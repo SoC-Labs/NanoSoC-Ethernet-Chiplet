@@ -1,0 +1,166 @@
+#-----------------------------------------------------------------------------
+# TideChart Controller Module
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Contributors
+#
+# David Mapstone (d.a.mapstone@soton.ac.uk)
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# Derived from RTL: src/rtl/tidechart_controller.sv
+# (repo: SoCLabs/tidechart, worktree branch add-subtree-and-irqc-axis)
+#
+# Top-module: tidechart_controller  (declared at tidechart_controller.sv:20,
+#             port list closes at line 93).
+#
+# RTL PORT COUNT = 28  (mechanically extracted: `input|output|inout` between
+# the `)(` and the `);` of the module header). This YAML declares exactly 28
+# interface entries, one per RTL port, with matching direction and width.
+#
+# TideChart is a PEER to TideLink: neither repo instantiates the other. The
+# system integrator wires a tidechart_controller alongside N tidelink_top
+# instances via the tc_axis_* AXI-Stream pair. This block description models
+# the integrator-visible boundary of tidechart_controller only.
+#
+# =============================================================================
+# MODELLING NOTES — why several buses are explicit `wire` ports, not protocols
+# =============================================================================
+# Protocol adapters registered in nanosoc_gen on this branch
+# (soc_model/adapters/*.py):  ahb, dbg_ahb, axis (alias: axis_stream),
+# axis_byte, gpio, swd.  There is NO `apb` adapter and NO adapter whose shape
+# matches TideChart's AXI-Stream ports, so the following are modelled as raw
+# wires (same approach as sys_desc/qspi_flash_ahb.yaml for its APB slave):
+#
+#  1. APB slave (apb_*) — no `apb` protocol exists; expanded as explicit wires.
+#
+#  2. tc_axis_rx_* / tc_axis_tx_* (the TideLink-facing pair) — the `axis`
+#     adapter expands to {tvalid, tready, tdata=SYS_DATA_W, tstrb[4], tlast}
+#     with 1-bit tvalid/tready and member names `<iface>_<suffix>`. TideChart's
+#     ports differ on FOUR counts, so coercing them would be wrong:
+#       (a) only 3 signals per direction (tvalid/tdata/tready) — NO tstrb, NO
+#           tlast;
+#       (b) tdata is FC_DATA_W (48) wide, not SYS_DATA_W;
+#       (c) tvalid/tready are per-port BUS vectors [NUM_PORTS-1:0], not 1-bit;
+#       (d) tdata is a SystemVerilog UNPACKED ARRAY (see note 4).
+#
+#  3. tc_to_irqc_* / irqc_to_tc_* (the ahb-chiplet-irqc AXI-Stream pair, Phase
+#     P4) — also modelled as wires. They carry `_o`/`_i` suffixes the `axis`
+#     adapter cannot reproduce (it emits `<iface>_tvalid`, never `_tvalid_o`),
+#     have no tstrb, use hardcoded 48-/32-bit tdata, and irqc_to_tc is a SINK
+#     stream (tvalid IN) which the single-direction `axis` table cannot express.
+#
+#  4. UNPACKED-ARRAY CAVEAT (load-bearing): three RTL ports are declared as
+#     SV unpacked arrays — `input wire [FC_DATA_W-1:0] tc_axis_rx_tdata [NUM_PORTS]`,
+#     the same for tc_axis_tx_tdata, and `[4:0] local_link_state_i [NUM_PORTS]`.
+#     nanosoc_gen's `wire` type emits a SINGLE PACKED dimension only
+#     (`[WIDTH-1:0] name`; see soc_model/backends/protocol_utils.py:width_str)
+#     — it has NO representation for an unpacked `[..] name [NUM_PORTS]` port.
+#     The WIDTH below is therefore the PER-ELEMENT (per-port) width only; the
+#     outer [NUM_PORTS] unpacked dimension is DROPPED and must be re-applied by
+#     the wrapper/integrator when it declares the connecting nets. Flagged here
+#     rather than silently flattened to [NUM_PORTS*W-1:0] (which would change
+#     the port's SV type and break the elaboration against the real RTL).
+#
+# =============================================================================
+# RTL vs README discrepancies (flagged, not papered over)
+# =============================================================================
+#  * DEVICE_CLASS: RTL default = 16'h0001; README parameter table says
+#    16'h8000. The RTL default makes this instance a guaranteed election winner
+#    (lowest class wins). Kept the RTL value below as source of truth.
+#  * tidechart_ahb_master ("Phase 3 autonomous AHB master, dormant in v1" per
+#    README) is NOT instantiated inside tidechart_controller and NONE of its
+#    ports are exposed at this boundary — there is deliberately NO `ahb`
+#    interface in this block description. If the AHB master is activated in a
+#    later revision, an `ahb` initiator interface must be added here.
+#-----------------------------------------------------------------------------
+
+module:
+  name: tidechart_controller
+  gen: False
+  desc: >
+    TideChart per-chiplet controller: dynamic chiplet-ID assignment (root
+    election, DFS enumeration, route/hop programming) over an N-port AXI-Stream
+    crossbar that faces N tidelink_top instances via the tc_axis_* ports.
+    Exposes its own APB slave for CPU access to TideChart state, a single
+    level interrupt, a Phase-2 congestion sideband, and the Phase-P4 IRQC
+    AXI-Stream pair to ahb-chiplet-irqc. Wraps SoC Labs `tidechart_controller`
+    (composes election/enum FSMs, route table, crossbar, PUF sampler, APB regs).
+
+  # =============================================================================
+  # Design Parameters (all 16 parameters of tidechart_controller, in RTL order)
+  # =============================================================================
+  params:
+    NUM_PORTS:        { type: int, default: 2,    desc: "Number of TideLink ports on this chiplet (sizes the tc_axis_* / congestion per-port vectors)" }
+    DEVICE_CLASS:     { type: int, default: 1,    desc: "16-bit root-election priority class, lower wins (RTL default 16'h0001). NOTE: README documents 16'h8000 — RTL disagrees" }
+    FC_DATA_W:        { type: int, default: 48,   desc: "Flow-control / AXI-Stream packet data width in bits (tc_axis_*_tdata)" }
+    APB_ADDR_W:       { type: int, default: 8,    desc: "APB slave address width (6-bit register offset field, up to 64 slots)" }
+    SYS_DATA_W:       { type: int, default: 32,   desc: "System / APB data width" }
+    ID_W:             { type: int, default: 5,    desc: "Logical chiplet-ID width (5-bit -> up to 31 assignable IDs)" }
+    PORT_W:           { type: int, default: 3,    desc: "Port-number / egress-port index width" }
+    MAX_HOPS:         { type: int, default: 8,    desc: "Maximum hop count / DFS enumeration stack depth" }
+    PUF_ENABLE:       { type: int, default: 0,    desc: "Instantiate the PUF sampler sub-block (0 = disabled)" }
+    PUF_NUM_WORDS:    { type: int, default: 16,   desc: "PUF sample word count (when PUF_ENABLE = 1)" }
+    INTERFACE_MAP:    { type: int, default: 2048, desc: "16-bit I/O-interface bitmask (RTL default 16'h0800; bit 11 = TideLink, always set)" }
+    COMPUTE_CLASS:    { type: int, default: 1,    desc: "8-bit compute-capability code (RTL default 8'h01 = Cortex-M0 class)" }
+    DAP_PRESENT:      { type: int, default: 0,    desc: "Chiplet has an Arm Debug Access Port (0/1)" }
+    NUM_DEBUG_CORES:  { type: int, default: 1,    desc: "Number of debug-accessible cores on this chiplet" }
+    ACCEL_COUNT:      { type: int, default: 0,    desc: "Number of hardware accelerators (0-4)" }
+    SRAM_BLOCK_COUNT: { type: int, default: 0,    desc: "Number of shared SRAM blocks (0-4)" }
+
+  # =============================================================================
+  # Interfaces (external ports) — 28 total, one per RTL port
+  # =============================================================================
+  interfaces:
+    # --- Clock and Reset ---
+    - { name: clk,    type: wire, direction: in, params: { WIDTH: 1 }, desc: "System clock" }
+    - { name: resetn, type: wire, direction: in, params: { WIDTH: 1 }, desc: "System reset (active low)" }
+
+    # --- Per-port AXI-Stream to/from tidelink_top instances (TideLink facing) ---
+    # NOT modelled with the `axis` adapter: no tstrb/tlast, tdata = FC_DATA_W,
+    # tvalid/tready are per-port [NUM_PORTS-1:0] vectors. See MODELLING NOTE 2.
+    # RX = inbound (TideLink -> TideChart); TX = outbound (TideChart -> TideLink).
+    - { name: tc_axis_rx_tvalid, type: wire, direction: in,  params: { WIDTH: $NUM_PORTS }, desc: "Per-port RX packet valid, [NUM_PORTS-1:0] (TL -> TC)" }
+    # UNPACKED ARRAY in RTL: [FC_DATA_W-1:0] tc_axis_rx_tdata [NUM_PORTS]. WIDTH
+    # below is PER-PORT only; outer [NUM_PORTS] dim dropped (MODELLING NOTE 4).
+    - { name: tc_axis_rx_tdata,  type: wire, direction: in,  params: { WIDTH: $FC_DATA_W }, desc: "Per-port RX 48-bit FC packet data. RTL is UNPACKED ARRAY [$FC_DATA_W-1:0] x [NUM_PORTS]; only per-port width modelled here" }
+    - { name: tc_axis_rx_tready, type: wire, direction: out, params: { WIDTH: $NUM_PORTS }, desc: "Per-port RX ready, [NUM_PORTS-1:0] (TC -> TL)" }
+    - { name: tc_axis_tx_tvalid, type: wire, direction: out, params: { WIDTH: $NUM_PORTS }, desc: "Per-port TX packet valid, [NUM_PORTS-1:0] (TC -> TL)" }
+    # UNPACKED ARRAY in RTL: [FC_DATA_W-1:0] tc_axis_tx_tdata [NUM_PORTS].
+    - { name: tc_axis_tx_tdata,  type: wire, direction: out, params: { WIDTH: $FC_DATA_W }, desc: "Per-port TX 48-bit FC packet data. RTL is UNPACKED ARRAY [$FC_DATA_W-1:0] x [NUM_PORTS]; only per-port width modelled here" }
+    - { name: tc_axis_tx_tready, type: wire, direction: in,  params: { WIDTH: $NUM_PORTS }, desc: "Per-port TX ready, [NUM_PORTS-1:0] (TL -> TC)" }
+    - { name: link_active,       type: wire, direction: in,  params: { WIDTH: $NUM_PORTS }, desc: "Per-port Wlink link-up, [NUM_PORTS-1:0] (TL -> TC)" }
+
+    # --- Congestion sideband (Phase 2 — from tidelink_top instances) ---
+    # UNPACKED ARRAY in RTL: [4:0] local_link_state_i [NUM_PORTS]. WIDTH below
+    # is the per-port 5-bit element; outer [NUM_PORTS] dim dropped (NOTE 4).
+    - { name: local_link_state_i,        type: wire, direction: in,  params: { WIDTH: 5 },          desc: "Per-port link-state input (5-bit). RTL is UNPACKED ARRAY [4:0] x [NUM_PORTS]; only per-port width modelled here" }
+    - { name: local_link_state_change_i, type: wire, direction: in,  params: { WIDTH: $NUM_PORTS }, desc: "Per-port link-state-change strobe, [NUM_PORTS-1:0]" }
+    - { name: local_bcast_ack_o,         type: wire, direction: out, params: { WIDTH: $NUM_PORTS }, desc: "Per-port congestion-broadcast acknowledge, [NUM_PORTS-1:0]" }
+
+    # --- APB slave (own address space; NOT routed through TideLink) ---
+    # Raw APB wires: nanosoc_gen has no `apb` protocol adapter (same as
+    # sys_desc/qspi_flash_ahb.yaml). 6-bit register offset within APB_ADDR_W.
+    - { name: apb_paddr,   type: wire, direction: in,  params: { WIDTH: $APB_ADDR_W }, desc: "APB address (register offset)" }
+    - { name: apb_psel,    type: wire, direction: in,  params: { WIDTH: 1 },           desc: "APB peripheral select" }
+    - { name: apb_penable, type: wire, direction: in,  params: { WIDTH: 1 },           desc: "APB enable (second phase)" }
+    - { name: apb_pwrite,  type: wire, direction: in,  params: { WIDTH: 1 },           desc: "APB write enable" }
+    - { name: apb_pwdata,  type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W }, desc: "APB write data" }
+    - { name: apb_prdata,  type: wire, direction: out, params: { WIDTH: $SYS_DATA_W }, desc: "APB read data" }
+    - { name: apb_pready,  type: wire, direction: out, params: { WIDTH: 1 },           desc: "APB ready" }
+    - { name: apb_pslverr, type: wire, direction: out, params: { WIDTH: 1 },           desc: "APB slave error" }
+
+    # --- Interrupt ---
+    - { name: tidechart_irq, type: wire, direction: out, params: { WIDTH: 1 }, desc: "TideChart level interrupt to the host NVIC" }
+
+    # --- IRQC AXI-Stream pair (Phase P4 — to/from ahb-chiplet-irqc) ---
+    # Raw wires (MODELLING NOTE 3): `_o`/`_i` suffixes, no tstrb, hardcoded
+    # tdata widths, and irqc_to_tc is a sink stream. tc_to_irqc = 48-bit update
+    # burst; irqc_to_tc = 32-bit request channel. See ahb-chiplet-irqc SPEC 8.6.
+    - { name: tc_to_irqc_tvalid_o, type: wire, direction: out, params: { WIDTH: 1 },  desc: "TC->IRQC update-burst valid" }
+    - { name: tc_to_irqc_tdata_o,  type: wire, direction: out, params: { WIDTH: 48 }, desc: "TC->IRQC 48-bit record packet (RTL hardcoded [47:0])" }
+    - { name: tc_to_irqc_tready_i, type: wire, direction: in,  params: { WIDTH: 1 },  desc: "TC->IRQC ready (IRQC accepts)" }
+    - { name: tc_to_irqc_tlast_o,  type: wire, direction: out, params: { WIDTH: 1 },  desc: "TC->IRQC end-of-burst" }
+    - { name: irqc_to_tc_tvalid_i, type: wire, direction: in,  params: { WIDTH: 1 },  desc: "IRQC->TC request valid" }
+    - { name: irqc_to_tc_tdata_i,  type: wire, direction: in,  params: { WIDTH: 32 }, desc: "IRQC->TC 32-bit record packet (RTL hardcoded [31:0])" }
+    - { name: irqc_to_tc_tready_o, type: wire, direction: out, params: { WIDTH: 1 },  desc: "IRQC->TC ready (TC accepts)" }
