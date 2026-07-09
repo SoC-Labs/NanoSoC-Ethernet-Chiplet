@@ -1,0 +1,443 @@
+#-----------------------------------------------------------------------------
+# TideLink Top-Level Chiplet Subsystem
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Contributors
+#
+# David Mapstone (d.a.mapstone@soton.ac.uk)
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# Derived from RTL: src/rtl/tidelink_top.sv
+#   (tidelink @ origin/integ/tidelink-soc — read-only; DO NOT check out)
+#
+# TideLink drop-in chiplet-interconnect subsystem. Wraps the whole chiplet
+# communication stack into a single module:
+#   - TideLink RX FIFO (tidelink_fifo_ahb): receive-side packet buffer
+#   - TideLink FC Adapter: bridges the AHB TX aperture + returner to a
+#     dedicated Wlink FC node (data_id=0xa1, 48-bit)
+#   - XHB500 AHB->AXI bridge (regular AHB subordinate path)
+#   - XHB500 AXI->AHB bridge (regular AHB manager path)
+#   - Address Translator: APB-configurable address remapping for the AXI path
+#   - Chiplet Controller (modified Wlink): link layer, FC, CRC/ECC, GPIO PHY,
+#     autoneg FSM, I2C sideband, PTP servo
+#
+# gen: False — the RTL exists and is authoritative. The generator must only
+# learn the module BOUNDARY so a chiplet-wrapper SoC can instantiate
+# tidelink_top via soc_model. SRAMs (FIFO buffers, TSMC65 rf_16k / FPGA BRAM)
+# live INSIDE this block and are selected by flist, not modelled here.
+#
+# =============================================================================
+# PORT ACCOUNTING — cross-checked mechanically against the RTL port list
+# (src/rtl/tidelink_top.sv, the `input/output/inout` lines between `module
+# tidelink_top #(...)(` and the closing `);`).
+#
+#   TOTAL RTL PORTS: 165   (== total ports expanded by this YAML: 165)
+#
+# Expansion here:
+#   * ahb_sub  -> ONE `type: ahb, direction: target` iface, EXCLUDE:[hmastlock]
+#                 => 12 boundary ports (canonical target table (13) minus
+#                    hmastlock). This is the ONLY port group that genuinely
+#                    matches the canonical AHB expansion.
+#   * all other 153 ports are declared as explicit `wire` ports (including the
+#     four non-canonical AHB groups ahb_tx / ahb_fifo / ahb_ptp / ahb_mng, the
+#     15-bit APB port, the 3-signal TideChart AXI-Streams, and the tiny I2C AXI
+#     slave) because their shape does NOT match any registered adapter table.
+#     See the DEVIATIONS block on each group below.
+#
+#   5 (clk/rst) + 12 (ahb_sub, type:ahb) + 10 (ahb_tx) + 10 (ahb_fifo)
+#   + 10 (ahb_mng) + 10 (apb) + 6 (scan) + 1 (user_ref_clk) + 4 (pad)
+#   + 1 (idelay_ref_clk) + 10 (ahb_ptp) + 13 (phc) + 1 (servo_locked)
+#   + 6 (irq) + 6 (tc_axis) + 1 (tc_qos) + 4 (congestion) + 1 (link_active)
+#   + 1 (d2d_reset) + 5 (role) + 5 (autoneg) + 6 (i2c sideband)
+#   + 35 (s_i2c_axi) + 2 (i2c irq)  =  165
+# =============================================================================
+
+module:
+  name: tidelink_top
+  gen: False
+  desc: >
+    TideLink drop-in chiplet-interconnect subsystem. Exposes four AHB ports
+    (a transparent address-translated subordinate to the peer, a direct TX
+    aperture, a local RX-FIFO read window, and an incoming manager), a unified
+    APB configuration port, the GPIO PHY pads, an external-PHC time/servo
+    bundle, PTP/perf/link/I2C interrupts, a TideChart AXI-Stream extension,
+    an I2C sideband + AXI slave, scan/DFT, autoneg and role straps. RTL is
+    authoritative (gen: False); this block description carries only the
+    boundary so a host chiplet wrapper can instantiate it via soc_model.
+
+  # =============================================================================
+  # Design Parameters (src/rtl/tidelink_top.sv:37-121)
+  # Defaults taken from the RTL, which is the source of truth. Where the
+  # INTEGRATION_GUIDE.md §4.3 table disagrees, the RTL wins (see NEGO_CFG_RESET).
+  # =============================================================================
+  params:
+    # System bus geometry
+    SYS_ADDR_W:           { type: int, default: 32,      desc: "System (AHB) address width" }
+    SYS_DATA_W:           { type: int, default: 32,      desc: "System (AHB/AXI) data width" }
+
+    # TideLink FIFO / SRAM
+    RAM_ADDR_W:           { type: int, default: 14,      desc: "FIFO SRAM address width (phys = 4 * 2^N bytes, default 16 KB); also sizes the ahb_tx / ahb_fifo apertures" }
+    RAM_DATA_W:           { type: int, default: 32,      desc: "FIFO SRAM data width" }
+
+    # APB register-access bus width. NOTE: this is the INTERNAL register-address
+    # width; the top-level apb_paddr PORT is a wider 15-bit unified window (see
+    # the apb interface deviation note below).
+    APB_ADDR_W:           { type: int, default: 12,      desc: "APB register address width (internal; top apb_paddr port is 15-bit)" }
+
+    # FC node
+    FC_DATA_W:            { type: int, default: 48,      desc: "FC-node data width (matches the AXI W channel); also the TideChart AXI-Stream tdata width" }
+
+    # PHY
+    NUM_PHY_LANES:        { type: int, default: 8,       desc: "Number of GPIO PHY lanes (sizes pad_tx / pad_rx)" }
+
+    # Peer APB base address (also settable at runtime via PAIR_BASE_ADDR reg).
+    # RTL type is [SYS_ADDR_W-1:0], POR default all-zeros ('0).
+    TIDELINK_PAIR_BASE:   { type: int, default: 0,       desc: "Paired-TideLink APB base address for the returner (SYS_ADDR_W-bit, POR '0)" }
+
+    # PTP multi-hop chaining
+    PHC_LOCK_GATE_EN:     { type: int, default: 0,       desc: "1 = gate HW PTP sync on phc_locked_i (multi-hop chaining); 0 = no gating (backward compat)" }
+
+    # FPGA-only RX datapath selectors. Default 0 = ASIC/sim (bit-exact
+    # passthrough, no Xilinx primitive). The FPGA IP wrapper overrides these
+    # to 1 via component.xml (do NOT delete the USE_* paths — FPGA-essential).
+    USE_IDELAY:           { type: int, default: 0,       desc: "1 = per-lane IDELAYE2 RX delay (FPGA); 0 = passthrough (sim/ASIC). 1-bit" }
+    USE_CLKBUF:           { type: int, default: 0,       desc: "1 = recovered-RX-clock BUFG forward (FPGA); 0 (sim/ASIC). 1-bit" }
+    USE_T3A:              { type: int, default: 0,       desc: "1 = per-lane self-aligning RX comma hunt (FPGA); 0 (sim/ASIC). 1-bit" }
+
+    # PHY refactor scaffold — reserved, MUST stay 0 (the g_phy_v2 generate arm
+    # elaborates empty today; sources not in any live flist).
+    USE_PHY_V2:           { type: int, default: 0,       desc: "RESERVED — select shared PHY v2 component. Keep 0 (placeholder arm). 1-bit logic" }
+
+    # Tier-2 RTL hardening — force swi_enable=1 on any Wlink 0x208 write that
+    # asserts swi_swreset=1 (protects the 7 FCSMs). Default 1 (ON), bit-safe.
+    HARDEN_SWI_ENABLE:    { type: int, default: 1,       desc: "1 = force swi_enable on swreset writes (FCSM guard). Default ON. 1-bit" }
+
+    # Interface-debug stubs — replace sub-blocks with tie-offs for ILA debug
+    # bitstreams. Default 0 = normal instantiation (no-op).
+    STUB_SERVO:           { type: int, default: 0,       desc: "1 = replace u_servo (tidelink_ptp_servo) with tie-offs. 1-bit" }
+    STUB_PERF:            { type: int, default: 0,       desc: "1 = replace u_perf (tidelink_perf) with tie-offs. 1-bit" }
+    STUB_PTP:             { type: int, default: 0,       desc: "1 = replace u_ptp (tidelink_ptp) with tie-offs (REQUIRES STUB_SERVO=1). 1-bit" }
+    BYPASS_ADDR_XLAT:     { type: int, default: 0,       desc: "1 = replace u_addr_translator with passthrough. 1-bit" }
+
+    # Autoneg POR values
+    NEGO_TRAIN_CFG_RESET: { type: int, default: 0x0001,  desc: "POR value for NEGO_TRAIN_CFG @0x4403_210C (16'h0001 = train_auto_en=1). 16-bit" }
+    # RTL default is 7'h00 (autoneg OFF, SW-driven) per the SoC Labs 2026-06-18
+    # reduced-lane bring-up note. The INTEGRATION_GUIDE §4.3 table still lists
+    # 7'h61 — that table is stale; the RTL default (7'h00) is authoritative.
+    NEGO_CFG_RESET:       { type: int, default: 0x00,    desc: "POR value for NEGO_CFG (7'h00 = autoneg OFF / SW-driven; guide's 7'h61 is stale). 7-bit" }
+
+  # =============================================================================
+  # Interfaces (external ports) — every RTL port, exactly once.
+  # =============================================================================
+  interfaces:
+
+    # -------------------------------------------------------------------------
+    # Clocks and Resets
+    # -------------------------------------------------------------------------
+    - { name: hclk,       type: wire, direction: in, params: { WIDTH: 1 }, desc: "AHB / application clock" }
+    - { name: hresetn,    type: wire, direction: in, params: { WIDTH: 1 }, desc: "AHB reset (active-low)" }
+    - { name: poresetn,   type: wire, direction: in, params: { WIDTH: 1 }, desc: "Power-on reset (active-low)" }
+    - { name: phc_clk,    type: wire, direction: in, params: { WIDTH: 1 }, desc: "PHC clock (may differ from hclk)" }
+    - { name: phc_resetn, type: wire, direction: in, params: { WIDTH: 1 }, desc: "PHC reset (active-low)" }
+
+    # -------------------------------------------------------------------------
+    # AHB Subordinate — ahb_sub: transparent bridge to the peer
+    # (ahb_sub -> XHB500 AHB->AXI -> Wlink -> remote XHB500 AXI->AHB), address
+    # translated. Safe with the link down (HREADY returned locally).
+    #
+    # CANONICAL FIT (the only one): matches `type: ahb, direction: target`
+    # (SYS_ADDR_W haddr, SYS_DATA_W data, hburst[2:0], hprot[3:0], hsel,
+    # hreadyout, hready-in) EXCEPT the RTL port group has NO hmastlock. The
+    # canonical target table includes hmastlock, so it is dropped via EXCLUDE.
+    # DEVIATION: EXCLUDE:[hmastlock] — one signal fewer than canonical target.
+    # Expands to 12 ports: ahb_sub_{hsel,haddr,hburst,hprot,hsize,htrans,
+    # hwdata,hwrite,hready,hrdata,hresp,hreadyout}.
+    # -------------------------------------------------------------------------
+    - { name: ahb_sub, type: ahb, direction: target, params: { ADDR_WIDTH: $SYS_ADDR_W, DATA_WIDTH: $SYS_DATA_W, EXCLUDE: [hmastlock] }, desc: "AHB subordinate: address-translated transparent access to the remote die (safe with link down)" }
+
+    # -------------------------------------------------------------------------
+    # AHB Subordinate — ahb_tx: direct TideLink TX aperture into the local FC
+    # node (no address translation, same aperture size as the remote RX FIFO).
+    # WEDGE HAZARD: a write with the link down hangs the bus — gate behind a
+    # verified-link check.
+    #
+    # DEVIATION from canonical `type: ahb target` — modelled as explicit wires:
+    #   * haddr is RAM_ADDR_W wide (aperture-sized), NOT SYS_ADDR_W.
+    #   * NO hburst, NO hprot, NO hmastlock (a reduced AHB-Lite slave).
+    # Present signals (10): hsel, haddr[RAM_ADDR_W], htrans, hsize, hwrite,
+    # hwdata, hready (in) + hrdata, hresp, hreadyout (out).
+    # (This shape is expressible as `type: ahb target` with ADDR_WIDTH:$RAM_ADDR_W
+    #  and EXCLUDE:[hburst,hprot,hmastlock], but is kept as explicit wires so the
+    #  boundary is unambiguous and self-documenting.)
+    # -------------------------------------------------------------------------
+    - { name: ahb_tx_hsel,      type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_tx: AHB select" }
+    - { name: ahb_tx_haddr,     type: wire, direction: in,  params: { WIDTH: $RAM_ADDR_W },  desc: "ahb_tx: AHB address (aperture-sized, RAM_ADDR_W)" }
+    - { name: ahb_tx_htrans,    type: wire, direction: in,  params: { WIDTH: 2 },            desc: "ahb_tx: AHB transfer type" }
+    - { name: ahb_tx_hsize,     type: wire, direction: in,  params: { WIDTH: 3 },            desc: "ahb_tx: AHB transfer size" }
+    - { name: ahb_tx_hwrite,    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_tx: AHB write enable" }
+    - { name: ahb_tx_hwdata,    type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W },  desc: "ahb_tx: AHB write data" }
+    - { name: ahb_tx_hready,    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_tx: AHB ready (in)" }
+    - { name: ahb_tx_hrdata,    type: wire, direction: out, params: { WIDTH: $SYS_DATA_W },  desc: "ahb_tx: AHB read data" }
+    - { name: ahb_tx_hresp,     type: wire, direction: out, params: { WIDTH: 1 },            desc: "ahb_tx: AHB response" }
+    - { name: ahb_tx_hreadyout, type: wire, direction: out, params: { WIDTH: 1 },            desc: "ahb_tx: AHB ready (out)" }
+
+    # -------------------------------------------------------------------------
+    # AHB Subordinate — ahb_fifo: local RX FIFO read window (drain received
+    # packets). Safe. SAME reduced shape as ahb_tx (RAM_ADDR_W haddr; no
+    # hburst/hprot/hmastlock) — modelled as explicit wires for the same reason.
+    # -------------------------------------------------------------------------
+    - { name: ahb_fifo_hsel,      type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_fifo: AHB select" }
+    - { name: ahb_fifo_haddr,     type: wire, direction: in,  params: { WIDTH: $RAM_ADDR_W },  desc: "ahb_fifo: AHB address (RX-FIFO window, RAM_ADDR_W)" }
+    - { name: ahb_fifo_htrans,    type: wire, direction: in,  params: { WIDTH: 2 },            desc: "ahb_fifo: AHB transfer type" }
+    - { name: ahb_fifo_hsize,     type: wire, direction: in,  params: { WIDTH: 3 },            desc: "ahb_fifo: AHB transfer size" }
+    - { name: ahb_fifo_hwrite,    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_fifo: AHB write enable" }
+    - { name: ahb_fifo_hwdata,    type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W },  desc: "ahb_fifo: AHB write data" }
+    - { name: ahb_fifo_hready,    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_fifo: AHB ready (in)" }
+    - { name: ahb_fifo_hrdata,    type: wire, direction: out, params: { WIDTH: $SYS_DATA_W },  desc: "ahb_fifo: AHB read data" }
+    - { name: ahb_fifo_hresp,     type: wire, direction: out, params: { WIDTH: 1 },            desc: "ahb_fifo: AHB response" }
+    - { name: ahb_fifo_hreadyout, type: wire, direction: out, params: { WIDTH: 1 },            desc: "ahb_fifo: AHB ready (out)" }
+
+    # -------------------------------------------------------------------------
+    # AHB Manager — ahb_mng: incoming credit-return / doorbell / FC writes from
+    # the peer, routed through the XHB500 AXI->AHB bridge. Connect as a MANAGER
+    # on the host bus matrix. Safe.
+    #
+    # DEVIATION from canonical `type: ahb initiator` — modelled as explicit
+    # wires because it CANNOT be expressed by the adapter table:
+    #   * hprot is [6:0] (AHB5, 7-bit) — the canonical initiator hprot is 4-bit
+    #     and ADDR_WIDTH/DATA_WIDTH cannot resize it.
+    #   * NO hmastlock (canonical initiator includes it).
+    #   * hready is an INPUT here (slave's ready back to the manager); LEC
+    #     flagged the earlier `output` decl as an undriven primary output.
+    # Present signals (10): haddr, hburst, hprot[6:0], hsize, htrans, hwdata,
+    # hwrite (out) + hready, hrdata, hresp (in).
+    # -------------------------------------------------------------------------
+    - { name: ahb_mng_haddr,  type: wire, direction: out, params: { WIDTH: $SYS_ADDR_W },  desc: "ahb_mng: AHB manager address" }
+    - { name: ahb_mng_hburst, type: wire, direction: out, params: { WIDTH: 3 },            desc: "ahb_mng: AHB manager burst" }
+    - { name: ahb_mng_hprot,  type: wire, direction: out, params: { WIDTH: 7 },            desc: "ahb_mng: AHB manager protection (AHB5, [6:0] — non-canonical)" }
+    - { name: ahb_mng_hsize,  type: wire, direction: out, params: { WIDTH: 3 },            desc: "ahb_mng: AHB manager transfer size" }
+    - { name: ahb_mng_htrans, type: wire, direction: out, params: { WIDTH: 2 },            desc: "ahb_mng: AHB manager transfer type" }
+    - { name: ahb_mng_hwdata, type: wire, direction: out, params: { WIDTH: $SYS_DATA_W },  desc: "ahb_mng: AHB manager write data" }
+    - { name: ahb_mng_hwrite, type: wire, direction: out, params: { WIDTH: 1 },            desc: "ahb_mng: AHB manager write enable" }
+    - { name: ahb_mng_hready, type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_mng: AHB ready (in — slave ready back to manager)" }
+    - { name: ahb_mng_hrdata, type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W },  desc: "ahb_mng: AHB manager read data" }
+    - { name: ahb_mng_hresp,  type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_mng: AHB manager response" }
+
+    # -------------------------------------------------------------------------
+    # APB Subordinate — apb_*: unified configuration port
+    #   0x0000-0x1FFF: Wlink chiplet controller (PHY, link, FC nodes)
+    #   0x2000-0x203F: TideLink FIFO config + PTP registers
+    #   (addr translator config extends the window higher — hence a 15-bit port)
+    #
+    # DEVIATION: there is NO `apb` adapter in soc_model, so APB is always
+    # explicit wires (matches sys_desc/qspi_flash_ahb.yaml). NOTE the top-level
+    # apb_paddr PORT is [14:0] (15-bit unified window) and does NOT equal the
+    # APB_ADDR_W=12 parameter (which is the internal register-address width).
+    # -------------------------------------------------------------------------
+    - { name: apb_paddr,   type: wire, direction: in,  params: { WIDTH: 15 },           desc: "APB address (15-bit unified config window; NOT APB_ADDR_W)" }
+    - { name: apb_penable, type: wire, direction: in,  params: { WIDTH: 1 },            desc: "APB enable (second phase)" }
+    - { name: apb_pwrite,  type: wire, direction: in,  params: { WIDTH: 1 },            desc: "APB write enable" }
+    - { name: apb_pstrb,   type: wire, direction: in,  params: { WIDTH: 4 },            desc: "APB byte strobe" }
+    - { name: apb_pprot,   type: wire, direction: in,  params: { WIDTH: 3 },            desc: "APB protection attributes" }
+    - { name: apb_pwdata,  type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W },  desc: "APB write data" }
+    - { name: apb_psel,    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "APB peripheral select" }
+    - { name: apb_prdata,  type: wire, direction: out, params: { WIDTH: $SYS_DATA_W },  desc: "APB read data" }
+    - { name: apb_pready,  type: wire, direction: out, params: { WIDTH: 1 },            desc: "APB ready" }
+    - { name: apb_pslverr, type: wire, direction: out, params: { WIDTH: 1 },            desc: "APB slave error" }
+
+    # -------------------------------------------------------------------------
+    # Scan / DFT
+    # -------------------------------------------------------------------------
+    - { name: scan_mode,          type: wire, direction: in,  params: { WIDTH: 1 }, desc: "Scan mode enable" }
+    - { name: scan_asyncrst_ctrl, type: wire, direction: in,  params: { WIDTH: 1 }, desc: "Scan async-reset control" }
+    - { name: scan_clk,           type: wire, direction: in,  params: { WIDTH: 1 }, desc: "Scan clock" }
+    - { name: scan_shift,         type: wire, direction: in,  params: { WIDTH: 1 }, desc: "Scan shift enable" }
+    - { name: scan_in,            type: wire, direction: in,  params: { WIDTH: 1 }, desc: "Scan chain input" }
+    - { name: scan_out,           type: wire, direction: out, params: { WIDTH: 1 }, desc: "Scan chain output" }
+
+    # -------------------------------------------------------------------------
+    # Reference clock for the Wlink PLL
+    # -------------------------------------------------------------------------
+    - { name: user_ref_clk, type: wire, direction: in, params: { WIDTH: 1 }, desc: "Wlink PLL reference clock" }
+
+    # -------------------------------------------------------------------------
+    # PHY Pads (width = NUM_PHY_LANES)
+    # -------------------------------------------------------------------------
+    - { name: pad_clk_tx, type: wire, direction: out, params: { WIDTH: 1 },               desc: "GPIO PHY forwarded TX clock (to pad)" }
+    - { name: pad_tx,     type: wire, direction: out, params: { WIDTH: $NUM_PHY_LANES },  desc: "GPIO PHY TX lanes (to pads)" }
+    - { name: pad_clk_rx, type: wire, direction: in,  params: { WIDTH: 1 },               desc: "GPIO PHY forwarded RX clock (from pad)" }
+    - { name: pad_rx,     type: wire, direction: in,  params: { WIDTH: $NUM_PHY_LANES },  desc: "GPIO PHY RX lanes (from pads)" }
+
+    # 200 MHz IDELAYCTRL reference — used only when USE_IDELAY=1 (FPGA).
+    # Tie 1'b0 in sim/ASIC (idelay_rx is pure passthrough then).
+    - { name: idelay_ref_clk, type: wire, direction: in, params: { WIDTH: 1 }, desc: "200 MHz IDELAYCTRL reference clock (FPGA IDELAY only; tie 0 sim/ASIC)" }
+
+    # -------------------------------------------------------------------------
+    # AHB Subordinate — ahb_ptp: PTP TX write port (CPU writes trigger PTP FC
+    # messages). SAME reduced shape as ahb_tx/ahb_fifo but haddr is only 4-bit
+    # (register-sized). Modelled as explicit wires.
+    #
+    # DEVIATION from canonical `type: ahb target`:
+    #   * haddr is [3:0] (4-bit), NOT SYS_ADDR_W.
+    #   * NO hburst, NO hprot, NO hmastlock.
+    # Present signals (10): hsel, haddr[3:0], htrans, hsize, hwrite, hwdata,
+    # hready (in) + hrdata, hresp, hreadyout (out).
+    # -------------------------------------------------------------------------
+    - { name: ahb_ptp_hsel,      type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_ptp: AHB select" }
+    - { name: ahb_ptp_haddr,     type: wire, direction: in,  params: { WIDTH: 4 },            desc: "ahb_ptp: AHB address (4-bit register window)" }
+    - { name: ahb_ptp_htrans,    type: wire, direction: in,  params: { WIDTH: 2 },            desc: "ahb_ptp: AHB transfer type" }
+    - { name: ahb_ptp_hsize,     type: wire, direction: in,  params: { WIDTH: 3 },            desc: "ahb_ptp: AHB transfer size" }
+    - { name: ahb_ptp_hwrite,    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_ptp: AHB write enable" }
+    - { name: ahb_ptp_hwdata,    type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W },  desc: "ahb_ptp: AHB write data" }
+    - { name: ahb_ptp_hready,    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "ahb_ptp: AHB ready (in)" }
+    - { name: ahb_ptp_hrdata,    type: wire, direction: out, params: { WIDTH: $SYS_DATA_W },  desc: "ahb_ptp: AHB read data" }
+    - { name: ahb_ptp_hresp,     type: wire, direction: out, params: { WIDTH: 1 },            desc: "ahb_ptp: AHB response" }
+    - { name: ahb_ptp_hreadyout, type: wire, direction: out, params: { WIDTH: 1 },            desc: "ahb_ptp: AHB ready (out)" }
+
+    # -------------------------------------------------------------------------
+    # External PHC bundle (time in, hardware capture out, servo adjust out)
+    # -------------------------------------------------------------------------
+    - { name: phc_hw_capture,             type: wire, direction: out, params: { WIDTH: 1 },            desc: "HW capture strobe to the external PHC hw_capture input" }
+    - { name: phc_nanoseconds,            type: wire, direction: in,  params: { WIDTH: 30 },           desc: "PHC nanoseconds (from external PHC)" }
+    - { name: phc_seconds,                type: wire, direction: in,  params: { WIDTH: 48 },           desc: "PHC seconds (from external PHC)" }
+    - { name: phc_pps,                    type: wire, direction: in,  params: { WIDTH: 1 },            desc: "PHC pulse-per-second" }
+    - { name: phc_hw_cap_seconds,         type: wire, direction: in,  params: { WIDTH: 48 },           desc: "PHC hardware-capture seconds (servo timestamp)" }
+    - { name: phc_hw_cap_nanoseconds,     type: wire, direction: in,  params: { WIDTH: 30 },           desc: "PHC hardware-capture nanoseconds (servo timestamp)" }
+    - { name: phc_hw_cap_sub_nanoseconds, type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W },  desc: "PHC hardware-capture sub-nanoseconds (servo timestamp)" }
+    - { name: phc_hw_set_time,            type: wire, direction: out, params: { WIDTH: 1 },            desc: "Servo -> PHC set-time strobe" }
+    - { name: phc_hw_set_seconds,         type: wire, direction: out, params: { WIDTH: 48 },           desc: "Servo -> PHC set seconds" }
+    - { name: phc_hw_set_nanoseconds,     type: wire, direction: out, params: { WIDTH: 30 },           desc: "Servo -> PHC set nanoseconds" }
+    - { name: phc_hw_adj_valid,           type: wire, direction: out, params: { WIDTH: 1 },            desc: "Servo -> PHC adjustment valid" }
+    - { name: phc_hw_adj_ns_incr_frac,    type: wire, direction: out, params: { WIDTH: $SYS_DATA_W },  desc: "Servo -> PHC ns-increment fractional adjustment" }
+    - { name: phc_locked_i,               type: wire, direction: in,  params: { WIDTH: 1 },            desc: "External PHC lock gate (gates HW sync when PHC_LOCK_GATE_EN=1; tie 1 single-link)" }
+
+    # -------------------------------------------------------------------------
+    # Servo status
+    # -------------------------------------------------------------------------
+    - { name: servo_locked, type: wire, direction: out, params: { WIDTH: 1 }, desc: "PTP servo locked status" }
+
+    # -------------------------------------------------------------------------
+    # Interrupt outputs
+    # -------------------------------------------------------------------------
+    - { name: released_credits_irq, type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: credits released" }
+    - { name: doorbell_irq,         type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: doorbell" }
+    - { name: packet_committed_irq, type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: packet committed" }
+    - { name: ptp_irq,              type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: PTP" }
+    - { name: perf_irq,             type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: performance counter" }
+    - { name: wlink_irq,            type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: Wlink chiplet controller" }
+
+    # -------------------------------------------------------------------------
+    # TideChart AXI-Stream extension (PKT_EXT, FC pkt_type=2'b10). Tie off if
+    # unused. DEVIATION: the RTL carries only tvalid/tdata/tready per direction
+    # (no tstrb/tlast), so the `type: axis` adapter (which adds tstrb+tlast)
+    # would over-generate. Modelled as explicit wires. tdata = FC_DATA_W.
+    #   tc_axis_tx_*: tidelink_top is the SINK  (tvalid/tdata in, tready out)
+    #   tc_axis_rx_*: tidelink_top is the SOURCE (tvalid/tdata out, tready in)
+    # -------------------------------------------------------------------------
+    - { name: tc_axis_tx_tvalid, type: wire, direction: in,  params: { WIDTH: 1 },           desc: "TideChart TX stream valid (into tidelink_top)" }
+    - { name: tc_axis_tx_tdata,  type: wire, direction: in,  params: { WIDTH: $FC_DATA_W },  desc: "TideChart TX stream data" }
+    - { name: tc_axis_tx_tready, type: wire, direction: out, params: { WIDTH: 1 },           desc: "TideChart TX stream ready" }
+    - { name: tc_axis_rx_tvalid, type: wire, direction: out, params: { WIDTH: 1 },           desc: "TideChart RX stream valid (out of tidelink_top)" }
+    - { name: tc_axis_rx_tdata,  type: wire, direction: out, params: { WIDTH: $FC_DATA_W },  desc: "TideChart RX stream data" }
+    - { name: tc_axis_rx_tready, type: wire, direction: in,  params: { WIDTH: 1 },           desc: "TideChart RX stream ready" }
+
+    # QoS priority hint (from TideChart TC_QOS_CFG). >0 prioritises PKT_EXT.
+    - { name: tc_qos_priority, type: wire, direction: in, params: { WIDTH: 3 }, desc: "TideChart QoS priority hint (0 = fixed priority)" }
+
+    # -------------------------------------------------------------------------
+    # Congestion sideband (to the TideChart link-state agent)
+    #   tl_local_link_state_o = {starve, trend[1:0], level[1:0]}
+    # -------------------------------------------------------------------------
+    - { name: tl_local_link_state_o,  type: wire, direction: out, params: { WIDTH: 5 },  desc: "Quantised local link state {starve,trend[1:0],level[1:0]}" }
+    - { name: tl_link_state_change_o, type: wire, direction: out, params: { WIDTH: 1 },  desc: "One-cycle pulse on any quantised link-state transition" }
+    - { name: tl_ewma_credit_o,       type: wire, direction: out, params: { WIDTH: 13 }, desc: "EWMA credit level" }
+    - { name: tl_bcast_ack_i,         type: wire, direction: in,  params: { WIDTH: 1 },  desc: "Broadcast ack (clears starve-sticky after broadcast)" }
+
+    # -------------------------------------------------------------------------
+    # Link active status
+    # -------------------------------------------------------------------------
+    - { name: link_active, type: wire, direction: out, params: { WIDTH: 1 }, desc: "Wlink link layer up and operational" }
+
+    # -------------------------------------------------------------------------
+    # Reset output
+    # -------------------------------------------------------------------------
+    - { name: d2d_reset_o, type: wire, direction: out, params: { WIDTH: 1 }, desc: "Die-to-die reset output" }
+
+    # -------------------------------------------------------------------------
+    # Chiplet controller role selection
+    # -------------------------------------------------------------------------
+    - { name: role_strap_i,       type: wire, direction: in,  params: { WIDTH: 1 }, desc: "Role strap input (master/slave select)" }
+    - { name: role_is_master_o,   type: wire, direction: out, params: { WIDTH: 1 }, desc: "Resolved role: this die is master" }
+    - { name: role_locked_o,      type: wire, direction: out, params: { WIDTH: 1 }, desc: "Role latched/locked" }
+    - { name: apb_debug_unlock_i, type: wire, direction: in,  params: { WIDTH: 1 }, desc: "APB debug unlock" }
+    - { name: mask_hs_bypass_i,   type: wire, direction: in,  params: { WIDTH: 1 }, desc: "Mask-handshake bypass" }
+
+    # -------------------------------------------------------------------------
+    # Auto-negotiation
+    # -------------------------------------------------------------------------
+    - { name: nego_priority_i, type: wire, direction: in,  params: { WIDTH: 16 }, desc: "External negotiation priority (OTP/UID)" }
+    - { name: puf_seed,        type: wire, direction: in,  params: { WIDTH: 16 }, desc: "PUF seed (from TideChart PUF sampler)" }
+    - { name: puf_ready,       type: wire, direction: in,  params: { WIDTH: 1 },  desc: "PUF sampling complete" }
+    - { name: nego_error_irq,  type: wire, direction: out, params: { WIDTH: 1 },  desc: "IRQ: negotiation error" }
+    - { name: train_fail_irq,  type: wire, direction: out, params: { WIDTH: 1 },  desc: "IRQ: autoneg FSM entered ST_TRAIN_FAIL (sticky, W1C in Region 8)" }
+
+    # -------------------------------------------------------------------------
+    # I2C sideband (open-drain tristate: _i in, _o drive, _t output-enable)
+    # -------------------------------------------------------------------------
+    - { name: i2c_scl_i, type: wire, direction: in,  params: { WIDTH: 1 }, desc: "I2C SCL input (from pad)" }
+    - { name: i2c_scl_o, type: wire, direction: out, params: { WIDTH: 1 }, desc: "I2C SCL output value" }
+    - { name: i2c_scl_t, type: wire, direction: out, params: { WIDTH: 1 }, desc: "I2C SCL tristate/output-enable" }
+    - { name: i2c_sda_i, type: wire, direction: in,  params: { WIDTH: 1 }, desc: "I2C SDA input (from pad)" }
+    - { name: i2c_sda_o, type: wire, direction: out, params: { WIDTH: 1 }, desc: "I2C SDA output value" }
+    - { name: i2c_sda_t, type: wire, direction: out, params: { WIDTH: 1 }, desc: "I2C SDA tristate/output-enable" }
+
+    # -------------------------------------------------------------------------
+    # I2C sideband AXI slave (CPU -> I2C master -> remote)
+    #
+    # DEVIATION: there is NO `axi` adapter in soc_model, AND this is a tiny
+    # non-standard AXI4 (awaddr/araddr are 4-bit register windows, awid/arid
+    # are 2-bit). Modelled entirely as explicit wires. Signal set = AW(10) +
+    # W(5) + B(4) + AR(10) + R(6) = 35 ports.
+    # -------------------------------------------------------------------------
+    - { name: s_i2c_axi_awvalid, type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI AW valid" }
+    - { name: s_i2c_axi_awid,    type: wire, direction: in,  params: { WIDTH: 2 },            desc: "I2C-AXI AW id" }
+    - { name: s_i2c_axi_awaddr,  type: wire, direction: in,  params: { WIDTH: 4 },            desc: "I2C-AXI AW address (4-bit register window)" }
+    - { name: s_i2c_axi_awlen,   type: wire, direction: in,  params: { WIDTH: 8 },            desc: "I2C-AXI AW burst length" }
+    - { name: s_i2c_axi_awsize,  type: wire, direction: in,  params: { WIDTH: 3 },            desc: "I2C-AXI AW burst size" }
+    - { name: s_i2c_axi_awburst, type: wire, direction: in,  params: { WIDTH: 2 },            desc: "I2C-AXI AW burst type" }
+    - { name: s_i2c_axi_awlock,  type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI AW lock" }
+    - { name: s_i2c_axi_awcache, type: wire, direction: in,  params: { WIDTH: 4 },            desc: "I2C-AXI AW cache" }
+    - { name: s_i2c_axi_awprot,  type: wire, direction: in,  params: { WIDTH: 3 },            desc: "I2C-AXI AW prot" }
+    - { name: s_i2c_axi_awready, type: wire, direction: out, params: { WIDTH: 1 },            desc: "I2C-AXI AW ready" }
+    - { name: s_i2c_axi_wvalid,  type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI W valid" }
+    - { name: s_i2c_axi_wdata,   type: wire, direction: in,  params: { WIDTH: $SYS_DATA_W },  desc: "I2C-AXI W data" }
+    - { name: s_i2c_axi_wstrb,   type: wire, direction: in,  params: { WIDTH: 4 },            desc: "I2C-AXI W strobe" }
+    - { name: s_i2c_axi_wlast,   type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI W last" }
+    - { name: s_i2c_axi_wready,  type: wire, direction: out, params: { WIDTH: 1 },            desc: "I2C-AXI W ready" }
+    - { name: s_i2c_axi_bvalid,  type: wire, direction: out, params: { WIDTH: 1 },            desc: "I2C-AXI B valid" }
+    - { name: s_i2c_axi_bid,     type: wire, direction: out, params: { WIDTH: 2 },            desc: "I2C-AXI B id" }
+    - { name: s_i2c_axi_bresp,   type: wire, direction: out, params: { WIDTH: 2 },            desc: "I2C-AXI B response" }
+    - { name: s_i2c_axi_bready,  type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI B ready" }
+    - { name: s_i2c_axi_arvalid, type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI AR valid" }
+    - { name: s_i2c_axi_arid,    type: wire, direction: in,  params: { WIDTH: 2 },            desc: "I2C-AXI AR id" }
+    - { name: s_i2c_axi_araddr,  type: wire, direction: in,  params: { WIDTH: 4 },            desc: "I2C-AXI AR address (4-bit register window)" }
+    - { name: s_i2c_axi_arlen,   type: wire, direction: in,  params: { WIDTH: 8 },            desc: "I2C-AXI AR burst length" }
+    - { name: s_i2c_axi_arsize,  type: wire, direction: in,  params: { WIDTH: 3 },            desc: "I2C-AXI AR burst size" }
+    - { name: s_i2c_axi_arburst, type: wire, direction: in,  params: { WIDTH: 2 },            desc: "I2C-AXI AR burst type" }
+    - { name: s_i2c_axi_arlock,  type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI AR lock" }
+    - { name: s_i2c_axi_arcache, type: wire, direction: in,  params: { WIDTH: 4 },            desc: "I2C-AXI AR cache" }
+    - { name: s_i2c_axi_arprot,  type: wire, direction: in,  params: { WIDTH: 3 },            desc: "I2C-AXI AR prot" }
+    - { name: s_i2c_axi_arready, type: wire, direction: out, params: { WIDTH: 1 },            desc: "I2C-AXI AR ready" }
+    - { name: s_i2c_axi_rvalid,  type: wire, direction: out, params: { WIDTH: 1 },            desc: "I2C-AXI R valid" }
+    - { name: s_i2c_axi_rid,     type: wire, direction: out, params: { WIDTH: 2 },            desc: "I2C-AXI R id" }
+    - { name: s_i2c_axi_rdata,   type: wire, direction: out, params: { WIDTH: $SYS_DATA_W },  desc: "I2C-AXI R data" }
+    - { name: s_i2c_axi_rresp,   type: wire, direction: out, params: { WIDTH: 2 },            desc: "I2C-AXI R response" }
+    - { name: s_i2c_axi_rlast,   type: wire, direction: out, params: { WIDTH: 1 },            desc: "I2C-AXI R last" }
+    - { name: s_i2c_axi_rready,  type: wire, direction: in,  params: { WIDTH: 1 },            desc: "I2C-AXI R ready" }
+
+    # -------------------------------------------------------------------------
+    # I2C interrupts
+    # -------------------------------------------------------------------------
+    - { name: i2c_nbsy_irq,      type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: I2C not-busy" }
+    - { name: i2c_nrd_empty_irq, type: wire, direction: out, params: { WIDTH: 1 }, desc: "IRQ: I2C read FIFO not-empty/empty" }
