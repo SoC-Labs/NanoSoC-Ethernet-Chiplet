@@ -1,0 +1,51 @@
+#-----------------------------------------------------------------------------
+# Makefile — nanoSoC ethernet chiplet integration
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# `make elab` structurally elaborates nanosoc_eth_chiplet under VCS — the proof
+# that the wrapper wires the three components together consistently.
+#
+# The three components each own their environment, and sourcing three set_env.sh
+# scripts by hand is exactly what the wrapper's own set_env.sh refuses to do.
+# So the ENVIRONMENT is assembled HERE, in the recipe, in dependency order:
+#   1. this repo's set_env.sh   — component roots + sys_desc lib dirs
+#   2. the SoC's set_env.sh      — ETHMAC/PHC/IPC/CMSDK/tech dirs the SoC flist needs
+#   3. TideLink's set_env.sh     — CMSDK_FPGA_SRAM_V + XHB500 (generated on first run)
+# Order matters: TideLink defaults CMSDK_DIR with `:=`, so the SoC's choice wins.
+#-----------------------------------------------------------------------------
+
+SHELL := /bin/bash
+.ONESHELL:
+
+CHIPLET_HOME := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+FLIST        := $(CHIPLET_HOME)/flist/nanosoc_eth_chiplet.flist
+TOP          := nanosoc_eth_chiplet
+SIMV         := simv_chiplet
+BUILD        := $(CHIPLET_HOME)/build/elab
+# VCS-readable, flattened copy of the SoC's generated flist (see the recipe).
+export CHIPLET_SOC_VCS_FLIST := $(BUILD)/soc_vcs.f
+
+VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
+
+.PHONY: elab clean
+
+## elab: assemble the environment and run the VCS structural elaboration.
+elab:
+	source "$(CHIPLET_HOME)/set_env.sh"
+	source "$(CHIPLET_HOME)/nanosoc-multicore-system/set_env.sh"
+	source "$(CHIPLET_HOME)/tidelink/set_env.sh"
+	mkdir -p "$(BUILD)"
+	# Flatten the SoC's in-sync generated flist into a VCS-readable one (the
+	# generator emits $()-syntax paths VCS cannot expand; regenerated each run
+	# so it tracks the current build_soc).
+	python3 "$(CHIPLET_HOME)/flist/flatten_soc_flist.py" \
+	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore.flist" > "$(CHIPLET_SOC_VCS_FLIST)"
+	cd "$(BUILD)"
+	echo "== vcs $(VCS_FLAGS) -f $(FLIST) -top $(TOP) -o $(SIMV) =="
+	vcs $(VCS_FLAGS) -f "$(FLIST)" -top $(TOP) -o "$(SIMV)" -l "$(BUILD)/elab.log"
+
+## clean: remove elaboration artifacts.
+clean:
+	rm -rf "$(BUILD)"

@@ -1,0 +1,60 @@
+// -----------------------------------------------------------------------------
+// nanosoc_eth_chiplet.flist — VCS/Xcelium filelist for the ethernet-chiplet top
+// A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+//
+// Copyright 2026, SoC Labs (www.soclabs.org)
+// -----------------------------------------------------------------------------
+// Assembles the three components' own flists side by side, then adds the three
+// integration RTL files. Every path is a ${VAR} the tool expands directly.
+//
+// Required environment (see Makefile `elab` — it sources all three set_env.sh
+// scripts in order, which also generates deps/xhb500/generated on first run):
+//   NANOSOC_ETH_CHIPLET_HOME   this repo         (set_env.sh)
+//   NANOSOC_MULTICORE_HOME + the SoC's env       (nanosoc-multicore-system/set_env.sh)
+//   TIDELINK_HOME + CMSDK_DIR + CMSDK_FPGA_SRAM_V + XHB500 (tidelink/set_env.sh)
+//   TIDECHART_HOME                               (set by this repo's set_env.sh)
+//
+// DUPLICATE-MODULE NOTE: the SoC and TideLink flists both compile three shared
+// Arm CMSDK cells (cmsdk_ahb_to_apb, cmsdk_ahb_to_sram, cmsdk_apb_slave_mux).
+// VCS reports each as Warning-[OPD] "Override previous declaration" and keeps
+// the last — the two cmsdk_apb_slave_mux copies are byte-identical, so this is
+// benign. It is NOT an error and NOT introduced by this integration.
+// -----------------------------------------------------------------------------
+
++libext+.v+.vlib+.sv
+
+// ── Component 1: the multicore SoC (generated top + all subsystems) ──────────
+// The SoC's IN-SYNC flist (nanosoc_multicore.flist) `-f`-includes the
+// generator's per-module flists, whose paths are Makefile-style `$(VAR)` that
+// VCS cannot expand; the repo's flat `${}`-syntax alternative
+// (nanosoc_multicore_generic.flist) lags the current build_soc render. So the
+// Makefile flattens the in-sync flist into ${CHIPLET_SOC_VCS_FLIST} (absolute
+// paths, VCS-readable) before invoking VCS, and we consume that here. Both SoC
+// flists live in the READ-ONLY submodule and are left untouched.
+// See flist/flatten_soc_flist.py for the rationale.
+-f ${CHIPLET_SOC_VCS_FLIST}
+
+// ── Component 2: TideLink die-to-die link (FPGA/generic build; embeds XHB500,
+//    Wlink, FIFO SRAM via cmsdk_fpga_sram, address translator, PTP servo). This
+//    flist also compiles ${CMSDK_DIR}/.../cmsdk_ahb_to_apb.v, which the two
+//    integration AHB->APB bridges below reuse — do NOT re-list it. ────────────
+-f ${TIDELINK_HOME}/flists/tidelink_fpga.flist
+
+// PRE-EXISTING TideLink flist defect (not ours): tidelink_fpga.flist compiles
+// the deps copy of WlinkGenericFCReplayAddrSync_18 (no obs_* ports) yet also
+// compiles the local override WlinkGenericFCReplayV2_13, which DRIVES those
+// obs_* ports -> Error-[UPIMI-E]. The sibling flists (tidelink_fpga_v2,
+// tidelink_a2l_replay_cdc) instead compile the override AddrSync_18 that
+// carries the ports. We can't edit the read-only submodule flist, so we append
+// the override here; VCS "last declaration wins" (Warning-[OPD]) makes it the
+// effective definition — the same mechanism TideLink uses for every override.
+${TIDELINK_HOME}/src/rtl/local_overrides/WlinkGenericFCReplayAddrSync_18.v
+
+// ── Component 3: TideChart chiplet-ID controller ─────────────────────────────
+-f ${TIDECHART_HOME}/flist/tidechart.flist
+
+// ── Integration RTL (this repo) ──────────────────────────────────────────────
++incdir+${NANOSOC_ETH_CHIPLET_HOME}/src/rtl
+${NANOSOC_ETH_CHIPLET_HOME}/src/rtl/chiplet_d2d_decode.sv
+${NANOSOC_ETH_CHIPLET_HOME}/src/rtl/tidechart_shim.sv
+${NANOSOC_ETH_CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv

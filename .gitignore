@@ -2,6 +2,7 @@
 build_soc/
 
 # Simulator / tool droppings
+build/
 sim_build/
 csrc/
 simv
