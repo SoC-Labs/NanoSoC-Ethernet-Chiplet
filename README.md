@@ -68,15 +68,31 @@ Offsets are deliberately identical to TideLink's reference map (its local base
 `REGISTER_MAP.md`, its bring-up runbooks and its `python/tidelink` driver stays
 valid after a single base substitution.
 
-| Address | Size | `tidelink_top` port |
+`chiplet_d2d_decode` resolves regions at **`haddr[19:16]`** granularity within
+`0x2E`, and `haddr[24]` separates `0x2E` from `0x2F`:
+
+| Address | Size | Decoded to |
 |---|---|---|
-| `0x2E00_0000` | 16 KB | `ahb_tx_*` — TX aperture. **Wedge hazard**: a write with the link down hangs the bus. Gate it. |
-| `0x2E01_0000` | 16 KB | `ahb_fifo_*` — local RX FIFO read window |
-| `0x2E02_0000` | 16 B | `ahb_ptp_*` — PTP TX write port |
-| `0x2E03_0000` | 8 KB | `apb_*` — Wlink chiplet-controller registers |
-| `0x2E03_2000` | 8 KB | `apb_*` — TideLink config + PTP registers |
-| `0x2E03_4000` | 8 KB | `apb_*` — address-translator config |
-| `0x2F00_0000` | 16 MB | `ahb_sub_*` — peer aperture, address-translated to the far die |
+| `0x2E00_0000` | 16 KB | `tidelink_top.ahb_tx_*` — TX aperture. **Wedge hazard**: a write with the link down hangs the bus. Gate it. |
+| `0x2E01_0000` | 16 KB | `tidelink_top.ahb_fifo_*` — local RX FIFO read window |
+| `0x2E02_0000` | 16 B | `tidelink_top.ahb_ptp_*` — PTP TX write port |
+| `0x2E03_0000` | 32 KB | `tidelink_top.apb_*`, via `cmsdk_ahb_to_apb #(.ADDRWIDTH(15))` |
+| `0x2E04_0000` | 4 KB | `tidechart_controller.apb_*`, via `cmsdk_ahb_to_apb #(.ADDRWIDTH(12))` |
+| `0x2F00_0000` | 16 MB | `tidelink_top.ahb_sub_*` — peer aperture, address-translated to the far die |
+| anything else in the window | — | two-cycle AHB **ERROR** (never OKAY-with-zeros) |
+
+TideLink's own three register banks live **inside** that single 32 KB APB region,
+selected by `apb_paddr[14:13]` in its RTL — not by this decoder:
+
+| APB address | Bank |
+|---|---|
+| `0x2E03_0000` | Wlink chiplet-controller registers |
+| `0x2E03_2000` | TideLink config + PTP registers |
+| `0x2E03_4000` | address-translator config |
+
+That is why `tidelink_top.apb_paddr` is 15-bit even though its `APB_ADDR_W`
+parameter is 12 — a discrepancy that looks like a bug until you see the bank
+decode.
 
 Two signature mismatches the wrapper must absorb, both trivial:
 
