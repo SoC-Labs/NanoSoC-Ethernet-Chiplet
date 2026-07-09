@@ -118,16 +118,43 @@ Two signature mismatches the wrapper must absorb, both trivial:
 
 ## Status
 
-Scaffolding. Nothing here elaborates yet. The two genuine prerequisites are:
+**It elaborates.** `make elab` builds `nanosoc_eth_chiplet` from a clean tree
+with zero VCS errors, and every one of the six instances has all of its RTL ports
+connected exactly once (114/114, 31/31, 25/25, 25/25, 165/165, 28/28).
 
-1. **`tidelink_top` has no sys_desc block description.** TideLink ships
-   `sys_desc/tidelink.yaml`, but that describes the *inner* `tidelink` module,
-   not the `tidelink_top` subsystem the wrapper instantiates.
-2. **TideChart has no `sys_desc/` at all.** `soc_model` cannot instantiate
-   `tidechart_controller` until `tidechart.yaml` (`gen: False`) exists.
+```sh
+git submodule update --init --recursive
+source set_env.sh
+make elab
+```
 
-Both are being written into `sys_desc/` here first; upstreaming them to their
-own repos is the right long-term home.
+What is here:
+
+| | |
+|---|---|
+| `src/rtl/nanosoc_eth_chiplet.sv` | structural top, 93 boundary ports |
+| `src/rtl/chiplet_d2d_decode.sv` | the window sub-decode, 28/28 self-checks, mutation-verified |
+| `src/rtl/tidechart_shim.sv` | flattens TideChart's unpacked-array ports; bit-ordering proven, not asserted |
+| `sys_desc/tidelink_top.yaml` | 165-port block description — TideLink ships one only for its *inner* module |
+| `sys_desc/tidechart.yaml` | 28-port block description — TideChart had no `sys_desc/` at all |
+| `docs/PIN_POLICY.md` | why four of five pins are feature branches, and what must change |
+| `docs/G2_PAIR_SIM.md` | the nanoSoC↔nanoSoC gate, and a note that **two** wrapper repos exist |
+
+Upstreaming the two YAMLs to `tidelink` and `tidechart` is the right long-term home.
+
+### What is not done
+
+- **No G2 pair sim.** The link has never carried a transaction between two dies.
+  `soc_d2d_loopback` in the SoC drives the port against a memory model; that is
+  not the same thing. See `docs/G2_PAIR_SIM.md`.
+- **No silicon.** The SoC bitstream for the pinned commit builds clean
+  (WNS +0.400 ns) but was never deployed — the board was in use by another
+  project. `docs/PIN_POLICY.md` records this.
+- **Two upstream flist bugs are worked around, not fixed**: `tidelink_fpga.flist`
+  compiles a dep and an override that disagree on a port list (7× `UPIMI-E`), and
+  the SoC's generated flists emit `$(VAR)` where VCS needs `${VAR}`.
+- **`s_i2c_axi_*` is tied off**, so the CPUs cannot master TideLink's I2C
+  sideband. If that is wanted it needs bridging to a SoC initiator.
 
 ---
 
