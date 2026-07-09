@@ -56,20 +56,42 @@ in the whole tree is
 ## What has to happen before these pins are stable
 
 1. Land the D2D work on `nanosoc-multicore-system:master` (or agree, in writing,
-   that this repo tracks a long-lived integration branch).
-2. Land `nanosoc_gen:integ/d2d-plus-generator-rollup` — which reconciles the
-   rollup's 7 commits with the 2 D2D generator fixes — and roll `nanosoc_arch_tech`
-   onto it. That branch is pushed and verified (1388 tests, byte-identical RTL,
-   `soc_d2d_loopback` 9/9), but **not yet adopted**: it pulls in
-   `fix(toplevel): invert AHB directions for external target sockets (exp)`,
-   which its own author marked experimental and which touches the machinery
-   `d2d_ahb_s` depends on. It wants a human review.
+   that this repo tracks a long-lived integration branch). `feature/eth-scratch-cycle3`
+   is 17 commits ahead of `master` and `master` has none of it.
+   **Not done.** The usual gate for landing on master is an FPGA regression on
+   silicon, and that could not run — see the HW note below.
+2. ~~Adopt `nanosoc_gen:integ/d2d-plus-generator-rollup`.~~ **DONE 2026-07-10.**
+   `nanosoc_arch_tech` now points at it (`202a755` → `nanosoc_gen d9973b3`).
+   The commit that held it up, `fix(toplevel): invert AHB directions for external
+   target sockets (exp)`, was reviewed: **`(exp)` names the `exp` EXPANSION
+   REGION, not "experimental"**. It fixes port directions for an interconnect
+   target with no instance and no passthrough — Vivado 2024.1 refuses to
+   back-propagate through the coerced ports, while simulators silently hide it.
+   It cannot fire on `nanosoc_multicore_soc` (no `exp` target; every target has an
+   instance or passthrough), which is exactly why the regenerated RTL is
+   byte-identical. Verified before adopting: 1388 generator tests, four REAL
+   wrapper cross-checks against the live SoC, byte-identical `nanosoc_multicore_soc.sv`,
+   and `soc_d2d_loopback` 9/9 — including `outbound_slave_can_wait_state`, the only
+   guard against that branch's original reversion of the `hreadyout` fix.
 3. Merge `tidelink:integ/tidelink-soc` to `tidelink:main`, or accept the pin
    deliberately. It is 135 commits ahead and is plainly the live line — but it
    is not the default branch, and nothing says so from the outside.
+   **Not done** — another repo's call.
 
-Until (1)–(3), treat this repo as **pre-release**: it builds, but its foundation
-can be pulled out from under it by someone with no idea this repo exists.
+Until (1) and (3), treat this repo as **pre-release**: it builds, but its
+foundation can be pulled out from under it by someone with no idea it exists.
+
+## Hardware validation status
+
+The SoC bitstream for the pinned commit builds clean — **0 errors, WNS +0.400 ns**
+on PYNQ-Z2. It has **not** been run on silicon: `pynq_z2_04_pl` is currently bound
+to project `nanosoc-compute-system` (`bitstream_loaded: true, boot_validated: true`)
+with a live build in flight, and deploying would have clobbered another
+workstream mid-run. The board lease was released rather than take it.
+
+So the D2D port is verified in **simulation only**. `soc_d2d_loopback` drives it
+in both directions, with two mutation-verified tests — but no transaction has
+crossed a real die boundary, and no chiplet exists to make one.
 
 ## Checking the chain
 
