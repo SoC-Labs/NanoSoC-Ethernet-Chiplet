@@ -3,6 +3,21 @@
 The gate that says the die-to-die port works between two dies, not just against
 a memory model.
 
+> **Status 2026-07-10 — assertion 1 is PROVEN in simulation, with an AHB master
+> model standing in for CPU0.** `verif/g2_peer_aperture` brings the link up
+> between two `tidelink_top` dies and shows a write to die A's `0x2F00_1000`
+> arriving at die B's `ahb_mng` as `0x2D00_1000` carrying its payload; a read
+> returns it; and with the CAM disabled the address arrives *untranslated*, which
+> is what makes the first result mean anything.
+>
+> It also found a real defect: `nanosoc_eth_chiplet.sv` closes a **combinational
+> cycle** on the peer aperture's `HREADY`. See `docs/D2D_HREADY_LOOP.md`. Nothing
+> that runs today exercises it, and it must be fixed before tapeout.
+>
+> Remaining for full G2: swap the AHB master model for two real
+> `nanosoc_multicore_soc` instances. The addressing and the bring-up do not
+> change.
+
 > **Provenance.** This plan was written in a parallel scaffold repo,
 > `~/SoCLabs/chiplet-integration-wrapper` (1 commit, unpushed, no submodules
 > wired). It is preserved here because it is the right plan. See

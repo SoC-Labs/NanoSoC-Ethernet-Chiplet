@@ -291,8 +291,8 @@ From `INTEGRATION_GUIDE.md:256-283`, rebased from the reference map
 
 | Step | Action | Absolute chiplet address | Value / check | Source |
 |---|---|---|---|---|
-| 1a | (optional) override role if not using strap: `ROLE_CFG[0]` | `0x2E032084` | 0=master / 1=slave | `INTEGRATION_GUIDE.md:263`; `REGISTER_MAP.md:181` |
-| 1b | Latch role: `ROLE_CFG[1]=1` — releases Wlink POR, starts training | `0x2E032084` | write `0x2` (or `0x3` for slave) | `INTEGRATION_GUIDE.md:263`; `REGISTER_MAP.md:182` |
+| 1a | (optional) override role if not using strap: `ROLE_CFG[0]` | `0x2E032080` | 0=master / 1=slave | `REGISTER_MAP.md:164,177` |
+| 1b | Latch role: `ROLE_CFG[1]=1` — releases Wlink POR, starts training | `0x2E032080` | write `0x2` (or `0x3` for slave) | `REGISTER_MAP.md:164,177` |
 | 1c | Set `PAIR_BASE_ADDR` to peer's TideLink base | `0x2E032000` | `0x2E032000` (see §7) | `INTEGRATION_GUIDE.md:264`; `REGISTER_MAP.md:64` |
 | 2 | Calibrate: poll `SWI_LANE_STATUS` | `0x2E032108` | `[7:0]=0xFF`, `[15:8]=0x00`, `[16]=1` | `INTEGRATION_GUIDE.md:266-268` |
 | 3a | Drop training mode | `0x2E032100` | write `0x0` | `INTEGRATION_GUIDE.md:269-270` |
@@ -300,6 +300,27 @@ From `INTEGRATION_GUIDE.md:256-283`, rebased from the reference map
 | 4 | Verify credit handshake: `SWI_LANE_STATUS[23]`=1 and `PAIR_CREDIT_COUNTER`≠0 | `0x2E032108`, `0x2E032028` | both sides | `INTEGRATION_GUIDE.md:273-274` |
 | 5 | **Program the address translator (§4)** | `0x2E034000/010/004` | `0`, `0x002D2F01`, `1` | this doc |
 | 6 | Peer write | `0x2F000000+X` (data), never `0x2E000000` TX aperture until link verified | reaches die B `0x2D000000+X` | `INTEGRATION_GUIDE.md:275-277` |
+
+> **`ROLE_CFG` is at offset `0x2080`, not `0x2084`.** An earlier revision of this
+> table said `0x2E032084`, taken from `INTEGRATION_GUIDE.md:263`. That is wrong:
+> `REGISTER_MAP.md:164` and every passing test in
+> `tidelink/cocotb/tidelink_top_pair` use `0x2080`. Writing `0x2084` silently
+> lands on the next register and the role never locks.
+
+Two more traps the integration guide does not mention, both learned from
+TideLink's own passing tests and now encoded in `verif/g2_peer_aperture`:
+
+* **`lanes_locked == 0xFF` is not the gate.** It reads `0xFF` only while the
+  calibrator is driving training patterns, and self-deasserts to `0x00` after
+  `S_DONE` in passive autocal. Gate on **`cal_done`, bit 16 of `SWI_LANE_STATUS`**.
+  Step 2's `[7:0]=0xFF` check above is therefore misleading on its own.
+* **`PAIR_CREDIT_COUNTER` reads 0 on a perfectly healthy link.** It is a sideband
+  ledger bumped only by a real RX-FIFO read completion, so step 4 must not gate
+  "link up" on it. The link-layer evidence is `cr_pkt_seen_rx` **and**
+  `crack_pkt_seen_rx` on the receiving die.
+* `link_active` is **not** evidence of a working link either — it is literally
+  `assign link_active = role_locked_o` (`tidelink_top.sv:2308`). It says a role
+  was latched, nothing more.
 
 Ordering notes:
 * Steps 1–4 are the link bring-up; step 5 (translator) can be done any time
