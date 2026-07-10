@@ -4,6 +4,9 @@ The integration level for a nanoSoC ethernet chiplet: the multicore SoC, a
 die-to-die link, and the chiplet-ID protocol that runs over it, wired side by
 side.
 
+> **Implementing this chiplet? Start at [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)** —
+> what is proven, what is yours to decide, and the gotchas that cost a day.
+
 ```
                     nanosoc_eth_chiplet
   ┌────────────────────────────────────────────────────────────┐
