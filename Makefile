@@ -34,7 +34,11 @@ export CHIPLET_TL_VCS_FLIST := $(BUILD)/tidelink_vcs.f
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
-.PHONY: elab chip-boundary chip-wrapper clean
+.PHONY: bootstrap elab chip-boundary chip-wrapper clean
+
+## bootstrap: fetch all 42 submodules. Not `git clone --recursive` — see the script.
+bootstrap:
+	"$(CHIPLET_HOME)/scripts/bootstrap.sh"
 
 ## chip-boundary: check the chip-boundary spec covers every RTL port, exactly once.
 ## Fails on an unclassified port, a stale name, or a direction/width mismatch.

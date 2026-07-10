@@ -248,9 +248,25 @@ Stated plainly so nobody builds on it:
 
 ### Getting the source
 
-The submodules point at **SoTON's internal GitLab over SSH**
-(`git@git.soton.ac.uk:soclabs/...`). A clone from GitHub without SoTON access
-will fetch this repo but **not** its three components. If the physical team is
-external, either mirror the components or switch `.gitmodules` to HTTPS with
-tokens. Nothing in this repo is Arm-licensed IP; the vendor trees are referenced
-only through `$CMSDK_DIR` / `$ARM_IP_LIBRARY_PATH` at build time.
+```sh
+git clone https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet.git
+cd NanoSoC-Ethernet-Chiplet
+./scripts/bootstrap.sh
+make chip-boundary        # sanity: python only, no EDA tools needed
+```
+
+The three components live on **SoTON's internal GitLab**, `git.soton.ac.uk`. They
+are reached over **HTTPS**, so no SSH key is required — but you still need read
+access to that GitLab, and it is not public. If the physical team is external,
+mirror the three repos and repoint `.gitmodules`.
+
+Do not use `git clone --recursive`: one submodule *inside* TideLink
+(`deps/tidelink-phy`) is still declared over SSH at the commit we pin, and the
+recursive clone dies there. `bootstrap.sh` rewrites that URL for the duration of
+the fetch and then verifies nothing was skipped. Expect **42 submodules, 8 levels
+deep**. `deps/tidelink-phy` contributes zero files to our build — it is the
+unused PHY-v2 scaffold, and a duplicate of `deps/tidelink-gpio-phy` — so if your
+mirror omits it, drop it from TideLink's `.gitmodules` rather than mirroring it.
+
+Nothing in this repo is Arm-licensed IP; the vendor trees are referenced only
+through `$CMSDK_DIR` / `$ARM_IP_LIBRARY_PATH` at build time.

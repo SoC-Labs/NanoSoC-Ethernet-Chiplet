@@ -123,10 +123,30 @@ with zero VCS errors, and every one of the six instances has all of its RTL port
 connected exactly once (114/114, 31/31, 25/25, 25/25, 165/165, 28/28).
 
 ```sh
-git submodule update --init --recursive
+git clone https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet.git
+cd NanoSoC-Ethernet-Chiplet
+./scripts/bootstrap.sh          # 42 submodules, 8 levels deep
 source set_env.sh
 make elab
 ```
+
+Use `scripts/bootstrap.sh` rather than `git clone --recursive`. This repo's three
+submodules are HTTPS, but one submodule *inside* TideLink — `deps/tidelink-phy`,
+at the commit we pin — is still declared over SSH, so a plain recursive clone
+dies there unless you hold SoTON SSH keys. `bootstrap.sh` rewrites that one URL
+to HTTPS for the duration of the fetch, writes nothing to your git config, and
+then checks that no submodule was silently skipped. It is idempotent, and it
+repairs a half-finished clone.
+
+If you would rather plain `git clone --recursive` simply worked, set the rewrite
+once, globally:
+
+```sh
+git config --global url."https://git.soton.ac.uk/".insteadOf "git@git.soton.ac.uk:"
+```
+
+The real fix is one line in TideLink's own `.gitmodules`; this repo's TideLink
+pointer is deliberately frozen, so it is worked around here instead.
 
 What is here:
 
