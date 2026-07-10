@@ -103,18 +103,19 @@ Two signature mismatches the wrapper must absorb, both trivial:
 
 | Submodule | Upstream | Pinned to |
 |---|---|---|
-| `nanosoc-multicore-system` | `soclabs/nanosoc-multicore-system` | `feature/eth-scratch-cycle3` |
+| `nanosoc-multicore-system` | `soclabs/nanosoc-multicore-system` | `master` |
 | `tidelink` | `soclabs/tidelink` | `integ/tidelink-soc` |
 | `tidechart` | `soclabs/tidechart` | `main` |
 
-> ⚠️ **Two of the three pins are feature branches, not `main`.** The D2D port
-> lives only on `feature/eth-scratch-cycle3` (17 commits ahead of the SoC's
-> `master`, which has none of it), and TideLink's integration line
-> `integ/tidelink-soc` is 135 commits ahead of its `main`. Submodule gitlinks
-> reference commits rather than branches, so a recursive clone works today — but
-> a rebase or branch deletion upstream will strand this repo. **Getting both onto
-> their default branches is a prerequisite for calling this repo stable.**
-> See `docs/PIN_POLICY.md`.
+> ⚠️ **One of the three pins is still a feature branch.** TideLink's integration
+> line `integ/tidelink-soc` is 135 commits ahead of its `main`, and that pin is
+> deliberately frozen at the commit this integration was built against. Submodule
+> gitlinks name commits rather than branches, so a clone works today — but a
+> rebase or branch deletion upstream will strand this repo.
+>
+> The SoC pin moved to `master` on 2026-07-10, once the D2D port was
+> hardware-validated. Counting the two nested pins, **four of the five commits
+> this repo depends on are now on default branches.** See `docs/PIN_POLICY.md`.
 
 ## Status
 
