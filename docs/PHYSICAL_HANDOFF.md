@@ -134,6 +134,47 @@ TideLink's own servo lock, which is a different signal. See `D2D_PORT.md` §6f.
 
 ---
 
+## 4.5 The filelist must not depend on tool declaration order
+
+`tidelink/flists/tidelink_fpga.flist` at the pinned commit compiles the `deps/`
+copy of `WlinkGenericFCReplayAddrSync_18` (no `obs_*` ports) **and** the local
+override `WlinkGenericFCReplayV2_13`, which drives those ports. As shipped it
+gives 7× `Error-[UPIMI-E]`.
+
+The tempting fix is to append TideLink's own override and rely on VCS's "last
+declaration wins". **Do not.** That makes the effective netlist a property of the
+tool rather than of the filelist:
+
+| Tool | Behaviour on a duplicate module |
+|---|---|
+| VCS | last declaration wins → you get the override |
+| Verilator | duplicate module is an error |
+| some Xcelium / Icarus modes | **first** declaration wins → you get the `deps/` copy |
+
+The override is not cosmetic. It carries the **a2l ACK-ptr reset-skew fix**
+(async-assert / sync-deassert of `w_reset` into `r_clk`). Its own header records
+that an idealised single-clock simulation "resolves the demets cleanly and never
+exposes it" — so **a green simulation does not prove the fix is even present**.
+Lose it on silicon and it returns as the a2l 6-word / false-FULL wedge: the link
+delivers a handful of writes and stops.
+
+`flist/resolve_tidelink_flist.py` therefore **removes** the shadowed `deps/`
+module and appends the override, leaving exactly one definition for any tool.
+Verified: the resolved filelist contains one `AddrSync_18` (the override), and
+the duplicate-definition warning on it is gone.
+
+Audited: `AddrSync_18` was the **only** shadowed module. Every other file in
+`src/rtl/local_overrides/` is compiled exactly once, from the override, with no
+`deps/` twin. The eleven duplicate-definition warnings that remain are the *same
+file* listed by two component flists (`cmsdk_ahb_to_apb.v`, `cmsdk_fpga_sram.v`,
+the XHB500 helpers) — identical definitions, benign.
+
+> **Upstream fix wanted:** swap the `deps/` path for the override in
+> `tidelink_fpga.flist`, as its siblings `tidelink_fpga_v2` and
+> `tidelink_a2l_replay_cdc` already do. Then delete the resolver.
+
+---
+
 ## 5. Power intent
 
 **Not done.** The SoC's UPF has no D2D domain — the generator residual reads
@@ -148,10 +189,23 @@ This is gap **C3** in `nanosoc-multicore-system/docs/CHIPLET_INTEGRATION_PLAN.md
 
 Stated plainly so nobody builds on it:
 
-- **No transaction has ever crossed a die boundary**, in simulation or on
-  silicon. The SoC's D2D port is exercised against a memory model
-  (`cocotb/soc_d2d_loopback`, 9/9, two tests mutation-verified). That is not the
-  same thing.
+- **No transaction has ever crossed a die boundary in THIS integration**, in
+  simulation or on silicon. The SoC's D2D port is exercised against a memory
+  model (`cocotb/soc_d2d_loopback`, 9/9, two tests mutation-verified). That is
+  not the same thing.
+
+  TideLink's own `tidelink_top_pair` env does pass 11/11 on the pinned commit,
+  including the slave→master credit-return path (`test_04`) and sustained
+  bilateral traffic past the 31-deep credit ring (`test_10`). So the link's
+  logical datapath is proven between two `tidelink_top`s — just not between two
+  chiplets. Note `test_06` is a weak guard (its assertion is also satisfied by
+  bring-up residual); gate on `test_04` and `test_10`.
+
+- **Simulation is blind to the reset-skew bug** the `AddrSync_18` override fixes
+  (§4.5). Those green sims would be green with or without it. On silicon the
+  exposure is on the a2l (TX) path — the same direction a chiplet uses to write
+  the far die. This needs bench validation or a multi-clock / reset-skew
+  testbench; it is not covered by anything that exists today.
 - **The link has never been brought up in this integration.** Until the straps
   above were exposed, it could not be.
 - **Unconfirmed:** whether Wlink's SERDES packetiser carries `addr[31:24]`

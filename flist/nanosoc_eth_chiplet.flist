@@ -38,17 +38,26 @@
 //    Wlink, FIFO SRAM via cmsdk_fpga_sram, address translator, PTP servo). This
 //    flist also compiles ${CMSDK_DIR}/.../cmsdk_ahb_to_apb.v, which the two
 //    integration AHB->APB bridges below reuse — do NOT re-list it. ────────────
--f ${TIDELINK_HOME}/flists/tidelink_fpga.flist
-
 // PRE-EXISTING TideLink flist defect (not ours): tidelink_fpga.flist compiles
-// the deps copy of WlinkGenericFCReplayAddrSync_18 (no obs_* ports) yet also
+// the deps copy of WlinkGenericFCReplayAddrSync_18 (no obs_* ports) yet ALSO
 // compiles the local override WlinkGenericFCReplayV2_13, which DRIVES those
-// obs_* ports -> Error-[UPIMI-E]. The sibling flists (tidelink_fpga_v2,
-// tidelink_a2l_replay_cdc) instead compile the override AddrSync_18 that
-// carries the ports. We can't edit the read-only submodule flist, so we append
-// the override here; VCS "last declaration wins" (Warning-[OPD]) makes it the
-// effective definition — the same mechanism TideLink uses for every override.
-${TIDELINK_HOME}/src/rtl/local_overrides/WlinkGenericFCReplayAddrSync_18.v
+// obs_* ports -> 7x Error-[UPIMI-E]. Its siblings (tidelink_fpga_v2,
+// tidelink_a2l_replay_cdc) instead compile the override AddrSync_18 that carries
+// the ports.
+//
+// We do NOT fix this by appending the override and leaning on VCS's "last
+// declaration wins". That makes the effective netlist a property of the TOOL,
+// not of the filelist: a first-wins or duplicate-is-an-error tool (Verilator,
+// some Xcelium / Icarus modes) silently binds the deps copy. That copy LACKS the
+// a2l ACK-ptr reset-skew fix — a bug an idealised single-clock simulation cannot
+// expose, and which silicon shows as the 6-word false-FULL wedge. Lint and
+// synthesis picking a different module than the simulator did is not a
+// debugging session anyone should have.
+//
+// resolve_tidelink_flist.py drops the shadowed deps module and appends the
+// override, so exactly ONE definition reaches any tool.
+// Upstream fix wanted: swap the deps path in tidelink_fpga.flist.
+-f ${CHIPLET_TL_VCS_FLIST}
 
 // ── Component 3: TideChart chiplet-ID controller ─────────────────────────────
 -f ${TIDECHART_HOME}/flist/tidechart.flist

@@ -26,6 +26,11 @@ SIMV         := simv_chiplet
 BUILD        := $(CHIPLET_HOME)/build/elab
 # VCS-readable, flattened copy of the SoC's generated flist (see the recipe).
 export CHIPLET_SOC_VCS_FLIST := $(BUILD)/soc_vcs.f
+# TideLink's flist with the shadowed deps module removed, so exactly one
+# definition of every module reaches the compiler. See resolve_tidelink_flist.py:
+# relying on VCS "last declaration wins" would let a first-wins tool silently
+# bind an RTL copy that lacks the a2l reset-skew fix.
+export CHIPLET_TL_VCS_FLIST := $(BUILD)/tidelink_vcs.f
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
@@ -42,6 +47,9 @@ elab:
 	# so it tracks the current build_soc).
 	python3 "$(CHIPLET_HOME)/flist/flatten_soc_flist.py" \
 	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore.flist" > "$(CHIPLET_SOC_VCS_FLIST)"
+	# Resolve TideLink's filelist to one definition per module (tool-independent).
+	python3 "$(CHIPLET_HOME)/flist/resolve_tidelink_flist.py" \
+	    "$${TIDELINK_HOME}/flists/tidelink_fpga.flist" > "$(CHIPLET_TL_VCS_FLIST)"
 	cd "$(BUILD)"
 	echo "== vcs $(VCS_FLAGS) -f $(FLIST) -top $(TOP) -o $(SIMV) =="
 	vcs $(VCS_FLAGS) -f "$(FLIST)" -top $(TOP) -o "$(SIMV)" -l "$(BUILD)/elab.log"
