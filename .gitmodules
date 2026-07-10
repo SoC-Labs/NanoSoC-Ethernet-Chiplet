@@ -1,9 +1,9 @@
 [submodule "tidechart"]
 	path = tidechart
-	url = git@git.soton.ac.uk:soclabs/tidechart.git
+	url = https://git.soton.ac.uk/soclabs/tidechart.git
 [submodule "tidelink"]
 	path = tidelink
-	url = git@git.soton.ac.uk:soclabs/tidelink.git
+	url = https://git.soton.ac.uk/soclabs/tidelink.git
 [submodule "nanosoc-multicore-system"]
 	path = nanosoc-multicore-system
-	url = git@git.soton.ac.uk:soclabs/nanosoc-multicore-system.git
+	url = https://git.soton.ac.uk/soclabs/nanosoc-multicore-system.git
