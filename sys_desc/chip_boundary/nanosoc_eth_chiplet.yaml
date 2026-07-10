@@ -1,0 +1,234 @@
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#
+# Chip-boundary spec for the nanoSoC ethernet chiplet.
+#
+# Declares how the integration top `nanosoc_eth_chiplet` (111 ports, 377 bits)
+# is wrapped by the bonded chip `nanosoc_eth_chiplet_chip`:
+#   - which inner ports become bonded chip pads (and what pad cell kind),
+#   - which inner inputs are tied to a constant inside the wrapper,
+#   - which inner outputs are left unconnected (open).
+#
+# This is EDITABLE, REVIEWABLE data and it is CHECKED. `make chip-boundary` runs
+# nanosoc_gen's chip-wrapper backend against the real RTL port list and REFUSES
+# to emit if any port is unclassified or if any classified name is not a port.
+# An unclassified port used to be silently dropped from the instantiation,
+# leaving its inputs floating — Z in simulation, tied 0 by synthesis.
+#
+# pad_kind vocabulary (see nanosoc_gen lib/chip_boundary/nanosoc_multicore.yaml)
+#   input        : pure-input pad     (consumes 1 inner input  -> `in`)
+#   output       : pure-output pad    (consumes 1 inner output -> `out`)
+#   tristate_out : output + OE pad    (consumes out + oe; floats when disabled)
+#   bidir        : in/out/oe triplet  (consumes 3 inner ports, one pad)
+#   oe_polarity  : the INNER oe port's assert sense — active_high means "1 drives"
+#
+# ============================================================================
+# DECISIONS THAT ARE NOT MINE TO MAKE, RECORDED HERE SO THEY ARE VISIBLE
+# ============================================================================
+# 1. `nego_priority_i` is TIED. See the tie block. On a real chiplet it must come
+#    from OTP or a die UID, because two dies presenting the same priority have no
+#    auto-negotiation tiebreak. Tying it makes `role_strap_i` the ONLY per-die
+#    differentiator. That is a deliberate, and reversible, simplification.
+# 2. TideChart's `DEVICE_CLASS` parameter defaults to 16'h0001, which its README
+#    defines as the value that reliably WINS the root election. Every chiplet
+#    therefore boots claiming to be the host complex. That is a PARAMETER, not a
+#    port, so this file cannot fix it — override it at the instance.
+# 3. `idelay_ref_clk` is tied off: it exists only for the FPGA IDELAYCTRL path
+#    (`USE_IDELAY=1`). On ASIC `USE_IDELAY=0` makes the delay element a bit-exact
+#    passthrough and the reference clock is dead weight.
+# 4. The 13-bit `tl_ewma_credit_o` congestion telemetry is left OPEN. It is worth
+#    a debug bus or a register, not thirteen pads.
+# ============================================================================
+
+chip_boundary:
+  chip_module:  nanosoc_eth_chiplet_chip
+  inner_module: nanosoc_eth_chiplet
+
+  pads:
+    # ---- clocks + reset -------------------------------------------------
+    clk_rst:
+      - { chip_port: sys_fclk,       pad_kind: input, width: 1, in: sys_fclk }        # free-running system clock
+      - { chip_port: nrst,           pad_kind: input, width: 1, in: sys_sysresetn }    # external system reset (active low)
+      - { chip_port: rtc_clk,        pad_kind: input, width: 1, in: rtc_clk }          # RTC / PTP reference
+      - { chip_port: rmii_ref_clk,   pad_kind: input, width: 1, in: rmii_ref_clk }     # 50 MHz RMII reference
+      - { chip_port: user_ref_clk,   pad_kind: input, width: 1, in: user_ref_clk }     # Wlink PLL reference (async to sys_hclk)
+
+    # ---- die-to-die PHY: the wire to the far die ------------------------
+    # Source-synchronous. pad_clk_rx is the far die's forwarded clock and is
+    # asynchronous to everything on this die. See docs/PHYSICAL_HANDOFF.md 1.
+    d2d_phy:
+      - { chip_port: d2d_clk_tx, pad_kind: output, width: 1, out: pad_clk_tx }
+      - { chip_port: d2d_tx,     pad_kind: output, width: 8, out: pad_tx }
+      - { chip_port: d2d_clk_rx, pad_kind: input,  width: 1, in:  pad_clk_rx }
+      - { chip_port: d2d_rx,     pad_kind: input,  width: 8, in:  pad_rx }
+
+    # ---- TideLink I2C sideband (open-drain) -----------------------------
+    # `_t` is a Hi-Z enable (1 = float), so the inner oe is ACTIVE LOW.
+    d2d_i2c:
+      - { chip_port: i2c_scl, pad_kind: bidir, width: 1, in: i2c_scl_i, out: i2c_scl_o, oe: i2c_scl_t, oe_polarity: active_low }
+      - { chip_port: i2c_sda, pad_kind: bidir, width: 1, in: i2c_sda_i, out: i2c_sda_o, oe: i2c_sda_t, oe_polarity: active_low }
+
+    # ---- link bring-up straps (per-die) ---------------------------------
+    # These are pads, not ties, because the chiplet cannot bring its link up
+    # without them and their values differ between the two dies.
+    d2d_strap:
+      - { chip_port: role_strap,       pad_kind: input, width: 1, in: role_strap_i }        # link role select
+      - { chip_port: mask_hs_bypass,   pad_kind: input, width: 1, in: mask_hs_bypass_i }    # opens the SW role-lock path
+      - { chip_port: apb_debug_unlock, pad_kind: input, width: 1, in: apb_debug_unlock_i }  # ditto; debug strap
+
+    # ---- link status / bring-up observability ---------------------------
+    d2d_status:
+      - { chip_port: link_active,    pad_kind: output, width: 1, out: link_active_o }     # ALSO gates the TX aperture internally
+      - { chip_port: role_is_master, pad_kind: output, width: 1, out: role_is_master_o }
+      - { chip_port: role_locked,    pad_kind: output, width: 1, out: role_locked_o }
+      - { chip_port: d2d_reset,      pad_kind: output, width: 1, out: d2d_reset_o }
+
+    # ---- CoreSight SWJ-DP -----------------------------------------------
+    swd:
+      - { chip_port: swd_clk, pad_kind: input,        width: 1, in:  dap_swclktck }
+      - { chip_port: swd_dio, pad_kind: bidir,        width: 1, in:  dap_swditms, out: dap_swdo, oe: dap_swdoen, oe_polarity: active_high }
+      - { chip_port: jtag_tdi,  pad_kind: input,      width: 1, in:  dap_tdi }
+      - { chip_port: jtag_tdo,  pad_kind: tristate_out, width: 1, out: dap_tdo, oe: dap_ntdoen, oe_polarity: active_low }
+      - { chip_port: jtag_ntrst, pad_kind: input,     width: 1, in:  dap_ntrst }
+
+    # ---- DFT -------------------------------------------------------------
+    # A tied-off scan chain is a chip with no scan chain.
+    dft:
+      - { chip_port: scan_mode,          pad_kind: input,  width: 1, in:  scan_mode }
+      - { chip_port: scan_asyncrst_ctrl, pad_kind: input,  width: 1, in:  scan_asyncrst_ctrl }
+      - { chip_port: scan_clk,           pad_kind: input,  width: 1, in:  scan_clk }
+      - { chip_port: scan_shift,         pad_kind: input,  width: 1, in:  scan_shift }
+      - { chip_port: scan_in,            pad_kind: input,  width: 1, in:  scan_in }
+      - { chip_port: scan_out,           pad_kind: output, width: 1, out: scan_out }
+      - { chip_port: sys_scanenable,     pad_kind: input,  width: 1, in:  sys_scanenable }
+      - { chip_port: sys_testmode,       pad_kind: input,  width: 1, in:  sys_testmode }
+
+    # ---- UARTs -----------------------------------------------------------
+    uart:
+      - { chip_port: uart_rxd,      pad_kind: input,  width: 1, in:  uart_rxd }
+      - { chip_port: uart_txd,      pad_kind: output, width: 1, out: uart_txd }
+      - { chip_port: cpu1_uart_rxd, pad_kind: input,  width: 1, in:  chip_core_uart_rxd }
+      - { chip_port: cpu1_uart_txd, pad_kind: output, width: 1, out: chip_core_uart_txd }
+
+    # ---- ethernet RMII + MDIO -------------------------------------------
+    eth:
+      - { chip_port: phy_rmii_txd,    pad_kind: output, width: 2, out: rmii_txd }
+      - { chip_port: phy_rmii_tx_en,  pad_kind: output, width: 1, out: rmii_tx_en }
+      - { chip_port: phy_rmii_rxd,    pad_kind: input,  width: 2, in:  rmii_rxd }
+      - { chip_port: phy_rmii_crs_dv, pad_kind: input,  width: 1, in:  rmii_crs_dv }
+      - { chip_port: phy_mdc,         pad_kind: output, width: 1, out: mdc_pad_o }
+      - { chip_port: mdio,            pad_kind: bidir,  width: 1, in: md_pad_i, out: md_pad_o, oe: md_padoe_o, oe_polarity: active_high }
+
+    # ---- QSPI flash ------------------------------------------------------
+    qspi:
+      - { chip_port: qspi_sclk, pad_kind: output, width: 1, out: qspi_sclk }
+      - { chip_port: qspi_ncs,  pad_kind: output, width: 1, out: qspi_csn }
+      - { chip_port: qspi_io,   pad_kind: bidir,  width: 4, in: qspi_io_i, out: qspi_io_o, oe: qspi_io_e, oe_polarity: active_high }
+
+    # ---- PL022 SPI master ------------------------------------------------
+    spi:
+      - { chip_port: spi_sclk, pad_kind: output, width: 1, out: spi_sclk }
+      - { chip_port: spi_mosi, pad_kind: output, width: 1, out: spi_mosi }
+      - { chip_port: spi_miso, pad_kind: input,  width: 1, in:  spi_miso }
+      - { chip_port: spi_ss,   pad_kind: output, width: 3, out: spi_ss }
+
+    # ---- HOSTIO4 host-access link ---------------------------------------
+    hostio4:
+      - { chip_port: hostio4, pad_kind: bidir, width: 7, in: hostio4_p1_in, out: hostio4_p1_out, oe: hostio4_p1_outen, oe_polarity: active_high }
+
+    # ---- PTP 1PPS --------------------------------------------------------
+    ptp:
+      - { chip_port: phc_pps_out, pad_kind: output, width: 1, out: phc_pps_out }
+
+  # =====================================================================
+  # TIED INPUTS — driven to a constant inside the wrapper, NOT bonded.
+  # Each is a decision. Reviewable.
+  # =====================================================================
+  ties:
+    # --- FPGA-only IDELAYCTRL reference; ASIC uses USE_IDELAY=0 ---
+    - { soc_port: idelay_ref_clk, const: "1'b0" }
+
+    # --- core straps / sideband ---
+    - { soc_port: sys_sysresetreq,        const: "1'b0" }   # no external reset requester
+    - { soc_port: dap_npotrst,            const: "1'b1" }   # SWJ-DP PoR deasserted (active low)
+    - { soc_port: dap_swj_enable,         const: "1'b1" }   # enable SWD on this chiplet
+    - { soc_port: network_core_pmuenable, const: "1'b0" }
+    - { soc_port: chip_core_pmuenable,    const: "1'b0" }
+    - { soc_port: network_core_nmi,       const: "1'b0" }
+    - { soc_port: chip_core_nmi,          const: "1'b0" }
+    - { soc_port: network_core_rxev,      const: "1'b0" }
+    - { soc_port: chip_core_rxev,         const: "1'b0" }
+
+    # --- auto-negotiation priority ---
+    # REQUIRED DECISION. Two dies presenting the same priority have no tiebreak,
+    # so with this tied the ONLY per-die differentiator is the `role_strap` pad.
+    # A production chiplet sources this from OTP or a die UID. 16 pads is the
+    # wrong answer; a fuse bank is the right one.
+    - { soc_port: nego_priority_i, const: "16'h0001" }
+
+    # --- TideChart PUF sampler: not enabled in v1 ---
+    - { soc_port: puf_seed,  const: "16'h0000" }
+    - { soc_port: puf_ready, const: "1'b0" }
+
+    # --- eth_ss_0: the SoC's external AHB test slave, held idle ---
+    # haddr/hwdata are SYS_ADDR_W/SYS_DATA_W wide (both 32). The wrapper has no
+    # access to the inner module's parameters, so the constants must be
+    # self-contained sized literals.
+    - { soc_port: eth_ss_0_htrans,    const: "2'b00" }      # IDLE transfer
+    - { soc_port: eth_ss_0_haddr,     const: "32'd0" }
+    - { soc_port: eth_ss_0_hwrite,    const: "1'b0" }
+    - { soc_port: eth_ss_0_hsize,     const: "3'b000" }
+    - { soc_port: eth_ss_0_hburst,    const: "3'b000" }
+    - { soc_port: eth_ss_0_hprot,     const: "4'b0000" }
+    - { soc_port: eth_ss_0_hwdata,    const: "32'd0" }
+    - { soc_port: eth_ss_0_hmastlock, const: "1'b0" }
+
+  # =====================================================================
+  # OPEN OUTPUTS — left unconnected. Reviewable.
+  # =====================================================================
+  opens:
+    # --- clock/reset observation (generated inside; nothing off-chip needs them) ---
+    - sys_poresetn
+    - sys_hclk
+    - sys_hresetn
+
+    # --- eth_ss_0 responses: nothing drives that port ---
+    - eth_ss_0_hrdata
+    - eth_ss_0_hready
+    - eth_ss_0_hresp
+
+    # --- CPU0 (network_core) status ---
+    - network_core_txev
+    - network_core_lockup
+    - network_core_sysresetreq
+    - network_core_sleeping
+    - network_core_sleepdeep
+
+    # --- CPU1 (chip_core) status ---
+    - chip_core_txev
+    - chip_core_lockup
+    - chip_core_sysresetreq
+    - chip_core_sleeping
+    - chip_core_sleepdeep
+    - chip_core_wdog_reset
+
+    # --- interrupts already routed INTERNALLY (to a CPU's NVIC); these copies
+    #     exist for observability only ---
+    - eth_irq
+    - phc_pps_irq
+    - phc_alarm_irq
+    - tidechart_irq_o
+
+    # --- RTC / PTP telemetry: 81 bits of time. A register read, not pads. ---
+    - rtc_time_ptp_ns        # [31:0]
+    - rtc_time_ptp_sec       # [47:0]
+    - rtc_time_one_pps
+
+    # --- servo lock status ---
+    # ha1588_servo_locked is the ETHERNET servo. servo_locked_o is TIDELINK's.
+    # The PHC reports only one of them regardless of SERVO_CTRL.SRC_SEL — see
+    # docs/PHYSICAL_HANDOFF.md 4.4. Neither is trustworthy enough to bond yet.
+    - ha1588_servo_locked
+    - servo_locked_o
+
+    # --- congestion telemetry: 13 bits, wants a debug bus not pads ---
+    - tl_ewma_credit_o

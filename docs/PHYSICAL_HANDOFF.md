@@ -64,6 +64,21 @@ The generator's chip-wrapper backend **refuses to emit** unless every SoC port i
 classified as bonded / tied / open / terminated. A chiplet `chip_boundary` spec
 does not exist yet — it is the first thing to write.
 
+The spec now exists: `sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml`, checked by
+`make chip-boundary` and emitted by `make chip-wrapper`.
+
+```
+  RTL ports  : 111  (377 bits)
+  classified : 111  (bonded 63 / tied 21 / open 27)
+  pads       : 50 pad cells
+```
+
+The check is not decorative. It was mutation-tested: dropping a port from the
+spec, swapping `in:`/`out:` on the MDIO bidir pad, and mis-sizing `d2d_tx` from 8
+to 4 bits each fail with the offending name. The generated wrapper
+(`nanosoc_eth_chiplet_chip.v`, 63 chip nets) elaborates under VCS with zero
+errors and no unconnected port on the chiplet instance.
+
 | Class | Ports |
 |---|---|
 | **PHY pads** (die-to-die) | `pad_clk_tx`, `pad_tx[7:0]`, `pad_clk_rx`, `pad_rx[7:0]` |
@@ -220,10 +235,22 @@ Stated plainly so nobody builds on it:
 
 ## 7. Suggested first steps for the physical team
 
-1. Write the chiplet `chip_boundary` + `pin_map`. The port gate will tell you
-   the moment you miss one.
-2. Run lint and SpyGlass CDC on `nanosoc_eth_chiplet`, not on the components.
-3. Resolve the reset-ordering question in §2 before committing to a pad ring.
-4. Add the D2D power domain (§5).
-5. Decide the four straps in §3. They are cheap to get wrong and expensive to
-   discover.
+1. **Read the boundary spec and disagree with it.** It is written, checked and
+   emits a wrapper that elaborates — but its *contents* are my judgement, not
+   yours. In particular §3's four straps, and the four decisions recorded at the
+   head of the YAML. `make chip-boundary` tells you the moment a change breaks
+   coverage.
+2. Write the `pin_map` (which pad cell, which side, which power domain). The
+   boundary spec is tech-independent; the pin map is not.
+3. Run lint and SpyGlass CDC on `nanosoc_eth_chiplet`, not on the components.
+4. Resolve the reset-ordering question in §2 before committing to a pad ring.
+5. Add the D2D power domain (§5).
+
+### Getting the source
+
+The submodules point at **SoTON's internal GitLab over SSH**
+(`git@git.soton.ac.uk:soclabs/...`). A clone from GitHub without SoTON access
+will fetch this repo but **not** its three components. If the physical team is
+external, either mirror the components or switch `.gitmodules` to HTTPS with
+tokens. Nothing in this repo is Arm-licensed IP; the vendor trees are referenced
+only through `$CMSDK_DIR` / `$ARM_IP_LIBRARY_PATH` at build time.

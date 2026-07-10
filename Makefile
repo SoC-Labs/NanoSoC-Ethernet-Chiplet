@@ -34,7 +34,17 @@ export CHIPLET_TL_VCS_FLIST := $(BUILD)/tidelink_vcs.f
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
-.PHONY: elab clean
+.PHONY: elab chip-boundary chip-wrapper clean
+
+## chip-boundary: check the chip-boundary spec covers every RTL port, exactly once.
+## Fails on an unclassified port, a stale name, or a direction/width mismatch.
+## An unclassified port is silently dropped from the wrapper and its inputs float.
+chip-boundary:
+	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py"
+
+## chip-wrapper: check, then emit build/chip/rtl/nanosoc_eth_chiplet_chip.v
+chip-wrapper:
+	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py" --emit "$(CHIPLET_HOME)/build/chip/rtl"
 
 ## elab: assemble the environment and run the VCS structural elaboration.
 elab:
