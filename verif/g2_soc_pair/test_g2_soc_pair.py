@@ -363,14 +363,10 @@ async def test_peer_write_crosses_to_die_b(dut):
     # a zero-latency far-side memory. Logged, NOT asserted, so the env stays green
     # on the proven WRITE path. See docs/G2_SOC_PAIR_STATUS.md "read round-trip".
     rb = await tb.a.read(PEER_ADDR)
-    if rb == PAYLOAD:
-        dut._log.info(f"STAGE 2b ok: die A read 0x{PEER_ADDR:08x} -> 0x{rb:08x} (link round-trip)")
-    else:
-        dut._log.warning(
-            f"STAGE 2b KNOWN-OPEN: peer read-back 0x{PEER_ADDR:08x} returned 0x{rb:08x}, "
-            f"expected 0x{PAYLOAD:08x} — the read round-trip does not yet carry data "
-            f"(TideLink ahb_sub completes on AR-accept, before R returns). "
-            f"docs/G2_SOC_PAIR_STATUS.md. WRITE path (Stage 2) is proven.")
+    assert rb == PAYLOAD, (
+        f"peer read-back 0x{PEER_ADDR:08x} returned 0x{rb:08x}, expected 0x{PAYLOAD:08x} "
+        f"— read round-trip did not carry the data.")
+    dut._log.info(f"STAGE 2b ok: die A read 0x{PEER_ADDR:08x} -> 0x{rb:08x} (link round-trip)")
 
     # -- Stage 3: the control. CAM off => address arrives UNtranslated. ------
     await tb.a.apb_write(CAM_CTRL, 0)

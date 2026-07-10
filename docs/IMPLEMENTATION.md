@@ -90,11 +90,12 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
   findings. `LINT_FINDINGS.md`.
 - **TideLink pin**: `tidelink` is frozen on a feature branch; roll it to `main`
   and apply `patches/0001` upstream. `PIN_POLICY.md`.
-- **Peer READ round-trip**: the peer **write** path is proven; a peer **read**
-  currently returns 0 because TideLink's `ahb_sub` completes the transfer when it
-  accepts the AXI read *address*, before the read *data* returns over the link.
-  The primary direction (write, then doorbell IRQ) works; remote reads need a
-  TideLink-side hold-until-`rvalid` or a chiplet-side read-completion gate.
+- **Peer READ round-trip**: **fixed** (2026-07-10). Both directions of the data
+  plane now cross between two real SoCs. The fix is a one-cycle read pipe-offset
+  mask in TideLink's `ahb_sub`, carried as a chiplet-local override
+  (`src/rtl/local_overrides/tidelink_top.sv`, swapped in by
+  `resolve_tidelink_flist.py`) with the minimal diff at
+  `patches/0003-*.patch` for upstreaming — the TideLink pin stays frozen.
   `G2_SOC_PAIR_STATUS.md` "read round-trip".
 
 ## Load-bearing gotchas

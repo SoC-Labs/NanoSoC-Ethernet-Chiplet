@@ -1,0 +1,63 @@
+TideLink ahb_sub peer-READ pipe-offset fix
+==========================================
+
+A peer READ across the D2D link returned stale data (0). The XHB500 read FSM is
+correct (holds hreadyout until r_done = rvalid & rready in RESP_FSM_SEQ_NSEQ); the
+bug is a phase offset. The ahb_sub address pipeline (pipe_haddr_r) presents the
+address to the bridge one cycle late, so on the master's first data-phase cycle
+the bridge is still in RESP_FSM_IDLE_BUSY where hreadyout=1 ("ready to accept an
+address"). A real AHB master reads that as its read completing and captures stale
+hrdata one cycle before the bridge issues the AXI read.
+
+Fix: hold ahb_sub_hreadyout low for that single pipe-offset cycle on a read
+(registered rd_pipe_r). Masks only the master-facing hreadyout, not the bridge's
+internal hready -> no desync. Writes never set it (hwrite=1).
+
+Validated in NanoSoC-Ethernet-Chiplet verif/g2_soc_pair (two real nanosoc_multicore_soc
+dies): peer read 0x2F00_1000 -> 0xC0FFEE01 round-trips; the write path and CAM
+control still pass. A zero-latency far-side memory (as in g2_peer_aperture) hides
+this, which is why only the two-real-SoC path caught it.
+
+Apply to tidelink/src/rtl/tidelink_top.sv. Once upstream, delete the chiplet
+override src/rtl/local_overrides/tidelink_top.sv.
+
+diff --git a/src/rtl/tidelink_top.sv b/src/rtl/tidelink_top.sv
+index 10a389b..0c52180 100644
+--- a/src/rtl/tidelink_top.sv
++++ b/src/rtl/tidelink_top.sv
+@@ -1165,8 +1165,33 @@ module tidelink_top #(
+     wire                    xhb_sub_hready = pipe_valid_r ? xhb_sub_hreadyout_raw :
+                                              (ext_is_nonseq ? 1'b0 : ahb_sub_hready);
+ 
+-    // External hreadyout: stall upstream during the pipeline fill cycle
+-    assign ahb_sub_hreadyout = (ext_is_nonseq && !pipe_valid_r) ? 1'b0 : xhb_sub_hreadyout_raw;
++    // Peer-READ pipe-offset mask. The ahb_sub address pipeline presents the
++    // address to the XHB500 bridge one cycle late, so on the master's FIRST
++    // data-phase cycle the bridge is still in its RESP_FSM_IDLE_BUSY state, where
++    // hreadyout is 1 ("ready to accept an address"). A real master reads that as
++    // its READ completing and captures stale hrdata one cycle before the bridge
++    // has even issued the AXI read. Hold hreadyout low for that single pipe-offset
++    // cycle on a read, so the master waits until the bridge is genuinely returning
++    // data (RESP_FSM_SEQ_NSEQ, hreadyout = r_done). Writes never set this
++    // (hwrite=1). This masks only the MASTER-facing hreadyout, not xhb_sub_hready
++    // into the bridge, so the bridge advances normally — no desync. Found by the
++    // two-real-SoC g2_soc_pair read round-trip (a zero-latency far-side memory,
++    // as in g2_peer_aperture, hides it). See docs/G2_SOC_PAIR_STATUS.md.
++    reg rd_pipe_r;
++    always @(posedge hclk or negedge hresetn) begin
++        if (!hresetn)
++            rd_pipe_r <= 1'b0;
++        else if (ext_is_nonseq && !ahb_sub_hwrite && !pipe_valid_r)
++            rd_pipe_r <= 1'b1;   // a read's address was just latched into the pipe
++        else
++            rd_pipe_r <= 1'b0;   // one cycle only
++    end
++
++    // External hreadyout: stall upstream during the pipeline fill cycle, and for
++    // one further cycle on a read (the bridge's IDLE-state hreadyout leak above).
++    assign ahb_sub_hreadyout = (ext_is_nonseq && !pipe_valid_r) ? 1'b0 :
++                               rd_pipe_r                        ? 1'b0 :
++                                                                  xhb_sub_hreadyout_raw;
+ 
+     // =========================================================================
+     // 1. TideLink RX FIFO (tidelink_fifo)

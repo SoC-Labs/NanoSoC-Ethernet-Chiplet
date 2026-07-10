@@ -264,12 +264,36 @@ the link).
 
 ---
 
-## Known open — the READ round-trip does not carry data yet
+## The READ round-trip — RESOLVED
 
-**Status: OPEN. The WRITE path is proven; a peer READ returns 0.** Found 2026-07-10
-by adding a read-back stage (`STAGE 2b`) to `test_peer_write_crosses_to_die_b`.
-The stage is **logged, not asserted**, so the test stays green on the proven write
-path; the warning names this doc.
+**Status: FIXED 2026-07-10. The full data plane crosses both ways.** `STAGE 2b`
+now asserts and passes: `die A read 0x2F00_1000 -> 0xC0FFEE01 (link round-trip)`.
+
+> **The fix** is a one-cycle read pipe-offset mask in TideLink's `ahb_sub`
+> (`tidelink_top.sv`). TideLink's `ahb_sub` XHB500 bridge read FSM is itself
+> correct — it holds `hreadyout` low until `r_done` (`rvalid & rready`) in
+> `RESP_FSM_SEQ_NSEQ`. The bug is a **phase offset**: the `ahb_sub` address
+> pipeline presents the address to the bridge one cycle late, so on the master's
+> first data-phase cycle the bridge is still in `RESP_FSM_IDLE_BUSY`, where
+> `hreadyout = 1` ("ready to accept an address"). A real master reads that as its
+> read completing and captures stale data one cycle before the bridge issues the
+> AXI read. A cycle trace showed it exactly: `sub_hrdyout=1` with `rvalid=0` on the
+> AR-accept cycle. The fix holds `ahb_sub_hreadyout` low for that single
+> pipe-offset cycle on a read (a registered `rd_pipe_r` flag), so the master waits
+> for the bridge's genuine `r_done`. It masks only the master-facing `hreadyout`,
+> not the bridge's internal `hready`, so there is no desync; writes never set it.
+>
+> **Packaging (TideLink pin stays frozen).** The fix lives as a chiplet-local
+> override — `src/rtl/local_overrides/tidelink_top.sv` — which
+> `resolve_tidelink_flist.py` swaps in for the frozen submodule's copy (one
+> definition per module, no submodule edit). The minimal diff is
+> `patches/0003-tidelink-ahb_sub-read-pipe-offset.patch`, ready to apply upstream
+> when TideLink rolls forward, after which the override can be deleted.
+
+_Original finding, preserved:_
+
+Found 2026-07-10 by adding a read-back stage (`STAGE 2b`) to
+`test_peer_write_crosses_to_die_b`.
 
 After the write lands (Stage 2), die A reads `0x2F00_1000` back and gets `0x0`
 instead of `0xC0FFEE01`. A cycle trace on die A's read pins it:
