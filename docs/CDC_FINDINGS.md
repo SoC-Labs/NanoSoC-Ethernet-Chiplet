@@ -49,23 +49,41 @@ the `eth_ss_0` response nets, the `d2d_ahb_m_hwdata_q` register's input. That is
 how a hierarchical design with combinational interconnect looks; it is pervasive
 (tens of thousands) and **waivable**. It is not a bug and not a CDC issue.
 
-## What this pass does NOT cover — the next step for signoff
+## What HAL covers, and what the full `CLKDMN` sign-off needs
 
-**Clocks were AUTO-INFERRED.** HAL identified multi-clock instances (`MCKDMN`) but
-did **not** run a full `CLKDMN` ("signal crossing a clock domain without a
-synchroniser") analysis, because that needs a **clock/reset constraints file**
-declaring the primary clocks and their relationships:
+**HAL's structural CDC infers clocks from the netlist** — it does not take an SDC
+or async-clock declaration (confirmed: `hal -help` exposes no clock-domain input).
+So it reports `MCKDMN` (instances with multiple clocks) but not a full `CLKDMN`
+("signal crosses a clock domain without a synchroniser") analysis, which needs the
+async-clock *relationships*. That analysis is a dedicated CDC tool's job.
+
+**The constraints now exist.** `constraints/nanosoc_eth_chiplet_cdc.sdc` declares
+the primary clocks at the chiplet ports and the async clock groups that are the
+D2D CDC boundary:
 
 - `sys_fclk` → `sys_hclk` (SoC core)
 - `user_ref_clk` (Wlink PLL ref, **async** to `sys_hclk`)
 - `pad_clk_rx` (the **far die's** clock, async to everything — `RESET_ORDERING.md §2`)
-- `rtc_clk`, `rmii_ref_clk`
+- `pad_clk_tx` (generated from `user_ref_clk`), `rtc_clk`, `rmii_ref_clk`, `swd_clk`
 
-**To complete the signoff:** write that constraints file (an SDC or HAL clock
-directives), re-run `verif/cdc/run.sh`, and triage the `CLKDMN` / `CMBCDC` /
-`RSTSYN` findings — focusing on the `sys_hclk` ↔ `{user_ref_clk, pad_clk_rx}`
-crossings, which are the ones this integration owns. TideLink ships its own CDC
-signoff (`make -C tidelink/cdc cdc`); run it on the configuration you tape out.
+It is a **starting point**: the async cuts (the load-bearing part) are declared,
+but the generated-clock ratios (`sys_hclk`'s PRMU divide), the SoC-internal
+MAC/PTP clocks, and the real source-sync I/O delays carry `[OWNER]` markers for the
+clock-tree owner. It composes the SoC and TideLink component SDCs.
+
+**To complete the `CLKDMN` sign-off:**
+1. Fill the `[OWNER]` items in the SDC (generated-clock ratios, MAC/PTP clocks, I/O
+   delays).
+2. Run a dedicated CDC tool with it. **SpyGlass** is the flow TideLink already uses
+   (`make -C tidelink/cdc cdc`, driven by `.sgdc`) — it is **not installed on this
+   host**, so this step runs where SpyGlass is licensed. Point it at
+   `nanosoc_eth_chiplet` with this SDC + TideLink's `.sgdc` waivers.
+3. Triage the `CLKDMN` findings, focusing on `sys_hclk` ↔ `{user_ref_clk,
+   pad_clk_rx}` — the crossings this integration owns. HAL's `MCKDMN` result above
+   already says the wrapper adds none of its own.
+
+The same SDC is the starting point for the ASIC STA constraints, which the
+multicore programme flags as the standing timing blocker.
 
 ## Reproduce
 

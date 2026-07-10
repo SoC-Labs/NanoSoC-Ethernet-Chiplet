@@ -13,6 +13,7 @@ build/
 build_soc/
 csrc/
 results.xml
+results_*.xml
 sim_build/
 simv
 simv.daidir/

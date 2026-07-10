@@ -74,9 +74,10 @@ cd "$BUILD"
 echo "== xrun -hal: elaborate (Xcelium parser) + HAL structural/CDC over $TOP =="
 # Standalone `hal` has a weaker SV front-end and cannot parse this design; the
 # integrated xrun -hal flow elaborates with Xcelium's parser, then HAL analyses
-# the netlist. Clocks are AUTO-INFERRED here — a clock/reset constraints file is
-# the next step for a full CLKDMN unsynchronised-crossing signoff (see
-# docs/CDC_FINDINGS.md).
+# the netlist. Clocks are AUTO-INFERRED here (HAL takes no SDC input) — the async
+# clock relationships for a full CLKDMN unsynchronised-crossing signoff live in
+# constraints/nanosoc_eth_chiplet_cdc.sdc, consumed by a dedicated CDC tool
+# (SpyGlass, TideLink's flow) — see docs/CDC_FINDINGS.md.
 set +e
 timeout 2400 "$XRUN" -sv -hal -elaborate \
     -f "$BUILD/merged_dedup.f" -top "$TOP" -l "$BUILD/xrun_hal.log"
