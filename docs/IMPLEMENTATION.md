@@ -86,6 +86,12 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
   is not yet run. `LINT_FINDINGS.md`.
 - **TideLink pin**: `tidelink` is frozen on a feature branch; roll it to `main`
   and apply `patches/0001` upstream. `PIN_POLICY.md`.
+- **Peer READ round-trip**: the peer **write** path is proven; a peer **read**
+  currently returns 0 because TideLink's `ahb_sub` completes the transfer when it
+  accepts the AXI read *address*, before the read *data* returns over the link.
+  The primary direction (write, then doorbell IRQ) works; remote reads need a
+  TideLink-side hold-until-`rvalid` or a chiplet-side read-completion gate.
+  `G2_SOC_PAIR_STATUS.md` "read round-trip".
 
 ## Load-bearing gotchas
 

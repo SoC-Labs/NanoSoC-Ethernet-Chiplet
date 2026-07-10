@@ -264,6 +264,54 @@ the link).
 
 ---
 
+## Known open — the READ round-trip does not carry data yet
+
+**Status: OPEN. The WRITE path is proven; a peer READ returns 0.** Found 2026-07-10
+by adding a read-back stage (`STAGE 2b`) to `test_peer_write_crosses_to_die_b`.
+The stage is **logged, not asserted**, so the test stays green on the proven write
+path; the warning names this doc.
+
+After the write lands (Stage 2), die A reads `0x2F00_1000` back and gets `0x0`
+instead of `0xC0FFEE01`. A cycle trace on die A's read pins it:
+
+```
+RTRACE +0  m_hready=1 selp=1 | tl: sub_hrdyout=0 pipe_v=0 arv=0 rv=0 r_rdata=0
+RTRACE +1  m_hready=1 selp=0 | tl: sub_hrdyout=1 pipe_v=1 arv=1 arr=1 rv=0 r_rdata=0
+```
+
+At `+1` TideLink's `ahb_sub` asserts `hreadyout=1` (the master takes it as "read
+done") on the cycle it **accepts the AXI read address** (`arvalid&arready`), while
+the read **data** channel is still empty (`rvalid=0`, `r_rdata=0`). The read data
+only returns after the multi-cycle link round-trip, but the transfer has already
+completed with a stale `0`.
+
+**Why `g2_peer_aperture` did not catch it.** Its far side is an `ahb_probe_mem`
+with **zero-latency** (combinational) read data — the data was valid the instant
+the address was accepted, so "complete on AR-accept" happened to be correct. A
+real SoC across a real link returns read data many cycles later, which exposes it.
+
+**Why this is not a same-day fix like the write.** The write drop was fixed by a
+one-cycle `hwdata` delay in the integration (`nanosoc_eth_chiplet.sv`) — the data
+was present, just one cycle early. The read needs the transfer to **wait** until
+`rvalid`, and the "read data valid" signal lives **inside frozen TideLink**. A
+clean fix is a TideLink `ahb_sub` change (hold `hreadyout` low for a read until the
+AXI R beat returns). A chiplet-side workaround would have to withhold the master's
+`hready` until read data is valid without re-introducing the combinational loop —
+possible but not obviously safe, and it wants its own analysis + guard.
+
+**Impact.** The peer aperture's primary direction is **write** (push data to the
+remote die's SRAM; signal arrival with the native doorbell IRQ), which is proven.
+Remote **reads** (die A reading die B's memory) are the affected, less-common
+direction. Firmware that only writes across the aperture is unaffected.
+
+**Next step for the verification/physical team:** decide TideLink-side hold-until-
+`rvalid` vs a chiplet-side read-completion gate; add a `g2_soc_pair` read assertion
+once fixed; consider a focused fast env (real SoC master → decode → TideLink →
+a **latency-injecting** far-side memory) so the read fix does not need the full
+two-SoC bring-up to iterate.
+
+---
+
 ## Files
 
 | Path | What |
