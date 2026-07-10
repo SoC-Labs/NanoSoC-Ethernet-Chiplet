@@ -21,3 +21,10 @@ vivado*.str
 __pycache__/
 *.pyc
 .venv/
+
+# VCS artifacts from verif/chiplet_d2d_decode (built in-tree by its Makefile)
+verif/*/simv_*
+verif/*/simv_*.daidir/
+verif/*/csrc/
+verif/*/ucli.key
+verif/*/*.log

@@ -107,20 +107,28 @@ in the whole tree is
    is not the default branch, and nothing says so from the outside.
    **Not done** — another repo's call.
 
-Until (1) and (3), treat this repo as **pre-release**: it builds, but its
-foundation can be pulled out from under it by someone with no idea it exists.
+Until (3), treat this repo as **pre-release**: it builds, but one of its five
+foundation commits can still be pulled out from under it by someone with no idea
+it exists.
 
 ## Hardware validation status
 
-The SoC bitstream for the pinned commit builds clean — **0 errors, WNS +0.400 ns**
-on PYNQ-Z2. It has **not** been run on silicon: `pynq_z2_04_pl` is currently bound
-to project `nanosoc-compute-system` (`bitstream_loaded: true, boot_validated: true`)
-with a live build in flight, and deploying would have clobbered another
-workstream mid-run. The board lease was released rather than take it.
+**The SoC carrying the D2D port has run on silicon.** Bitstream builds clean
+(0 errors, WNS +0.400 ns on PYNQ-Z2) and a full FPGA regression ran three times
+on `pynq_z2_03`: 28 of 31 tests pass deterministically, `preflight` (the INFRA
+gate) passes every run. The three non-passes are all accounted for and none is
+caused by D2D — `eth_tsu_watermark` is that board's physical eth-TX egress fault
+(`eth_mac_loopback` passes), `ipc_rpc` is a pre-existing intermittent
+IRQ-delivery gap (`ipc_sock` passes on the same mailbox), and
+`phc_servo_control` flaps SKIP/PASS by design because its status bit is driven by
+the live HA1588 ethernet servo. D2D was independently exonerated twice:
+`d2d_irq` is tied `16'h0` in the FPGA wrapper, and the D2D commits moved no
+pre-existing NVIC bit.
 
-So the D2D port is verified in **simulation only**. `soc_d2d_loopback` drives it
-in both directions, with two mutation-verified tests — but no transaction has
-crossed a real die boundary, and no chiplet exists to make one.
+**But no transaction has ever crossed a real die boundary.** `soc_d2d_loopback`
+drives the SoC's D2D *port* in both directions against a memory model, with two
+mutation-verified tests. That proves the port, not the link. The pair sim
+(`docs/G2_PAIR_SIM.md`) is what would prove the link, and it does not exist yet.
 
 ## Checking the chain
 
