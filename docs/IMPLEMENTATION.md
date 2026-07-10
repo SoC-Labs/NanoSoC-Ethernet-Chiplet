@@ -81,9 +81,13 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
 - **Two-die reset ordering**: the pad-ring / power-sequencing asks. `RESET_ORDERING.md`.
 - **Per-die straps**: `role_strap` is the only per-die differentiator while
   `nego_priority_i` is tied — decide whether to fuse it. `PIN_MAP.md`, `PHYSICAL_HANDOFF.md §3`.
-- **Lint/CDC signoff**: `make lint` covers our RTL with Verilator; a full
-  flist-native CDC pass (HAL is installed, license-gated) over the integrated top
-  is not yet run. `LINT_FINDINGS.md`.
+- **CDC signoff**: a first structural CDC pass is done (`verif/cdc/run.sh`, HAL
+  22.03 via `xrun -hal`) — 14 multi-clock instances, all component-internal, none
+  at the wrapper boundary. To *complete* it, add a clock/reset constraints file
+  (declare `sys_hclk` / `user_ref_clk` / `pad_clk_rx` and their async relations)
+  and re-run for the full `CLKDMN` analysis. `CDC_FINDINGS.md`.
+- **Lint**: `make lint` (Verilator) covers our wrapper RTL — no non-waived
+  findings. `LINT_FINDINGS.md`.
 - **TideLink pin**: `tidelink` is frozen on a feature branch; roll it to `main`
   and apply `patches/0001` upstream. `PIN_POLICY.md`.
 - **Peer READ round-trip**: the peer **write** path is proven; a peer **read**

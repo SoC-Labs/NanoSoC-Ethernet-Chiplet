@@ -51,6 +51,11 @@ lint:
 check: chip-boundary lint
 	@echo "== check OK: chip-boundary + lint clean =="
 
+## cdc: first structural CDC pass over the integrated top (Cadence HAL via
+## xrun -hal). ~25 min; needs an Xcelium/HAL license. See docs/CDC_FINDINGS.md.
+cdc:
+	"$(CHIPLET_HOME)/verif/cdc/run.sh"
+
 ## chip-boundary: check the chip-boundary spec covers every RTL port, exactly once.
 ## Fails on an unclassified port, a stale name, or a direction/width mismatch.
 ## An unclassified port is silently dropped from the wrapper and its inputs float.
