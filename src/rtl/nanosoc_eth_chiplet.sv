@@ -260,6 +260,25 @@ module nanosoc_eth_chiplet #(
     // See docs/D2D_HREADY_LOOP.md.
     wire        hready_to_peer = dph_peer ? 1'b1 : d2d_ahb_m_hready;
 
+    // ---- Peer-write data alignment (docs/G2_SOC_PAIR_STATUS.md) --------------
+    // TideLink's ahb_sub XHB500 bridge pipelines the ADDRESS by one cycle
+    // (tidelink_top.sv:1156, pipe_haddr_r) but samples write data LIVE
+    // (u_xhb_sub .hwdata(ahb_sub_hwdata)). It sequences the AXI AW beat, then the
+    // W beat one cycle later. A compliant AHB master drives HWDATA for the single
+    // data-phase cycle and releases it, so the bridge's W beat — one cycle after
+    // AW — captures 0. (g2_peer_aperture's hand-timed master held HWDATA across
+    // the whole data phase and masked this; two real SoCs in g2_soc_pair expose
+    // it: 0xC0FFEE01 leaves the SoC on d2d_ahb_m but s_axi_wdata inside TideLink
+    // is 0.) Delay the write data one cycle so it is still valid on the bridge's
+    // W cycle. Under wait states the SoC holds HWDATA stable, so the extra
+    // register is harmless (same value in, same value out). ahb_sub carries only
+    // the peer-aperture path, so an unconditional delay is safe.
+    reg  [31:0] d2d_ahb_m_hwdata_q;
+    always @(posedge sys_hclk or negedge sys_hresetn) begin
+        if (!sys_hresetn) d2d_ahb_m_hwdata_q <= 32'h0;
+        else              d2d_ahb_m_hwdata_q <= d2d_ahb_m_hwdata;
+    end
+
     // Per-slave data-phase responses back into the decoder.
     wire [31:0] hrdata_tx,    hrdata_fifo,    hrdata_ptp,    hrdata_tlapb,    hrdata_tcapb,    hrdata_peer;
     wire        hreadyout_tx, hreadyout_fifo, hreadyout_ptp, hreadyout_tlapb, hreadyout_tcapb, hreadyout_peer;
@@ -591,7 +610,7 @@ module nanosoc_eth_chiplet #(
         .ahb_sub_hprot      (d2d_ahb_m_hprot),
         .ahb_sub_hsize      (d2d_ahb_m_hsize),
         .ahb_sub_htrans     (d2d_ahb_m_htrans),
-        .ahb_sub_hwdata     (d2d_ahb_m_hwdata),
+        .ahb_sub_hwdata     (d2d_ahb_m_hwdata_q),   // delayed 1 cyc — see above
         .ahb_sub_hwrite     (d2d_ahb_m_hwrite),
         .ahb_sub_hready     (hready_to_peer),   // NOT d2d_ahb_m_hready — comb loop
         .ahb_sub_hrdata     (hrdata_peer),
