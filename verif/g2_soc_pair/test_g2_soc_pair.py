@@ -356,17 +356,31 @@ async def test_peer_write_crosses_to_die_b(dut):
     # must return over the link from die B's real shared_sram_0. Stage 2 proved
     # the write reached die B; this proves the read path — request out, data back
     # — through two real SoCs. CAM still enabled, so 0x2F.... -> 0x2D.....
-    # KNOWN-OPEN (2026-07-10): a peer READ returns 0, not the payload. Trace shows
-    # TideLink's ahb_sub asserts hreadyout when it accepts the AXI read ADDRESS,
-    # before the read DATA returns over the multi-cycle link round-trip (rvalid
-    # still 0), so the master captures a stale 0. g2_peer_aperture masked this with
-    # a zero-latency far-side memory. Logged, NOT asserted, so the env stays green
-    # on the proven WRITE path. See docs/G2_SOC_PAIR_STATUS.md "read round-trip".
+    # (The TideLink ahb_sub read pipe-offset that made this return 0 is fixed by
+    # the src/rtl/local_overrides/tidelink_top.sv override; see G2_SOC_PAIR_STATUS.md.)
     rb = await tb.a.read(PEER_ADDR)
     assert rb == PAYLOAD, (
         f"peer read-back 0x{PEER_ADDR:08x} returned 0x{rb:08x}, expected 0x{PAYLOAD:08x} "
         f"— read round-trip did not carry the data.")
     dut._log.info(f"STAGE 2b ok: die A read 0x{PEER_ADDR:08x} -> 0x{rb:08x} (link round-trip)")
+
+    # -- Stage 2c: a multi-word SEQUENCE — hardens the write + read fixes across
+    # consecutive beats (what a memcpy across the aperture does). The single-beat
+    # stages above cannot catch an off-by-one BETWEEN beats: a write-data delay
+    # that mis-aligned beat N with beat N+1, or a read pipe-offset mask that failed
+    # to re-arm between reads, would corrupt a sequence while a lone access passes.
+    # CAM still enabled. Distinct values so a cross-beat swap is visible.
+    seq = [(PEER_ADDR + 4 * i, 0x5EED0000 + (i << 4) + i) for i in range(8)]
+    for addr, val in seq:
+        await tb.a.write(addr, val)
+    await ClockCycles(dut.sys_fclk, 4000)  # let the last writes drain over the link
+    for addr, val in seq:
+        rb = await tb.a.read(addr)
+        assert rb == val, (
+            f"burst mismatch at 0x{addr:08x}: read 0x{rb:08x}, wrote 0x{val:08x} "
+            f"— a consecutive-beat write or read corrupted the sequence.")
+    dut._log.info(f"STAGE 2c ok: {len(seq)}-word write+read sequence across the aperture, "
+                  f"all beats intact")
 
     # -- Stage 3: the control. CAM off => address arrives UNtranslated. ------
     await tb.a.apb_write(CAM_CTRL, 0)
