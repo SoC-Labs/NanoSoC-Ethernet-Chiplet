@@ -223,10 +223,19 @@ Stated plainly so nobody builds on it:
   testbench; it is not covered by anything that exists today.
 - **The link has never been brought up in this integration.** Until the straps
   above were exposed, it could not be.
-- **Unconfirmed:** whether Wlink's SERDES packetiser carries `addr[31:24]`
-  end-to-end. The CAM makes the address `0x2D` on die A; if the packetiser
-  windows the address, `0x2D` never arrives at die B. This is the single most
-  load-bearing unknown in the data plane and it is a Chisel-generated black box.
+- ~~**Unconfirmed:** whether Wlink's SERDES packetiser carries `addr[31:24]`
+  end-to-end.~~ **RESOLVED 2026-07-10: it does.** The address is packed as a
+  64-bit field (36 significant bits) at
+  `deps/axi-chiplet-controller/logical/wlink/AXI4ToWlink.v:395-399`, and the far
+  die reconstructs it *from the received packet* (`l2a_data`), not from a base
+  register (`AXI4ToWlink.v:401,450`). So `ahb_mng_haddr[31:24]` on die B reads
+  `0x2D`. The Chisel (`AXI.scala:442-471`) agrees with the generated Verilog, and
+  `AXI4ToWlink` is not shadowed by any local override. Note the peer aperture
+  uses the **AXI** path (`WlinkGenericFCSM` on the AW channel) — it is *not* the
+  FIFO/returner native path the doorbell uses, and the
+  `WlinkGenericFCReplayAddrSync_18` reset-skew hazard is on the a2l replay path,
+  not this one. To re-confirm in the pair sim, probe far-die
+  `ahb_mng_haddr[31:24]` against post-CAM `ahb_sub_haddr[31:24]`.
 - **No timing, area or power numbers** exist for the chiplet. The SoC alone
   closes at WNS +0.400 ns on a PYNQ-Z2 (xc7z020), which says nothing about ASIC.
 - **No lint or CDC signoff** has been run on the integrated top.

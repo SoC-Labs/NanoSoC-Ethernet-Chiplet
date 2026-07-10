@@ -372,18 +372,42 @@ Nonetheless, **set it to `0x2E032000`**:
 
 ## 8. Open questions (could not fully resolve from the RTL)
 
-1. **Does the full 32-bit AXI address survive the Wlink SERDES?** The CAM makes
-   the AHB address `0x2D......` on die A, and both XHB500 bridges are 32-bit
-   (`cfg_xhb_ahb_to_axi.cfg:47`, `cfg_xhb_axi_to_ahb.cfg:47`). But the Wlink
-   AXI2WL/WL2AXI packetiser is a Chisel-generated black box I did not open; I did
-   not confirm it carries `addr[31:24]` end to end (vs. windowing to a base). If
-   it drops upper bits, `0x2D` would not survive and hop 8 would carry the wrong
-   region.
-   *To resolve:* inspect the AW/AR address field width in
-   `deps/axi-chiplet-controller` (AXI2WL AW FC node, `register_map.rst` FC-node
-   layout) or capture `ahb_mng_haddr` in a `tidelink_top_pair` waveform with a
-   known `ahb_sub` address. This is the **single biggest residual unknown** for
-   the G2 data plane.
+1. ~~**Does the full 32-bit AXI address survive the Wlink SERDES?**~~
+   **RESOLVED 2026-07-10 — yes, it survives.** The packetiser was opened.
+
+   TX (`deps/axi-chiplet-controller/logical/wlink/AXI4ToWlink.v:395-399`):
+   ```verilog
+   axi_tgt_aw_bits_addr[35:0] = auto_axi_tgt_in_aw_bits_addr;  // 36-bit AXI addr
+   aw_tgt_aw_addr[63:0]       = {28'd0, axi_tgt_aw_bits_addr}; // zero-extend to 64
+   ```
+   The address rides a **64-bit field** inside a 101-bit `app_data` word
+   (`WlinkGenericFCSM wlink_axiawFC`, `AXI4ToWlink.v:529`) — no link-level
+   truncation.
+
+   RX (`AXI4ToWlink.v:401,450`):
+   ```verilog
+   aw_ini_aw_addr[63:0]      = wlink_axiawFC_io_app_l2a_data[88:25]; // FROM THE PACKET
+   axi_ini_aw_bits_addr[35:0]= aw_ini_aw_addr[35:0];
+   ```
+   Reconstructed from the packet, **not** from a base/constant register. Hence
+   `ahb_mng_haddr[31:24] = 0x2D` on die B. Chisel (`AXI.scala:442-471`) agrees
+   with the generated Verilog, and `AXI4ToWlink` is not shadowed by any copy in
+   `src/rtl/local_overrides/`.
+
+   Two things this does **not** say. The peer aperture uses the **AXI** path
+   (AW channel, `WlinkGenericFCSM`); the doorbell's FIFO/returner *native* path is
+   a different mechanism, and the `WlinkGenericFCReplayAddrSync_18` reset-skew
+   hazard lives on the a2l replay path, not on AW. And it remains worth probing
+   far-die `ahb_mng_haddr[31:24]` against post-CAM `ahb_sub_haddr[31:24]` once the
+   pair sim exists — RTL reading is not a simulated transaction.
+
+   **Consequence for §5.** `ipc_mailbox_0` is unreachable through the aperture
+   because **this SoC exposes only one local aperture byte (`0x2F`)**, and a CAM
+   rule maps one local byte to one remote byte. It is *not* because the CAM is
+   limited (it has 8 rules) and *not* because the link drops `addr[31:24]`.
+   Reaching the mailbox needs a **second local aperture byte**, which the top
+   matrix cannot spare today (16/16 targets used; CPU0's only window is
+   `0x20`–`0x2F`, and `0x2E` is the TideLink control sub-decode).
 
 2. **There is no existing test that programs this translator.** The one
    peer-aperture env (`cocotb/debug/tidelink_peer_aperture/`) is an
