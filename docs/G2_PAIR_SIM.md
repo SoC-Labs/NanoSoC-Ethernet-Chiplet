@@ -21,18 +21,32 @@ These mirror `cocotb/soc_d2d_loopback` in the SoC, the env that closed gap D1 by
 driving the port instead of terminating it.
 
 1. **Cross-die write.** CPU0 on die A writes `shared_sram_0` on die B; die B
-   reads it back. This is the data plane.
-2. **Cross-die doorbell.** A write to `ipc_mailbox_0` on die A raises
-   `doorbell_irq` on die B — which lands on die B's CPU0 NVIC at `IRQ[10]`,
-   because the SoC maps `d2d_irq[0]` there. Proves the interrupt seam.
-3. **Wedge hazard.** A TX-aperture write while `link_active=0` must **wait-state,
-   not wedge**, and must complete once the link comes up.
+   reads it back. This is the data plane. Requires the address translator to be
+   programmed first — see `docs/PEER_APERTURE_PROGRAMMING.md`.
 
-Assertion 3 is the one worth building the env for. `tidelink`'s own
-`INTEGRATION_GUIDE.md` flags `ahb_tx_*` as a **WEDGE HAZARD** — "a write with the
-link down hangs the bus" — and the wrapper is where that gate belongs, since the
-wrapper owns the sub-decode. An env that does not try to wedge the bus has not
-tested the thing most likely to bite on silicon.
+2. **Cross-die doorbell.** *(Rewritten 2026-07-10.)* Originally this said "a
+   write to `ipc_mailbox_0` on die A raises `doorbell_irq` on die B". **That
+   cannot work.** TideLink's address translator is an 8-rule CAM matching only
+   `addr[31:24]`, and the peer aperture is a single upper byte (`0x2F`), so die A
+   can reach exactly **one** remote 16 MB region. That region is `shared_sram_0`
+   (`0x2D`). The mailbox at `0x23` is unreachable through the aperture.
+
+   The hardware already has the right mechanism. Die A writes TideLink's own
+   `DOORBELL` register; die B's TideLink raises `doorbell_irq`, which the SoC
+   maps to `d2d_irq[0]` → die B's CPU0 NVIC `IRQ[10]`. Assert **that**. No remote
+   AHB write is involved, and no mailbox.
+
+3. **Wedge hazard.** *(Superseded by RTL, 2026-07-10.)* This said a TX-aperture
+   write with `link_active=0` must "wait-state, not wedge". A stall is
+   indistinguishable from a dead SoC on a bench. `chiplet_d2d_decode` now closes
+   the TX aperture when the link is down and returns a clean two-cycle AHB
+   **ERROR** — a fault you can attribute, not a hang. Proven in
+   `verif/chiplet_d2d_decode/`, which also proves the APB bring-up region stays
+   reachable with the link down (otherwise you could never bring it up).
+
+   G2 should assert the *pair-level* consequence: with the far die held in reset,
+   a TX write on die A faults promptly and the SoC bus stays alive. Give the
+   cocotb test a timeout so a wedge is a clean failure, not a hung simulation.
 
 ## What must already be true
 

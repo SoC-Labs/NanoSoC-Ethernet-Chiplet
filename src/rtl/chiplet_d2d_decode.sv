@@ -67,6 +67,10 @@ module chiplet_d2d_decode (
     // From the SoC's d2d_ahb_m manager port (no hsel)
     input  wire [31:0] haddr,
     input  wire  [1:0] htrans,
+
+    // Link status. When low, the TX aperture is closed and its addresses fault
+    // instead of wedging the SoC's bus matrix. See the wedge gate below.
+    input  wire        link_active_i,
     // Response back to the SoC
     output wire [31:0] hrdata,
     output wire        hready,
@@ -100,13 +104,31 @@ module chiplet_d2d_decode (
     wire        in_2e  = ~haddr[24];            // 0x2E aperture
     wire [3:0]  blk    =  haddr[19:16];         // 64 KB block within 0x2E
 
-    wire a_tx    = in_2e & (blk == 4'h0);
+    // TX APERTURE WEDGE GATE.
+    //
+    // TideLink's own integration guide marks `ahb_tx_*` a WEDGE HAZARD: a write
+    // with the link down never completes and hangs the bus. The SoC cannot
+    // defend against that — its matrix has already committed the transfer by the
+    // time it leaves `d2d_ahb_m` — so the gate belongs here, in the only module
+    // that owns the sub-decode and the default responder.
+    //
+    // With the link down, a TX-aperture access is routed to the default
+    // responder and takes a clean two-cycle AHB ERROR. The core sees a bus fault
+    // it can attribute; it does not see a hang. That is a deliberate choice over
+    // stalling until link-up: a stall is indistinguishable from a dead SoC on a
+    // bench, and a fault is a fact you can act on.
+    //
+    // Tie `link_active_i` high only if you have another guarantee the link is up.
+    wire tx_open = link_active_i;
+
+    wire a_tx    = in_2e & (blk == 4'h0) &  tx_open;
     wire a_fifo  = in_2e & (blk == 4'h1);
     wire a_ptp   = in_2e & (blk == 4'h2);
     wire a_tlapb = in_2e & (blk == 4'h3);
     wire a_tcapb = in_2e & (blk == 4'h4);
     wire a_peer  = haddr[24];                   // all of 0x2F is the peer window
-    wire a_dflt  = in_2e & (blk >  4'h4);       // 0x2E050000..0x2E0FFFFF: unmapped
+    wire a_dflt  = in_2e & ((blk > 4'h4)                       // unmapped blocks
+                          | ((blk == 4'h0) & ~tx_open));       // TX with link down
 
     assign hsel_tx    = xfer & a_tx;
     assign hsel_fifo  = xfer & a_fifo;

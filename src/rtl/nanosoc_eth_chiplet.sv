@@ -159,7 +159,52 @@ module nanosoc_eth_chiplet #(
     input  wire        i2c_sda_i,
     output wire        i2c_sda_o,
     output wire        i2c_sda_t,
-    input  wire        role_strap_i
+    input  wire        role_strap_i,
+
+    // =========================================================================
+    // Link bring-up straps.
+    //
+    // These were tie-offs. They are ports because a chiplet cannot bring its
+    // link up without them, and because their values are a per-die decision the
+    // integrator makes at the pad ring, not something this RTL should assume.
+    //
+    // `nego_priority_i` is the auto-negotiation priority, normally sourced from
+    // OTP or a die UID. Two dies that both present 0 have no tiebreak.
+    // `mask_hs_bypass_i` and `apb_debug_unlock_i` open the software-driven
+    // role-lock path used during bring-up; both were held low, which shut it.
+    // `puf_seed` / `puf_ready` come from TideChart's PUF sampler when enabled.
+    // =========================================================================
+    input  wire [15:0] nego_priority_i,
+    input  wire        mask_hs_bypass_i,
+    input  wire        apb_debug_unlock_i,
+    input  wire [15:0] puf_seed,
+    input  wire        puf_ready,
+
+    // =========================================================================
+    // DFT. Scan was tied off, which is correct for functional elaboration and
+    // wrong for a chip. A production pad ring wires these to the scan
+    // controller; leaving them internal would silently drop the chiplet's scan
+    // chain on the floor.
+    // =========================================================================
+    input  wire        scan_mode,
+    input  wire        scan_asyncrst_ctrl,
+    input  wire        scan_clk,
+    input  wire        scan_shift,
+    input  wire        scan_in,
+    output wire        scan_out,
+
+    // =========================================================================
+    // Link status / observability. Bring-up and silicon debug need these; a
+    // physical team decides whether each becomes a pad, a test point, or a
+    // register bit. They must not be invisible.
+    // =========================================================================
+    output wire        link_active_o,      // Wlink link layer is up
+    output wire        d2d_reset_o,        // die-to-die reset out
+    output wire        role_is_master_o,   // resolved link role
+    output wire        role_locked_o,      // role latched
+    output wire        servo_locked_o,     // TideLink PTP servo lock (NOT the PHC's; see D2D_PORT.md 6f)
+    output wire [12:0] tl_ewma_credit_o,   // congestion telemetry
+    output wire        tidechart_irq_o     // TideChart controller interrupt
 );
 
     //=========================================================================
@@ -249,6 +294,17 @@ module nanosoc_eth_chiplet #(
     wire        tc_link_state_change;
     wire        tc_bcast_ack;
     wire        tc_link_active;
+
+    //=========================================================================
+    // Link status to the boundary.
+    //
+    // `tc_link_active` is not merely observability: it also closes the TX
+    // aperture in u_d2d_decode, so a link-down write to 0x2E000000 takes a bus
+    // fault instead of wedging the SoC's matrix. Exporting it lets a bring-up
+    // script see the same bit the hardware gate is using.
+    //=========================================================================
+    assign link_active_o   = tc_link_active;
+    assign tidechart_irq_o = tc_tidechart_irq;
 
     //=========================================================================
     // The multicore SoC. Default parameters (SYS_ADDR_W=SYS_DATA_W=32, the
@@ -397,6 +453,7 @@ module nanosoc_eth_chiplet #(
         .hresetn        (sys_hresetn),
         .haddr          (d2d_ahb_m_haddr),
         .htrans         (d2d_ahb_m_htrans),
+        .link_active_i      (tc_link_active),   // TX aperture closed while the link is down
         .hrdata         (d2d_ahb_m_hrdata),
         .hready         (d2d_ahb_m_hready),
         .hresp          (d2d_ahb_m_hresp),
@@ -552,12 +609,12 @@ module nanosoc_eth_chiplet #(
         .apb_pready         (tlapb_pready),
         .apb_pslverr        (tlapb_pslverr),
         // Scan / DFT — no scan in this integration; tie inactive, capture open.
-        .scan_mode          (1'b0),
-        .scan_asyncrst_ctrl (1'b0),
-        .scan_clk           (1'b0),
-        .scan_shift         (1'b0),
-        .scan_in            (1'b0),
-        .scan_out           (),
+        .scan_mode          (scan_mode),
+        .scan_asyncrst_ctrl (scan_asyncrst_ctrl),
+        .scan_clk           (scan_clk),
+        .scan_shift         (scan_shift),
+        .scan_in            (scan_in),
+        .scan_out           (scan_out),
         // Wlink PLL reference clock (chiplet boundary).
         .user_ref_clk       (user_ref_clk),
         // GPIO PHY pads (chiplet boundary).
@@ -593,7 +650,7 @@ module nanosoc_eth_chiplet #(
         .phc_locked_i               (1'b1),   // single-link deployment: PHC lock always granted
         // Servo status — SoC's PHC servo_locked input is owned by the ethernet
         // HA1588 servo (D2D_PORT.md §6f), so this TideLink status is left open.
-        .servo_locked               (),
+        .servo_locked               (servo_locked_o),
         // Interrupt outputs.
         .released_credits_irq (tl_released_credits_irq),
         .doorbell_irq         (tl_doorbell_irq),
@@ -613,22 +670,22 @@ module nanosoc_eth_chiplet #(
         // Congestion sideband to TideChart.
         .tl_local_link_state_o  (tc_local_link_state),
         .tl_link_state_change_o (tc_link_state_change),
-        .tl_ewma_credit_o       (),   // EWMA credit telemetry — not consumed in v1
+        .tl_ewma_credit_o       (tl_ewma_credit_o),
         .tl_bcast_ack_i         (tc_bcast_ack),
         // Link status.
         .link_active            (tc_link_active),
         // Reset output — no consumer at this integration level.
-        .d2d_reset_o            (),
+        .d2d_reset_o            (d2d_reset_o),
         // Role selection (strap in; resolved role/lock outputs unused in v1).
         .role_strap_i           (role_strap_i),
-        .role_is_master_o       (),
-        .role_locked_o          (),
-        .apb_debug_unlock_i     (1'b0),   // debug unlock held de-asserted
-        .mask_hs_bypass_i       (1'b0),   // mask-handshake bypass off
+        .role_is_master_o       (role_is_master_o),
+        .role_locked_o          (role_locked_o),
+        .apb_debug_unlock_i     (apb_debug_unlock_i),
+        .mask_hs_bypass_i       (mask_hs_bypass_i),
         // Auto-negotiation.
-        .nego_priority_i        (16'h0000),   // no external OTP/UID priority source
-        .puf_seed               (16'h0000),   // no PUF sampler wired (TideChart PUF disabled)
-        .puf_ready              (1'b0),
+        .nego_priority_i        (nego_priority_i),
+        .puf_seed               (puf_seed),
+        .puf_ready              (puf_ready),
         .nego_error_irq         (tl_nego_error_irq),
         .train_fail_irq         (tl_train_fail_irq),
         // I2C sideband pads (chiplet boundary).
