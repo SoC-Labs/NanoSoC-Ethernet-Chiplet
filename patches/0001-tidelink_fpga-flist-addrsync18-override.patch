@@ -1,0 +1,60 @@
+Subject: [PATCH] flists: compile the AddrSync_18 override, not the deps copy
+
+Repo:  tidelink  (git.soton.ac.uk / SoC-Labs mirror)
+Apply: from the tidelink repo root:  git apply 0001-...patch
+       (or:  patch -p1 < 0001-...patch)
+File:  flists/tidelink_fpga.flist   (line 186)
+
+WHY
+---
+tidelink_fpga.flist compiles TWO modules that disagree on a port list:
+
+  * line 186  deps/.../wlink/WlinkGenericFCReplayAddrSync_18.v   -- NO obs_* ports
+  * line 196  src/rtl/local_overrides/WlinkGenericFCReplayV2_13.v -- DRIVES obs_* ports
+
+WlinkGenericFCReplayV2_13 (the local override) instantiates AddrSync_18 and wires
+its obs_raddr / obs_mbx_* observation ports. The deps copy of AddrSync_18 does not
+declare those ports (verified: `grep -c obs_ deps/.../WlinkGenericFCReplayAddrSync_18.v`
+== 0), so as shipped the flist produces 7x Error-[UPIMI-E] (unknown port in module
+instance).
+
+Appending the override and leaning on VCS "last declaration wins" is NOT a fix: it
+makes the netlist a property of the tool. VCS keeps the last; Verilator errors on a
+duplicate module; some Xcelium/Icarus modes keep the FIRST -- i.e. the deps copy.
+The deps copy LACKS the a2l ACK-ptr reset-skew fix (async-assert / sync-deassert of
+w_reset into r_clk; see override lines 84-121). That bug is invisible to an idealised
+single-clock sim (the override's own header, line 100-101, says so) and shows up on
+silicon as the a2l 6-word / false-FULL wedge. A first-wins tool binding the deps copy
+would ship that bug silently.
+
+FIX
+---
+Swap the deps/ path on line 186 for the local_overrides/ path -- exactly what the
+sibling flists already do:
+
+  flists/tidelink_fpga_v2.flist:230    ${TIDELINK_HOME}/src/rtl/local_overrides/WlinkGenericFCReplayAddrSync_18.v
+  flists/tidelink_a2l_replay_cdc.flist:44  ${TIDELINK_HOME}/src/rtl/local_overrides/WlinkGenericFCReplayAddrSync_18.v
+
+AddrSync_18 is the ONLY AddrSync/FCReplay module with a local override that this
+flist still pulls from deps/ (AddrSync{,_15,_3} have no override; V2_12/V2_13 already
+point at local_overrides). After this change there is exactly one AddrSync_18 for
+every tool, and flist/resolve_tidelink_flist.py in the nanosoc-ethernet-chiplet
+superproject becomes a no-op that can be deleted (it prints a WARNING telling you so).
+
+VERIFICATION
+------------
+  * grep confirms deps AddrSync_18 has 0 obs_ ports, override has 7.
+  * The two sibling flists already carry the override path (cited above).
+  * No other line in tidelink_fpga.flist references AddrSync_18.
+
+--- a/flists/tidelink_fpga.flist
++++ b/flists/tidelink_fpga.flist
+@@ -183,7 +183,7 @@
+ ${TIDELINK_HOME}/src/rtl/local_overrides/WlinkGPIOPHY.v
+ ${TIDELINK_HOME}/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCReplayAddrSync.v
+ ${TIDELINK_HOME}/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCReplayAddrSync_15.v
+-${TIDELINK_HOME}/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCReplayAddrSync_18.v
++${TIDELINK_HOME}/src/rtl/local_overrides/WlinkGenericFCReplayAddrSync_18.v
+ ${TIDELINK_HOME}/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCReplayAddrSync_3.v
+ ${TIDELINK_HOME}/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCReplayV2.v
+ ${TIDELINK_HOME}/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCReplayV2_1.v

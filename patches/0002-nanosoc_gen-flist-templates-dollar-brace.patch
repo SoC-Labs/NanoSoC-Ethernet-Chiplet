@@ -1,0 +1,157 @@
+Subject: [PATCH] flist templates: emit ${VAR} not $(VAR); teach lint parser ${}
+
+Repo:  nanosoc_gen  (submodule: nanosoc_arch_tech/nanosoc_gen)
+Apply: from the nanosoc_gen repo root:  git apply 0002-...patch
+       (or:  patch -p1 < 0002-...patch)
+Then:  regenerate the golden snapshots (see "REQUIRED FOLLOW-UP" below).
+
+WHY
+---
+nanosoc_gen renders per-module filelists from Jinja templates that write
+Makefile-style $(VAR) paths. VCS expands ${VAR} and $VAR but NOT $(VAR) -- it
+treats a $(VAR) path as a literal and fails with Error-[SFCOR]. Downstream the
+nanosoc-ethernet-chiplet superproject carries flist/flatten_soc_flist.py purely
+to rewrite $(VAR) -> ${VAR} on the generated flists before VCS sees them. Fixing
+the templates removes the reason that shim exists.
+
+Three flist templates emit $(VAR):
+  soc_model/backends/templates/soc_toplevel.flist.j2
+  soc_model/backends/templates/ahb_interconnect.flist.j2
+  soc_model/backends/templates/perf_probe.flist.j2
+
+This patch converts $(VAR) -> ${VAR} in all three, and updates the ONE internal
+consumer that parsed the old syntax.
+
+IS IT SAFE TO APPLY DIRECTLY?  -- Yes for real tools, but it is a COORDINATED
+change, not an isolated template edit. Blast radius:
+
+ 1. lint.py (soc_model/backends/lint.py) is nanosoc_gen's OWN flist parser. Its
+    _expand_vars regex matched ONLY $(VAR):  re.sub(r'\$\((\w+)\)', ...). Left
+    alone, ${VAR} paths would pass through unexpanded and every source file would
+    read as "not found". This patch widens the regex to accept BOTH $(VAR) and
+    ${VAR}, so it keeps working for any hand-written flist that still uses $(...).
+    (Included in this patch.)
+
+ 2. Golden snapshot byte-match tests (tests/golden/test_flists.py, FL-01/FL-04 and
+    the perf-probe backend test) compare rendered output against checked-in
+    __snapshots__/*/*_toplevel.flist and *_interconnect.flist that contain $(...).
+    They WILL fail until regenerated. This is mechanical, not a real regression.
+    (See REQUIRED FOLLOW-UP.)
+
+ 3. GNU Make treats $(VAR) and ${VAR} as identical, so any Makefile-based consumer
+    that `include`s or word-expands these flists is UNAFFECTED. No consumer relies
+    on the $(...) spelling specifically -- the only tools that care (VCS, shells)
+    strictly PREFER ${...}.
+
+ 4. NOT TOUCHED, on purpose: tb_Makefile.j2 and firmware_memmap.mk.j2 also emit
+    $(VAR), but those are genuine GNU Makefiles where $(VAR) is correct. This
+    patch is scoped to the three *.flist.j2 templates only.
+
+This affects EVERY nanosoc_gen downstream (single-core nanosoc, eth-ss, the
+chiplet SoC) because the templates are shared -- which is the point: fix it once,
+upstream, and delete flatten_soc_flist.py's rewrite step.
+
+REQUIRED FOLLOW-UP (same commit)
+--------------------------------
+  pytest tests/golden/test_flists.py --snapshot-update
+  pytest tests/test_perf_probe_backend.py            # regen its inline flist expectation if snapshotted
+  # then re-run the suite to confirm green:
+  pytest tests/golden/test_flists.py
+
+--- a/soc_model/backends/templates/soc_toplevel.flist.j2
++++ b/soc_model/backends/templates/soc_toplevel.flist.j2
+@@ -13,13 +13,13 @@
+ +libext+.v+.vlib+.sv
+ 
+ // =============    Generated Top-Level Module    =============
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ module_name }}.sv
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ module_name }}.sv
+ 
+ // =============    Structural Glue Logic Helpers    =============
+-$(SOCLABS_NANOSOC_GEN_DIR)/rtl/soc_glue/soc_glue_passthrough.sv
+-$(SOCLABS_NANOSOC_GEN_DIR)/rtl/soc_glue/soc_glue_or_reduce.sv
+-$(SOCLABS_NANOSOC_GEN_DIR)/rtl/soc_glue/soc_glue_or_combine.sv
+-$(SOCLABS_NANOSOC_GEN_DIR)/rtl/soc_glue/soc_glue_and_gate.sv
+-$(SOCLABS_NANOSOC_GEN_DIR)/rtl/soc_glue/soc_glue_constant.sv
+-$(SOCLABS_NANOSOC_GEN_DIR)/rtl/soc_glue/soc_glue_mux2.sv
+-$(SOCLABS_NANOSOC_GEN_DIR)/rtl/soc_glue/soc_glue_reset_sync.sv
++${SOCLABS_NANOSOC_GEN_DIR}/rtl/soc_glue/soc_glue_passthrough.sv
++${SOCLABS_NANOSOC_GEN_DIR}/rtl/soc_glue/soc_glue_or_reduce.sv
++${SOCLABS_NANOSOC_GEN_DIR}/rtl/soc_glue/soc_glue_or_combine.sv
++${SOCLABS_NANOSOC_GEN_DIR}/rtl/soc_glue/soc_glue_and_gate.sv
++${SOCLABS_NANOSOC_GEN_DIR}/rtl/soc_glue/soc_glue_constant.sv
++${SOCLABS_NANOSOC_GEN_DIR}/rtl/soc_glue/soc_glue_mux2.sv
++${SOCLABS_NANOSOC_GEN_DIR}/rtl/soc_glue/soc_glue_reset_sync.sv
+--- a/soc_model/backends/templates/ahb_interconnect.flist.j2
++++ b/soc_model/backends/templates/ahb_interconnect.flist.j2
+@@ -19,31 +19,31 @@
+ 
+ // =============    Packages (must precede modules that import them)    =============
+ // Discovery table package + module
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}_discovery/{{ interconnect_name }}_discovery_pkg.sv
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}_discovery/{{ interconnect_name }}_discovery.sv
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}_discovery/{{ interconnect_name }}_discovery_pkg.sv
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}_discovery/{{ interconnect_name }}_discovery.sv
+ // Interconnect configuration package
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ module_prefix }}_config_pkg.sv
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ module_prefix }}_config_pkg.sv
+ 
+ // =============    AHB Interconnect Wrapper    =============
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ module_name }}.sv
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ module_name }}.sv
+ 
+ // =============    AHB BusMatrix IP - Arbiters (one per target)    =============
+ {% for entry in all_targets %}
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_arbiter_{{ entry.name | upper }}.v
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_arbiter_{{ entry.name | upper }}.v
+ {% endfor %}
+ 
+ // =============    AHB BusMatrix IP - Fixed files    =============
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ interconnect_name }}_default_slave.v
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ interconnect_name }}_lite.v
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ interconnect_name }}.v
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_inititator_input.v
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ interconnect_name }}_default_slave.v
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ interconnect_name }}_lite.v
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ interconnect_name }}.v
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_inititator_input.v
+ 
+ // =============    AHB BusMatrix IP - Matrix Decoders (one per initiator)    =============
+ {% for init in initiators %}
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_matrix_decode_{{ init | upper }}.v
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_matrix_decode_{{ init | upper }}.v
+ {% endfor %}
+ 
+ // =============    AHB BusMatrix IP - Target Outputs (one per target)    =============
+ {% for entry in all_targets %}
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_target_output_{{ entry.name | upper }}.v
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ interconnect_name }}/{{ module_prefix }}_target_output_{{ entry.name | upper }}.v
+ {% endfor %}
+--- a/soc_model/backends/templates/perf_probe.flist.j2
++++ b/soc_model/backends/templates/perf_probe.flist.j2
+@@ -22,4 +22,4 @@
+ {{ probe_rtl_ref }}/ahb_perf_probe_regs.v
+ 
+ // =============    Generated perf-probe harness    =============
+-$(SOCLABS_NANOSOC_SOC_DIR)/build_soc/rtl/{{ interconnect_name }}/{{ module_name }}.sv
++${SOCLABS_NANOSOC_SOC_DIR}/build_soc/rtl/{{ interconnect_name }}/{{ module_name }}.sv
+--- a/soc_model/backends/lint.py
++++ b/soc_model/backends/lint.py
+@@ -35,12 +35,13 @@
+         self._visited: set = set()
+ 
+     def _expand_vars(self, line: str) -> str:
+-        """Expand $(VAR) and $VAR references using the environment."""
+-        # Handle $(VAR) style
++        """Expand $(VAR) and ${VAR} references using the environment."""
++        # Accept both Makefile-style $(VAR) and shell/VCS-style ${VAR}; an
++        # unknown name is left verbatim so a downstream tool can still see it.
+         def _repl(m):
+-            var = m.group(1)
++            var = m.group(1) or m.group(2)
+             return self.env.get(var, m.group(0))
+-        return re.sub(r'\$\((\w+)\)', _repl, line)
++        return re.sub(r'\$\((\w+)\)|\$\{(\w+)\}', _repl, line)
+ 
+     def parse(self, flist_path: str):
+         """Parse a .flist file, recursively following -f includes."""
