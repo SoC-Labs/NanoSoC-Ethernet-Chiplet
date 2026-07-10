@@ -228,6 +228,38 @@ module nanosoc_eth_chiplet #(
     // Per-slave selects from the decoder.
     wire        hsel_tx, hsel_fifo, hsel_ptp, hsel_tlapb, hsel_tcapb, hsel_peer;
 
+    // Registered "the outstanding data phase is the peer aperture".
+    wire        dph_peer;
+
+    // HREADY presented to TideLink's `ahb_sub` subordinate.
+    //
+    // NOT `d2d_ahb_m_hready`. That is the decoder's response mux, which selects
+    // the peer's own `hreadyout` while the peer owns the data phase. TideLink's
+    // `ahb_sub_hreadyout` reads `ahb_sub_hready` combinationally
+    // (tidelink_top.sv:1119,1169), so feeding it back closes a cycle with no
+    // register in it:
+    //
+    //     hready -> ext_addr_phase -> ext_is_nonseq -> ahb_sub_hreadyout
+    //            -> hready_r (DPH_PEER arm) -> hready
+    //
+    // It oscillates on back-to-back peer transfers — a memcpy across the
+    // aperture. VCS does not error; it spins with simulation time frozen.
+    //
+    // AMBA says a subordinate's HREADYOUT must not be a function of HREADY, so
+    // withholding the peer's own contribution from its own HREADY input is not a
+    // lie — it removes an input the subordinate should never have used. Every
+    // other slave still sees the true global HREADY, so a peer address phase
+    // presented during another slave's wait state is still correctly ignored.
+    //
+    // Audited 2026-07-10: `ahb_sub` is the ONLY TideLink port with this
+    // dependence. `ahb_ptp_hreadyout` is constant 1; `ahb_tx_hreadyout` is
+    // registered state only; the FIFO bottoms out at `cmsdk_ahb_to_sram`
+    // (`assign HREADYOUT = 1'b1`); both APB banks are `cmsdk_ahb_to_apb`, whose
+    // HREADYOUT is a function of its registered FSM state.
+    //
+    // See docs/D2D_HREADY_LOOP.md.
+    wire        hready_to_peer = dph_peer ? 1'b1 : d2d_ahb_m_hready;
+
     // Per-slave data-phase responses back into the decoder.
     wire [31:0] hrdata_tx,    hrdata_fifo,    hrdata_ptp,    hrdata_tlapb,    hrdata_tcapb,    hrdata_peer;
     wire        hreadyout_tx, hreadyout_fifo, hreadyout_ptp, hreadyout_tlapb, hreadyout_tcapb, hreadyout_peer;
@@ -463,6 +495,7 @@ module nanosoc_eth_chiplet #(
         .hsel_tlapb     (hsel_tlapb),
         .hsel_tcapb     (hsel_tcapb),
         .hsel_peer      (hsel_peer),
+        .dph_peer       (dph_peer),
         .hrdata_tx      (hrdata_tx),      .hreadyout_tx    (hreadyout_tx),    .hresp_tx    (hresp_tx),
         .hrdata_fifo    (hrdata_fifo),    .hreadyout_fifo  (hreadyout_fifo),  .hresp_fifo  (hresp_fifo),
         .hrdata_ptp     (hrdata_ptp),     .hreadyout_ptp   (hreadyout_ptp),   .hresp_ptp   (hresp_ptp),
@@ -560,7 +593,7 @@ module nanosoc_eth_chiplet #(
         .ahb_sub_htrans     (d2d_ahb_m_htrans),
         .ahb_sub_hwdata     (d2d_ahb_m_hwdata),
         .ahb_sub_hwrite     (d2d_ahb_m_hwrite),
-        .ahb_sub_hready     (d2d_ahb_m_hready),
+        .ahb_sub_hready     (hready_to_peer),   // NOT d2d_ahb_m_hready — comb loop
         .ahb_sub_hrdata     (hrdata_peer),
         .ahb_sub_hresp      (hresp_peer),
         .ahb_sub_hreadyout  (hreadyout_peer),

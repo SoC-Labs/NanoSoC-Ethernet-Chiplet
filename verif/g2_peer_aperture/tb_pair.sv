@@ -156,9 +156,9 @@ module tb_pair #(
     // Tying hready high is what TideLink's own pair tb does, and it is safe HERE
     // because this master asserts hsel only during its address phase and holds
     // the address across wait states. It does mean this tb does not model the
-    // chiplet's own hready feedback path — see docs/D2D_HREADY_LOOP.md, which
-    // records that `nanosoc_eth_chiplet.sv` DOES close this loop on back-to-back
-    // peer transfers.
+    // chiplet's own hready feedback path. That path USED to close this very loop
+    // on back-to-back peer transfers; it is fixed and guarded now — see
+    // docs/D2D_HREADY_LOOP.md.
     wire         m_sub_hready = 1'b1;
 
     // ---------------------------------------------------------------------

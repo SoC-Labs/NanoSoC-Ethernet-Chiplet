@@ -82,6 +82,15 @@ module chiplet_d2d_decode (
     output wire        hsel_tlapb,
     output wire        hsel_tcapb,
     output wire        hsel_peer,
+    // High while the OUTSTANDING DATA PHASE belongs to the peer aperture, i.e.
+    // while this decoder's `hready` output IS the peer's own `hreadyout`.
+    //
+    // The integration must not hand that value straight back to the peer
+    // subordinate as its `hready` input: TideLink's `ahb_sub_hreadyout` reads
+    // `ahb_sub_hready` combinationally (tidelink_top.sv:1119,1169), so doing so
+    // closes a cycle with no register in it and the simulator spins with time
+    // frozen. Use this to break it. See docs/D2D_HREADY_LOOP.md.
+    output wire        dph_peer,
     // Per-slave responses (data phase)
     input  wire [31:0] hrdata_tx,   input wire hreadyout_tx,   input wire hresp_tx,
     input  wire [31:0] hrdata_fifo, input wire hreadyout_fifo, input wire hresp_fifo,
@@ -171,6 +180,10 @@ module chiplet_d2d_decode (
         if (!hresetn)      dph_code <= DPH_NONE;
         else if (hready)   dph_code <= aph_code;   // advance only when bus ready
     end
+
+    // Registered, so this is safe to use as a mux select on the peer's hready
+    // without re-introducing the cycle it exists to break.
+    assign dph_peer = (dph_code == DPH_PEER);
 
     //-------------------------------------------------------------------------
     // Internal default responder (two-cycle AHB-Lite ERROR)

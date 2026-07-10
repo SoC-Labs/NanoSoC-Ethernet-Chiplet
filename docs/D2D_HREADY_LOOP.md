@@ -1,7 +1,25 @@
 # A combinational cycle on the peer aperture's HREADY
 
-**Status: OPEN. Found 2026-07-10 while bringing up `verif/g2_peer_aperture`.**
-Not exercised by anything that runs today. Must be broken before tapeout.
+**Status: FIXED 2026-07-10, with a regression guard.** Found while bringing up
+`verif/g2_peer_aperture`. The fix is option 1 below.
+
+* `chiplet_d2d_decode` now exports `dph_peer` — registered, high while the
+  outstanding data phase belongs to the peer.
+* `nanosoc_eth_chiplet.sv` drives TideLink's `ahb_sub_hready` from
+  `hready_to_peer = dph_peer ? 1'b1 : d2d_ahb_m_hready`, never from the raw mux.
+* `verif/chiplet_d2d_decode/tb_hready_loop.sv` drives four back-to-back NONSEQ
+  peer writes through a stub that reproduces TideLink's `hreadyout(hready)`
+  dependence exactly. `make -C verif/chiplet_d2d_decode` must print
+  `PASS: 4 back-to-back peer writes completed and landed; no comb loop`.
+
+**The guard was mutation-tested.** Rebuilt with `+define+NO_HREADY_FIX` (the old
+wiring), the simulation never completes *and never fires its own `#100000`
+sim-time watchdog* — 45 s of wall clock with simulation time frozen at zero. VCS
+reports no error. That is what this class of bug looks like, and it is why the
+broken variant is not run by the default target.
+
+Everything below is the original analysis, kept because the reasoning is what
+makes the fix legible.
 
 ## The cycle
 
@@ -58,8 +76,9 @@ see below.
   two-cycle ERROR. There is no `hready` feedback because there is no TideLink.
 * **`make elab` only elaborates.** It links a netlist; it does not evaluate it,
   and it does not look for combinational cycles.
-* **`verif/chiplet_d2d_decode` drives the decoder standalone**, with stub slaves
-  whose `hreadyout` is a constant or a register. No feedback, no cycle.
+* **`verif/chiplet_d2d_decode/tb_tx_gate.sv` drove the decoder standalone**, with
+  stub slaves whose `hreadyout` is a constant. No feedback, no cycle. (Its sibling
+  `tb_hready_loop.sv` now closes the feedback on purpose, and is the guard.)
 * **TideLink's own `tidelink_top_pair` testbench ties `ahb_sub_hready` to
   `1'b1`** and leaves `ahb_mng` dangling — it never closes the loop either.
 * **`soc_d2d_loopback` drives the SoC's `d2d_ahb_m` against a memory model**, not
@@ -82,19 +101,29 @@ is cut. **Back-to-back peer transfers do activate it** — which is precisely wh
 `memcpy` across the aperture, or any loop of stores into remote `shared_sram_0`,
 generates. This is not an exotic corner.
 
-The same shape exists on the other five decoded slaves, since the mux feeds each
-of their `hreadyout`s back as `hready`. It bites on the peer path because
-TideLink's `ahb_sub_hreadyout` reads `ahb_sub_hready`. Whether `ahb_tx`,
-`ahb_fifo` and `ahb_ptp` do the same has not been checked — TideLink's own
-testbench loops `ahb_tx_hready` back from `ahb_tx_hreadyout`
-(`tb_top.sv`, `m_ahb_tx_hready_loop`) and does not spin, which is weak evidence
-that the TX aperture is clean. **Audit the other five before tapeout.**
+The same *structural* shape exists on the other five decoded slaves — the mux
+feeds each of their `hreadyout`s back as `hready`. It bites only on the peer path,
+because only TideLink's `ahb_sub_hreadyout` reads its own `hready`.
 
-## Candidate fixes
+**Audited 2026-07-10. `ahb_sub` is the only one.**
 
-Neither is implemented. Both need simulating.
+| Slave | `hreadyout` driver | Reads its `hready`? |
+|---|---|---|
+| `ahb_sub` (peer) | `(ext_is_nonseq && !pipe_valid_r) ? 0 : raw` (`tidelink_top.sv:1169`) | **YES — the bug** |
+| `ahb_tx` | `tx_err1_r / tx_err2_r / tx_data_phase_r / skid_can_accept` (`tidelink_fc_adapter.sv:371`) | no (0 references) |
+| `ahb_ptp` | `assign ahb_ptp_hreadyout = 1'b1` (`tidelink_top.sv:1468`) | no |
+| `ahb_fifo` | → `tidelink_fifo_mem`: `ahb_hreadyout_raw && !fc_active`, and `ahb_hreadyout_raw` comes from `cmsdk_ahb_to_sram`, where `assign HREADYOUT = 1'b1` | no |
+| `tlapb`, `tcapb` | `cmsdk_ahb_to_apb`: a function of the registered FSM state and `PREADY`/`PSLVERR`/`PCLKEN` | no |
 
-1. **Chiplet-side (preferred; TideLink's pin is frozen).** Do not feed the peer
+So the single-point fix on `ahb_sub` is sufficient. `HREADY` is still fed to the
+other five unchanged.
+
+## The fixes
+
+Option 1 is **implemented and guarded**. Option 2 is the upstream fix and is not
+done — TideLink's pin is frozen and it is another repo's call.
+
+1. **Chiplet-side (IMPLEMENTED).** Do not feed the peer
    subordinate its own readiness. A subordinate's `HREADYOUT` must not be a
    function of `HREADY` — AMBA says so — so supplying `1'b1` while the peer owns
    the data phase is not a lie, it is removing an input the slave should never
@@ -121,16 +150,21 @@ Neither is implemented. Both need simulating.
 
 ## Reproducing
 
-Restore the loop in the pair testbench:
-
-```systemverilog
-// verif/g2_peer_aperture/tb_pair.sv
-wire m_sub_hready = m_sub_hreadyout;   // instead of 1'b1
+```sh
+cd verif/chiplet_d2d_decode
+vcs -full64 -sverilog -q +define+NO_HREADY_FIX \
+    ../../src/rtl/chiplet_d2d_decode.sv tb_hready_loop.sv -top tb_hready_loop -o simv_broken
+./simv_broken        # never finishes; kill it
 ```
 
-Run `make`. The heartbeat stops at the first peer write; `simv` sits at 100 % CPU
-with sim time frozen. That is the same cycle the chiplet top closes on
-back-to-back peer transfers, just closed unconditionally.
+It prints nothing and its own `#100000` sim-time watchdog never fires, because no
+simulation time passes. Without `+define+NO_HREADY_FIX` the same testbench prints
+`PASS` in milliseconds.
+
+The pair sim reaches the same cycle a different way: set
+`wire m_sub_hready = m_sub_hreadyout;` in `verif/g2_peer_aperture/tb_pair.sv`
+instead of `1'b1`, and the cocotb heartbeat stops at the first peer write while
+`simv` holds a core.
 
 ## What this does not affect
 

@@ -236,13 +236,16 @@ Stated plainly so nobody builds on it:
   `WlinkGenericFCReplayAddrSync_18` reset-skew hazard is on the a2l replay path,
   not this one. To re-confirm in the pair sim, probe far-die
   `ahb_mng_haddr[31:24]` against post-CAM `ahb_sub_haddr[31:24]`.
-- **A combinational cycle on the peer aperture's `HREADY`.** `nanosoc_eth_chiplet.sv:563`
-  feeds `chiplet_d2d_decode`'s muxed `hready` back into TideLink's
-  `ahb_sub_hready`, and TideLink's `ahb_sub_hreadyout` reads that input
-  combinationally (`tidelink_top.sv:1119,1169`). Back-to-back peer transfers — a
-  `memcpy` across the aperture — close a loop with no register in it. Nothing that
-  runs today exercises it; `make elab` cannot see it. **Fix before tapeout.**
-  Full analysis and two candidate fixes: `docs/D2D_HREADY_LOOP.md`.
+- ~~**A combinational cycle on the peer aperture's `HREADY`.**~~ **FIXED
+  2026-07-10.** `nanosoc_eth_chiplet.sv` fed `chiplet_d2d_decode`'s muxed `hready`
+  back into TideLink's `ahb_sub_hready`, whose `ahb_sub_hreadyout` reads it
+  combinationally (`tidelink_top.sv:1119,1169`) — back-to-back peer transfers
+  oscillated. The decoder now exports a registered `dph_peer` and the top drives
+  `hready_to_peer = dph_peer ? 1'b1 : d2d_ahb_m_hready`. Guarded by
+  `verif/chiplet_d2d_decode/tb_hready_loop.sv`, mutation-tested. Audited: `ahb_sub`
+  was the only TideLink port with the dependence. See `docs/D2D_HREADY_LOOP.md`.
+  **A lint/CDC signoff on the integrated top is still owed** — it would have found
+  this, and may find more.
 - **No timing, area or power numbers** exist for the chiplet. The SoC alone
   closes at WNS +0.400 ns on a PYNQ-Z2 (xc7z020), which says nothing about ASIC.
 - **No lint or CDC signoff** has been run on the integrated top.

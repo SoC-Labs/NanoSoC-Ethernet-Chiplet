@@ -10,9 +10,9 @@ a memory model.
 > returns it; and with the CAM disabled the address arrives *untranslated*, which
 > is what makes the first result mean anything.
 >
-> It also found a real defect: `nanosoc_eth_chiplet.sv` closes a **combinational
-> cycle** on the peer aperture's `HREADY`. See `docs/D2D_HREADY_LOOP.md`. Nothing
-> that runs today exercises it, and it must be fixed before tapeout.
+> It also found a real defect, now **fixed and guarded**: `nanosoc_eth_chiplet.sv`
+> closed a **combinational cycle** on the peer aperture's `HREADY`. See
+> `docs/D2D_HREADY_LOOP.md`.
 >
 > Remaining for full G2: swap the AHB master model for two real
 > `nanosoc_multicore_soc` instances. The addressing and the bring-up do not
