@@ -22,7 +22,13 @@ cd NanoSoC-Ethernet-Chiplet
 source set_env.sh
 make check                  # chip-boundary + lint — no EDA license needed
 make elab                   # full structural elaboration — needs VCS
+make regress                # every data-plane sim proof, one table — needs VCS
 ```
+
+`make check` is the fast static gate (no license). `make regress` is the dynamic
+gate: it runs every simulation proof below — the two decode guards, the tidelink
+pair, and the two-real-SoC write+read+burst — and prints one pass/fail table
+(`make regress ARGS=--quick` skips the two-SoC long pole). `scripts/regress.sh`.
 
 `scripts/bootstrap.sh` rather than `git clone --recursive` because one submodule
 *inside* TideLink is still declared over SSH; the script rewrites it to HTTPS for
@@ -36,8 +42,12 @@ the fetch. See the README.
 | Every top port is bonded / tied / open exactly once | `make chip-boundary` — 111 ports, 50 pad cells | `PIN_MAP.md` |
 | No combinational loops / latches / width bugs in our RTL | `make lint` (Verilator) | `LINT_FINDINGS.md` |
 | **A memory transaction crosses between two REAL SoCs over the link** | `verif/g2_soc_pair` — die A `0x2F00_1000` → die B's real `shared_sram_0` `0x2D00_1000`, payload intact, CAM-off control | `G2_SOC_PAIR_STATUS.md` |
+| **The data plane crosses BOTH ways** — peer read round-trip | `verif/g2_soc_pair` STAGE 2b — read back `0x2F00_1000` = written value across the link | `G2_SOC_PAIR_STATUS.md` |
+| **Back-to-back bursts stay intact** | `verif/g2_soc_pair` STAGE 2c — 8-word write+read sequence, every beat verified | `G2_SOC_PAIR_STATUS.md` |
 | The link trains between two real SoCs, firmware-free | same env, STAGE 1 | `G2_SOC_PAIR_STATUS.md` |
 | The address survives the link end-to-end | RTL trace + G2 sim | `PEER_APERTURE_PROGRAMMING.md §8` |
+| Link-down TX write is a 2-cycle ERROR, not a hang; APB stays reachable | `verif/chiplet_d2d_decode` tx-gate | `PHYSICAL_HANDOFF.md` |
+| No comb cycle on back-to-back peer writes | `verif/chiplet_d2d_decode` hready-loop | `D2D_HREADY_LOOP.md` |
 
 This is simulation. There is **no silicon and no timing/area/power** — see "open".
 
@@ -68,7 +78,8 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
 | `RESET_ORDERING.md` | two-die reset ordering for the source-synchronous link |
 | `PEER_APERTURE_PROGRAMMING.md` | how a CPU programs the CAM and reaches the peer; the bring-up register sequence |
 | `D2D_HREADY_LOOP.md` | the HREADY comb loop and its fix |
-| `G2_SOC_PAIR_STATUS.md` | the two-real-SoC proof + the write-data fix |
+| `G2_SOC_PAIR_STATUS.md` | the two-real-SoC proof + the write-data / read-pipe fixes |
+| `CDC_FINDINGS.md` | the structural CDC pass + `constraints/nanosoc_eth_chiplet_cdc.sdc` for full sign-off |
 | `LINT_FINDINGS.md` | lint tooling, the sanity harness, triaged findings |
 | `PIN_POLICY.md` | which submodule pins are on default branches vs frozen |
 | `patches/` | prepared upstream fixes (TideLink flist, nanosoc_gen `$()→${}`) — not applied |
@@ -83,9 +94,12 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
   `nego_priority_i` is tied — decide whether to fuse it. `PIN_MAP.md`, `PHYSICAL_HANDOFF.md §3`.
 - **CDC signoff**: a first structural CDC pass is done (`verif/cdc/run.sh`, HAL
   22.03 via `xrun -hal`) — 14 multi-clock instances, all component-internal, none
-  at the wrapper boundary. To *complete* it, add a clock/reset constraints file
-  (declare `sys_hclk` / `user_ref_clk` / `pad_clk_rx` and their async relations)
-  and re-run for the full `CLKDMN` analysis. `CDC_FINDINGS.md`.
+  at the wrapper boundary. The clock/async-group constraints now exist —
+  `constraints/nanosoc_eth_chiplet_cdc.sdc` declares the primary clocks and the
+  async cut at the D2D boundary (`sys_hclk` ↔ `{user_ref_clk, pad_clk_rx}`). HAL
+  takes no SDC input, so to *complete* the `CLKDMN` analysis, fill the `[OWNER]`
+  items in the SDC and run it through a dedicated CDC tool (SpyGlass — TideLink's
+  flow). The same SDC seeds the ASIC STA constraints. `CDC_FINDINGS.md`.
 - **Lint**: `make lint` (Verilator) covers our wrapper RTL — no non-waived
   findings. `LINT_FINDINGS.md`.
 - **TideLink pin**: `tidelink` is frozen on a feature branch; roll it to `main`
@@ -118,7 +132,8 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
 ## Suggested first steps
 
 1. `./scripts/bootstrap.sh && source set_env.sh && make check` — confirm a clean
-   tree. Then `make elab` if you have VCS.
+   tree. Then `make elab && make regress` if you have VCS — `regress` is the
+   one-command proof that the whole data plane still crosses both ways.
 2. Read `PHYSICAL_HANDOFF.md`, then `RESET_ORDERING.md`, then `POWER_DOMAINS.md`
    — in that order; each builds on the last.
 3. Start `PIN_MAP.md` (pad cells + sides) and settle the power-domain decision.

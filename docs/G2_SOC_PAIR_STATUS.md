@@ -16,11 +16,15 @@ Environment: `verif/g2_soc_pair/` (`tb_g2_soc_pair.sv`, `Makefile`,
 |---|---|
 | **1 — structural elaboration, firmware-free, 0 VCS errors** | **DONE — 0 errors, 206 modules, `simv_g2` built** |
 | **2 — cocotb: link bring-up + a peer write from die A lands in die B's real `shared_sram_0`** | **DONE — `test_peer_write_crosses_to_die_b` PASSES.** Link brought up between two real SoCs; die A's peer write to `0x2F00_1000` lands in die B's real `shared_sram_0` at `0x2D00_1000` = `0xC0FFEE01`, CAM-off control confirms translation. The payload drop found on the first pass (below) was **root-caused and FIXED** — see "Milestone 2 finding: RESOLVED". |
+| **2b — peer READ round-trip** | **DONE — `STAGE 2b` reads `0x2F00_1000` back across the link = `0xC0FFEE01`. The data plane crosses BOTH ways** (read pipe-offset fix, below). |
+| **2c — back-to-back burst** | **DONE — `STAGE 2c` 8-word write+read sequence, every beat intact.** The fixes hold across consecutive beats. |
 | **3 — blocker list / skeleton** | No blockers remain. |
 
 > **Full G2: a memory transaction crosses from one real `nanosoc_multicore_soc`
 > to another over the die-to-die link — address translated `0x2F`→`0x2D`, payload
-> intact, landing in the far die's real SRAM.**
+> intact, landing in the far die's real SRAM — and back again (read + 8-word
+> burst). Reproduce the whole set with `make regress` (or just this env with
+> `make -C verif/g2_soc_pair sim`).**
 
 ---
 
@@ -289,6 +293,17 @@ now asserts and passes: `die A read 0x2F00_1000 -> 0xC0FFEE01 (link round-trip)`
 > definition per module, no submodule edit). The minimal diff is
 > `patches/0003-tidelink-ahb_sub-read-pipe-offset.patch`, ready to apply upstream
 > when TideLink rolls forward, after which the override can be deleted.
+
+### Burst hardening — `STAGE 2c`
+
+A single write and a single read prove the pipe-offset fixes, but the fixes must
+also hold **across consecutive beats** — the `hready_to_peer` comb-loop break and
+the `rd_pipe_r` read mask both key off per-transfer state, so back-to-back traffic
+is where a stale-state bug would surface. `STAGE 2c` writes an 8-word sequence
+(`0x2F00_1000..1C`, values `0x5EED_00i i`) across the aperture, then reads all
+eight back and asserts each beat: `8-word write+read sequence across the aperture,
+all beats intact`. This is the guard against a fix that works once but corrupts a
+burst (a memcpy across the aperture, the realistic access pattern).
 
 _Original finding, preserved:_
 

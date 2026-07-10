@@ -34,7 +34,7 @@ export CHIPLET_TL_VCS_FLIST := $(BUILD)/tidelink_vcs.f
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
-.PHONY: bootstrap elab chip-boundary chip-wrapper lint check clean
+.PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc clean
 
 ## bootstrap: fetch all 42 submodules. Not `git clone --recursive` — see the script.
 bootstrap:
@@ -50,6 +50,13 @@ lint:
 ## coverage + structural lint. `make elab` and the verif/ envs need VCS on top.
 check: chip-boundary lint
 	@echo "== check OK: chip-boundary + lint clean =="
+
+## regress: the DYNAMIC gate — every simulation proof of the data plane, one
+## pass/fail table (decode tx-gate + hready-loop guards, g2_peer_aperture, and
+## the two-real-SoC g2_soc_pair write+read+burst). Needs VCS. `--quick` via
+## `make regress ARGS=--quick` skips the two-SoC long pole. See scripts/regress.sh.
+regress:
+	"$(CHIPLET_HOME)/scripts/regress.sh" $(ARGS)
 
 ## cdc: first structural CDC pass over the integrated top (Cadence HAL via
 ## xrun -hal). ~25 min; needs an Xcelium/HAL license. See docs/CDC_FINDINGS.md.
