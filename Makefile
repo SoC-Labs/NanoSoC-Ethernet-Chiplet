@@ -34,7 +34,7 @@ export CHIPLET_TL_VCS_FLIST := $(BUILD)/tidelink_vcs.f
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
-.PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc clean
+.PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
 
 ## bootstrap: fetch all 42 submodules. Not `git clone --recursive` — see the script.
 bootstrap:
@@ -62,6 +62,13 @@ regress:
 ## xrun -hal). ~25 min; needs an Xcelium/HAL license. See docs/CDC_FINDINGS.md.
 cdc:
 	"$(CHIPLET_HOME)/verif/cdc/run.sh"
+
+## elab-strict: STRICT ASIC-elaboration gate — catches the synthesis blockers a
+## simulator hides, above all a same-clock procedural MULTI-DRIVER (fc_shell/Genus
+## reject it; VCS + Verilator pass it). xrun -hal, gates on MLTDRV in authored RTL.
+## ~25 min; needs an Xcelium/HAL license. See docs/ELAB_STRICT_FINDINGS.md.
+elab-strict:
+	"$(CHIPLET_HOME)/verif/elab_strict/run.sh"
 
 ## chip-boundary: check the chip-boundary spec covers every RTL port, exactly once.
 ## Fails on an unclassified port, a stale name, or a direction/width mismatch.

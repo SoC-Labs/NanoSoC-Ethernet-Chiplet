@@ -29,6 +29,11 @@ make regress                # every data-plane sim proof, one table — needs VC
 gate: it runs every simulation proof below — the two decode guards, the tidelink
 pair, and the two-real-SoC write+read+burst — and prints one pass/fail table
 (`make regress ARGS=--quick` skips the two-SoC long pole). `scripts/regress.sh`.
+`make elab-strict` is the pre-synthesis gate: `xrun -hal` over the whole
+integration, failing on a same-clock procedural **multi-driver** (`MLTDRV`) — the
+class `fc_shell`/Genus reject but VCS and Verilator both pass. Run it before
+handing RTL to synthesis and after any submodule roll (that is how the last one
+arrived). `docs/ELAB_STRICT_FINDINGS.md`.
 
 `scripts/bootstrap.sh` rather than `git clone --recursive` because one submodule
 *inside* TideLink is still declared over SSH; the script rewrites it to HTTPS for
@@ -80,6 +85,7 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
 | `D2D_HREADY_LOOP.md` | the HREADY comb loop and its fix |
 | `G2_SOC_PAIR_STATUS.md` | the two-real-SoC proof + the write-data / read-pipe fixes |
 | `CDC_FINDINGS.md` | the structural CDC pass + `constraints/nanosoc_eth_chiplet_cdc.sdc` for full sign-off |
+| `ELAB_STRICT_FINDINGS.md` | the strict-elaboration gate (`make elab-strict`) — catches multi-drivers synthesis rejects |
 | `LINT_FINDINGS.md` | lint tooling, the sanity harness, triaged findings |
 | `PIN_POLICY.md` | which submodule pins are on default branches vs frozen |
 | `patches/` | prepared upstream fixes (TideLink flist, nanosoc_gen `$()→${}`) — not applied |

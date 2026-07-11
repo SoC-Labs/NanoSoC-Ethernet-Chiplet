@@ -25,6 +25,7 @@ verif/*/simv_*
 verif/*/simv_*.daidir/
 verif/*/ucli.key
 verif/cdc/build/
+verif/elab_strict/build/
 vivado*.jou
 vivado*.log
 vivado*.str
