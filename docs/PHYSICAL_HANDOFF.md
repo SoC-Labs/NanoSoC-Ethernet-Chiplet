@@ -214,25 +214,38 @@ This is gap **C3** in `nanosoc-multicore-system/docs/CHIPLET_INTEGRATION_PLAN.md
 
 Stated plainly so nobody builds on it:
 
-- **No transaction has ever crossed a die boundary in THIS integration**, in
-  simulation or on silicon. The SoC's D2D port is exercised against a memory
-  model (`cocotb/soc_d2d_loopback`, 9/9, two tests mutation-verified). That is
-  not the same thing.
+- ~~**No transaction has ever crossed a die boundary in THIS integration**, in
+  simulation or on silicon.~~ **SUPERSEDED — true only of SILICON now.**
+  `verif/g2_soc_pair` instantiates the shipping `nanosoc_eth_chiplet` **twice**,
+  cross-wires the PHY pads, brings the link up between two real
+  `nanosoc_multicore_soc` dies, and lands die A's peer write to `0x2F00_1000` in
+  die B's **real `shared_sram_0`** at `0x2D00_1000` — address-translated, payload
+  intact, with a CAM-off control. It crosses **both ways** (STAGE 2b read
+  round-trip) and survives an 8-word burst (STAGE 2c). It is wired into the
+  `make regress` gate and passes there. See `G2_SOC_PAIR_STATUS.md`.
 
-  TideLink's own `tidelink_top_pair` env does pass 11/11 on the pinned commit,
-  including the slave→master credit-return path (`test_04`) and sustained
-  bilateral traffic past the 31-deep credit ring (`test_10`). So the link's
-  logical datapath is proven between two `tidelink_top`s — just not between two
-  chiplets. Note `test_06` is a weak guard (its assertion is also satisfied by
-  bring-up residual); gate on `test_04` and `test_10`.
+  **What remains true: no transaction has crossed a die boundary ON SILICON.** A
+  simulation of two dies is not two dies.
+
+  For reference, TideLink's own `tidelink_top_pair` env also passes 11/11 on the
+  pinned commit, including the slave→master credit-return path (`test_04`) and
+  sustained bilateral traffic past the 31-deep credit ring (`test_10`). Note
+  `test_06` is a weak guard (its assertion is also satisfied by bring-up
+  residual); gate on `test_04` and `test_10`.
 
 - **Simulation is blind to the reset-skew bug** the `AddrSync_18` override fixes
   (§4.5). Those green sims would be green with or without it. On silicon the
   exposure is on the a2l (TX) path — the same direction a chiplet uses to write
   the far die. This needs bench validation or a multi-clock / reset-skew
   testbench; it is not covered by anything that exists today.
-- **The link has never been brought up in this integration.** Until the straps
-  above were exposed, it could not be.
+- ~~**The link has never been brought up in this integration.**~~ **SUPERSEDED in
+  simulation.** Exposing the straps is what made it possible, and
+  `verif/g2_soc_pair` now brings the link up between two chiplet instances as part
+  of `make regress`. **It has never been brought up on hardware** — and the
+  bring-up that sim performs leans on the bench straps (`mask_hs_bypass`,
+  `apb_debug_unlock`) rather than real auto-negotiation, because
+  `NEGO_CFG_RESET = 7'h00` parks the FSM in `ST_BYPASS`. So the sim proves the
+  datapath, **not** the production bring-up sequence. See RESET_ORDERING §3.3.
 - ~~**Unconfirmed:** whether Wlink's SERDES packetiser carries `addr[31:24]`
   end-to-end.~~ **RESOLVED 2026-07-10: it does.** The address is packed as a
   64-bit field (36 significant bits) at
@@ -254,11 +267,25 @@ Stated plainly so nobody builds on it:
   `hready_to_peer = dph_peer ? 1'b1 : d2d_ahb_m_hready`. Guarded by
   `verif/chiplet_d2d_decode/tb_hready_loop.sv`, mutation-tested. Audited: `ahb_sub`
   was the only TideLink port with the dependence. See `docs/D2D_HREADY_LOOP.md`.
-  **A lint/CDC signoff on the integrated top is still owed** — it would have found
-  this, and may find more.
+  A lint/CDC pass on the integrated top would have found this — both now exist,
+  see below.
 - **No timing, area or power numbers** exist for the chiplet. The SoC alone
   closes at WNS +0.400 ns on a PYNQ-Z2 (xc7z020), which says nothing about ASIC.
-- **No lint or CDC signoff** has been run on the integrated top.
+- ~~**No lint or CDC signoff** has been run on the integrated top.~~ **PARTLY
+  SUPERSEDED. Read this carefully — "run" and "signed off" are different things.**
+  - **Lint: done and green.** `make lint` (Verilator) reports no non-waived
+    findings on our RTL, and the env is self-verifying — it proves it still
+    *detects* the `hready` combinational cycle (UNOPTFLAT) against a deliberately
+    bugged wiring, so a green result means the detector works rather than the
+    check having quietly stopped looking. Findings log: `LINT_FINDINGS.md`.
+  - **CDC: a first structural pass exists, and is NOT a clean bill.** `make cdc`
+    runs Cadence HAL 22.03 via `xrun -hal` over the deduped integrated netlist.
+    `CDC_FINDINGS.md` says in its own words that it is "a **starting point** for
+    the physical team's CDC signoff, not a clean bill" — read its "What this pass
+    does NOT cover" section before relying on it.
+  - **Still owed: a real CDC signoff on the taped-out configuration**, run inside
+    TideLink (where the `pad_clk_rx -> sys_hclk` crossing actually lives) with the
+    shipped parameters, not the defaults. That is the item that is not done.
 
 ---
 

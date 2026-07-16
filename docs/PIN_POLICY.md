@@ -3,8 +3,9 @@
 A wrapper repo is a claim about reproducibility. This file records exactly what
 is pinned, why, and what has to happen before the pins are safe.
 
-**Status 2026-07-16: `tidelink` is no longer frozen.** The pin was rolled to pick up
-two perf-block fixes, and `tidelink:main` was fast-forwarded so the pin is
+**Status 2026-07-16: all five pins are on default branches. The risk this file tracks
+is closed.** `tidelink` was the last hold-out; its pin was rolled to pick up two
+perf-block fixes and `tidelink:main` was fast-forwarded and pushed, so the pin is
 main-reachable — see "The 2026-07-16 tidelink roll" below. `tidechart` and
 `nanosoc-multicore-system` were also rolled the same day (both "gated green").
 
@@ -13,14 +14,14 @@ main-reachable — see "The 2026-07-16 tidelink roll" below. `tidechart` and
 | Submodule | Commit | Reachable from | Is that a default branch? |
 |---|---|---|---|
 | `nanosoc-multicore-system` | `84b8617` | `origin/master` | **Yes** |
-| `tidelink` | `43c3d7c` | `origin/integ/tidelink-soc`, local `main` | **Local main yes — needs `git push origin main`** |
+| `tidelink` | `43c3d7c` | `origin/main` *and* `origin/integ/tidelink-soc` | **Yes** |
 | `tidechart` | `585e042` | `origin/main` | **Yes** |
 
-> **Action outstanding:** `tidelink:main` has been fast-forwarded **locally** to
-> `43c3d7c` but not yet pushed. `origin/main` is still `3f3de09` (tagged
-> `v2026.07.16-chiplet-verified`). Until `git -C tidelink push origin main` runs, the
-> pin is reachable only from `origin/integ/tidelink-soc` and the old caveat below
-> still applies.
+> **All three top-level pins are now reachable from a default branch, verified by the
+> chain check below** (`refs >= 1` and on `origin/main`/`origin/master` for each).
+> `tidelink:main` was fast-forwarded `3f3de09 -> 43c3d7c` and **pushed** on
+> 2026-07-16. The feature-branch dependency this document was written to track is
+> **closed**.
 
 Nested inside `nanosoc-multicore-system`, and equally load-bearing:
 
@@ -142,16 +143,18 @@ in the whole tree is
    and `soc_d2d_loopback` 9/9 — including `outbound_slave_can_wait_state`, the only
    guard against that branch's original reversion of the `hreadyout` fix.
 3. ~~Merge `tidelink:integ/tidelink-soc` to `tidelink:main`, or accept the pin
-   deliberately.~~ **DONE LOCALLY 2026-07-16, PUSH OUTSTANDING.** `tidelink:main`
-   was fast-forwarded to `43c3d7c` (a pure fast-forward — `origin/main` was a strict
-   ancestor, so no content decision was involved and no artifact changed). The pin now
-   sits on `main`. **`git -C tidelink push origin main` has not been run**, so
-   `origin/main` is still `3f3de09`. Until it is pushed, the exposure below is
-   unchanged in practice.
+   deliberately.~~ **DONE 2026-07-16.** `tidelink:main` was fast-forwarded to
+   `43c3d7c` and pushed. A pure fast-forward — `origin/main` was a strict ancestor of
+   the pin, so no content decision was involved and no built artifact changed; only
+   the three commits in the roll section above are new.
 
-Until (3) is **pushed**, treat this repo as **pre-release**: it builds, but one of its
-five foundation commits can still be pulled out from under it by someone with no idea
-it exists.
+**All three items are now closed, and the stranding risk this document exists to track
+is gone:** every pin resolves from a default branch, so a fresh
+`git submodule update --init --recursive` cannot be broken by someone rebasing or
+deleting a feature branch. Re-run the chain check below after any pin change.
+
+The repo's remaining caveats are about *hardware*, not pins — see "Hardware validation
+status" below and PHYSICAL_HANDOFF §6.
 
 ## Hardware validation status
 
@@ -167,10 +170,23 @@ the live HA1588 ethernet servo. D2D was independently exonerated twice:
 `d2d_irq` is tied `16'h0` in the FPGA wrapper, and the D2D commits moved no
 pre-existing NVIC bit.
 
-**But no transaction has ever crossed a real die boundary.** `soc_d2d_loopback`
-drives the SoC's D2D *port* in both directions against a memory model, with two
-mutation-verified tests. That proves the port, not the link. The pair sim
-(`docs/G2_PAIR_SIM.md`) is what would prove the link, and it does not exist yet.
+**But no transaction has ever crossed a real die boundary ON SILICON.**
+`soc_d2d_loopback` drives the SoC's D2D *port* in both directions against a memory
+model, with two mutation-verified tests — that proves the port, not the link.
+
+~~The pair sim is what would prove the link, and it does not exist yet.~~ **It
+exists and it passes** (superseded 2026-07-16): `verif/g2_soc_pair` instantiates the
+shipping `nanosoc_eth_chiplet` twice, cross-wires the PHY pads, and crosses a
+transaction from die A's D2D window into die B's real `shared_sram_0` — both
+directions, plus an 8-word burst. It is part of `make regress`. See
+`G2_SOC_PAIR_STATUS.md` (`G2_PAIR_SIM.md` is the older design note).
+
+So the link's datapath is proven **in simulation between two real SoC dies**. The
+gap that remains is **hardware**: no die-to-die transaction has run on silicon, and
+the sim's bring-up uses the bench straps rather than real auto-negotiation
+(`NEGO_CFG_RESET = 7'h00`), so the production bring-up sequence is also unproven.
+Simulation is additionally blind to the a2l reset-skew bug the `AddrSync_18`
+override fixes — those green sims would be green either way (PHYSICAL_HANDOFF §6).
 
 ## Checking the chain
 

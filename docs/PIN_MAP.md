@@ -315,7 +315,14 @@ Design-level decisions:
       in either direction.
 - [ ] **Reset/power sequencing**: clocks stable → `poresetn` → `hresetn` per die
       (RESET_ORDERING §5); no independent early release of the RX-domain reset.
-- [ ] **Lint + SpyGlass CDC on the integrated top** (still owed — PHYSICAL_HANDOFF §6).
+- [x] ~~**Lint on the integrated top**~~ — **DONE.** `make lint` (Verilator) is green
+      and self-verifying (it proves it still detects the `hready` cycle). See
+      `LINT_FINDINGS.md`.
+- [ ] **CDC signoff on the integrated top.** A first structural pass exists
+      (`make cdc`, Cadence HAL 22.03 — `CDC_FINDINGS.md`), but it says itself it is a
+      starting point, **not a clean bill**. The signoff must run on the **taped-out
+      configuration** with shipped parameters, inside TideLink where the
+      `pad_clk_rx -> sys_hclk` crossing lives (PHYSICAL_HANDOFF §6).
 - [ ] **`idelay_ref_clk`** stays tied off on ASIC (`USE_IDELAY=0`) — it is FPGA-only.
 - [ ] Re-run `make chip-boundary` and confirm **46 pad cells / bonded 59** before tape-out.
 - [ ] **If any die in the package will be strapped `dap_swj_enable = 0`** (§4c), revisit
