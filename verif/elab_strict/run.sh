@@ -83,6 +83,27 @@ set -e
 # Vendor / pre-verified IP we cannot edit — reported, not gated.
 VENDOR_RE='ip_library|Corstone|BP210|cmsdk|CMSDK|ethmac_patches|opencores|OpenCores|eth_wishbone|eth_top|xhb500|XHB500|/mem/|_model|behavioural|behavioral|/sram/|rf_[0-9]|axi-chiplet-controller|wlink|Wlink'
 
+# ---------------------------------------------------------------------------
+# count_matching <log-regex> <path-regex>  -> prints a count, ALWAYS returns 0.
+#
+# ⚠ WHY THIS EXISTS — a false-RED that shipped and had to be fixed:
+# `grep` exits 1 when it matches NOTHING. Under `set -eo pipefail` (above), a
+#     VAR="$(grep ... | grep ... | wc -l)"
+# therefore KILLS THE SCRIPT precisely when the design is CLEAN — the one case
+# the gate exists to report. The original gate could never return 0: clean =>
+# grep found nothing => exit 1 silently with no verdict; dirty => grep matched
+# => verdict printed => exit 1. It ALWAYS failed, and the bug was invisible
+# because the verdict logic had only ever been tested inline, never by running
+# this script end-to-end.
+# `|| true` on each grep keeps a no-match at status 0 so the count is honest.
+# ---------------------------------------------------------------------------
+count_matching() { # $1=log regex  $2=path regex (empty => no path filter)
+    local hits
+    hits="$(grep -aE "$1" "$LOG" 2>/dev/null || true)"
+    [ -n "$2" ] && hits="$(printf '%s\n' "$hits" | grep -aE "$2" || true)"
+    printf '%s' "$(printf '%s' "$hits" | grep -c . || true)"
+}
+
 echo
 echo "== MLTDRV (multiple-driver) findings — the fc_shell ASIC-synth blocker =="
 mapfile -t MLT < <(grep -aE '\*E,MLTDRV' "$LOG" 2>/dev/null || true)
@@ -112,14 +133,17 @@ grep -aoE '\*[EW],[A-Z0-9]+' "$LOG" 2>/dev/null \
 # How many of the synthesizability findings land in AUTHORED RTL (actionable)?
 AUTHORED_RE='nanosoc-ethernet-chiplet/src/rtl|/tidechart/src/rtl|/tidelink/src/rtl|build_soc/rtl'
 for rule in SIZMIS LATINF GLTASR OUTRNG; do
-    n=$(grep -aE "\*[EW],$rule" "$LOG" 2>/dev/null | grep -aE "$AUTHORED_RE" | wc -l | tr -d ' ')
-    [ "${n:-0}" -gt 0 ] && echo "  -> $rule in authored RTL: $n (review; not a hard blocker)"
+    n=$(count_matching "\*[EW],$rule" "$AUTHORED_RE")
+    if [ "${n:-0}" -gt 0 ]; then
+        echo "  -> $rule in authored RTL: $n (review; not a hard blocker)"
+    fi
 done
 
 echo
 # Gate: any MLTDRV in authored (non-vendor) RTL fails the run.
-AUTHORED_MLT="$(grep -aE '\*E,MLTDRV' "$LOG" 2>/dev/null \
-    | grep -avE "$VENDOR_RE" | wc -l | tr -d ' ')"
+# Counted via count_matching() so that "no matches" (a CLEAN design) cannot kill
+# the script under set -e/pipefail before this verdict is reached. See above.
+AUTHORED_MLT="$(grep -aE '\*E,MLTDRV' "$LOG" 2>/dev/null | grep -avE "$VENDOR_RE" | grep -c . || true)"
 if [ "${AUTHORED_MLT:-0}" -gt 0 ]; then
     echo "== elab-strict FAIL: $AUTHORED_MLT multiple-driver net(s) in authored RTL =="
     echo "   fix each: drive the register from exactly ONE always block. See the log:"
