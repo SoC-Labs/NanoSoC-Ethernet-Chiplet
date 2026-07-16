@@ -9,6 +9,11 @@
 .Xil/
 .venv/
 __pycache__/
+ASIC/*/logs
+ASIC/*/outputs
+ASIC/*/reports
+ASIC/*/work
+ASIC/romlibs
 build/
 build_soc/
 csrc/

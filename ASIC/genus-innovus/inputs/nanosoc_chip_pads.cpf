@@ -1,0 +1,39 @@
+################################################################################
+# Cadence CPF (Common Power Format) for nanosoc_chip_pads
+# Generated from nanosoc_chip_pads.upf
+################################################################################
+set_cpf_version 1.1
+set_design nanosoc_chip_pads
+
+#######################################
+# Create Power Domains
+#######################################
+create_power_domain -name PD_TOP -default
+
+create_nominal_condition -name nom -voltage 1.08
+
+create_power_mode -name PM -domain_conditions {PD_TOP@nom} -default
+
+#######################################
+# Create Supply Ports
+#######################################
+# Top Port Supplies 
+create_ground_nets -nets {VSS VSSIO}
+create_power_nets -nets {VDD VDDIO}
+
+update_power_domain -name PD_TOP -primary_power_net VDD -primary_ground_net VSS
+
+################################################################################
+# Connect PG nets to macros
+################################################################################
+
+create_global_connection -net VSS -pins VSS
+create_global_connection -net VDD -pins VDD
+
+create_global_connection -net VSS -pins VSSE
+create_global_connection -net VDD -pins VDDE
+
+create_global_connection -net VSSIO -pins VSSPST
+create_global_connection -net VDDIO -pins VDDPST
+
+end_design

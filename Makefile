@@ -26,11 +26,13 @@ SIMV         := simv_chiplet
 BUILD        := $(CHIPLET_HOME)/build/elab
 # VCS-readable, flattened copy of the SoC's generated flist (see the recipe).
 export CHIPLET_SOC_VCS_FLIST := $(BUILD)/soc_vcs.f
+export CHIPLET_SOC_ASIC_FLIST := $(CHIPLET_HOME)/build/chip/flist/soc.flist
 # TideLink's flist with the shadowed deps module removed, so exactly one
 # definition of every module reaches the compiler. See resolve_tidelink_flist.py:
 # relying on VCS "last declaration wins" would let a first-wins tool silently
 # bind an RTL copy that lacks the a2l reset-skew fix.
 export CHIPLET_TL_VCS_FLIST := $(BUILD)/tidelink_vcs.f
+export CHIPLET_TL_ASIC_FLIST := $(CHIPLET_HOME)/build/chip/flist/tidelink_asic.flist
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
@@ -97,6 +99,16 @@ elab:
 	cd "$(BUILD)"
 	echo "== vcs $(VCS_FLAGS) -f $(FLIST) -top $(TOP) -o $(SIMV) =="
 	vcs $(VCS_FLAGS) -f "$(FLIST)" -top $(TOP) -o "$(SIMV)" -l "$(BUILD)/elab.log"
+
+asic-flist:
+	source "$(CHIPLET_HOME)/set_env.sh"
+	source "$(CHIPLET_HOME)/nanosoc-multicore-system/set_env.sh"
+	source "$(CHIPLET_HOME)/tidelink/set_env.sh"
+	mkdir -p "$(BUILD)"
+	python3 "$(CHIPLET_HOME)/flist/flatten_soc_flist.py" \
+	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore_asic.flist" > "$(CHIPLET_SOC_ASIC_FLIST)"
+	python3 "$(CHIPLET_HOME)/flist/resolve_tidelink_flist.py" \
+	    "$${TIDELINK_HOME}/flists/tidelink_top_full_asic.flist" > "$(CHIPLET_TL_ASIC_FLIST)"
 
 ## clean: remove elaboration artifacts.
 clean:

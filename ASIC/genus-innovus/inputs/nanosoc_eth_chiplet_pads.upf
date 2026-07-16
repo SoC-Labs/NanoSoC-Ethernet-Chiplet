@@ -1,0 +1,128 @@
+set_design_top nanosoc_chip_pads
+
+#######################################
+# Create Supply Ports
+#######################################
+# Top Port Supplies 
+create_supply_port VDD 
+create_supply_net VDD
+connect_supply_net VDD -ports VDD 
+
+create_supply_port VSS 
+create_supply_net VSS 
+connect_supply_net VSS -ports VSS 
+
+create_supply_port VDDIO 
+create_supply_net VDDIO
+connect_supply_net VDDIO -ports VDDIO
+
+create_supply_port VSSIO 
+create_supply_net VSSIO
+connect_supply_net VSSIO -ports VSSIO
+
+#######################################
+# Create Supply Sets
+######################################
+create_supply_set SS_TOP -function {power VDD} -function {ground VSS}
+create_supply_set SS_IO  -function {power VDDIO} -function {ground VSSIO}
+
+#######################################
+# Create Power Domains
+######################################
+create_power_domain PD_TOP -include_scope -supply {primary SS_TOP}
+
+################################################################################
+# Connect PG nets to macros
+################################################################################
+
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_0_i/VDD 
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_1_i/VDD 
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_2_i/VDD 
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_3_i/VDD 
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_0_i/VDD 
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_1_i/VDD 
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_2_i/VDD 
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_3_i/VDD 
+
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_0_i/VSS 
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_1_i/VSS 
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_2_i/VSS 
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/data_ram_0_word_3_i/VSS 
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_0_i/VSS 
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_1_i/VSS 
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_2_i/VSS 
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/data_ram_0_word_3_i/VSS 
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/tag_ram_0_i/VDD
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/tag_ram_0_i/VDD
+
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way0_cache_ram/tag_ram_0_i/VSS
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_qspi_flash_0/u_top_ahb_qspi/u_cache_subsystem/u_way1_cache_ram/tag_ram_0_i/VSS
+
+connect_supply_net VDD -ports u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_chip_core/u_region_bootrom_0/u_bootrom/u_rom_via/VDDE
+connect_supply_net VSS -ports u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_chip_core/u_region_bootrom_0/u_bootrom/u_rom_via/VSSE
+connect_supply_net VSS -ports u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_chip_core/u_region_bootrom_0/u_bootrom/u_rom_via/VSS
+
+connect_supply_net VDD -ports u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_network_core/u_region_bootrom_0/u_bootrom/u_rom_via/VDDE
+connect_supply_net VSS -ports u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_network_core/u_region_bootrom_0/u_bootrom/u_rom_via/VSSE
+connect_supply_net VSS -ports u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_network_core/u_region_bootrom_0/u_bootrom/u_rom_via/VSS
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_eth_scratch_rx_0/u_sram/u_sram/gen_rf_16k.u_rf_sp_hdf/VDD
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_eth_scratch_rx_0/u_sram/u_sram/gen_rf_16k.u_rf_sp_hdf/VSS
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_eth_scratch_tx_0/u_sram/u_sram/gen_rf_16k.u_rf_sp_hdf/VDD
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_eth_scratch_tx_0/u_sram/u_sram/gen_rf_16k.u_rf_sp_hdf/VSS
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_dmem_0/u_sram/u_sram/gen_rf_16k.u_rf_sp_hdf/VDD
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_dmem_0/u_sram/u_sram/gen_rf_16k.u_rf_sp_hdf/VSS
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_imem_0/u_mem/u_sram/gen_banked.gen_bank[0].u_rf_sp_hdf/VDD
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_imem_0/u_mem/u_sram/gen_banked.gen_bank[0].u_rf_sp_hdf/VSS
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_imem_0/u_mem/u_sram/gen_banked.gen_bank[1].u_rf_sp_hdf/VDD
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_eth_ss_0/u_region_imem_0/u_mem/u_sram/gen_banked.gen_bank[1].u_rf_sp_hdf/VSS
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_cpu_ss_1/u_region_imem_0/u_mem/u_sram/gen_rf_32k.u_rf_sp_hdf/VDD
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_cpu_ss_1/u_region_imem_0/u_mem/u_sram/gen_rf_32k.u_rf_sp_hdf/VSS
+
+connect_supply_net VDD -ports u_nanosoc_multicore_soc/u_cpu_ss_1/u_region_dmem_0/u_mem/u_sram/gen_rf_32k.u_rf_sp_hdf/VDD
+connect_supply_net VSS -ports u_nanosoc_multicore_soc/u_cpu_ss_1/u_region_dmem_0/u_mem/u_sram/gen_rf_32k.u_rf_sp_hdf/VSS
+
+connect_supply_net VDD -ports {uPAD_VDD_*/VDD}
+connect_supply_net VDDIO -ports {uPAD_VDDIO_*/VDDPST} 
+connect_supply_net VSS -ports {uPAD_VSS_*/VSS}
+connect_supply_net VSSIO -ports {uPAD_VSSIO_*/VSSPST}
+
+#######################################
+# Add Power States
+######################################
+add_port_state VSS              -state {ON_SLOW 0.0}
+add_port_state VSS              -state {ON_TYP  0.0}
+add_port_state VSS              -state {ON_FAST 0.0}
+add_port_state VSSIO            -state {ON_SLOW 0.0}
+add_port_state VSSIO            -state {ON_TYP  0.0}
+add_port_state VSSIO            -state {ON_FAST 0.0}
+
+add_port_state VDD              -state {ON_SLOW 1.08}
+add_port_state VDD              -state {ON_TYP  1.20}
+add_port_state VDD              -state {ON_FAST 1.32}
+add_port_state VDDIO            -state {ON_SLOW 2.97}
+add_port_state VDDIO            -state {ON_TYP  3.30}
+add_port_state VDDIO            -state {ON_FAST 3.63}
+
+create_pst top_pst -supplies {\
+    VSS \
+    VSSIO \
+    VDD \
+    VDDIO \
+    }
+
+# VDDIO     -----------------------------------------------------------------------+        |  
+# VDD       --------------------------------------------------------------+        |        |   
+# VSSIO     -----------------------------------------------------+        |        |           
+# VSS       --------------------------------------------+        |        |        |        |  
+#                                                       |        |        |        |        |  
+add_pst_state all_on_slow -pst top_pst -state       {ON_SLOW  ON_SLOW  ON_SLOW  ON_SLOW  }
+add_pst_state all_on_typ -pst top_pst -state        {ON_TYP   ON_TYP   ON_TYP   ON_TYP   }
+add_pst_state all_on_fast -pst top_pst -state       {ON_FAST  ON_FAST  ON_FAST  ON_FAST  }

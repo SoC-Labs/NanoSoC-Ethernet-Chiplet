@@ -7,3 +7,6 @@
 [submodule "nanosoc-multicore-system"]
 	path = nanosoc-multicore-system
 	url = https://git.soton.ac.uk/soclabs/nanosoc-multicore-system.git
+[submodule "ASIC/asic-flows"]
+	path = ASIC/asic-flows
+	url = https://github.com/SoC-Labs/ASIC-Flow.git

@@ -1,0 +1,128 @@
+set phys_lib /research/AAA/phys_ip_library
+
+set base_path ${phys_lib}/arm/tsmc/cln65lp/sc12_base_rvt/r0p0
+set tech_path ${phys_lib}/arm/tsmc/cln65lp/arm_tech/r2p0
+set rf_32k_path /research/precompiled_mems/TSMC65/rf_32k
+set rf_16k_path /research/precompiled_mems/TSMC65/rf_16k/ 
+set rf_08k_path /research/precompiled_mems/TSMC65/rf_08k/ 
+set flash_cache_data_path /research/precompiled_mems/TSMC65/flash_cache_data/
+set flash_cache_tag_path /research/precompiled_mems/TSMC65/flash_cache_tag/
+set bootrom_path $::env(NANOSOC_MULTICORE_HOME)/syn/asic/romlibs/cc_rom
+set eth_rom_path $::env(NANOSOC_MULTICORE_HOME)/syn/asic/romlibs/eth_rom
+set IO_driver_path $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/
+
+create_library_set -name default_libset_max\
+   -timing\
+    [list ${base_path}/lib/sc12_cln65lp_base_rvt_ss_typical_max_1p08v_125c.lib \
+    ${rf_32k_path}/rf_32k_ss_1p08v_1p08v_125c.lib \
+    ${rf_16k_path}/rf_16k_ss_1p08v_1p08v_125c.lib \
+    ${rf_08k_path}/rf_08k_ss_1p08v_1p08v_125c.lib \
+    ${flash_cache_data_path}/flash_cache_data_ss_1p08v_1p08v_125c.lib \
+    ${flash_cache_tag_path}/flash_cache_tag_ss_1p08v_1p08v_125c.lib \
+    ${bootrom_path}/rom_via_ss_1p08v_1p08v_125c.lib \
+    ${eth_rom_path}/eth_rom_via_ss_1p08v_1p08v_125c.lib \
+    ${IO_driver_path}/tphn65lpgv2od3_slwc.lib] \
+   -si\
+    [list ${base_path}/celtic/sc12_cln65lp_base_rvt_ss_typical_max_1p08v_125c.cdB]
+
+create_library_set -name default_libset_min\
+   -timing\
+    [list ${base_path}/lib/sc12_cln65lp_base_rvt_ff_typical_min_1p32v_m40c.lib \
+    ${rf_32k_path}/rf_32k_ff_1p32v_1p32v_m40c.lib \
+    ${rf_16k_path}/rf_16k_ff_1p32v_1p32v_m40c.lib \
+    ${rf_08k_path}/rf_08k_ff_1p32v_1p32v_m40c.lib \
+    ${flash_cache_data_path}/flash_cache_data_ff_1p32v_1p32v_m40c.lib \
+    ${flash_cache_tag_path}/flash_cache_tag_ff_1p32v_1p32v_m40c.lib \
+    ${bootrom_path}/rom_via_ff_1p32v_1p32v_m40c.lib \
+    ${eth_rom_path}/eth_rom_via_ff_1p32v_1p32v_m40c.lib \
+    ${IO_driver_path}/tphn65lpgv2od3_slbc.lib] \
+   -si\
+    [list ${base_path}/celtic/sc12_cln65lp_base_rvt_ff_typical_min_1p32v_m40c.cdB]
+
+create_library_set -name typical_libset\
+   -timing\
+    [list ${base_path}/lib/sc12_cln65lp_base_rvt_tt_typical_max_1p20v_25c.lib \
+    ${rf_32k_path}/rf_32k_tt_1p20v_1p20v_25c.lib \
+    ${rf_16k_path}/rf_16k_tt_1p20v_1p20v_25c.lib \
+    ${rf_08k_path}/rf_08k_tt_1p20v_1p20v_25c.lib \
+    ${flash_cache_data_path}/flash_cache_data_tt_1p20v_1p20v_25c.lib \
+    ${flash_cache_tag_path}/flash_cache_tag_tt_1p20v_1p20v_25c.lib \
+    ${bootrom_path}/rom_via_tt_1p20v_1p20v_25c.lib \
+    ${eth_rom_path}/eth_rom_via_tt_1p20v_1p20v_25c.lib \
+    ${IO_driver_path}/tphn65lpgv2od3_sltc.lib] \
+   -si\
+    [list ${base_path}/celtic/sc12_cln65lp_base_rvt_tt_typical_max_1p20v_25c.cdB]
+
+
+create_rc_corner -name default_rc_corner_worst\
+   -pre_route_res 1\
+   -post_route_res 1\
+   -pre_route_cap 1\
+   -post_route_cap 1\
+   -post_route_cross_cap 1\
+   -pre_route_clock_res 0\
+   -pre_route_clock_cap 0\
+   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/rcworst.captbl
+
+create_rc_corner -name default_rc_corner_best\
+   -pre_route_res 1\
+   -post_route_res 1\
+   -pre_route_cap 1\
+   -post_route_cap 1\
+   -post_route_cross_cap 1\
+   -pre_route_clock_res 0\
+   -pre_route_clock_cap 0\
+   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/rcbest.captbl
+
+create_rc_corner -name default_rc_corner_typical\
+   -pre_route_res 1\
+   -post_route_res 1\
+   -pre_route_cap 1\
+   -post_route_cap 1\
+   -post_route_cross_cap 1\
+   -pre_route_clock_res 0\
+   -pre_route_clock_cap 0\
+   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/typical.captbl
+
+
+create_timing_condition -name tc_max \
+   -library_sets {default_libset_max} 
+
+create_timing_condition -name tc_min \
+   -library_sets {default_libset_min} 
+
+create_timing_condition -name tc_typ \
+   -library_sets {typical_libset} 
+
+
+
+create_delay_corner -name default_delay_corner_max\
+   -timing_condition {tc_max}\
+   -rc_corner default_rc_corner_worst
+
+create_delay_corner -name default_delay_corner_ocv\
+   -early_timing_condition {tc_min}\
+   -late_timing_condition {tc_max}\
+   -rc_corner default_rc_corner_typical
+
+create_delay_corner -name default_delay_corner_min\
+   -timing_condition tc_min\
+   -rc_corner default_rc_corner_best
+
+create_delay_corner -name typical_delay_corner\
+   -timing_condition tc_typ\
+   -rc_corner default_rc_corner_typical
+
+create_constraint_mode -name default_constraint_mode\
+   -sdc_files\
+    [list ../outputs/nanosoc_chip_pads_syn.sdc]
+
+create_analysis_view -name default_analysis_view_setup -constraint_mode default_constraint_mode -delay_corner default_delay_corner_max
+create_analysis_view -name default_analysis_view_hold -constraint_mode default_constraint_mode -delay_corner default_delay_corner_min
+
+create_analysis_view -name typical_analysis_view_setup -constraint_mode default_constraint_mode -delay_corner default_delay_corner_ocv
+create_analysis_view -name typical_analysis_view_hold -constraint_mode default_constraint_mode -delay_corner default_delay_corner_ocv
+
+create_analysis_view -name typical_analysis_view -constraint_mode default_constraint_mode -delay_corner typical_delay_corner
+
+set_analysis_view -setup [list default_analysis_view_setup typical_analysis_view] -hold [list default_analysis_view_hold typical_analysis_view]
