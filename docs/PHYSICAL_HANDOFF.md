@@ -48,9 +48,13 @@ them. In this wrapper:
 - `tidelink_top.hresetn` ← SoC `sys_hresetn` (AHB)
 - `tidechart_shim.resetn` ← SoC `sys_hresetn`
 
-`d2d_reset_o` is TideLink's die-to-die reset **output**. It is now a boundary
-port. Whether it drives anything on this die is an integration decision that has
-not been made.
+`d2d_reset_o` is **not a reset, and is tied low by construction** — it is Wlink's RX
+`in_error_state`, half of a cross-die "stop transmitting" backpressure handshake. It
+cannot assert because the ECC syndrome checker is a deliberate, documented bring-up
+bypass (`WlinkEccSyndrome.v:306-308` hardwires `corrupted = 1'h0`). It drives nothing,
+and as of 2026-07-16 it is not a pad. **Implication for sign-off: this link runs with no
+header ECC protection** (payload CRC is unaffected). See **STATUS_REGISTERS.md §4**;
+raised upstream — the fix is a syndrome-polynomial audit, not a code change.
 
 > **Open:** the reset ordering between `sys_poresetn`, `sys_hresetn` and the far
 > die's power-up has not been analysed. Two dies powering up in an arbitrary
@@ -69,22 +73,28 @@ The spec now exists: `sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml`, checked 
 
 ```
   RTL ports  : 111  (377 bits)
-  classified : 111  (bonded 63 / tied 21 / open 27)
-  pads       : 50 pad cells
+  classified : 111  (bonded 59 / tied 21 / open 31)
+  pads       : 46 pad cells
 ```
 
 The check is not decorative. It was mutation-tested: dropping a port from the
 spec, swapping `in:`/`out:` on the MDIO bidir pad, and mis-sizing `d2d_tx` from 8
 to 4 bits each fail with the offending name. The generated wrapper
-(`nanosoc_eth_chiplet_chip.v`, 63 chip nets) elaborates under VCS with zero
+(`nanosoc_eth_chiplet_chip.v`, 59 chip nets) elaborates under VCS with zero
 errors and no unconnected port on the chiplet instance.
+
+> **Changed 2026-07-16: 50 → 46 pad cells.** The four link-status pads were unbonded;
+> all four are register-readable over the TideLink config APB, which the SWJ-DP reaches
+> independently of CPU state. See **STATUS_REGISTERS.md** and PIN_MAP.md §4c. Two of
+> them could never have carried information anyway: `link_active` is the same net as
+> `role_locked`, and `d2d_reset` is tied low by construction.
 
 | Class | Ports |
 |---|---|
 | **PHY pads** (die-to-die) | `pad_clk_tx`, `pad_tx[7:0]`, `pad_clk_rx`, `pad_rx[7:0]` |
 | **Straps** (per-die, set at the pad ring) | `role_strap_i`, `nego_priority_i[15:0]`, `mask_hs_bypass_i`, `apb_debug_unlock_i`, `puf_seed[15:0]`, `puf_ready` |
 | **DFT** | `scan_mode`, `scan_asyncrst_ctrl`, `scan_clk`, `scan_shift`, `scan_in`, `scan_out`, plus the SoC's `sys_scanenable`, `sys_testmode` |
-| **Status / observability** | `link_active_o`, `d2d_reset_o`, `role_is_master_o`, `role_locked_o`, `servo_locked_o`, `tl_ewma_credit_o[12:0]`, `tidechart_irq_o` |
+| **Status / observability** — **none of these is a pad** (see STATUS_REGISTERS.md) | `link_active_o`, `d2d_reset_o`, `role_is_master_o`, `role_locked_o`, `servo_locked_o`, `tl_ewma_credit_o[12:0]`, `tidechart_irq_o` |
 | **I²C sideband** (open-drain) | `i2c_scl_i/o/t`, `i2c_sda_i/o/t` |
 | **SoC pads** | everything else — RMII, MDIO, UARTs, QSPI, SPI, HOSTIO4, DAP/SWD, RTC/PTP |
 

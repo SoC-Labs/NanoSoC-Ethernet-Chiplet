@@ -124,14 +124,38 @@ domain stays safely in reset while the far die is dark, and only leaves reset on
    **differently on the two dies**, or the election is a coin-flip on the LFSR and
    may never converge — independent of reset ordering.
 
-5. **`d2d_reset_o` is an output; decide whether it is a cross-die reset.**
+5. ~~**`d2d_reset_o` is an output; decide whether it is a cross-die reset.**~~
+   **RESOLVED 2026-07-16 — the question was malformed. `d2d_reset_o` is NOT a reset,
+   and it is TIED LOW BY CONSTRUCTION.** It is unbonded as of the same date
+   (`PIN_MAP.md` §4c). There is no sequencing constraint here and nothing to
+   synchronize; a reset loop is impossible because the signal cannot assert.
+
    `sb_reset_in` is tied `1'b0` and `sb_reset_out` drives `d2d_reset_o`
-   (`tidelink_top.sv:2024-2025`); whether it resets anything on this die (or the far
-   die) is undecided (`PHYSICAL_HANDOFF.md:51-53`). **If** it is wired die-to-die it
-   is an async signal crossing into the other die's domain and must be synchronized
-   on the receiving side, and any reset **loop** (each die's POR holding the other in
-   reset) must be broken — otherwise a two-die power-up can deadlock with each die
-   waiting on the other.
+   (`tidelink_top.sv:2024-2025`), but `sb_reset_out` is Wlink's RX
+   `in_error_state = (state == 2'h2)`, and that state has no entry edge —
+   `WlinkRxLinkLayer.v:1305` writes `2'h2` only inside `else if (state == 2'h2)`, and
+   reset forces `2'h0`.
+
+   **The dead FSM branch is a symptom.** The cause is that the ECC syndrome checker is
+   a deliberate, documented bring-up bypass — `WlinkEccSyndrome.v:306-308` hardwires
+   `corrupted = 1'h0` because the Hamming(33,24) decoder mismatches the TX-side ECC
+   polynomial and flagged every header corrupt at 25 MHz, blocking all traffic. With
+   `corrupted` constant, the ERROR entry is dead code. Full detail:
+   `STATUS_REGISTERS.md` §4.
+
+   **The real issue this exposes is not reset ordering — it is that the link runs with
+   no header ECC protection.** `sb_reset_out`/`sb_reset_in` is a cross-die "my receiver
+   is in error, stop transmitting" handshake (`sb_reset_in`'s only consumer anywhere in
+   Wlink is `lltx_io_enable`), and it is inert at both ends. Payload CRC still applies.
+   The team already knew ECC detection was dead — `axi_chiplet_controller.sv:2549-2550`
+   repurposed the dead ECC counter field to `SYNC_DETECTED_COUNTER`. Raised upstream,
+   not fixed here: the real fix is a syndrome-polynomial audit against the TX-side ECC
+   RTL with bench re-validation, and getting it wrong stops all link traffic.
+
+   **Note for anyone looking for the software link reset:** it is **not** clearing
+   `role_locked` — `role_lock_reg` is W1S with POR-only clear
+   (`axi_chiplet_controller.sv:545`, `:645`). It is Wlink's `sw_reset`,
+   `0x2E030208` bit[3], which drives `por_reset` into all three link clock domains.
 
 6. **IDELAY reset (FPGA only).** `idelay_rst = ~poresetn` (`tidelink_top.sv:2248`);
    on ASIC `USE_IDELAY=0` makes the RX delay a bit-exact passthrough and this ties
@@ -198,8 +222,10 @@ SW recipe) is what makes the link safe **regardless of which die powers first.**
   silicon.
 - Strap `nego_priority_i` (and `role_strap_i` / TideChart `DEVICE_CLASS`)
   **asymmetrically** on the two dies so the root election has a tiebreak.
-- Decide `d2d_reset_o` wiring; if cross-die, synchronize it and prove there is no
-  reset loop.
+- ~~Decide `d2d_reset_o` wiring; if cross-die, synchronize it and prove there is no
+  reset loop.~~ **Moot — `d2d_reset_o` is tied low by construction and is now unbonded
+  (§3.5, `STATUS_REGISTERS.md` §4).** Raise the underlying Wlink RX-error defect
+  upstream instead.
 - Owe a lint + SpyGlass CDC signoff on the integrated top with the taped-out
   configuration — it would independently flag any of the above
   (`PHYSICAL_HANDOFF.md:247-248, 251`).

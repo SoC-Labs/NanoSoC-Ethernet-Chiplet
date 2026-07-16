@@ -44,7 +44,7 @@ the fetch. See the README.
 | Claim | How | Where |
 |---|---|---|
 | The top wires together consistently | `make elab` — 0 VCS errors, every port connected once | — |
-| Every top port is bonded / tied / open exactly once | `make chip-boundary` — 111 ports, 50 pad cells | `PIN_MAP.md` |
+| Every top port is bonded / tied / open exactly once | `make chip-boundary` — 111 ports, 46 pad cells | `PIN_MAP.md` |
 | No combinational loops / latches / width bugs in our RTL | `make lint` (Verilator) | `LINT_FINDINGS.md` |
 | **A memory transaction crosses between two REAL SoCs over the link** | `verif/g2_soc_pair` — die A `0x2F00_1000` → die B's real `shared_sram_0` `0x2D00_1000`, payload intact, CAM-off control | `G2_SOC_PAIR_STATUS.md` |
 | **The data plane crosses BOTH ways** — peer read round-trip | `verif/g2_soc_pair` STAGE 2b — read back `0x2F00_1000` = written value across the link | `G2_SOC_PAIR_STATUS.md` |

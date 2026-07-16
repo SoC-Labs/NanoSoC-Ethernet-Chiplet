@@ -37,6 +37,37 @@
 #    passthrough and the reference clock is dead weight.
 # 4. The 13-bit `tl_ewma_credit_o` congestion telemetry is left OPEN. It is worth
 #    a debug bus or a register, not thirteen pads.
+# 5. The four link-status ports were UNBONDED on 2026-07-16 (50 -> 46 pad cells).
+#    All four are already readable over the TideLink config APB at 0x2E03xxxx,
+#    which the SWJ-DP reaches independently of CPU state — so the pads bought no
+#    visibility the debug port does not already have. See docs/STATUS_REGISTERS.md
+#    for the address table and the per-signal rationale in the `opens` list.
+#
+#    Two bits below are DEAD in the pinned tidelink (3f3de09). Recorded so nobody
+#    trusts them. Full detail in docs/STATUS_REGISTERS.md §4 and §5:
+#
+#    (a) `d2d_reset_o` is TIED LOW BY CONSTRUCTION, and is not a reset — it is
+#        Wlink's RX `in_error_state`, one half of a cross-die "my receiver is in
+#        error, stop transmitting" backpressure handshake. It cannot assert
+#        because the ECC syndrome checker is a DELIBERATE, DOCUMENTED bring-up
+#        bypass: WlinkEccSyndrome.v:306-308 hardwires `corrupted = 1'h0` (the
+#        Hamming(33,24) decoder mismatches the TX-side ECC polynomial and flagged
+#        every header corrupt at 25 MHz, blocking all traffic). With `corrupted`
+#        constant, the FSM's ERROR branch is dead code. NOT FIXED: the real fix
+#        is a syndrome-polynomial audit against the TX-side ECC RTL with bench
+#        re-validation — get it wrong and the link carries no traffic at all.
+#        Raised upstream. Note the team already knew ECC detection was dead —
+#        axi_chiplet_controller.sv:2549-2550 repurposed the dead ECC counter
+#        field to SYNC_DETECTED_COUNTER.
+#    (b) `tl_ewma_credit_o` is PERMANENTLY ZERO in the pinned tidelink.
+#        tidelink_apb_regs.sv drove `perf_reg_region = apb_region[1:0]` (raw), but
+#        perf_reg_write is gated to apb_region 5..7, so region 2'b00 — the only
+#        branch that writes perf_enable_r (tidelink_perf.sv:437-440) — was
+#        unreachable. perf_enable_r resets to 0 and ewma_q_r only advances under
+#        perf_active. The same off-by-one rotated the read mux, so PERF_ID read
+#        0x0 too. FIXED on tidelink branch `fix/perf-region-decode` (with a
+#        mutation-verified regression test); this pin does NOT yet carry it, so
+#        the bit stays dead here until the pin rolls.
 # ============================================================================
 
 chip_boundary:
@@ -76,11 +107,10 @@ chip_boundary:
       - { chip_port: apb_debug_unlock, pad_kind: input, width: 1, in: apb_debug_unlock_i }  # ditto; debug strap
 
     # ---- link status / bring-up observability ---------------------------
-    d2d_status:
-      - { chip_port: link_active,    pad_kind: output, width: 1, out: link_active_o }     # ALSO gates the TX aperture internally
-      - { chip_port: role_is_master, pad_kind: output, width: 1, out: role_is_master_o }
-      - { chip_port: role_locked,    pad_kind: output, width: 1, out: role_locked_o }
-      - { chip_port: d2d_reset,      pad_kind: output, width: 1, out: d2d_reset_o }
+    # NONE. All four former status pads are OPEN — every one is already
+    # readable over the TideLink config APB at 0x2E03xxxx, which the SWJ-DP can
+    # reach independently of CPU state. See docs/STATUS_REGISTERS.md and note 5
+    # in the header above.
 
     # ---- CoreSight SWJ-DP -----------------------------------------------
     swd:
@@ -231,4 +261,30 @@ chip_boundary:
     - servo_locked_o
 
     # --- congestion telemetry: 13 bits, wants a debug bus not pads ---
+    # Also PERMANENTLY ZERO today — see note 5 below and docs/STATUS_REGISTERS.md.
     - tl_ewma_credit_o
+
+    # --- link status / observability: all four are register-readable ---
+    # Unbonded 2026-07-16. Every one of these is already a bit in the TideLink
+    # config APB at 0x2E03xxxx (docs/STATUS_REGISTERS.md), a window the SWJ-DP
+    # reaches on free-running SYS_HCLK regardless of CPU state, and which is NOT
+    # gated by link_active (only the TX aperture is). Per-signal rationale:
+    #
+    #   link_active_o    — NOT independent status: tidelink_top.sv:2308 is
+    #                      `assign link_active = role_locked_o;`. Same net as
+    #                      role_locked_o. Two pads carried one bit.
+    #                      (It also gates the TX aperture, but that path is
+    #                      internal — tc_link_active -> u_d2d_decode — and is
+    #                      unaffected by unbonding the pad.)
+    #   role_is_master_o — role_status[0] @ 0x2E032084, INVERTED (0 = master).
+    #   role_locked_o    — role_status[1] @ 0x2E032084.
+    #   d2d_reset_o      — TIED LOW BY CONSTRUCTION; see note 5.
+    #
+    # KNOWN GAP, accepted: a die strapped dap_swj_enable=0 (a non-active die in
+    # a multi-chiplet package) has no SWD, so with its link down it has no
+    # link-status visibility at all. Not a concern while chip.v ties
+    # dap_swj_enable=1'b1. Revisit if a package strapped 0 is ever built.
+    - link_active_o
+    - role_is_master_o
+    - role_locked_o
+    - d2d_reset_o
