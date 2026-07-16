@@ -25,7 +25,7 @@ CPU1, the DMAC or an SWD debugger writes into a load/store.
 | `role_is_master_o` | `0x2E032084` | [0] | `role_status.effective_role` — **INVERTED**: 0 = master |
 | `d2d_reset_o` | `0x2E030234` | [2] | Wlink `LinkStatus.in_error_state` — **always 0**, see §4 |
 | `servo_locked_o` | `0x2E03205C` | [0] | `SERVO_STATUS`. TideLink's PTP servo, **not** the ethernet HA1588 servo |
-| `tl_ewma_credit_o` | `0x2E0320D8` | [12:0] | `PERF_CONG_STATE` — **always 0**, see §5. Note: **not** the `0x20F8` the docs claim |
+| `tl_ewma_credit_o` | `0x2E0320F8` | [12:0] | `PERF_CONG_STATE`. Requires perf enabled — see §5 |
 
 Adjacent bits worth knowing:
 
@@ -36,6 +36,8 @@ Adjacent bits worth knowing:
 | **Software link reset** (write 1) | `0x2E030208` | [3] |
 | `sb_reset_in` SW override value | `0x2E030234` | [0] |
 | `sb_reset_in` SW override select | `0x2E030234` | [1] |
+| `PERF_CTRL` — bit[0] enables perf | `0x2E0320A0` | [4:0] |
+| `PERF_ID` — presence gate, reads `0x5046_0100` | `0x2E0320FC` | [31:0] |
 
 ### How the address decodes
 
@@ -218,7 +220,14 @@ Consequences:
 `REGION5 = 0b00` and pokes `perf_reg_region` directly, so it encodes the *module's*
 convention and passes while the integration is broken.
 
-### Status: FIXED on a branch, not yet in the pin
+### Status: FIXED and IN THE PIN as of 2026-07-16
+
+Everything in §5 above describes the **historical** bug, kept because it explains why the
+old addresses and SW headers were wrong and why nothing caught it. **The pin now carries
+the fix**, so `PERF_CONG_STATE` answers at `0x2E0320F8` (not `0x20D8`) and `PERF_ID` at
+`0x2E0320FC` reads `0x5046_0100`. **The EWMA still reads 0 until software enables perf** —
+write `PERF_CTRL` bit[0] at `0x2E0320A0` — because `ewma_q_r` only advances under
+`perf_active`. That is correct behaviour, not the bug.
 
 Fixed on tidelink branch **`fix/perf-region-decode`** (2026-07-16), two commits:
 
@@ -235,10 +244,9 @@ Fixed on tidelink branch **`fix/perf-region-decode`** (2026-07-16), two commits:
    `DBG_SCRATCH` — it is `PERF_CONG_STATE`, and the read-only address the old
    `tl_perf_set_scratch()` wrote into the void.
 
-**This chiplet does not yet carry the fix.** The pin is still `3f3de09`, so at the
-addresses in §1 the telemetry reads zero and `PERF_ID` reads `0x0` *today*. Once the pin
-rolls, `PERF_CONG_STATE` moves from `0x2E0320D8` to **`0x2E0320F8`** (the documented
-address) and `PERF_ID` answers `0x5046_0100` at `0x2E0320FC`.
+Both landed on tidelink `main` and the chiplet pin was rolled to carry them, gated on a
+full `make regress` (4/4: decode_tx_gate, decode_hready_loop, g2_peer_aperture,
+g2_soc_pair) and a clean-rebuild `make elab` (0 errors). See PIN_POLICY.md.
 
 `tl_ewma_credit_o` is classified `open`, so nothing bonded depends on it either way.
 
@@ -286,9 +294,19 @@ bool rx_valid     = (rd32(WLINK_LINK_STATUS) >> 4) & 1u;
 /* Reset the link layer in software. */
 wr32(WLINK_LINK_ENABLE_RESET, rd32(WLINK_LINK_ENABLE_RESET) | (1u << 3));
 
-/* DO NOT USE — both are tied 0 by upstream defects (sections 4 and 5):
+/* Congestion telemetry. Enable perf FIRST — the EWMA only advances while
+ * perf_active is high, so it reads 0 on a disabled block (section 5). */
+#define TL_PERF_CTRL       (D2D_TLAPB_BASE + 0x20A0u)  /* bit0 = enable      */
+#define TL_PERF_ID         (D2D_TLAPB_BASE + 0x20FCu)  /* 0x50460100         */
+#define TL_PERF_CONG_STATE (D2D_TLAPB_BASE + 0x20F8u)  /* [12:0] ewma credit */
+
+if (rd32(TL_PERF_ID) == 0x50460100u) {          /* presence gate */
+    wr32(TL_PERF_CTRL, rd32(TL_PERF_CTRL) | 1u);       /* enable perf */
+    uint32_t ewma = rd32(TL_PERF_CONG_STATE) & 0x1FFFu;
+}
+
+/* DO NOT USE — tied 0 by a deliberate upstream ECC bypass (section 4):
  *   (rd32(WLINK_LINK_STATUS) >> 2) & 1u      // in_error_state / d2d_reset
- *   rd32(D2D_TLAPB_BASE + 0x20D8u) & 0x1FFFu // ewma credit
  */
 ```
 

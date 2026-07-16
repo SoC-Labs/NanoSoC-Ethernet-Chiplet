@@ -3,17 +3,24 @@
 A wrapper repo is a claim about reproducibility. This file records exactly what
 is pinned, why, and what has to happen before the pins are safe.
 
-**Status 2026-07-10: four of the five pins are now on default branches.** Only
-`tidelink` still lives on a feature branch, and that pin is deliberately frozen
-(see below).
+**Status 2026-07-16: `tidelink` is no longer frozen.** The pin was rolled to pick up
+two perf-block fixes, and `tidelink:main` was fast-forwarded so the pin is
+main-reachable — see "The 2026-07-16 tidelink roll" below. `tidechart` and
+`nanosoc-multicore-system` were also rolled the same day (both "gated green").
 
 ## Current pins
 
 | Submodule | Commit | Reachable from | Is that a default branch? |
 |---|---|---|---|
-| `nanosoc-multicore-system` | `1560fa2` | `origin/master` | **Yes** |
-| `tidelink` | `3f3de09` | `origin/integ/tidelink-soc` | **No** — 135 commits ahead of `origin/main` |
-| `tidechart` | `b5102b2` | `origin/main` *and* `origin/add-subtree-and-irqc-axis` | Yes |
+| `nanosoc-multicore-system` | `84b8617` | `origin/master` | **Yes** |
+| `tidelink` | `43c3d7c` | `origin/integ/tidelink-soc`, local `main` | **Local main yes — needs `git push origin main`** |
+| `tidechart` | `585e042` | `origin/main` | **Yes** |
+
+> **Action outstanding:** `tidelink:main` has been fast-forwarded **locally** to
+> `43c3d7c` but not yet pushed. `origin/main` is still `3f3de09` (tagged
+> `v2026.07.16-chiplet-verified`). Until `git -C tidelink push origin main` runs, the
+> pin is reachable only from `origin/integ/tidelink-soc` and the old caveat below
+> still applies.
 
 Nested inside `nanosoc-multicore-system`, and equally load-bearing:
 
@@ -41,12 +48,44 @@ pinned commits main-reachable, and the SoC's pins were left byte-identical. Same
 RTL, same validation, no feature-branch dependency. Prefer this whenever a pin
 must become "safe" without re-qualifying the hardware.
 
-### tidelink stays frozen, on purpose
+### ~~tidelink stays frozen, on purpose~~ — superseded 2026-07-16
 
-`3f3de09` is the commit the integration was built and elaborated against. Rolling
-it forward is a separate exercise with its own bring-up cost, and is owned
-elsewhere. Until it lands on `origin/main`, this repo is one upstream rebase away
-from being stranded — see the risk section below.
+`3f3de09` was the commit the integration was built and elaborated against, and it was
+held deliberately. That changed on 2026-07-16; see the next section.
+
+### The 2026-07-16 tidelink roll: `3f3de09` -> `43c3d7c`
+
+Rolled to pick up two fixes to the perf register block, plus the V2 ASIC flist commit.
+`43c3d7c` = `3f3de09` + three commits:
+
+| Commit | What |
+|---|---|
+| `e6f0254` | `fix(apb)`: perf region decode off by one — PERF_CTRL writes were dead |
+| `a094999` | `fix(sw)`: PERF_CTRL bits rotated; `0x0F8` is CONG_STATE, not scratch |
+| `43c3d7c` | `flists`: make `tidelink_top_full_asic_v2` elaborate — V2 is the ship config |
+
+**Why this roll was cheap, unlike the one the old text feared.** `origin/main` was a
+strict *ancestor* of `3f3de09` (0 commits unique to main, 135 unique to
+`integ/tidelink-soc`), so fast-forwarding `main` adopts the integration line **without
+changing a single built artifact** — the RTL was already what the pin builds. That is
+the same "make the pin main-reachable without re-qualifying the hardware" pattern used
+for the other four pins on 2026-07-10. Only the three commits above are new RTL/SW.
+
+**Gated on:**
+- `make elab` — 0 errors on a **clean rebuild** (`rm -rf build/elab` first; VCS
+  incremental compile reports "no re-compilation is necessary" and will happily
+  re-link a stale `simv` against changed RTL, so an incremental pass proves nothing).
+- `make regress` — 4/4 PASS: `decode_tx_gate`, `decode_hready_loop`,
+  `g2_peer_aperture`, `g2_soc_pair` (the two-real-SoC pair sim).
+- `make chip-boundary` — 111 ports, 46 pad cells, all classified.
+- tidelink `cocotb/tidelink_apb_regs`: 49/49 existing + 4/4 new
+  `test_perf_region_decode`, mutation-verified (3 of the 4 fail against the old form).
+
+**Blast radius of the fix.** One line of RTL (`perf_reg_region` in
+`tidelink_apb_regs.sv`) plus SW headers. It makes PERF_CTRL writes reachable, which
+were previously dead — so perf can now be enabled, where before `perf_enable_r` was
+stuck at 0. No existing behaviour depended on the dead path. See
+`docs/STATUS_REGISTERS.md` §5.
 
 ## Why this is a real risk, not a formality
 
@@ -102,13 +141,16 @@ in the whole tree is
    wrapper cross-checks against the live SoC, byte-identical `nanosoc_multicore_soc.sv`,
    and `soc_d2d_loopback` 9/9 — including `outbound_slave_can_wait_state`, the only
    guard against that branch's original reversion of the `hreadyout` fix.
-3. Merge `tidelink:integ/tidelink-soc` to `tidelink:main`, or accept the pin
-   deliberately. It is 135 commits ahead and is plainly the live line — but it
-   is not the default branch, and nothing says so from the outside.
-   **Not done** — another repo's call.
+3. ~~Merge `tidelink:integ/tidelink-soc` to `tidelink:main`, or accept the pin
+   deliberately.~~ **DONE LOCALLY 2026-07-16, PUSH OUTSTANDING.** `tidelink:main`
+   was fast-forwarded to `43c3d7c` (a pure fast-forward — `origin/main` was a strict
+   ancestor, so no content decision was involved and no artifact changed). The pin now
+   sits on `main`. **`git -C tidelink push origin main` has not been run**, so
+   `origin/main` is still `3f3de09`. Until it is pushed, the exposure below is
+   unchanged in practice.
 
-Until (3), treat this repo as **pre-release**: it builds, but one of its five
-foundation commits can still be pulled out from under it by someone with no idea
+Until (3) is **pushed**, treat this repo as **pre-release**: it builds, but one of its
+five foundation commits can still be pulled out from under it by someone with no idea
 it exists.
 
 ## Hardware validation status

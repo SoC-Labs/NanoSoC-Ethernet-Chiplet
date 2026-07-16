@@ -65,9 +65,12 @@
 #        branch that writes perf_enable_r (tidelink_perf.sv:437-440) — was
 #        unreachable. perf_enable_r resets to 0 and ewma_q_r only advances under
 #        perf_active. The same off-by-one rotated the read mux, so PERF_ID read
-#        0x0 too. FIXED on tidelink branch `fix/perf-region-decode` (with a
-#        mutation-verified regression test); this pin does NOT yet carry it, so
-#        the bit stays dead here until the pin rolls.
+#        0x0 too. FIXED on tidelink `main` (branch `fix/perf-region-decode`, with
+#        a mutation-verified regression test) and THE PIN NOW CARRIES IT: the
+#        register answers at 0x2E0320F8 and PERF_ID at 0x2E0320FC reads
+#        0x5046_0100. It still reads 0 until SW enables perf (PERF_CTRL bit[0] at
+#        0x2E0320A0) — that is correct behaviour, not the bug. Stays `open` here
+#        regardless: 13 bits of telemetry is a register read, not thirteen pads.
 # ============================================================================
 
 chip_boundary:
