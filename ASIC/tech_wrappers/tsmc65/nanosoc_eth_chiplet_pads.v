@@ -128,9 +128,9 @@ wire tiehi = 1'b1;
 nanosoc_eth_chiplet_chip u_nanosoc_eth_chiplet_chip (
     .sys_fclk(soc_sys_fclk),
     .sys_sysresetn(soc_sys_sysresetn),
-    .rtc_clk(),
+    .rtc_clk(soc_sys_fclk),
     .rmii_ref_clk(soc_rmii_ref_clk),
-    .user_ref_clk(),
+    .user_ref_clk(soc_sys_fclk),
 
     .pad_clk_tx(soc_pad_clk_tx),
     .pad_tx(soc_pad_tx),
@@ -150,6 +150,7 @@ nanosoc_eth_chiplet_chip u_nanosoc_eth_chiplet_chip (
     .link_active_o(),
     .role_is_master_o(),
     .role_locked_o(),
+  
     .d2d_reset_o(),
 
     .dap_swclktck(soc_dap_swclktck),
@@ -204,7 +205,7 @@ nanosoc_eth_chiplet_chip u_nanosoc_eth_chiplet_chip (
 );
 
  // --------------------------------------------------------------------------------
- // IO pad (TSMC 65nm specific Library napping)
+ // IO pad (TSMC 65nm specific Library mapping)
  // --------------------------------------------------------------------------------
 
 // Power Pads
