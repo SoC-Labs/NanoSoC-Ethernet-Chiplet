@@ -100,15 +100,26 @@ elab:
 	echo "== vcs $(VCS_FLAGS) -f $(FLIST) -top $(TOP) -o $(SIMV) =="
 	vcs $(VCS_FLAGS) -f "$(FLIST)" -top $(TOP) -o "$(SIMV)" -l "$(BUILD)/elab.log"
 
+## asic-flist: render the two generated sub-flists the ASIC flist `-f`-includes.
+## TIDELINK V2 IS THE SHIP CONFIGURATION: we resolve tidelink_top_full_asic_v2
+## (the shared deps/tidelink-phy GPIO-PHY, +define+TIDELINK_PHY_V2), NOT the V1
+## tidelink_top_full_asic. The two carry same-named modules and can never
+## co-compile, so this line alone selects which PHY reaches synthesis.
+## V2 needs the deps/tidelink-phy submodule (SSH remote, not fetched by a plain
+## `git submodule update --init` over https) — `make bootstrap` covers it.
 asic-flist:
 	source "$(CHIPLET_HOME)/set_env.sh"
 	source "$(CHIPLET_HOME)/nanosoc-multicore-system/set_env.sh"
 	source "$(CHIPLET_HOME)/tidelink/set_env.sh"
-	mkdir -p "$(BUILD)"
+	mkdir -p "$(BUILD)" "$(dir $(CHIPLET_SOC_ASIC_FLIST))"
+	test -d "$${TIDELINK_HOME}/deps/tidelink-phy/rtl" || { \
+	    echo "asic-flist: MISSING $${TIDELINK_HOME}/deps/tidelink-phy — the V2 PHY."; \
+	    echo "            run: git -C $${TIDELINK_HOME} submodule update --init deps/tidelink-phy"; \
+	    exit 1; }
 	python3 "$(CHIPLET_HOME)/flist/flatten_soc_flist.py" \
 	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore_asic.flist" > "$(CHIPLET_SOC_ASIC_FLIST)"
 	python3 "$(CHIPLET_HOME)/flist/resolve_tidelink_flist.py" \
-	    "$${TIDELINK_HOME}/flists/tidelink_top_full_asic.flist" > "$(CHIPLET_TL_ASIC_FLIST)"
+	    "$${TIDELINK_HOME}/flists/tidelink_top_full_asic_v2.flist" > "$(CHIPLET_TL_ASIC_FLIST)"
 
 ## clean: remove elaboration artifacts.
 clean:
