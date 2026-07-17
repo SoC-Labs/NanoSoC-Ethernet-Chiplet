@@ -59,7 +59,7 @@ set_false_path -from [get_clocks {rmii_ref_clk mii_tx_clk}] -to [get_clocks clk]
 ### CDC 2 — mii_rx -> CLK correctly-synchronised crossings (targeted false paths)
 # Cut ONLY the metastability-capture flops so the last_push_flags MCP (CDC 3)
 # survives on the same clock pair. eth_rx_cksum (exact paths, RTL-verified):
-set_false_path -to [get_pins ${CKSUM}/wptr_gray_pclk_s0_reg[*]/D] ; # gray write-pointer sync (async FIFO)
+set_false_path -to [get_pins ${CKSUM}/wptr_gray_pclk_s0_reg\[*\]/D] ; # gray write-pointer sync (async FIFO)
 set_false_path -to [get_pins ${CKSUM}/ovf_tog_pclk_s0_reg/D]      ; # overflow toggle synchroniser
 set_false_path -to [get_pins ${CKSUM}/push_tog_pclk_s0_reg/D]     ; # push  toggle synchroniser
 set_false_path -from [get_cells ${CKSUM}/fifo_mem_reg*] -to [get_clocks clk] ; # async FIFO memory read (mrx write -> pclk peek/prdata)
@@ -81,8 +81,8 @@ set_false_path -from [get_cells ${ETH_SS}/u_ethmac_0/u_inner/u_rx_ptp_det/ptp_ev
 # ip_bad_q / l4_good_q / l4_bad_q), so "-to CLK" targets exactly this crossing.
 # Multiplier 2/1 mirrors the toggle's >=2-cycle handshake and the SWDCK->CLK
 # idiom above (-end = relax on the capturing CLK).
-set_multicycle_path 2 -setup -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg[*]] -to [get_clocks clk]
-set_multicycle_path 1 -hold  -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg[*]] -to [get_clocks clk]
+set_multicycle_path 2 -setup -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg\[*\]] -to [get_clocks clk]
+set_multicycle_path 1 -hold  -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg\[*\]] -to [get_clocks clk]
 
 # NOTE (max-robustness alternative): if a name-free, guaranteed-complete cut of
 # the mii_rx->CLK boundary is preferred over the verified last_push_flags MCP,
