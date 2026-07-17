@@ -79,12 +79,12 @@ chip_boundary:
 
   pads:
     # ---- clocks + reset -------------------------------------------------
+    # rtc_clk and user_ref_clk are NOT bonded — they share the sys_fclk pad.
+    # See the ALIASED CLOCKS block in the ties section.
     clk_rst:
       - { chip_port: sys_fclk,       pad_kind: input, width: 1, in: sys_fclk }        # free-running system clock
       - { chip_port: nrst,           pad_kind: input, width: 1, in: sys_sysresetn }    # external system reset (active low)
-      - { chip_port: rtc_clk,        pad_kind: input, width: 1, in: rtc_clk }          # RTC / PTP reference
       - { chip_port: rmii_ref_clk,   pad_kind: input, width: 1, in: rmii_ref_clk }     # 50 MHz RMII reference
-      - { chip_port: user_ref_clk,   pad_kind: input, width: 1, in: user_ref_clk }     # Wlink PLL reference (async to sys_hclk)
 
     # ---- die-to-die PHY: the wire to the far die ------------------------
     # Source-synchronous. pad_clk_rx is the far die's forwarded clock and is
@@ -102,12 +102,11 @@ chip_boundary:
       - { chip_port: i2c_sda, pad_kind: bidir, width: 1, in: i2c_sda_i, out: i2c_sda_o, oe: i2c_sda_t, oe_polarity: active_low }
 
     # ---- link bring-up straps (per-die) ---------------------------------
-    # These are pads, not ties, because the chiplet cannot bring its link up
-    # without them and their values differ between the two dies.
-    d2d_strap:
-      - { chip_port: role_strap,       pad_kind: input, width: 1, in: role_strap_i }        # link role select
-      - { chip_port: mask_hs_bypass,   pad_kind: input, width: 1, in: mask_hs_bypass_i }    # opens the SW role-lock path
-      - { chip_port: apb_debug_unlock, pad_kind: input, width: 1, in: apb_debug_unlock_i }  # ditto; debug strap
+    # NONE. All three are TIED — see the STRAPS block in the ties section.
+    # role_strap is tied, so firmware owns the per-die role. That is the
+    # documented path for this build, not a workaround: NEGO_CFG_RESET = 7'h00
+    # (tidelink_top.sv:123, not overridden here) means nego_en = 0 at POR, and
+    # axi_chiplet_controller.sv:83 calls that "the proven SW-role_lock path".
 
     # ---- link status / bring-up observability ---------------------------
     # NONE. All four former status pads are OPEN — every one is already
@@ -116,31 +115,29 @@ chip_boundary:
     # in the header above.
 
     # ---- CoreSight SWJ-DP -----------------------------------------------
+    # SWD only. JTAG (tdi/tdo/ntrst) is tied/open — dap_swj_enable is already
+    # tied 1'b1 below, so SWD is the debug path and the JTAG TAP is unused.
     swd:
       - { chip_port: swd_clk, pad_kind: input,        width: 1, in:  dap_swclktck }
       - { chip_port: swd_dio, pad_kind: bidir,        width: 1, in:  dap_swditms, out: dap_swdo, oe: dap_swdoen, oe_polarity: active_high }
-      - { chip_port: jtag_tdi,  pad_kind: input,      width: 1, in:  dap_tdi }
-      - { chip_port: jtag_tdo,  pad_kind: tristate_out, width: 1, out: dap_tdo, oe: dap_ntdoen, oe_polarity: active_low }
-      - { chip_port: jtag_ntrst, pad_kind: input,     width: 1, in:  dap_ntrst }
 
     # ---- DFT -------------------------------------------------------------
-    # A tied-off scan chain is a chip with no scan chain.
+    # The scan CHAIN is not bonded: scan_in/out/clk/shift/mode/asyncrst_ctrl are
+    # tied or open (see the DFT block in ties). This chip therefore has no scan
+    # access. That is a deliberate v1 pad-budget decision, and it is reversible:
+    # the ports still exist on the inner RTL, so a later revision can mux the
+    # chain onto functional pads without touching nanosoc_eth_chiplet.sv.
+    #
+    # sys_scanenable / sys_testmode STAY bonded. They are the DFT mode controls
+    # rather than the chain itself, and a future muxed chain needs them.
     dft:
-      - { chip_port: scan_mode,          pad_kind: input,  width: 1, in:  scan_mode }
-      - { chip_port: scan_asyncrst_ctrl, pad_kind: input,  width: 1, in:  scan_asyncrst_ctrl }
-      - { chip_port: scan_clk,           pad_kind: input,  width: 1, in:  scan_clk }
-      - { chip_port: scan_shift,         pad_kind: input,  width: 1, in:  scan_shift }
-      - { chip_port: scan_in,            pad_kind: input,  width: 1, in:  scan_in }
-      - { chip_port: scan_out,           pad_kind: output, width: 1, out: scan_out }
       - { chip_port: sys_scanenable,     pad_kind: input,  width: 1, in:  sys_scanenable }
       - { chip_port: sys_testmode,       pad_kind: input,  width: 1, in:  sys_testmode }
 
     # ---- UARTs -----------------------------------------------------------
-    uart:
-      - { chip_port: uart_rxd,      pad_kind: input,  width: 1, in:  uart_rxd }
-      - { chip_port: uart_txd,      pad_kind: output, width: 1, out: uart_txd }
-      - { chip_port: cpu1_uart_rxd, pad_kind: input,  width: 1, in:  chip_core_uart_rxd }
-      - { chip_port: cpu1_uart_txd, pad_kind: output, width: 1, out: chip_core_uart_txd }
+    # NONE. Both cores' UARTs are tied/open — see the UART block in ties.
+    # There is no console on this chip; bring-up is over SWD + the TideLink
+    # config APB (docs/STATUS_REGISTERS.md).
 
     # ---- ethernet RMII + MDIO -------------------------------------------
     eth:
@@ -158,19 +155,17 @@ chip_boundary:
       - { chip_port: qspi_io,   pad_kind: bidir,  width: 4, in: qspi_io_i, out: qspi_io_o, oe: qspi_io_e, oe_polarity: active_high }
 
     # ---- PL022 SPI master ------------------------------------------------
-    spi:
-      - { chip_port: spi_sclk, pad_kind: output, width: 1, out: spi_sclk }
-      - { chip_port: spi_mosi, pad_kind: output, width: 1, out: spi_mosi }
-      - { chip_port: spi_miso, pad_kind: input,  width: 1, in:  spi_miso }
-      - { chip_port: spi_ss,   pad_kind: output, width: 3, out: spi_ss }
+    # NONE. Tied/open — see the SPI block in ties. QSPI (above) is the bonded
+    # serial-flash path; the PL022 has no off-chip peer on this package.
 
     # ---- HOSTIO4 host-access link ---------------------------------------
     hostio4:
       - { chip_port: hostio4, pad_kind: bidir, width: 7, in: hostio4_p1_in, out: hostio4_p1_out, oe: hostio4_p1_outen, oe_polarity: active_high }
 
     # ---- PTP 1PPS --------------------------------------------------------
-    ptp:
-      - { chip_port: phc_pps_out, pad_kind: output, width: 1, out: phc_pps_out }
+    # NONE. phc_pps_out is OPEN — see the opens list. This costs the only
+    # physical means of observing PTP alignment against a reference; the PHC's
+    # captured time is still readable (CAP_SECONDS_LO/HI, CAP_NANOSECONDS).
 
   # =====================================================================
   # TIED INPUTS — driven to a constant inside the wrapper, NOT bonded.
@@ -179,6 +174,29 @@ chip_boundary:
   ties:
     # --- FPGA-only IDELAYCTRL reference; ASIC uses USE_IDELAY=0 ---
     - { soc_port: idelay_ref_clk, const: "1'b0" }
+
+    # =================================================================
+    # ALIASED CLOCKS — not constants. `const` is emitted VERBATIM into the
+    # wrapper's inner instantiation, and sys_fclk is a wrapper port, so these
+    # render as `.rtc_clk (sys_fclk)` and share the sys_fclk pad rather than
+    # bonding two more. That is the v1 pad-budget decision.
+    #
+    # This is the ONLY way the spec can express pad sharing: `pads` is 1:1 and
+    # there is no alias kind. Recorded here rather than hand-wired in the pad
+    # ring, so it stays reviewable and `make chip-boundary` still counts it.
+    #
+    # WHAT IT COSTS — both are board-sourced in docs/PHYSICAL_HANDOFF.md:22,24:
+    #   rtc_clk      : the RTC/PHC now counts off sys_fclk, not a 32.768 MHz
+    #                  reference. PTP resolution and drift follow the system
+    #                  clock; the PHC increment must be programmed to match.
+    #   user_ref_clk : the Wlink PLL reference is no longer independent of
+    #                  sys_hclk. The controller's internal CDC still exists and
+    #                  is harmless, but the link rate is now tied to the system
+    #                  clock and inherits its jitter.
+    # Bond them separately if either cost bites.
+    # =================================================================
+    - { soc_port: rtc_clk,      const: "sys_fclk" }
+    - { soc_port: user_ref_clk, const: "sys_fclk" }
 
     # --- core straps / sideband ---
     - { soc_port: sys_sysresetreq,        const: "1'b0" }   # no external reset requester
@@ -191,12 +209,70 @@ chip_boundary:
     - { soc_port: network_core_rxev,      const: "1'b0" }
     - { soc_port: chip_core_rxev,         const: "1'b0" }
 
+    # =================================================================
+    # STRAPS — all three tied. FIRMWARE now owns the per-die role.
+    #
+    # role_strap_i sets role_effective at POR (axi_chiplet_controller.sv:575),
+    # so with it tied 0 BOTH dies boot believing they are master. Firmware must
+    # role-lock each die before the link is used. That is the documented path
+    # for this build, not a workaround — NEGO_CFG_RESET = 7'h00 means nego_en=0
+    # at POR, the autoneg FSM parks in ST_BYPASS (tidelink_autoneg.sv:830), and
+    # :83 names nego_en=0 "the proven SW-role_lock / host-winscan path".
+    #
+    # Bug N7 (identical priority -> identical autoneg backoff -> both time out)
+    # is NOT reachable here: it lives in ST_NEGO_WAIT, which needs nego_en=1.
+    # If firmware ever enables autoneg it must write NEGO_PRIORITY (0x2E032098)
+    # per die FIRST — with both dies tied identical, enabling autoneg without
+    # that write reproduces N7 exactly. test_18 covers it.
+    #
+    # Bond role_strap if you want a die that comes up correctly with no
+    # firmware. That is the whole trade.
+    # =================================================================
+    - { soc_port: role_strap_i,       const: "1'b0" }   # both dies master until SW role-locks
+    - { soc_port: mask_hs_bypass_i,   const: "1'b0" }   # 0 = normal; no SW role-lock bypass
+    - { soc_port: apb_debug_unlock_i, const: "1'b0" }   # 0 = debug locked
+
     # --- auto-negotiation priority ---
-    # REQUIRED DECISION. Two dies presenting the same priority have no tiebreak,
-    # so with this tied the ONLY per-die differentiator is the `role_strap` pad.
-    # A production chiplet sources this from OTP or a die UID. 16 pads is the
-    # wrong answer; a fuse bank is the right one.
+    # Inert in this build, and left tied for that reason. nego_pri_sel
+    # (NEGO_CFG[3:2]) PORs to 0, which selects nego_priority_REG, not this port
+    # (tidelink_autoneg.sv:543). Nothing reads it unless firmware writes
+    # NEGO_CFG[3:2]=01. A production chiplet would source it from OTP or a die
+    # UID via that path; 16 pads is the wrong answer, a fuse bank is the right
+    # one.
     - { soc_port: nego_priority_i, const: "16'h0001" }
+
+    # =================================================================
+    # JTAG — the TAP is unused; dap_swj_enable is tied 1'b1 (SWD is the path).
+    # =================================================================
+    - { soc_port: dap_tdi,   const: "1'b0" }
+    # ACTIVE LOW. 1'b1 = TAP reset DEASSERTED. Tying this 0 would hold the TAP
+    # in permanent reset. Same sense as dap_npotrst above.
+    - { soc_port: dap_ntrst, const: "1'b1" }
+
+    # =================================================================
+    # DFT — the scan chain is not bonded. Tied inert, NOT deleted: the inner
+    # ports remain, so a later revision can mux the chain onto functional pads.
+    # sys_scanenable / sys_testmode stay bonded (see the dft pad group).
+    # =================================================================
+    - { soc_port: scan_mode,          const: "1'b0" }
+    - { soc_port: scan_asyncrst_ctrl, const: "1'b0" }
+    - { soc_port: scan_clk,           const: "1'b0" }
+    - { soc_port: scan_shift,         const: "1'b0" }
+    - { soc_port: scan_in,            const: "1'b0" }
+
+    # =================================================================
+    # UARTs — no console on this chip.
+    # ACTIVE HIGH IDLE. A UART line idles at 1. Tying RXD to 0 presents a
+    # permanent start-bit / break condition to the receiver, which some UART
+    # cores latch as a framing error. 1'b1 is the idle-line value.
+    # =================================================================
+    - { soc_port: uart_rxd,           const: "1'b1" }
+    - { soc_port: chip_core_uart_rxd, const: "1'b1" }
+
+    # =================================================================
+    # PL022 SPI — no off-chip peer. MISO reads as a constant 0.
+    # =================================================================
+    - { soc_port: spi_miso, const: "1'b0" }
 
     # --- TideChart PUF sampler: not enabled in v1 ---
     - { soc_port: puf_seed,  const: "16'h0000" }
@@ -223,6 +299,26 @@ chip_boundary:
     - sys_poresetn
     - sys_hclk
     - sys_hresetn
+
+    # --- JTAG TAP outputs: the TAP is unused (SWD is the debug path) ---
+    - dap_tdo
+    - dap_ntdoen
+
+    # --- scan chain output: the chain is not bonded. See the DFT ties. ---
+    - scan_out
+
+    # --- UART transmit: no console on this chip ---
+    - uart_txd
+    - chip_core_uart_txd
+
+    # --- PL022 SPI outputs: no off-chip peer ---
+    - spi_sclk
+    - spi_mosi
+    - spi_ss                 # [2:0]
+
+    # --- PTP 1PPS: the only physical view of PTP alignment, given up for the
+    #     pad budget. Captured time stays readable over the PHC registers. ---
+    - phc_pps_out
 
     # --- eth_ss_0 responses: nothing drives that port ---
     - eth_ss_0_hrdata

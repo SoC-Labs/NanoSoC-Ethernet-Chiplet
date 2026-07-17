@@ -205,13 +205,6 @@ def main() -> int:
         print("\n".join(bad), file=sys.stderr)
         return 1
 
-    pad_bad = check_pad_ring(boundary, be)
-    if pad_bad:
-        print(f"chip_boundary '{boundary.chip_module}': "
-              f"{len(pad_bad)} pad-ring mismatch(es) vs the spec:", file=sys.stderr)
-        print("\n".join(pad_bad), file=sys.stderr)
-        return 1
-
     cov = be.coverage()
     n_bits = sum(p["width"] for p in ports)
     print(f"chip_boundary '{boundary.chip_module}' <- '{boundary.inner_module}'")
@@ -224,14 +217,26 @@ def main() -> int:
     bonded_bits = sum(p.width * (3 if p.kind == "bidir" else 2 if p.kind == "tristate_out" else 1)
                       for p in boundary.pads)
     print(f"  pads       : {bonded_pads} pad cells")
-    print(f"  pad ring   : {PADS.name} agrees (all {len(cov['bonded'])} bonded "
-          f"ports reach a pad cell)")
-    print(f"  OK — every port accounted for exactly once")
 
+    # Emit BEFORE gating on the pad ring. The wrapper is generated from the
+    # spec; the hand-written ring is downstream of it. Gating emission on a
+    # stale ring would deadlock every spec change — you would need the new
+    # wrapper to write the new ring, and the new ring to emit the wrapper.
     if args.emit:
         out = Path(args.emit)
         path = be.generate(out, out.parent / "flist")
         print(f"  emitted    : {path}")
+
+    pad_bad = check_pad_ring(boundary, be)
+    if pad_bad:
+        print(f"chip_boundary '{boundary.chip_module}': "
+              f"{len(pad_bad)} pad-ring mismatch(es) vs the spec:", file=sys.stderr)
+        print("\n".join(pad_bad), file=sys.stderr)
+        return 1
+
+    print(f"  pad ring   : {PADS.name} agrees (all {len(cov['bonded'])} bonded "
+          f"ports reach a pad cell)")
+    print(f"  OK — every port accounted for exactly once")
     return 0
 
 
