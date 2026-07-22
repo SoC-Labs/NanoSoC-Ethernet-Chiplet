@@ -1,10 +1,32 @@
 # TideLink KR260 Two-Board Port Plan (nanosoc-ethernet-chiplet)
 
-> **Status:** PLAN, not implementation (branch `feat/tidelink-chiplet-port`).
-> Companion to the tidelink architecture doc
-> `tidelink/docs/ETHERNET_CHIPLET_INTEGRATION.md`. This file says how *this*
-> repo's integration maps onto a two-board KR260 FPGA build of the ethernet
-> chiplet over TideLink, and what the ethernet path still needs.
+> **Status:** SCAFFOLDING IN PLACE, ready to synth (branch `feat/tidelink-chiplet-port`).
+> The FPGA-flow scaffolding is now built (see "Implementation status" below);
+> what remains is the xck26 scoping synth and its closure work. This file says
+> how *this* repo's integration maps onto a two-board KR260 FPGA build of the
+> ethernet chiplet over TideLink, and what the ethernet path still needs.
+
+## Implementation status (2026-07-22)
+
+The KR260 flow scaffolding is in place. The tidelink submodule pointer moved
+from `43c3d7c` to a local **`integ/kr260-eth-chiplet`** branch (no remote push)
+that layers the KR260 FPGA flow onto the chiplet-verified line *additively* —
+the silicon-verified flow-control RTL (`tidelink_fc_adapter.sv`,
+`WlinkGenericFCSM_6.v`) is byte-identical to `43c3d7c`, so the merge carries no
+FC risk. On that branch:
+
+- `nanosoc_eth_chiplet` is packaged as a Vivado IP
+  (`fpga/vivado_ip/{nanosoc_eth_chiplet_filelist,package_eth_chiplet_ip}.tcl`
+  + wrapper), reusing *this* repo's flattened source lists.
+- New `kr260-eth-chiplet` / `kr260-eth-chiplet-flip` targets (die_a/die_b) with
+  the ZynqMP BD scaffold, J21-ribbon XDC, and **CoreSight SWD on PMOD4**
+  (SWCLK=L2, SWDIO=T7, nRST=AF7) driving the existing OpenOCD flow.
+- `make -C fpga package_eth_chiplet_ip` is the **OOC scoping synth** — the
+  go/no-go that proves the SoC fits xck26 (needs `make elab` first +
+  `TIDELINK_PHY_V2=1`). See `tidelink/fpga/targets/kr260-eth-chiplet/BUILD_NOTES.md`.
+
+Still open (below): the scoping-synth result, FPGA memory mapping, the block-
+design closure, finding G1's DEVICE_CLASS strap, and firmware.
 
 ## 0. What this repo already is (verified on disk, HEAD e809fbf)
 
