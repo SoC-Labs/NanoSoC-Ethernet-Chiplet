@@ -147,8 +147,8 @@ dongle (CP2102 / FT232 / CH340) off PMOD3:
 | `uart_rxd` (host → SoC) | 8 | AG11 | dongle **TXD** |
 | GND | 11 | — | dongle GND |
 
-> PMOD3 pins 1–4 are reserved for the LAN8720's MDIO/nRST and the status LEDs
-> (§3), so the dongle uses the lower row.
+> PMOD3 pins 3–4 hold the status LEDs once the PHY takes PMOD1 (§3), so the
+> dongle uses the lower row.
 
 **Cross TX↔RX** — the single most common wiring mistake here. Do **not** connect
 the dongle's VCC if the board is already powered.
@@ -206,9 +206,9 @@ the easy part.
 | `rmii_crs_dv` | in | CRS_DV / MODE0 | strap pin |
 | `mdc_pad_o` | out | MDC | |
 | `md_pad_{i,o,oe}` | bidir | MDIO | one pin + IOBUF |
-| *(optional)* `phy_nrst` | out | nRST | tie high or drive from PL |
 
-**9 PL pins** (10 with nRST) — one 8-pin PMOD is not enough, so use **two**.
+**9 PL pins.** A Pmod carries 8 signals, so the module fills one connector and
+**TX1 is the single overflow** — one flying lead, nothing more.
 
 ### Pin map — module plugs into PMOD1, TX1 overflows to PMOD2 **[PROPOSED]**
 

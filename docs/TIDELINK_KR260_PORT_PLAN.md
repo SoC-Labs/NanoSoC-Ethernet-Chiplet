@@ -19,8 +19,8 @@ FC risk. On that branch:
   (`fpga/vivado_ip/{nanosoc_eth_chiplet_filelist,package_eth_chiplet_ip}.tcl`
   + wrapper), reusing *this* repo's flattened source lists.
 - New `kr260-eth-chiplet` / `kr260-eth-chiplet-flip` targets (die_a/die_b) with
-  the ZynqMP BD scaffold, J21-ribbon XDC, and **CoreSight SWD on PMOD4**
-  (SWCLK=L2, SWDIO=T7, nRST=AF7) driving the existing OpenOCD flow.
+  the ZynqMP BD scaffold, J21-ribbon XDC, and **CoreSight SWD on PMOD2**
+  (SWCLK=J11, SWDIO=J10, nRST=K13 — 3.3V) driving the existing OpenOCD flow.
 - `make -C fpga package_eth_chiplet_ip` is the **OOC scoping synth** — the
   go/no-go that proves the SoC fits xck26 (needs `make elab` first +
   `TIDELINK_PHY_V2=1`). See `tidelink/fpga/targets/kr260-eth-chiplet/BUILD_NOTES.md`.
