@@ -175,6 +175,10 @@ pins are better kept clear of the ribbon.
 
 ## 3. LAN8720 RMII PHY (milestone M2)
 
+> **Hub-side work:** the FPGA side below is built. Making ethernet actually
+> *reachable* needs a PL-ethernet segment in fpgahub (own subnet + unique
+> `pl_mac` per die). See [`KR260_LAN8720_FPGAHUB_PLAN.md`](KR260_LAN8720_FPGAHUB_PLAN.md).
+
 ### Current state — **tied off**
 
 The M1 build deliberately idles the PHY inside
