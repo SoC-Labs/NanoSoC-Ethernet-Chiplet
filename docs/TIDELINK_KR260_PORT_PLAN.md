@@ -28,6 +28,11 @@ FC risk. On that branch:
 Still open (below): the scoping-synth result, FPGA memory mapping, the block-
 design closure, finding G1's DEVICE_CLASS strap, and firmware.
 
+**Board wiring:** see [`KR260_BOARD_WIRING.md`](KR260_BOARD_WIRING.md) for where
+to land the LAN8720 RMII PHY, the UART console, and the SWD debugger on the
+KR260 (connector/ball maps, the 1.8 V vs 3.3 V PMOD split, and the RTL/BD/XDC
+changes each needs).
+
 ## 0. What this repo already is (verified on disk, HEAD e809fbf)
 
 `nanosoc_eth_chiplet.sv` is a **pure structural integration top** — it forks
@@ -127,6 +132,21 @@ two-board ethernet demo:
    eth_scratch_tx, (b) pushes it across the peer window into the far die's
    eth_scratch_rx, (c) drives the PTP Sync/Delay-Req exchange. This is new
    firmware on top of the existing PicoTCP stack.
+7. **nanosoc UART console path.** The KR260's micro-USB (FTDI FT4232) is
+   hardwired to the **PS** MIO console — the `kr260-pair-*` `tidelink_design.tcl`
+   is explicit that "the PS DDR4 + MIO are driven by the board preset and are NOT
+   brought out as PL wrapper ports". The nanosoc UARTs live in the **PL**
+   (`uart_txd/rxd` = network_core/CPU0, `cpu1_uart_txd/rxd` = chip_core/CPU1;
+   `docs/PIN_MAP.md` §5c) and have no path to that FTDI, so they will **not**
+   enumerate as a native `/dev/ttyUSB` over the board cable. *Action:* to get the
+   nanosoc console over the same USB cable, drop an `axi_uartlite` into the PL,
+   hang it off the **already-enabled** `M_AXI_GP0`, and wire nanosoc `uart_txd/
+   rxd` to it; from PetaLinux it appears as `/dev/ttyULx` and is relayed over the
+   existing console/SSH (`socat`/`microcom`). One uartlite per core for both
+   consoles — cheap in LUTs, no PS board-preset change, no schematic dependency.
+   (The EMIO→second-PS-UART alternative needs a board-preset edit and still won't
+   enumerate as a second ttyUSB — the FTDI channel isn't wired for it — so it
+   ends up bridging in software anyway. Not preferred.)
 
 ## 4. Milestone mapping (to the tidelink arch doc)
 
