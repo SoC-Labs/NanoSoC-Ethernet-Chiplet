@@ -3,7 +3,7 @@
 	url = https://git.soton.ac.uk/soclabs/tidechart.git
 [submodule "tidelink"]
 	path = tidelink
-	url = https://git.soton.ac.uk/soclabs/tidelink.git
+	url = git@github.com:SoC-Labs/TideLink-Chiplet-Interconnect-AHB.git
 [submodule "nanosoc-multicore-system"]
 	path = nanosoc-multicore-system
 	url = https://git.soton.ac.uk/soclabs/nanosoc-multicore-system.git
