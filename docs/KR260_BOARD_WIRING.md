@@ -210,44 +210,69 @@ the easy part.
 
 **9 PL pins** (10 with nRST) — one 8-pin PMOD is not enough, so use **two**.
 
-### Recommended pin map — PMOD1 + PMOD3 **[PROPOSED]**
+### Pin map — module plugs into PMOD1, TX1 overflows to PMOD2 **[PROPOSED]**
 
-Both are 3.3 V, matching the LAN8720 module. **PMOD2 is not available** — SWD now
-owns pins 1-3 there (§1), so the PHY spills onto PMOD3 instead. RMII needs 9-10
-signals and a Pmod carries 8, so it spans two connectors either way.
+The Waveshare LAN8720 is a **plug-in Pmod module**, so its pinout is fixed by the
+board — do not re-order it. The PYNQ-Z2 build
+(`nanosoc-multicore-system/pynq/targets/pynq-z2/nanosoc_multicore.xdc`) plugs it
+into PMODB and uses exactly 8 pins; **TX1 is the one signal that does not fit**
+and needs a single flying lead. (On the Z2 it lands on an Arduino pin only
+because PMODA was already full — nothing about TX1 requires that connector.)
+
+Module pinout, in Pmod pin numbers — identical on Z2 and KR260:
+
+| Pmod pin | LAN8720 signal | Chiplet port |
+|---|---|---|
+| 1 | RX1 | `rmii_rxd[1]` |
+| 2 | TX0 | `rmii_txd[0]` |
+| 3 | CRS_DV | `rmii_crs_dv` |
+| 4 | MDC | `mdc_pad_o` |
+| 7 | TX_EN | `rmii_tx_en` |
+| 8 | RX0 | `rmii_rxd[0]` |
+| 9 | MDIO | `md_pad_*` (IOBUF) |
+| 10 | nINT/REF_CLK (50 MHz out) | `rmii_ref_clk` |
+| — | **TX1** *(overflow)* | `rmii_txd[1]` |
+
+On the KR260: **plug the module into PMOD1**, and run TX1 to **PMOD2 pin 4
+(K12)** — the nearest free pin, since SWD only takes PMOD2 pins 1-3.
 
 | Signal | Connector | Pin | Ball |
 |---|---|---|---|
-| `rmii_ref_clk` | PMOD1 | 1 | H12 |
+| `rmii_rxd[1]` | PMOD1 | 1 | H12 |
 | `rmii_txd[0]` | PMOD1 | 2 | E10 |
-| `rmii_txd[1]` | PMOD1 | 3 | D10 |
-| `rmii_tx_en` | PMOD1 | 4 | C11 |
-| `rmii_rxd[0]` | PMOD1 | 7 | B10 |
-| `rmii_rxd[1]` | PMOD1 | 8 | E12 |
-| `rmii_crs_dv` | PMOD1 | 9 | D11 |
-| `mdc_pad_o` | PMOD1 | 10 | B11 |
-| `MDIO` (bidir) | PMOD3 | 1 | AE12 |
-| `phy_nrst` | PMOD3 | 2 | AF12 |
-| 3.3 V / GND | either | 6,12 / 5,11 | module power |
+| `rmii_crs_dv` | PMOD1 | 3 | D10 |
+| `mdc_pad_o` | PMOD1 | 4 | C11 |
+| `rmii_tx_en` | PMOD1 | 7 | B10 |
+| `rmii_rxd[0]` | PMOD1 | 8 | E12 |
+| `MDIO` (bidir) | PMOD1 | 9 | D11 |
+| `rmii_ref_clk` | PMOD1 | 10 | B11 |
+| **`rmii_txd[1]` (TX1)** | **PMOD2** | **4** | **K12** |
+| 3.3 V / GND | PMOD1 | 6,12 / 5,11 | module power |
 
-> The status LEDs currently sit on PMOD1 pins 1–2 (H12/E10). Move them to PMOD3
-> pins 3–4 (AG10/AH10) or drop them when you wire the PHY.
+> **The status LEDs must move off PMOD1** (they currently sit on pins 1-2,
+> H12/E10 — the module's RX1/TX0). Move them to PMOD3 pins 3-4 (AG10/AH10).
+> There is no `phy_nrst`: the Waveshare module self-resets, and the Z2 build
+> drives no reset pin.
 
 ```tcl
-set_property -dict { PACKAGE_PIN H12 IOSTANDARD LVCMOS33 } [get_ports rmii_ref_clk]
-set_property -dict { PACKAGE_PIN E10 IOSTANDARD LVCMOS33 SLEW FAST DRIVE 8 } [get_ports {rmii_txd[0]}]
-set_property -dict { PACKAGE_PIN D10 IOSTANDARD LVCMOS33 SLEW FAST DRIVE 8 } [get_ports {rmii_txd[1]}]
-set_property -dict { PACKAGE_PIN C11 IOSTANDARD LVCMOS33 SLEW FAST DRIVE 8 } [get_ports rmii_tx_en]
-set_property -dict { PACKAGE_PIN B10 IOSTANDARD LVCMOS33 } [get_ports {rmii_rxd[0]}]
-set_property -dict { PACKAGE_PIN E12 IOSTANDARD LVCMOS33 } [get_ports {rmii_rxd[1]}]
-set_property -dict { PACKAGE_PIN D11 IOSTANDARD LVCMOS33 } [get_ports rmii_crs_dv]
-set_property -dict { PACKAGE_PIN B11 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 } [get_ports mdc_pad_o]
-set_property -dict { PACKAGE_PIN AE12 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 PULLUP true } [get_ports MDIO]
-set_property -dict { PACKAGE_PIN AF12 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 4 } [get_ports phy_nrst]
+# LAN8720 module on PMOD1 (fixed module pinout — do not re-order)
+set_property -dict { PACKAGE_PIN H12 IOSTANDARD LVCMOS33 } [get_ports {rmii_rxd[1]}]
+set_property -dict { PACKAGE_PIN D10 IOSTANDARD LVCMOS33 } [get_ports rmii_crs_dv]
+set_property -dict { PACKAGE_PIN E12 IOSTANDARD LVCMOS33 } [get_ports {rmii_rxd[0]}]
+set_property -dict { PACKAGE_PIN C11 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 } [get_ports mdc_pad_o]
+set_property -dict { PACKAGE_PIN D11 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 PULLUP true } [get_ports MDIO]
 
-# 50 MHz RMII reference — constrain it, and waive dedicated routing if the pin
-# chosen is not clock-capable (same treatment as SWCLK).
-create_clock -period 20.000 -name rmii_ref_clk [get_ports rmii_ref_clk]
+# RMII TX: SLEW FAST + DRIVE 16 (+ IOB) is the Z2-validated source-synchronous
+# config. NOTE: verify IOB TRUE is accepted on the KR260 HD bank — the TideLink
+# pad_rx path needed IOB FALSE on this device, so do not assume it packs.
+set_property -dict { PACKAGE_PIN E10 IOSTANDARD LVCMOS33 SLEW FAST DRIVE 16 } [get_ports {rmii_txd[0]}]
+set_property -dict { PACKAGE_PIN B10 IOSTANDARD LVCMOS33 SLEW FAST DRIVE 16 } [get_ports rmii_tx_en]
+# TX1 overflow -> PMOD2 pin 4 (SWD occupies pins 1-3 only)
+set_property -dict { PACKAGE_PIN K12 IOSTANDARD LVCMOS33 SLEW FAST DRIVE 16 } [get_ports {rmii_txd[1]}]
+
+# 50 MHz REF_CLK from the PHY, on a non-clock-capable pin (as on the Z2, V12).
+create_clock -period 20.000 -name rmii_ref_clk -waveform {0.000 10.000} -add [get_ports rmii_ref_clk]
+set_property -dict { PACKAGE_PIN B11 IOSTANDARD LVCMOS33 } [get_ports rmii_ref_clk]
 set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets -of_objects [get_ports rmii_ref_clk]]
 ```
 
@@ -256,7 +281,7 @@ set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets -of_objects [get_ports rmii_r
 `rmii_ref_clk` is an **input** to the SoC, so by default the LAN8720 sources the
 50 MHz. Two ways to do it:
 
-- **PHY-sourced (default LAN8720 module).** The module's 25 MHz crystal drives an
+- **PHY-sourced — this is what the Z2 build uses (REF_CLK_OUT mode).** The module's 25 MHz crystal drives an
   internal PLL and the `nINT/REFCLKO` pin outputs 50 MHz into the FPGA. Simplest
   to wire, but 50 MHz arriving on a non-clock-capable PMOD pin is the weak point
   — hence the `CLOCK_DEDICATED_ROUTE FALSE` above. Verify the ball you pick; if
@@ -311,8 +336,8 @@ set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets -of_objects [get_ports rmii_r
 | TideLink die-to-die ribbon | **J21** (RPi 40-pin), 18 signals + 2 I²C + GNDs | 3.3 V | **[BUILT]** — straight-through, `BCM_n ↔ BCM_n`; **never bridge the +3V3/+5V rails** |
 | SWD debugger | **PMOD2** (pins 1-3) | 3.3 V | applied; build validating placement |
 | UART console | EMIO → `/dev/ttyPS1` (**recommended**), or dongle on **PMOD3** pins 7–8 | — / 3.3 V | currently on spare J21 pins **[BUILT]** |
-| LAN8720 RMII | **PMOD1** (+ **PMOD3** for MDIO/nRST) | 3.3 V | **[PROPOSED]** — RTL tie-offs must be undone first |
-| Status LEDs | PMOD1 pins 1–2 → move to **PMOD3** pins 3–4 if PHY takes PMOD1 | 3.3 V | **[BUILT]** |
+| LAN8720 RMII | **PMOD1** (module plugs in) + **PMOD2 pin 4** for TX1 | 3.3 V | **[PROPOSED]** — RTL tie-offs must be undone first |
+| Status LEDs | PMOD1 pins 1–2 → **must move to PMOD3** pins 3–4 when the PHY plugs into PMOD1 | 3.3 V | **[BUILT]** |
 | *(free)* | **PMOD4** — 1.8 V, keep clear of 3.3 V parts | 1.8 V | unused |
 
 ### Pre-power checklist
