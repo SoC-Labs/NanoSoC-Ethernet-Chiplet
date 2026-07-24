@@ -37,49 +37,37 @@ Standard Pmod 2×6 numbering: top row `1 2 3 4 5=GND 6=VCC`, bottom row
 
 ## 1. SWD debugger
 
-### Current state **[BUILT]**
+### Current state — **PMOD2, 3.3 V** *(applied; build in flight to validate placement)*
 
-SWD is on **PMOD4** at `LVCMOS18` — it builds and places, but PMOD4 is the 1.8 V
-connector, so it needs a **1.8 V-capable probe** (ST-Link V3, or a DAPLink with
-1.8 V VREF) or a level shifter.
+SWD was **moved off PMOD4**. PMOD4 sits on HP banks 64/65 (1.8 V) and rejected
+`LVCMOS33` outright (`DRC BIVB-1`), which would have forced a 1.8 V-only probe.
+PMOD2 is a 3.3 V HD bank, so an ordinary ST-Link / DAPLink works directly.
 
-| Signal | PMOD4 pin | Ball | Direction |
+| Signal | PMOD2 pin | Ball | Direction |
 |---|---|---|---|
-| `SWCLK` | 1 | L2 | probe → FPGA |
-| `SWDIO` | 2 | T7 | bidirectional |
-| `SWD_NPORESETN` | 3 | AF7 | probe → FPGA (optional) |
+| `SWCLK` | 1 | J11 | probe → FPGA |
+| `SWDIO` | 2 | J10 | bidirectional |
+| `SWD_NPORESETN` | 3 | K13 | probe → FPGA (optional) |
 | GND | 5 / 11 | — | probe return |
-| VCC (**1.8 V**) | 6 / 12 | — | probe VREF sense |
+| VCC (**3.3 V**) | 6 / 12 | — | probe VREF sense |
 
-`SWCLK` also carries `set_property CLOCK_DEDICATED_ROUTE FALSE` (it lands on an
-N-type clock-capable pin; it's a slow debug clock so dedicated routing is waived).
+`SWCLK` also carries `set_property CLOCK_DEDICATED_ROUTE FALSE` on its **net**
+(it may land on a clock-capable pin; it's a slow debug clock so dedicated
+routing is waived — note this is a *net* property, applying it to a port throws
+`Netlist 29-69` and fails the message gate).
 
-### Recommended change — move SWD to PMOD2 **[PROPOSED]**
-
-If you want to use an **ordinary 3.3 V probe** (the common case — plain ST-Link
-V2 clones, most DAPLink boards), move SWD to a 3.3 V connector. PMOD2 is free:
-
-```tcl
-# Replace the PMOD4 SWD block in kr260_eth_chiplet_tidelink.xdc with:
-set_property -dict { PACKAGE_PIN J11 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 PULLDOWN true } [get_ports SWCLK]         ;# PMOD2 pin1
-set_property -dict { PACKAGE_PIN J10 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 PULLUP true }   [get_ports SWDIO]         ;# PMOD2 pin2
-set_property -dict { PACKAGE_PIN K13 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 PULLUP true }   [get_ports SWD_NPORESETN] ;# PMOD2 pin3
-set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets -of_objects [get_ports SWCLK]]
-```
-
-Keep the `CLOCK_DEDICATED_ROUTE` line regardless — `SWCLK` is treated as a clock
-and may land on a non-ideal pin on any connector.
+**PMOD4 is now free** — and should stay clear of 3.3 V peripherals.
 
 ### Probe wiring
 
 ```
-  Probe            KR260 PMOD (2 or 4)
+  Probe            KR260 PMOD2  (3.3 V)
   ---------------------------------------
-  SWCLK    ------> pin 1
-  SWDIO    <-----> pin 2
-  nRESET   ------> pin 3      (optional; SWD SYSRESETREQ works without it)
+  SWCLK    ------> pin 1   (J11)
+  SWDIO    <-----> pin 2   (J10)
+  nRESET   ------> pin 3   (K13)  (optional; SWD SYSRESETREQ works without it)
   GND      ------- pin 5 or 11
-  VREF/VTG <------ pin 6 or 12   (3.3 V on PMOD1/2/3, 1.8 V on PMOD4)
+  VREF/VTG <------ pin 6 or 12    (reads 3.3 V)
 ```
 
 Keep `SWCLK` short. If the probe is flaky, drop the adapter speed first
@@ -155,16 +143,19 @@ dongle (CP2102 / FT232 / CH340) off PMOD3:
 
 | Signal | PMOD3 pin | Ball | Dongle pin |
 |---|---|---|---|
-| `uart_txd` (SoC → host) | 1 | AE12 | dongle **RXD** |
-| `uart_rxd` (host → SoC) | 2 | AF12 | dongle **TXD** |
-| GND | 5 | — | dongle GND |
+| `uart_txd` (SoC → host) | 7 | AF11 | dongle **RXD** |
+| `uart_rxd` (host → SoC) | 8 | AG11 | dongle **TXD** |
+| GND | 11 | — | dongle GND |
+
+> PMOD3 pins 1–4 are reserved for the LAN8720's MDIO/nRST and the status LEDs
+> (§3), so the dongle uses the lower row.
 
 **Cross TX↔RX** — the single most common wiring mistake here. Do **not** connect
 the dongle's VCC if the board is already powered.
 
 ```tcl
-set_property -dict { PACKAGE_PIN AE12 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 4 } [get_ports uart_txd]
-set_property -dict { PACKAGE_PIN AF12 IOSTANDARD LVCMOS33 }                    [get_ports uart_rxd]
+set_property -dict { PACKAGE_PIN AF11 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 4 } [get_ports uart_txd]
+set_property -dict { PACKAGE_PIN AG11 IOSTANDARD LVCMOS33 }                    [get_ports uart_rxd]
 ```
 
 ### Current state **[BUILT]**
@@ -219,10 +210,11 @@ the easy part.
 
 **9 PL pins** (10 with nRST) — one 8-pin PMOD is not enough, so use **two**.
 
-### Recommended pin map — PMOD1 + PMOD2 **[PROPOSED]**
+### Recommended pin map — PMOD1 + PMOD3 **[PROPOSED]**
 
-Both are 3.3 V, matching the LAN8720 module. (If you also move SWD to PMOD2 per
-§1, put SWD on PMOD3 instead and keep this map.)
+Both are 3.3 V, matching the LAN8720 module. **PMOD2 is not available** — SWD now
+owns pins 1-3 there (§1), so the PHY spills onto PMOD3 instead. RMII needs 9-10
+signals and a Pmod carries 8, so it spans two connectors either way.
 
 | Signal | Connector | Pin | Ball |
 |---|---|---|---|
@@ -234,12 +226,12 @@ Both are 3.3 V, matching the LAN8720 module. (If you also move SWD to PMOD2 per
 | `rmii_rxd[1]` | PMOD1 | 8 | E12 |
 | `rmii_crs_dv` | PMOD1 | 9 | D11 |
 | `mdc_pad_o` | PMOD1 | 10 | B11 |
-| `MDIO` (bidir) | PMOD2 | 1 | J11 |
-| `phy_nrst` | PMOD2 | 2 | J10 |
+| `MDIO` (bidir) | PMOD3 | 1 | AE12 |
+| `phy_nrst` | PMOD3 | 2 | AF12 |
 | 3.3 V / GND | either | 6,12 / 5,11 | module power |
 
 > The status LEDs currently sit on PMOD1 pins 1–2 (H12/E10). Move them to PMOD3
-> (AG10/AH10) or drop them when you wire the PHY.
+> pins 3–4 (AG10/AH10) or drop them when you wire the PHY.
 
 ```tcl
 set_property -dict { PACKAGE_PIN H12 IOSTANDARD LVCMOS33 } [get_ports rmii_ref_clk]
@@ -250,8 +242,8 @@ set_property -dict { PACKAGE_PIN B10 IOSTANDARD LVCMOS33 } [get_ports {rmii_rxd[
 set_property -dict { PACKAGE_PIN E12 IOSTANDARD LVCMOS33 } [get_ports {rmii_rxd[1]}]
 set_property -dict { PACKAGE_PIN D11 IOSTANDARD LVCMOS33 } [get_ports rmii_crs_dv]
 set_property -dict { PACKAGE_PIN B11 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 } [get_ports mdc_pad_o]
-set_property -dict { PACKAGE_PIN J11 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 PULLUP true } [get_ports MDIO]
-set_property -dict { PACKAGE_PIN J10 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 4 } [get_ports phy_nrst]
+set_property -dict { PACKAGE_PIN AE12 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8 PULLUP true } [get_ports MDIO]
+set_property -dict { PACKAGE_PIN AF12 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 4 } [get_ports phy_nrst]
 
 # 50 MHz RMII reference — constrain it, and waive dedicated routing if the pin
 # chosen is not clock-capable (same treatment as SWCLK).
@@ -317,16 +309,17 @@ set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets -of_objects [get_ports rmii_r
 | Interface | Connector | Voltage | Status |
 |---|---|---|---|
 | TideLink die-to-die ribbon | **J21** (RPi 40-pin), 18 signals + 2 I²C + GNDs | 3.3 V | **[BUILT]** — straight-through, `BCM_n ↔ BCM_n`; **never bridge the +3V3/+5V rails** |
-| SWD debugger | **PMOD4** today → move to **PMOD2** | 1.8 V → 3.3 V | **[BUILT]** / move **[PROPOSED]** |
-| UART console | EMIO → `/dev/ttyPS1` (**recommended**), or dongle on **PMOD3** | — / 3.3 V | currently on spare J21 pins **[BUILT]** |
-| LAN8720 RMII | **PMOD1** (+ PMOD2 for MDIO/nRST) | 3.3 V | **[PROPOSED]** — RTL tie-offs must be undone first |
-| Status LEDs | PMOD1 pins 1–2 → move to **PMOD3** if PHY takes PMOD1 | 3.3 V | **[BUILT]** |
+| SWD debugger | **PMOD2** (pins 1-3) | 3.3 V | applied; build validating placement |
+| UART console | EMIO → `/dev/ttyPS1` (**recommended**), or dongle on **PMOD3** pins 7–8 | — / 3.3 V | currently on spare J21 pins **[BUILT]** |
+| LAN8720 RMII | **PMOD1** (+ **PMOD3** for MDIO/nRST) | 3.3 V | **[PROPOSED]** — RTL tie-offs must be undone first |
+| Status LEDs | PMOD1 pins 1–2 → move to **PMOD3** pins 3–4 if PHY takes PMOD1 | 3.3 V | **[BUILT]** |
+| *(free)* | **PMOD4** — 1.8 V, keep clear of 3.3 V parts | 1.8 V | unused |
 
 ### Pre-power checklist
 1. Ribbon is **straight-through**, power rails stripped, die_a image on one board
    and the **`-flip`** image on the other (same image on both shorts every lane).
-2. Nothing 3.3 V is touching **PMOD4**.
-3. SWD probe VREF matches the connector (1.8 V on PMOD4, 3.3 V on PMOD1/2/3).
+2. Nothing 3.3 V is touching **PMOD4** (it is now unused — keep it that way).
+3. SWD probe VREF reads **3.3 V** on PMOD2 pin 6/12.
 4. UART dongle TX↔RX crossed, VCC not connected.
 5. LAN8720 module powered from the same PMOD it is signalling to.
 
