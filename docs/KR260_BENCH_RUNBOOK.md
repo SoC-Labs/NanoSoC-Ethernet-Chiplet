@@ -46,15 +46,45 @@ fpgahub lease acquire kr260_02
 ```
 
 Everything below runs from the dev host under those leases. If a board is stuck,
-`fpgahub board reset <name>` (or the `zynqmp_jtag_por` capability).
+`fpgahub board reset <name>` (JTAG POR via the `kr260_jtag_por` plugin).
+
+> **Recovery gotcha (verified 2026-07-27).** `fpgahub board reset` and the other
+> per-board endpoints **404 from some client hosts** (a CLI/daemon route skew) but
+> work when run **on `mapstone-dev`** (where the daemon lives). If a reset 404s,
+> ssh to `mapstone-dev` and run it there:
+> `ssh mapstone-dev 'fpgahub board reset kr260_01 --yes'` → issues the JTAG POR
+> (`method=default plugin=kr260_jtag_por`, "POR issued … via local (cable …)").
+> The board pings again ~10 s later. The collection endpoints (`status`, `board
+> list`, `lease …`) work from any host; only the `board/<name>/…` routes need this.
 
 ---
 
-## 3. Deploy the bitstreams **[FIRST-TIME]**
+## 3. Deploy the bitstreams **[PROVEN on silicon 2026-07-27]**
+
+Both dies now deploy clean, end-to-end, on the real boards: **die_a → kr260_01
+and die_b → kr260_02 both reach `fpga_manager=operating`**, AFI widths read
+32-bit on both PS master ports, and the full post-load SSH round-trip completes
+(proving the PS AXI bus is healthy, not wedged). The `.bin` flavour, the mirrored
+staging layout, and the AFI re-poke are all validated. What is *not* yet proven
+is anything **past** the load — see the wedge hazard below and §4–§6.
 
 The KR260s run **plain Ubuntu (no PYNQ)**; deploy is `fpgautil` with a
 header-stripped `.bin`, then an AFI PS-master-port width re-poke (needed on every
 PL load, not persisted).
+
+> **🔴 WEDGE HAZARD — the defining eth-chiplet difference (learned the hard way).**
+> On the eth-chiplet the PS can reach **only** the SoC's AHB via the `eth_ss_0`
+> backdoor at HPM0 `0x8000_0000`. **Any PS read of a PL address the SoC does not
+> decode hangs the ZynqMP PS AXI bus with no timeout** — the board goes to 100 %
+> packet loss and only a **JTAG POR** recovers it (see §2 recovery gotcha). This
+> is not hypothetical: the bare-link AFI *canaries* (`0x8403_xxxx`) wedged
+> kr260_01 on first load. The deploy now **auto-skips those canaries** for
+> `kr260-eth-chiplet*` targets (`KR260_AFI_NO_CANARY=1`, threaded by
+> `kr260_deploy.sh`); the width fix still runs. **Do not** point any bare-link
+> host script (`kr260_smoke.py`, `bringup_pair_converge.sh`, raw `devmem` at
+> `0x8403_xxxx`/`0x8404_xxxx`) at the eth-chiplet — they read undecoded addresses
+> and will re-wedge. Only touch addresses inside the `eth_ss_0` window that the
+> SoC AHB actually decodes.
 
 Via fpgahub (preferred — one action per board, role-aware):
 ```bash
@@ -174,8 +204,13 @@ Blocked on three things, none needed for the link demo above:
 [ ] ribbon straight-through, power rails stripped, die_a<->die_b images not swapped
 [ ] SWD probe VREF reads 3.3 V on PMOD2 pin 6
 [ ] fpgahub lease acquire kr260_01 && kr260_02
-[ ] deploy die_a -> kr260_01, die_b -> kr260_02 ; fpga_manager = operating
-[ ] kr260_smoke --expect-role : role strap + live PL reg OK
-[ ] openocd attaches, halts an M0, reads CPUID
+[x] deploy die_a -> kr260_01, die_b -> kr260_02 ; fpga_manager = operating   <-- PROVEN 2026-07-27
+[ ] openocd attaches over SWD, halts an M0, reads CPUID     (needs probes on PMOD2)
+[ ] load eth-chiplet M0 firmware that drives TideLink        (firmware does not exist yet)
 [ ] on-chip bring-up -> FCSM=4 bilateral on both dies   <-- M1 done
 ```
+
+> **Do NOT run `kr260_smoke.py` on the eth-chiplet** — its map is bare-link and
+> its pokes read undecoded addresses that wedge the PS (see §3/§4). The eth-chiplet
+> has no PS-side "prove the board is alive" step that is safe today; aliveness is
+> instead shown via SWD (§5), which talks to the M0 debug port, not the PS AXI.
