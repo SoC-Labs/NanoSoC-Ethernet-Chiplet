@@ -213,6 +213,32 @@ link first if anything is uncertain.**
 
 ---
 
+## 6b. Cross-die data transfer — the data plane **[PROVEN on silicon 2026-07-27]**
+
+With the link up, a memory transaction crosses between the two SoCs, driven
+PS-side (`kr260_eth_xfer.py`, on-silicon version of `verif/g2_soc_pair`):
+
+```bash
+# die_a: program the address-translator CAM (0x2F->0x2D) + peer-write:
+KR260_HOST=ubuntu@10.22.24.159 bash tidelink/pynq_host/scripts/kr260_eth_run.sh xfer_send
+# die_b: read its own shared_sram_0 where it should land:
+KR260_HOST=ubuntu@10.22.24.153 bash tidelink/pynq_host/scripts/kr260_eth_run.sh xfer_recv
+# die_a: read it back over the link (round-trip):
+KR260_HOST=ubuntu@10.22.24.159 bash tidelink/pynq_host/scripts/kr260_eth_run.sh xfer_readback
+```
+
+> **On-silicon result.** die_a peer-write `[0x2F001000] <- 0xC0FFEE01` → CAM
+> rewrites `0x2F→0x2D` → crosses the TideLink link → lands in die_b's real
+> `shared_sram_0[0x2D001000] = 0xC0FFEE01` (**die_b local read = PASS**), and
+> die_a reads it back over the link = `0xC0FFEE01` (**round-trip = PASS**). The
+> data plane crosses **both ways with correct payload** — confirming the
+> peer-write data-phase-drop fix (`nanosoc_eth_chiplet.sv`, g2 Milestone-2
+> finding) holds on silicon. Neither board wedged. **SoC-to-SoC communication is
+> working.**
+
+`xfer_send` refuses to peer-write unless the local TideLink reports FCSM=4 (a
+peer access on a down link can hang the PS bus).
+
 ## 7. Ethernet (M2) — separate session, do not attempt in M1
 
 Blocked on three things, none needed for the link demo above:
