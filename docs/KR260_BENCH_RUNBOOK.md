@@ -108,25 +108,31 @@ come back wrong-width later, that step didn't run.
 
 ---
 
-## 4. Prove the board is alive — per board **[FIRST-TIME, adapt]**
+## 4. Prove the board is alive — per board **[eth-chiplet-native, PROVEN-safe]**
+
+The eth-chiplet PS reaches the SoC ONLY through the `eth_ss_0` AHB backdoor,
+which on the built bitstream is the **HPM0_FPD high aperture at PS phys
+`0x4_0000_0000`** (`tidelink.hwh:4112`), **NOT `0x8000_0000`**. A SoC-internal
+address `A` is reached from the PS at `0x4_0000_0000 + A`. Two SAFE, read-only
+checks — they touch only combinational boot ROM / RO APB registers on the
+free-running system clock, so they cannot wedge the bus the way a bare-link poke
+does (the SoC AHB matrix's default slave terminates any in-window miss with
+SLVERR, never a hang):
 
 ```bash
-sudo TIDELINK_SOC=kr260 python3 tidelink/pynq_host/scripts/kr260_smoke.py \
-     --expect-role die_a          # die_b on the other board
+# a) boot-ROM aliveness: proves the PS->SoC backdoor delivers into the live SoC.
+sudo python3 ~/td/scripts/eth_ss_probe.py          # expect PASS: 0x18003c00 / 0x08000189 / ...
+
+# b) TideLink config-plane status (read-only): effective role + calibration/FCSM.
+sudo python3 ~/td/scripts/kr260_eth_bringup.py --status
 ```
 
-Confirms the role strap reads back (die_a=0 / die_b=1) and a PL register is
-writable through the PS aperture.
-
-> ⚠️ **Address-map caveat.** `kr260_smoke.py`'s map mirrors the **bare-link**
-> `kr260-pair-*` BD (the PS reaching TideLink's apertures directly). The
-> eth-chiplet BD is different: the PS reaches the SoC through the **`eth_ss_0`
-> AHB backdoor at HPM0 `0x8000_0000`**, and the *on-chip M0s* drive TideLink. So
-> the smoke script's TideLink-aperture pokes will not match the eth-chiplet
-> as-is. Use it to confirm the role strap + a live PL reg; expect the
-> deeper pokes to need the eth-chiplet map. The eth-chiplet-native scripts are
-> `pynq_host/scripts/kr260_onchip_{smoke,autonomy,soak}.py` — these assume the
-> on-chip drive model and are the right starting point.
+> ⚠️ **NEVER run the bare-link `kr260_smoke.py` / `kr260_onchip_*.py` / `tl39.py`
+> on the eth-chiplet.** Their map pokes `0x8403_xxxx` / `0x8000_0000`, which are
+> UNDECODED here — the read hangs the PS AXI bus with no timeout (JTAG-POR-only
+> recovery; this wedged kr260_01 on first bring-up, 2026-07-27). The
+> eth-chiplet-native tools above address the SoC through the `0x4_2E03_xxxx`
+> backdoor instead, and refuse any out-of-window address.
 
 ---
 
@@ -146,21 +152,36 @@ config TAP only.
 
 ---
 
-## 6. Bring the link up — the actual M1 demo **[FIRST-TIME]**
+## 6. Bring the link up — the actual M1 demo **[eth-chiplet-native]**
 
-The eth-chiplet's on-chip cores drive TideLink, so use the **on-chip** bring-up
-path, not the PS-driven `bringup_pair_converge.sh` (that one is bare-link, where
-the PS pokes the TideLink apertures directly):
+The link is brought up **directly from each board's PS over the `eth_ss_0`
+backdoor** — no firmware, no SWD probe. `D2D_PORT.md §3` is explicit: the
+PS-facing masters can drive "role strap, calibration poll, training drop … with
+no CPU firmware running." `kr260_eth_bringup.py` replays the exact register
+recipe proven in `verif/g2_soc_pair/test_g2_soc_pair.py`, addressed through the
+`0x4_2E03_xxxx` backdoor. Run on **BOTH boards together** (die_a=master,
+die_b=slave); each die's `cal_done` only asserts once the peer is also up over
+the ribbon, so the two independent runs self-synchronise:
 
 ```bash
-# starting point — the on-chip smoke, run per board / as a pair
-sudo TIDELINK_SOC=kr260 python3 tidelink/pynq_host/scripts/kr260_onchip_smoke.py ...
+# board 1 (die_a image) and board 2 (die_b image) — start both, ideally together:
+sudo python3 ~/td/scripts/kr260_eth_bringup.py --bringup --role die_a   # board 1
+sudo python3 ~/td/scripts/kr260_eth_bringup.py --bringup --role die_b   # board 2
 ```
 
-**Success criterion (same as bare-link):** both dies reach **FCSM = 4
-(LINK_IDLE, bilateral)**. Judge link health by FCSM, *not* lane-lock (lane-lock
-reads 0x00 after training — expected). Pin die_a as grandmaster by strap; do not
-rely on TideChart auto-election (finding G1 — unresolved).
+**Success criterion:** both dies reach **FCSM = 4 (LINK_IDLE, bilateral)** with
+`calibration_done = 1`. Judge link health by FCSM, *not* lane-lock (lane-lock
+reads 0x00 after training — expected). die_a is pinned grandmaster by
+`--role die_a` (ROLE_CFG master-lock); do not rely on auto-election (G1).
+
+> The on-chip-firmware path (an M0 app loaded over SWD that runs the same
+> recipe) is the autonomous alternative, but is **not needed** for the bench
+> demo — the PS-side path above is simpler and reuses no SWD. Both cores reach
+> the D2D window (`D2D_PORT.md §3`), so a firmware port is a later option.
+>
+> **This tool is correct-by-construction from the sim but has NOT run on
+> silicon.** cal_done/FCSM depend on the physical ribbon + the runtime winscan
+> (first silicon — see §8); treat the first run as a debug step.
 
 If it doesn't converge, the bare-link `kr260-pair-nptp` image is the fallback
 control: it is the smaller, route-clean design that isolates "is the ribbon /
@@ -205,12 +226,15 @@ Blocked on three things, none needed for the link demo above:
 [ ] SWD probe VREF reads 3.3 V on PMOD2 pin 6
 [ ] fpgahub lease acquire kr260_01 && kr260_02
 [x] deploy die_a -> kr260_01, die_b -> kr260_02 ; fpga_manager = operating   <-- PROVEN 2026-07-27
-[ ] openocd attaches over SWD, halts an M0, reads CPUID     (needs probes on PMOD2)
-[ ] load eth-chiplet M0 firmware that drives TideLink        (firmware does not exist yet)
-[ ] on-chip bring-up -> FCSM=4 bilateral on both dies   <-- M1 done
+[ ] eth_ss_probe.py -> PASS (boot ROM 0x18003c00...) : PS->SoC backdoor alive
+[ ] kr260_eth_bringup.py --status : TideLink config plane reads back
+[ ] ribbon seated; run kr260_eth_bringup.py --bringup on BOTH boards together
+[ ] both dies -> FCSM=4 (LINK_IDLE) + cal_done=1   <-- M1 done
 ```
 
-> **Do NOT run `kr260_smoke.py` on the eth-chiplet** — its map is bare-link and
-> its pokes read undecoded addresses that wedge the PS (see §3/§4). The eth-chiplet
-> has no PS-side "prove the board is alive" step that is safe today; aliveness is
-> instead shown via SWD (§5), which talks to the M0 debug port, not the PS AXI.
+> **Do NOT run `kr260_smoke.py` / `kr260_onchip_*.py` / `tl39.py` on the
+> eth-chiplet** — their map is bare-link and pokes undecoded `0x8403_xxxx` /
+> `0x8000_0000` that wedge the PS (see §3/§4). Use the eth-chiplet-native
+> `eth_ss_probe.py` (§4) and `kr260_eth_bringup.py` (§4/§6), which address the
+> SoC through the `0x4_2E03_xxxx` backdoor and refuse any out-of-window address.
+> SWD (§5) is now optional — the PS-side bring-up needs no probe.
