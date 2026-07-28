@@ -4,6 +4,10 @@ Operator steps to get the two-board eth-chiplet demo running. Target for the
 first session: **M1 — the TideLink link up between two boards** (no ethernet,
 no LAN8720 needed). Ethernet (M2) is a later session — see §7.
 
+> **✅ M1 DONE on silicon (2026-07-27).** Both KR260 dies reached FCSM=4
+> (LINK_IDLE) bilaterally over the ribbon, brought up PS-side over the eth_ss_0
+> backdoor. See §6 and the §9 checklist. What follows is the reproducible recipe.
+
 > **Confidence tags:** **[PROVEN]** = the exact command/flow works on the
 > bare-link KR260 or PYNQ-Z2 today. **[FIRST-TIME]** = correct-by-construction
 > but never run on this design — expect to iterate. This is first silicon for the
@@ -245,11 +249,19 @@ Blocked on three things, none needed for the link demo above:
 [ ] SWD probe VREF reads 3.3 V on PMOD2 pin 6
 [ ] fpgahub lease acquire kr260_01 && kr260_02
 [x] deploy die_a -> kr260_01, die_b -> kr260_02 ; fpga_manager = operating   <-- PROVEN 2026-07-27
-[ ] eth_ss_probe.py -> PASS (boot ROM 0x18003c00...) : PS->SoC backdoor alive
-[ ] kr260_eth_bringup.py --status : TideLink config plane reads back
-[ ] ribbon seated; run kr260_eth_bringup.py --bringup on BOTH boards together
-[ ] both dies -> FCSM=4 (LINK_IDLE) + cal_done=1   <-- M1 done
+[x] eth_ss_probe.py -> PASS (boot ROM 0x18003c00...) : PS->SoC backdoor alive
+[x] kr260_eth_bringup.py --status : TideLink config plane reads back (role straps correct)
+[x] ribbon seated; run kr260_eth_bringup.py --bringup on BOTH boards together
+[x] both dies -> FCSM=4 (LINK_IDLE) + cal_done=1   <-- ★ M1 DONE on silicon 2026-07-27 ★
 ```
+
+> **★ M1 ACHIEVED (2026-07-27).** Both dies brought up concurrently over the J21
+> ribbon reached **FCSM=4 (LINK_IDLE), cal_done=1, cr_seen=crack_seen=1**
+> bilaterally (`SWI_LANE_STATUS` die_a=0x05890000, die_b=0x27890000), and the link
+> HELD on a read-only re-check. The two-board eth-chiplet TideLink die-to-die link
+> is live on silicon, brought up entirely PS-side over the eth_ss_0 backdoor (no
+> firmware, no SWD). First silicon: the runtime forwarded-clock winscan calibrated
+> against the peer on the first attempt.
 
 > **Do NOT run `kr260_smoke.py` / `kr260_onchip_*.py` / `tl39.py` on the
 > eth-chiplet** — their map is bare-link and pokes undecoded `0x8403_xxxx` /
