@@ -108,7 +108,17 @@ come back wrong-width later, that step didn't run.
 
 ---
 
-## 4. Prove the board is alive — per board **[eth-chiplet-native, PROVEN-safe]**
+## 4. Prove the board is alive — per board **[PROVEN on silicon 2026-07-27]**
+
+> **On-silicon result.** Both checks below PASS on real hardware (kr260_01 die_a,
+> kr260_02 die_b): `eth_ss_probe.py` reads the boot ROM (`0x18003C00 / 0x08000189
+> / …`) — the PS→SoC backdoor delivers into the live SoC; and `--status` reads the
+> TideLink config plane with the **correct per-die role strap** (die_a→`ROLE_STATUS
+> =0`/master, die_b→`=1`/slave), on-silicon proof of the flip pair. Neither board
+> wedged. Run these from the dev host via `make`-staged tooling:
+> ```bash
+> KR260_HOST=ubuntu@<ip> bash tidelink/pynq_host/scripts/kr260_eth_run.sh status
+> ```
 
 The eth-chiplet PS reaches the SoC ONLY through the `eth_ss_0` AHB backdoor,
 which on the built bitstream is the **HPM0_FPD high aperture at PS phys
@@ -164,10 +174,19 @@ die_b=slave); each die's `cal_done` only asserts once the peer is also up over
 the ribbon, so the two independent runs self-synchronise:
 
 ```bash
-# board 1 (die_a image) and board 2 (die_b image) — start both, ideally together:
-sudo python3 ~/td/scripts/kr260_eth_bringup.py --bringup --role die_a   # board 1
-sudo python3 ~/td/scripts/kr260_eth_bringup.py --bringup --role die_b   # board 2
+# from the dev host, run on BOTH boards at the same time (own terminal each):
+KR260_HOST=ubuntu@10.22.24.159 KR260_ETH_ROLE=die_a \
+    bash tidelink/pynq_host/scripts/kr260_eth_run.sh bringup   # board 1 (master)
+KR260_HOST=ubuntu@10.22.24.153 KR260_ETH_ROLE=die_b \
+    bash tidelink/pynq_host/scripts/kr260_eth_run.sh bringup   # board 2 (slave)
 ```
+
+> **On-silicon (2026-07-27), single-board die_a:** the `ROLE_CFG` write took
+> (`ROLE_STATUS 0x00→0x02`, role_lock set) and **FCSM advanced `0→1`** — the link
+> state machine is live and responds on silicon. `cal_done` stayed 0 with no
+> concurrent peer, exactly as expected. **Reaching FCSM=4 needs the J21 ribbon +
+> both dies brought up together** (cal_done calibrates the forwarded-clock RX
+> against the peer). That concurrent, ribboned run is the remaining bench step.
 
 **Success criterion:** both dies reach **FCSM = 4 (LINK_IDLE, bilateral)** with
 `calibration_done = 1`. Judge link health by FCSM, *not* lane-lock (lane-lock
