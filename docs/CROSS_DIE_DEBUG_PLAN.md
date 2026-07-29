@@ -244,5 +244,7 @@ hangs and wedges the PS** (writes are reliable; reads are not — see
 that intermittent wedge**, and a hung debug poll wedges the whole board. So the
 read-return reliability must be root-caused/fixed (the sim says reads cross via the
 `local_overrides/tidelink_top.sv` read-pipe fix; confirm that fix is robust in the
-FPGA build) **before** cross-die debug is dependable. Treat read reliability as a
+FPGA build) **before** cross-die debug is dependable (ROOT-CAUSED 2026-07-29 —
+the silicon ships recovery-stripped FCSM on the AXI data nodes; see
+[CROSS_DIE_WEDGE_ROOTCAUSE.md](CROSS_DIE_WEDGE_ROOTCAUSE.md)). Treat read reliability as a
 prerequisite of G3, not just a nice-to-have.
