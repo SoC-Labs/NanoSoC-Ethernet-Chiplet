@@ -180,3 +180,69 @@ Then 0b+0c together (never 0b alone).
   `nanosoc_arch_tech/rtl/src/regions/reset_ctrl/nanosoc_reset_ctrl.v`.
 - Tracking: gap **D5** / goal **G3** (and D4 for Phase 2) in
   `nanosoc-multicore-system/docs/CHIPLET_INTEGRATION_PLAN.md`.
+
+---
+
+## Implementation roadmap (2026-07-29) — first PR
+
+Deep-dive established this is buildable, and the risky parts are already retired by
+existing sims.
+
+### Prototype in SIMULATION first (no bitstream, no silicon)
+`nanosoc-multicore-system/cocotb/soc_d2d_loopback` masters `d2d_ahb_s` through the
+*real* SoC matrix and already has a single-beat inbound driver (`_d2d_s_beat`,
+`test_soc_d2d_loopback.py:69`) + a DECERR-confinement test (`:257-272`).
+- **Proves the negative TODAY, zero changes:** a beat to `0xA000EDF0` DECERRs (the
+  `d2d_m` decode only routes `0x23`+`0x2D`, `multicore_matrix_decode_D2D_M.v:203-212`).
+- **Proves the positive** after the 0b YAML edit + a local `make soc`: `_d2d_s_beat`
+  DHCSR write `DBGKEY|C_HALT|C_DEBUGEN` (`0xA05F0003`) → poll `S_HALT` → CPUID
+  `0x410CC200`. The dbg bridge does **no origin check** (`nanosoc_dbg_ahb_bridge.v:106-165`)
+  and `coresight_soc400_dap_to_core` already halts a core via this exact bridge, so
+  the CoreSight-accepts-inbound risk is essentially retired.
+- Full-fidelity dress rehearsal (CAM+PHY+far SoC): `verif/g2_soc_pair` with the CAM
+  rule changed `0x2F→0x2D` → `0x2F→0xA0` (`test_g2_soc_pair.py:79`).
+
+### The RTL diff (never land 0b without 0c)
+- **0b (2 lines + regen):** add `network_core_dbg_window` + `chip_core_dbg_window`
+  to the `d2d_m` targets in `nanosoc_multicore_soc.yaml:2383-2387`; `make soc`
+  regenerates the matrix (adds `0xA0…`/`0xB0…` decode + grows each window's arbiter
+  1→2). Both windows already exist as `dap_ss_0_m` targets, so this only adds edges.
+- **0c (the real new RTL — the security gate):** a `REMOTE_DBG_EN` bit in
+  `nanosoc_reset_ctrl.v` (free RAZ slot `0x004`, reset 0 = closed; reachable only by
+  a *local* master, so the far die can't self-authorize) + a ~40-line inbound
+  firewall `nanosoc_d2d_dbg_firewall.v` on the `ahb_mng→d2d_ahb_s` path in
+  `nanosoc_eth_chiplet.sv:642-651` that DECERRs `0xA0000000-0xBFFFFFFF` unless the
+  bit is set. **Wiring cost to flag:** `REMOTE_DBG_EN` originates in the SoC but the
+  firewall is in the wrapper → needs a new SoC output port (a generator/YAML change).
+
+### Host tool (pure /dev/mem — no OpenOCD for the scripted path)
+New `kr260_eth_xfer.py --mode dbg_halt --core {net,chip}`, reusing `program_cam`
++ `rd/wr`. PPB regs via the peer aperture (die_a PS = `0x4_0000_0000 + SoC_addr`;
+CAM `0x2F→0xA0` CPU0 / `0x2F→0xB0` CPU1; low 24 bits pass through):
+
+| PPB reg | SoC (CPU0) | die_a PS-side |
+|---|---|---|
+| DHCSR | `0xA000EDF0` | `0x4_2F00_EDF0` |
+| CPUID | `0xA000ED00` | `0x4_2F00_ED00` |
+| DCRSR/DCRDR | `0xA000EDF4/8` | `0x4_2F00_EDF4/8` |
+
+Sequence: die_b set `REMOTE_DBG_EN` (`wr 0x4_2A00_0004 = 1`) → die_a `program_cam`
+`RULE_0=(0xA0<<16)|(0x2F<<8)|1` → write DHCSR halt → poll `S_HALT` → read CPUID →
+regfile via DCRSR/DCRDR. One core per CAM rule (reprogram `0xA0↔0xB0` to switch).
+
+### Silicon validation ladder + regression hook
+1. gate default-closed (DECERR, no hang) → 2. `REMOTE_DBG_EN=1`, CPUID reads
+`0x410CC200` → 3. halt (S_HALT=1) → 4. resume → 5. isolation (halt CPU1, CPU0 runs)
+→ 6. gate re-close. Add `t_dbg_halt` to `kr260_eth_regress.py` after `t_mailbox`,
+gating once stable.
+
+### 🔴 Caveat linking to the read-reliability finding (2026-07-29)
+Cross-die debug is **poll-heavy — every DHCSR check is a peer READ over the link.**
+The regression's repeatability run found the **peer read-round-trip intermittently
+hangs and wedges the PS** (writes are reliable; reads are not — see
+`docs/OVERNIGHT_WORKLOG.md`). **A poll-based far-core debug session would inherit
+that intermittent wedge**, and a hung debug poll wedges the whole board. So the
+read-return reliability must be root-caused/fixed (the sim says reads cross via the
+`local_overrides/tidelink_top.sv` read-pipe fix; confirm that fix is robust in the
+FPGA build) **before** cross-die debug is dependable. Treat read reliability as a
+prerequisite of G3, not just a nice-to-have.

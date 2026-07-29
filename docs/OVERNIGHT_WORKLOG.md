@@ -41,3 +41,14 @@ Recovery if a board wedges: `ssh mapstone-dev 'fpgahub board reset kr260_0X --ye
 - Validated end-to-end: `python3 kr260_eth_regress.py --deploy --soak-iters 1000` -> **10/10 PASS**, both boards healthy.
 - **Bug caught + fixed:** re-running bring-up on a live link (LL_SWRESET) desyncs it and hangs the sender's peer writes -> die_a wedged. Recovered via the per-target POR API (group `board reset` breaks on the `kr260_01_pl` topology member). Both saved to memory.
 - Run on a design iteration: `python3 tidelink/pynq_host/scripts/kr260_eth_regress.py --deploy` (or `make -C tidelink/fpga regress_eth_chiplet KR260_PASSWORD=...`).
+
+### Repeatability run — 🔴 found an INTERMITTENT PEER-READ WEDGE (the suite doing its job)
+- 3× reflash+regression (3000-beat soak). Iter 1: link/backdoor/role/sram_fwd PASS, then **sram_rtt (peer read-round-trip) wedged BOTH boards**; iters 2-3 couldn't deploy.
+- **Finding:** cross-die WRITES are reliable (sram_fwd/mailbox/reverse/soak-writes always pass); the **peer READ round-trip intermittently hangs** and wedges the PS (no software timeout). The single earlier run got lucky (10/10); repeating it exposed the flake — exactly what a regression is for.
+- **Recovery:** POR both via the per-target API (group `board reset` breaks on `kr260_01_pl`). die_b's first POR failed (transient cable-not-found from back-to-back POR); **retry succeeded** — POR one board at a time, retry on transient. Both back.
+- **Fix (committed 13d578b):** soak is now WRITE-ONLY + health by default; regression's `sram_rtt` is non-gating + opt-in (`--include-peer-read`). The default suite is wedge-safe (writes + local reads + health only).
+- **Root-cause hypothesis:** the read-return path (g2 sim needed `local_overrides/tidelink_top.sv`) is not robust on silicon. Prerequisite to fix before cross-die *debug* (which is poll/read-heavy) is dependable.
+
+### Agents: cross-die debug + interrupts (user request)
+- **SWD debug over tidelink** → concrete first-PR roadmap in [CROSS_DIE_DEBUG_PLAN.md](CROSS_DIE_DEBUG_PLAN.md): sim-prototype via `soc_d2d_loopback` first (proves negative today, positive after the 0b regen — no bitstream); 0b YAML edit + 0c REMOTE_DBG_EN gate; host `dbg_halt` mode; validation ladder. CoreSight-accepts-inbound risk retired. **Peer-read-wedge is a prerequisite risk** (debug is poll-heavy).
+- **Cross-die interrupts** → new [CROSS_DIE_INTERRUPTS.md](CROSS_DIE_INTERRUPTS.md): full d2d_irq[15:0]→NVIC map; the **IPC mailbox doorbell** (P1 already exercised the write) is the general-purpose cross-die IRQ — `mbox_recv` now reads `irq_status @ 0x2300_0028` to prove the source latched (firmware-free). TideLink doorbell/packet/PTP/TideChart mapped; all sources PS-observable, ISR delivery needs firmware (item #8).
