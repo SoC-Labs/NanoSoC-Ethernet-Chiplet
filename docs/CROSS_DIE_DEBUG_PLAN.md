@@ -248,3 +248,33 @@ FPGA build) **before** cross-die debug is dependable (ROOT-CAUSED 2026-07-29 —
 the silicon ships recovery-stripped FCSM on the AXI data nodes; see
 [CROSS_DIE_WEDGE_ROOTCAUSE.md](CROSS_DIE_WEDGE_ROOTCAUSE.md)). Treat read reliability as a
 prerequisite of G3, not just a nice-to-have.
+
+---
+
+## ✅ Sim-prototype result (2026-07-29) — the transport is PROVEN
+
+Ran the Vehicle-1 prototype in `nanosoc-multicore-system/cocotb/soc_d2d_loopback`
+(VCS + cocotb), isolated (0b YAML edit + `make soc` regen + a throwaway
+`test_dbg_halt.py`, all reverted afterward — submodule left untouched).
+
+- **Negative (zero changes):** `test_d2d_inbound_is_confined` passes today — an
+  inbound `d2d_m` beat to the dbg window DECERRs (the exclusion is real). Whole
+  existing D2D suite: 9/9 PASS.
+- **Positive (after the 0b `d2d_m` dbg-window edit + `make soc`):** an inbound
+  `d2d_ahb_s` beat reaches the far core's PPB — **2/2 PASS**:
+  - **CPU1 CPUID via `d2d_m` = `0x410CC601`** (genuine Cortex-M0+ ID) — i.e. the
+    debug bridge accepts a `d2d_m`-origin access *identically to a DAP access*.
+    **This retires the one open risk** ("does the far core's dbg accept an inbound
+    access like a DAP one?") — yes, in sim.
+  - CPU0 CPUID reads `0x0` only because it's the boot-gated secondary with debug
+    unpowered in this env; its beat still completes **OKAY** (routing proven). On
+    silicon a running core returns CPUID + latches `S_HALT`.
+  - DHCSR write + read-back over `d2d_m` both complete OKAY.
+
+**So the Phase-0 transport (`0b`) is de-risked before spending a silicon rebuild.**
+The remaining new RTL is the `0c` `REMOTE_DBG_EN` security gate; the host
+`dbg_halt` mode is pure `/dev/mem`. Note the silicon caveat still stands: debug is
+poll-heavy over the AXI FC nodes, so the FCSM-recovery fix
+(`CROSS_DIE_WEDGE_ROOTCAUSE.md`) is a prerequisite for a *dependable* far-core
+debug session. Commit a proper version of the `test_dbg_halt` prototype alongside
+the `0b`/`0c` RTL in the batch.

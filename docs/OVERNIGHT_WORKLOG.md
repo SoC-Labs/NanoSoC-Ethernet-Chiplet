@@ -65,3 +65,7 @@ Recovery if a board wedges: `ssh mapstone-dev 'fpgahub board reset kr260_0X --ye
 - Also confirmed: the `rd_pipe_r` read-completion guard is NOT in the silicon `tidelink_top` (reads ≥ as fragile); `SUB_STALL_TIMEOUT` can't catch a lost response beat (parks XHB with hreadyout high → hard hang, no SIGBUS).
 - **Fix path:** (1) restore FCSM 0–4 recovery with the min-CRACK gate scaled for the 40 ns ratio [rebuild]; (2) host interim — poll per-node Wlink FC regs (B=0x1200, R=0x1400) between transfers, FLUSH/re-cal on stuck-FIFO/rising-CRC; (3) quiesce before CAM writes; (4) port the read guard.
 - Gates cross-die SWD debug (poll-heavy over the same nodes). Diagnosis doc has the PS-observable per-node registers for the next attended session.
+
+### SWD-debug sim-prototype — ✅ PROVEN (parallel work while the tidelink FCSM fix is addressed)
+- `soc_d2d_loopback` (VCS+cocotb), isolated + fully reverted (submodule untouched). Stage 1: existing suite 9/9 PASS (dbg window DECERRs today). Stage 2 (0b edit + `make soc`): far-core dbg reachable over d2d_m — 2/2 PASS, **CPU1 CPUID=0x410CC601** over the link (CoreSight-accepts-inbound risk retired). Details in [CROSS_DIE_DEBUG_PLAN.md](CROSS_DIE_DEBUG_PLAN.md).
+- Also built `fc_health` (per-node Wlink FC diagnostic, committed) for validating the incoming FCSM fix, and the TideLink silicon-feedback handover doc.
