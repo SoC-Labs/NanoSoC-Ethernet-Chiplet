@@ -39,7 +39,12 @@
 module nanosoc_eth_chiplet #(
     // TideLink GPIO-PHY lane count. RTL default is 8; kept as a chiplet param so
     // the PHY-pad boundary width tracks the instance parameter in one place.
-    parameter NUM_PHY_LANES = 8
+    parameter NUM_PHY_LANES = 8,
+    // TideChart device class = grandmaster-election priority (lower wins).
+    // Surfaced here (finding G1) so the two build targets can strap it per die
+    // (die_a 0x0001 < die_b 0x0002) for DETERMINISTIC root election instead of
+    // the current 0x0001-on-both dual-root. Threads straight to tidechart_shim.
+    parameter [15:0] DEVICE_CLASS = 16'h0001
 ) (
     // =========================================================================
     // SoC boundary — EVERY nanosoc_multicore_soc port that is NOT d2d_* is
@@ -794,8 +799,9 @@ module nanosoc_eth_chiplet #(
     // (NUM_PORTS=1) facing this one TideLink; FC_DATA_W=48 matches the seam.
     //=========================================================================
     tidechart_shim #(
-        .NUM_PORTS (1),
-        .FC_DATA_W (48)
+        .NUM_PORTS    (1),
+        .FC_DATA_W    (48),
+        .DEVICE_CLASS (DEVICE_CLASS)     // per-die strap (G1) — was hard-defaulted 0x0001
     ) u_tidechart (
         .clk    (sys_hclk),
         .resetn (sys_hresetn),
