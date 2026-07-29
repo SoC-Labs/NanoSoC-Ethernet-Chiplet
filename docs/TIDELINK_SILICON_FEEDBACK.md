@@ -35,7 +35,7 @@ error / dropped ACK on an AXI data node has **no recovery**: `fe_rx_ptr` never
 advances → credit ring fills → `fe_rx_is_full` latches → the sender stops → the far
 side's `B` (write) / `R` (read) beat never returns → PS `M_AXI_GP0` SmartConnect
 saturates → PL slaves wedge (the mechanism is documented in
-`src/rtl/local_overrides/tidelink_top.sv:1957-1962`).
+`src/rtl/tidelink_top.sv:2338-2343`).
 
 ### Why it's stripped — and this is your deferred item
 - `c2b2d51` (Jul 4) *"xhb500: harden 5 AXI FC nodes (lite A-E + CRC-off) for silicon
@@ -83,7 +83,7 @@ thresholds).
 ## 🟠 P2 — should-fix, same rebuild
 
 - **`rd_pipe_r` read-completion guard is absent from the base V2 `tidelink_top`.** It
-  exists only in `src/rtl/local_overrides/tidelink_top.sv:1168-1194`; the shipped build
+  is not present anywhere in the current tree (the `src/rtl/local_overrides/tidelink_top.sv:1168-1194` path cited here has never existed); the shipped build
   resolves `tidelink_top` via the base V2 copy (`rd_pipe_r` count 0). On silicon a peer
   READ was one of the two observed wedge points — reads are ≥ as fragile as writes.
   Port the guard forward, or confirm the base version holds `hreadyout` low until the
@@ -107,7 +107,7 @@ thresholds).
   field in an APB status reg** (a rising CRC count or a stuck Ack/Nack FIFO would
   immediately pin the failing channel).
 
-- **`SUB_STALL_TIMEOUT` doesn't catch this wedge class.** `tidelink_top.sv:1313-1419`
+- **`SUB_STALL_TIMEOUT` doesn't catch this wedge class.** `src/rtl/tidelink_top.sv:1422-1527`
   (`SUB_STALL_TIMEOUT_LOG2=16`) only counts while `xhb_sub_hreadyout_raw==0`. A wedge
   that parks XHB500 with `hreadyout` high (response beat lost mid-transaction) is
   invisible to it — hence the hard hang with no SIGBUS. Consider extending the backstop
@@ -157,9 +157,10 @@ that `election_timeout` must be widened for a real link. Full test plan:
 - Commits: `c2b2d51` (harden 5 AXI FC nodes), `74d0d52` (the revert = root cause),
   `65e13af` (L9b/L9c onto FCSM_6).
 - Files: `src/rtl/local_overrides/WlinkGenericFCSM{,_1,_2,_3,_4,_6}.v`,
-  `flists/tidelink_fpga_v2.flist:276-295`, `src/rtl/local_overrides/tidelink_top.sv`
-  (`rd_pipe_r`, PS-wedge note), `src/rtl/tidelink_top.sv:1313-1419` (SUB_STALL_TIMEOUT),
+  `flists/tidelink_fpga_v2.flist:276-295`, `src/rtl/tidelink_top.sv`
+  (`rd_pipe_r`, PS-wedge note), `src/rtl/tidelink_top.sv:1422-1527` (SUB_STALL_TIMEOUT),
   `src/rtl/local_overrides/tidelink_phy_align_calibrator_v2.sv`.
 - Consumer analysis + tools (eth-chiplet repo): `docs/CROSS_DIE_WEDGE_ROOTCAUSE.md`,
   `docs/CROSS_DIE_INTERRUPTS.md`, `docs/CROSS_DIE_DEBUG_PLAN.md`,
   `tidelink/pynq_host/scripts/kr260_eth_{bringup,xfer,regress}.py`.
+- *(Paths corrected 2026-07-29: `tidelink_top.sv` lives at `src/rtl/`, never `src/rtl/local_overrides/`; its line numbers were re-synced to the current tree — SmartConnect-wedge note → `:2338-2343`, `SUB_STALL_TIMEOUT` → `:1422-1527`. No `rd_pipe_r` symbol exists anywhere in the tree.)*
