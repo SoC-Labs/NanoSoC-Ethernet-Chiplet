@@ -295,3 +295,34 @@ Blocked on three things, none needed for the link demo above:
 > `eth_ss_probe.py` (§4) and `kr260_eth_bringup.py` (§4/§6), which address the
 > SoC through the `0x4_2E03_xxxx` backdoor and refuse any out-of-window address.
 > SWD (§5) is now optional — the PS-side bring-up needs no probe.
+
+---
+
+## 10. Regression suite — repeat on every design iteration
+
+`tidelink/pynq_host/scripts/kr260_eth_regress.py` consolidates the whole cross-die
+stack into one repeatable, CI-friendly run. Use it to confirm a rebuild still works
+on silicon:
+
+```bash
+# reflash both dies from the latest build, bring up the link, run the full suite:
+make -C tidelink/fpga regress_eth_chiplet KR260_PASSWORD=<pw>
+#   or directly, with a bigger soak + JSON output:
+KR260_PASSWORD=<pw> python3 tidelink/pynq_host/scripts/kr260_eth_regress.py \
+     --deploy --soak-iters 2000 --json regress.json
+```
+
+It runs (all PS-side over the eth_ss_0 backdoor): **deploy → link (fresh bring-up) →
+backdoor → role → sram_fwd → sram_rtt → sram_rev → mailbox → soak → tidechart**,
+prints a PASS/FAIL table, and **exits non-zero on any gating failure**. Baseline:
+**10/10 PASS** on a clean deploy (2026-07-29).
+
+- **`--deploy` reflashes first** — this is the design-iteration flow, and it is the
+  SAFE one: the link is only ever brought up on FRESH dies. Without `--deploy` the
+  runner *verifies* the live link (reads FCSM=4) and never re-brings-up — because
+  re-running the bring-up (`LL_SWRESET`) on a LIVE link desyncs it and hangs the
+  sender's peer writes (this wedged die_a on 2026-07-29).
+- `tidechart` is a non-gating diagnostic (register plane must be alive; election
+  convergence is a known RTL gap — see [`TIDECHART_TEST_PLAN.md`](TIDECHART_TEST_PLAN.md) G1).
+- If a board wedges, POR the single member (the group `board reset` breaks on the
+  `_pl` topology entry): `ssh mapstone-dev "curl -s --unix-socket /run/fpgahub/fpgahub.sock -X POST http://localhost/api/v1/targets/kr260_01/reset -H 'Content-Type: application/json' -d '{\"method\":\"default\",\"confirm\":true}'"`.
