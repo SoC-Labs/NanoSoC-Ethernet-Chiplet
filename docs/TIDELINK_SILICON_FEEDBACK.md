@@ -14,6 +14,16 @@ cross-die operation on shipped silicon. Details + a bounded fix below.
 
 Full root-cause analysis: `docs/CROSS_DIE_WEDGE_ROOTCAUSE.md` (in the eth-chiplet repo).
 
+> **🚨 UPDATE 2026-07-30 — the delivered I1 fix does NOT work on silicon.** We
+> consumed your I1 fix (`main` `b98b944`: FCSM 0–4 → recovery `local_overrides`,
+> `SOCL_L7_MIN_CRACK_EMITS` 32→8), rebuilt both KR260 bitstreams, and deployed. **The
+> link no longer comes up** — `cr_seen=0 crack_seen=0 cal_done=0`, FCSM never reaches 4,
+> both dies. The recovery FCSMs break the initial CR/CRACK **credit handshake** at the
+> KR260 ratio; the recovery-stripped `deps` FCSMs still bring up (FCSM=4) but wedge under
+> traffic as before. So I1 currently **trades the wedge for a bring-up failure**, and the
+> `tidelink_fcsm_silicon_ratio` cocotb suite passes where silicon fails (sim/silicon gap).
+> Full evidence, ruled-out alternatives, and RTL hypothesis: **`docs/I1_FCSM_BRINGUP_REGRESSION.md`**.
+
 ---
 
 ## 🔴 P1 — FCSM 0–4 recovery is stripped on silicon; the deferred threshold fix is the blocker
