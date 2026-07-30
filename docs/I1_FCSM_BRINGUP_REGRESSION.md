@@ -129,9 +129,48 @@ as needed, so all five converge regardless of ratio/contention.
 `flists/tidelink_fpga_v2.flist` (FCSM region ~277-282) now points FCSM 0–4 at
 `local_overrides` but still carries a stale "reverted to deps" comment.
 
+## Silicon validation of candidate fixes — BOTH FALSIFIED
+
+Two RTL fixes were built into full KR260 bitstreams and tested on the bench. Both
+produced the **byte-identical failure signature** as the unmodified I1
+(`SWI_LANE_STATUS=0x00100000`, `cr_seen=0 crack_seen=0 cal_done=0 fcsm=0`, both dies):
+
+| Candidate fix | tidelink commit | Hypothesis | Silicon result |
+|---|---|---|---|
+| **v1** — ungate the state-1/2 emit gates (`(~socl_l7_reached_link_data) \| count≥thr`) until first LINK_DATA | `0853c4c` | emit-count gate stalls the muxed AXI handshake | **FALSIFIED** — link still down. (Edit verified present in the packaged IP + both synth copies.) |
+| **v2** — flip the 5 AXI nodes' `out_prepend_swi_disable_crc` reset default `1'h1`→`1'h0` (CRC-ON, matching the working `FCSM_6`/deps) | `6d85c68` | CRC-off TX framing breaks the RX CR/CRACK detect | **FALSIFIED** — link still down, identical signature. |
+
+**Interpretation.** Neither the emit-count gate **nor** the CRC-default is the (sole)
+cause. The recovery-override FCSM breaks the CR handshake in some way beyond these two —
+and the **identical, unchanged failure signature** across the unmodified I1, v1, and v2
+suggests the local-override AXI FCSM simply never gets the initial CR exchange going
+(`cr_seen` never so much as flickers), i.e. the break is in logic that runs **before/at**
+the state-1 CR emit, not in the exit gating or the CRC format.
+
+**Remaining candidates (for the dev)** — the still-unaddressed `local_overrides` vs
+`deps` FCSM diffs, in rough priority:
+1. The **state-1 CR emit content / selection** itself (`FC.scala` ~459-486 region) — what
+   the node actually drives onto the link in state 1, beyond the gate. If the recovery
+   override changes the emitted CR word/format, the (shared) RX never latches it.
+2. The extra recovery **state/regs** (`socl_l7_*`, `socl_reack_*`, the added `always`
+   blocks) — verify none of them gates TX-enable or the CR emit in states 0–3 at reset.
+3. `isNotExpPacket_l7` / `socl_l7_crack_release` feedback into `send_nack_req` /
+   emit-select during bring-up.
+
+**Method note for the dev:** each of these is a full FPGA rebuild + two-board bench cycle
+to test (≈1.5 h build + POR/deploy/bringup). The two most obvious candidates (gate, CRC)
+are now **empirically eliminated on silicon** — start from the state-1 CR emit content.
+The cleanest path is likely a targeted two-die, multiplexed, async-reset, RX-align sim
+(which does not exist — see the sim-gap section) so candidates can be triaged without a
+board cycle each.
+
 ## Board / repo state left behind
 - Both KR260 boards restored to the **working baseline (`0ed6d46`)** bitstream, leases
   released. The wedge-prone-but-functional link is what's deployed.
-- tidelink branch `integ/i1-fcsm-on-proven` (`90fe6cc`) and parent pin (`99192a2`)
-  document the attempt — **do NOT build/deploy for bench use; the link will not come up.**
-- Preserved bitstreams: `imp/fpga/output/kr260-eth-chiplet{,-flip}.{baseline-0ed6d46,i1-90fe6cc,fixed-969a0c9}/`.
+- tidelink branch `integ/i1-fcsm-on-proven` records the whole attempt:
+  `90fe6cc` (I1-on-proven) → `0853c4c` (fix v1, emit-gate ungate) → `6d85c68` (fix v2,
+  AXI CRC-on). Parent pin currently `e8bbcc8` → tidelink `6d85c68`.
+  **Do NOT build/deploy any of these for bench use — the link will not come up.** The
+  next rebuild for actual use should pin back to a deps-FCSM base (e.g. `0ed6d46`/`809f038`)
+  until the dev lands a working recovery FCSM.
+- Preserved bitstreams on disk: `imp/fpga/output/kr260-eth-chiplet{,-flip}.{baseline-0ed6d46,i1-90fe6cc,fixed-969a0c9}/`.
