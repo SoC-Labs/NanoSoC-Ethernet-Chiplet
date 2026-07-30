@@ -36,7 +36,7 @@ proc read_filelist {flist} {
             # Compiler read_design wrapper, which reads the whole SoC as one SV
             # language unit. SV is a Verilog-2001 superset for this codebase.
             if {[string match "*.sv" $file] || [string match "*.v" $file]} {
-                read_hdl -language sv $file
+                read_hdl -define TIDELINK_PHY_V2 -language sv $file
             }
         }
     }
