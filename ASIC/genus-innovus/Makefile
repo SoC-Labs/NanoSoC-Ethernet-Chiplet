@@ -68,3 +68,6 @@ lec:
 
 pnr_setup:
 	cd $(WORK_DIR)/; innovus -stylus 
+
+drc:
+	cd $(WORK_DIR)/; calibre -gui
