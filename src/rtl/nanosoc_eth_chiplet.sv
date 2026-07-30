@@ -600,7 +600,13 @@ module nanosoc_eth_chiplet #(
     // (tx/fifo apertures are 16 KB -> haddr[13:0]). NUM_PHY_LANES passes to the
     // GPIO PHY pads.
     //=========================================================================
-    tidelink_top #(.NUM_PHY_LANES(NUM_PHY_LANES)) u_tidelink (
+    // I1 eth-chiplet bring-up fix (docs/I1_SELFARM_FIX.md): SELF_ARM_TRAIN_EN=1
+    // self-latches role_lock on the PS ROLE_CFG[1] write (the peer-I2C mask
+    // handshake never completes on this chiplet, so the default gated latch left
+    // role_locked=0 -> mutual clock enable + calibrator stuck in reset ->
+    // cal_done=0/fcsm=0). Conscious opt-in ONLY on this eth-chiplet instance;
+    // every other tidelink integration keeps the 1'b0 default.
+    tidelink_top #(.NUM_PHY_LANES(NUM_PHY_LANES), .SELF_ARM_TRAIN_EN(1'b1)) u_tidelink (
         // Clocks / resets — all from the SoC clock/reset controller output.
         .hclk       (sys_hclk),
         .hresetn    (sys_hresetn),
