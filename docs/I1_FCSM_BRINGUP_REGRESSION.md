@@ -57,11 +57,77 @@ at the KR260 silicon ratio (link_clk:app_clk ≈ 40 ns). Today:
 The `tidelink_fcsm_silicon_ratio` cocotb suite reports PASS at gate=8, so there is a
 **sim/silicon gap**: sim does not reproduce the initial-handshake failure the KR260 sees.
 
-## RTL root-cause hypothesis
+## RTL root-cause (analysis complete)
 
-_(RTL-level analysis of `local_overrides/WlinkGenericFCSM.v` vs the `deps/` version —
-the state-2 CRACK-emit gate and the CR/CRACK handshake — is in progress; appended below
-once complete.)_
+The FSM `always` block is **byte-identical** (override `WlinkGenericFCSM.v:685-703` vs
+deps `:608-626`). The only bring-up-relevant difference is the **combinational
+state-exit gates**:
+
+| Transition | deps (links up) | local_overrides (fails) |
+|---|---|---|
+| state 1→2 (CR) | leave on **first peer CR/CRACK seen** (`deps:244`) | also needs `socl_l6_cr_emit_gate_ok` = **≥32 of THIS node's own CR emits** (`local:312-313`) |
+| state 2→3 (CRACK) | leave on **first peer CRACK seen** (`deps:252`) | needs peer CRACK **AND** `socl_l7_crack_emit_gate_ok` = **≥8 own CRACK emits** (`local:292,316-321`) |
+
+The emit counters increment only on `auto_tx_out_advance & sop` (once per CR/CRACK
+packet this node actually **transmits**), reset on state change (`local:818-838`). The
+recovery regs (`socl_reack`, watchdog, forgive) act only in states ≥4 and **cannot**
+affect 0→3, so they are not the blocker. The two gate `localparam`s are the whole story:
+`SOCL_L6_MIN_CR_EMITS=32` (`local:64`, never lowered) and `SOCL_L7_MIN_CRACK_EMITS=8`
+(`local:76`, lowered from 32 by I1).
+
+**Decisive fact — the threshold number is NOT the cause.** The sideband node
+`WlinkGenericFCSM_6.v` carries the **identical gate logic at 32/32** and brings up fine on
+silicon (`_6.v:189,192`). The discriminator is **structural**: the five AXI FC nodes
+(AW/W/B/AR/R) are time-multiplexed onto **one shared serial link** in `AXI4ToWlink`, so
+each accrues emits ~5× slower and all five must complete their bilateral CR→CRACK→IDLE
+handshake **simultaneously under contention**, while `FCSM_6` is a single dedicated node.
+
+**Root cause:** gating state-exit on a fixed count of *this node's own transmitted
+packets* has two opposing failure edges and no fixed count satisfies both across the five
+contended nodes at the 40 ns link:app ratio:
+- **32** → a node can't transmit 32 CR/CRACK before its peer node satisfies its gate,
+  sees this node, and **leaves the state (stops emitting)** → documented state-2 stall.
+- **8** → the emit window is only 8 packets; the peer's RX LinkLayer framer needs many
+  symbols to byte-align after reset (the gate's very purpose, `_6.v:15-70`), so 8 packets
+  fly past **before the peer latches even one** → `cr_seen=0/crack_seen=0`, never leaves
+  state 0/1, `cal_done` never asserts.
+
+The deps version has **no** emit gate — each node emits CR until peer-seen, then CRACK
+until peer-CRACK-seen: an open-ended, self-terminating-on-peer-seen window exactly as long
+as needed, so all five converge regardless of ratio/contention.
+
+## Suggested fix (for the TideLink dev)
+
+1. **Do not gate the *initial* handshake on a fixed self-emit count.** Keep the deps exit
+   condition for first bring-up (leave state 1 on peer-CR-seen; state 2 on peer-CRACK-seen),
+   and arm the min-emit hold + recovery **only after LINK_IDLE is first reached.** The hook
+   already exists: `socl_l7_reached_link_data` latches sticky on `state==5` (`local:999-1005`)
+   and already disarms `socl_l7_bringup_forgive` (`local:295-299`). Reuse it to force
+   `socl_l6_cr_emit_gate_ok`/`socl_l7_crack_emit_gate_ok` **true until first LINK_IDLE** →
+   bring-up becomes bit-identical to the proven deps path while recovery still arms for the
+   traffic phase. This directly resolves the "trades the wedge for a bring-up failure" tradeoff.
+2. If a minimum CR/CRACK hold is genuinely needed for the peer's RX byte-align, make it
+   **time/cycle-based, not transmit-count-based**, and still release on peer-seen — a
+   self-transmit count is throttled ~5× by the shared-link multiplex and can't serve five
+   contended nodes deadlock-free.
+3. **Threshold retune alone will not fix it** — `FCSM_6` proves 32 works on a single node;
+   any retune must be validated per-node under the 5-way multiplex, not on one pair.
+
+## Why sim passed but silicon failed (sim gap)
+
+- The cited `cocotb/tidelink_fcsm_silicon_ratio/` suite **does not exist in the tree** — it
+  is referenced only in RTL comments (`local:71`) and docs. The "PASS at gate=8" claim is
+  not reproducible here (nearest real env: `cocotb/tidelink_error_injection`).
+- Substantively, a silicon-ratio TB that proves "recovery fires under injected ACK-loss on
+  an idealized single pair" does **not** model the four things that make the fixed-count
+  gate fail: (1) RX LinkLayer byte-align/hunt latency after reset; (2) the 5-way multiplex
+  of the AXI FC nodes onto one link; (3) asynchronous reset-release + clock phase between
+  two real dies (the finish-first race); (4) calibrator/`cal_done` coupling. A real
+  two-die, multiplexed, async-reset, RX-align-latency pair TB is needed before re-shipping.
+
+## Doc nit found during analysis
+`flists/tidelink_fpga_v2.flist` (FCSM region ~277-282) now points FCSM 0–4 at
+`local_overrides` but still carries a stale "reverted to deps" comment.
 
 ## Board / repo state left behind
 - Both KR260 boards restored to the **working baseline (`0ed6d46`)** bitstream, leases
