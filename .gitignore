@@ -34,3 +34,7 @@ verif/elab_strict/build/
 vivado*.jou
 vivado*.log
 vivado*.str
+# Synopsys DC analysis DB + HAPS FPGA-prototype build outputs (not source)
+/AN.DB/
+/fpga/haps-sx/
+/fpga/haps-sx-pc/
