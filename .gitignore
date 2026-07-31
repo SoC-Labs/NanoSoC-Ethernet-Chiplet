@@ -36,5 +36,11 @@ vivado*.log
 vivado*.str
 # Synopsys DC analysis DB + HAPS FPGA-prototype build outputs (not source)
 /AN.DB/
-/fpga/haps-sx/
-/fpga/haps-sx-pc/
+# Ignore the BUILD OUTPUTS ONLY. These rules used to be /fpga/haps-sx/ and
+# /fpga/haps-sx-pc/, which also swallowed ~230 KB of hand-written source --
+# the board top, the .cob, the constraints and the build scripts -- despite
+# the comment above saying "not source". Git cannot re-include a path under
+# an excluded directory, so a negation would not have worked; the rules have
+# to name the build dirs directly.
+/fpga/haps-sx/build/
+/fpga/haps-sx-pc/build/

@@ -1,0 +1,102 @@
+################################################################################
+# nanosoc_eth_chiplet_haps_sx.fdc — timing constraints (HAPS-SX VU19P)
+#
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+# license.
+#
+# Contributors
+#
+# David Mapstone (d.a.mapstone@soton.ac.uk)
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+################################################################################
+# Consumed by `run pre_map -fdclist`, alongside the generated pin-location FDC
+# that the cobra helper produces from the .cob. Keep the two apart: the .cob
+# owns WHERE signals go, this file owns WHEN they must arrive.
+#
+# The MMCM outputs (sys_fclk 25 MHz, idelay_ref 200 MHz, user_ref 100 MHz) are
+# derived automatically from the GCLK0 input clock — do not declare them here
+# or you get two competing definitions of the same net.
+################################################################################
+
+################################################################################
+# Primary clocks
+################################################################################
+
+# GCLK0 — board PLL, 100 MHz default, LVDS pair into an IBUFDS.
+create_clock -name {gclk0} -period 10.000 -waveform {0.000 5.000} \
+    [get_ports {gclk0_p}]
+
+# RMII reference — 50 MHz sourced BY the LAN8720, entirely asynchronous to
+# GCLK0 (different crystal, no phase relationship).
+create_clock -name {rmii_ref_clk} -period 20.000 -waveform {0.000 10.000} \
+    [get_ports {phy_rmii_ref_clk}]
+
+################################################################################
+# Clock groups
+#
+# The SoC/chiplet domain and the RMII domain are asynchronous. The ethernet
+# subsystem crosses between them through its own synchronisers, so telling the
+# tool they are unrelated is correct — not a way of hiding a real path.
+################################################################################
+set_clock_groups -asynchronous \
+    -group [get_clocks {gclk0}] \
+    -group [get_clocks {rmii_ref_clk}]
+
+################################################################################
+# RMII I/O timing
+#
+# Numbers carried over from the proven Pynq-Z2 / KR260 flows. They are
+# deliberately loose: the LAN8720's RMII timing budget is generous at 50 MHz,
+# and on this board the signals additionally pass through an external 1.8 V
+# <-> 3.3 V translator (74AVC16T245 class, t_pd ~2-3 ns) which the FPGA cannot
+# see. If you fit a slower translator (74LVC-class, t_pd ~4.5 ns) widen the max
+# input delay by the difference.
+################################################################################
+set_input_delay  -clock {rmii_ref_clk} -min  2.0 \
+    [get_ports {phy_rmii_rxd[*] phy_rmii_crs_dv}]
+set_input_delay  -clock {rmii_ref_clk} -max 14.0 \
+    [get_ports {phy_rmii_rxd[*] phy_rmii_crs_dv}]
+set_output_delay -clock {rmii_ref_clk} -min -1.0 \
+    [get_ports {phy_rmii_txd[*] phy_rmii_tx_en}]
+set_output_delay -clock {rmii_ref_clk} -max  5.0 \
+    [get_ports {phy_rmii_txd[*] phy_rmii_tx_en}]
+
+################################################################################
+# False paths
+################################################################################
+
+# Status LEDs — purely visual, no timing requirement.
+set_false_path -to [get_ports {led[*]}]
+
+# 1 PPS — a slow, software-visible PHC output with no setup target.
+set_false_path -to [get_ports {phc_pps_out}]
+
+# MDIO — 2.5 MHz management bus driven from a software-rate divider, plus an
+# external translator. Not a mission-mode timing path.
+set_false_path -to   [get_ports {phy_mdc phy_mdio phy_mdio_dir}]
+set_false_path -from [get_ports {phy_mdio}]
+
+# PHY reset — asynchronous level, released once out of system reset.
+set_false_path -to [get_ports {phy_nrst}]
+
+# SWD — asynchronous debug interface clocked by the probe, never part of
+# mission-mode timing. swd_clk is treated as a clock by the tool and lands on
+# a non-clock-capable Mictor pin; that is fine at <= 10 MHz.
+set_false_path -from [get_ports {swd_clk}]
+set_false_path -from [get_ports {swd_dio}]
+set_false_path -to   [get_ports {swd_dio}]
+
+# Push button — mechanical, synchronised in the board top.
+set_false_path -from [get_ports {pb1_rst_n}]
+
+################################################################################
+# QSPI
+#
+# qspi_sclk is generated INSIDE the controller by a HCLK/2N divider
+# (apb_qspi_regs CLK_DIV, reset value 1 -> SCK = HCLK/2). At HCLK = 25 MHz that
+# is <= 12.5 MHz, far inside the W25Q32FW's limits, so the pads are left
+# unconstrained here rather than carrying a fragile hierarchical generated-clock
+# lookup through synthesis. Constrain them on the Vivado side after
+# `export vivado` if the flash proves marginal — see README.md.
+################################################################################

@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+# ---------------------------------------------------------------------------
+# assemble_uc_filelist.py — flatten the chiplet VCS flist into one self-
+# contained -f file for ProtoCompiler Unified Compile (vlogan).
+#
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+# license.  Copyright 2026, SoC Labs (www.soclabs.org)
+# ---------------------------------------------------------------------------
+# `make elab` feeds flist/nanosoc_eth_chiplet.flist straight to VCS with a few
+# environment variables set (CHIPLET_SOC_VCS_FLIST, CHIPLET_TL_VCS_FLIST,
+# TIDECHART_HOME, ...). UC runs vlogan inside its own csh sandbox where that
+# environment is not guaranteed, so we resolve everything here: expand every
+# `-f` include recursively, expand ${VAR}/$VAR against the current environment,
+# and emit absolute paths. The result is identical in content to what `make
+# elab` compiles — same 586 sources — just fully self-contained.
+#
+# Preserves +incdir+ (rewritten to absolute) and +define+; passes file paths
+# through as absolute. Drops +libext (vlogan gets it on the command line).
+#
+# Usage: assemble_uc_filelist.py <root.flist>  > chiplet_uc.f
+# ---------------------------------------------------------------------------
+import os
+import re
+import sys
+
+
+def expand(tok):
+    tok = re.sub(r"\$\(([A-Za-z_]\w*)\)", r"${\1}", tok)   # $(V) -> ${V}
+    return os.path.expandvars(tok)
+
+
+def resolve(tok, base):
+    p = expand(tok)
+    if "$" in p:
+        return None
+    if not os.path.isabs(p):
+        p = os.path.join(base, p)
+    return p
+
+
+SRC_EXT = (".v", ".sv", ".vlib")
+HDR_EXT = (".vh", ".svh", ".h")
+
+
+def walk(path, out_incdirs, out_srcs, out_defs, seen, unresolved):
+    ap = os.path.abspath(path)
+    if ap in seen:
+        return
+    seen.add(ap)
+    if not os.path.isfile(ap):
+        sys.stderr.write("assemble_uc_filelist: MISSING flist %s\n" % ap)
+        return
+    base = os.path.dirname(ap)
+    with open(ap) as fh:
+        text = fh.read()
+    # strip // and # comments, then tokenise across whitespace/newlines
+    clean = []
+    for raw in text.splitlines():
+        line = raw.split("//", 1)[0]
+        line = re.sub(r"(^|\s)#.*$", "", line)
+        clean.append(line)
+    toks = " ".join(clean).split()
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t in ("-f", "-F") and i + 1 < len(toks):
+            r = resolve(toks[i + 1], base)
+            if r:
+                walk(r, out_incdirs, out_srcs, out_defs, seen, unresolved)
+            else:
+                unresolved.append(toks[i + 1])
+            i += 2
+            continue
+        m = re.match(r"^-[fF](.+)$", t)
+        if m:
+            r = resolve(m.group(1), base)
+            if r:
+                walk(r, out_incdirs, out_srcs, out_defs, seen, unresolved)
+            else:
+                unresolved.append(m.group(1))
+            i += 1
+            continue
+        if t.startswith("+incdir+"):
+            for d in t[len("+incdir+"):].split("+"):
+                if not d:
+                    continue
+                r = resolve(d, base)
+                if r:
+                    if r not in out_incdirs:
+                        out_incdirs.append(r)
+                else:
+                    unresolved.append(d)
+            i += 1
+            continue
+        if t.startswith("+define+"):
+            for d in t[len("+define+"):].split("+"):
+                if d and d not in out_defs:
+                    out_defs.append(d)
+            i += 1
+            continue
+        if t.startswith("+libext"):
+            i += 1
+            continue
+        if t.startswith(("+", "-")):
+            i += 1
+            continue
+        r = resolve(t, base)
+        if r is None:
+            unresolved.append(t)
+        elif r.endswith(HDR_EXT):
+            d = os.path.dirname(r)
+            if d not in out_incdirs:
+                out_incdirs.append(d)
+        elif r.endswith(SRC_EXT):
+            if r not in out_srcs:
+                out_srcs.append(r)
+        i += 1
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.stderr.write("usage: assemble_uc_filelist.py <root.flist>\n")
+        return 2
+    incdirs, srcs, defs, unresolved = [], [], [], []
+    walk(sys.argv[1], incdirs, srcs, defs, set(), unresolved)
+
+    if unresolved:
+        sys.stderr.write(
+            "assemble_uc_filelist: %d token(s) unresolved (env not set?):\n"
+            % len(unresolved))
+        for u in sorted(set(unresolved))[:20]:
+            sys.stderr.write("    %s\n" % u)
+        return 1
+
+    missing = [s for s in srcs if not os.path.isfile(s)]
+    if missing:
+        sys.stderr.write("assemble_uc_filelist: %d source(s) missing on disk:\n"
+                         % len(missing))
+        for m in missing[:20]:
+            sys.stderr.write("    %s\n" % m)
+        return 1
+
+    out = sys.stdout
+    out.write("// Generated by assemble_uc_filelist.py — DO NOT EDIT.\n")
+    out.write("// %d sources, %d include dirs\n" % (len(srcs), len(incdirs)))
+    for d in incdirs:
+        out.write("+incdir+%s\n" % d)
+    for d in defs:
+        out.write("+define+%s\n" % d)
+    for s in srcs:
+        out.write("%s\n" % s)
+    sys.stderr.write("assemble_uc_filelist: %d sources, %d incdirs\n"
+                     % (len(srcs), len(incdirs)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
