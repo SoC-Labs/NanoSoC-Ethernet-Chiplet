@@ -3,10 +3,13 @@
 **TL;DR:** I1 (SELF_ARM + FIX-E) resolved **link bring-up** — the pair reaches fcsm=4 and
 carries *clean* D2D traffic byte-exact. But the **AXI data-node traffic recovery is still
 ABSENT**: a single injected bit-error on the B (write-response) node **hard-wedges the
-initiator die**, JTAG-POR-only. This is the ORIGINAL wedge root cause
-(`docs/CROSS_DIE_WEDGE_ROOTCAUSE.md` — 5 AXI nodes ship the recovery-*stripped* FCSM; only
-sideband FCSM_6 recovers), which I1 did **not** address. The "1000-beat soak clean" result
-was a clean-BER window (no bit-errors occurred), so nothing to recover from.
+initiator die**, JTAG-POR-only. **The shipped build already contains the recovery-capable
+FCSMs** (flist points FCSM 0–4 at `local_overrides`, gate=8, full `socl_reack`/watchdog
+logic) — so this is *recovery present but **ineffective*** for this failure mode, NOT
+recovery-stripped; I1 (a bring-up fix) did not address it. (This corrects
+`docs/CROSS_DIE_WEDGE_ROOTCAUSE.md`, now stale: it says the AXI nodes ship the deps stripped
+copies; I1 re-pointed them to local_overrides.) The "1000-beat soak clean" result was a
+clean-BER window (no bit-errors occurred), so nothing to recover from.
 
 ## The experiment
 `kr260_eth_xfer.py --mode errinject --node B --seed 0xBEEF --stream 32` on die_a, over the
