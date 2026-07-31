@@ -68,6 +68,14 @@ CAM_RULE_0               = TLAPB_BASE + 0x4010   # [0]=en [15:8]=match [23:16]=r
 ROLE_CFG_MASTER_LOCK = 0x02
 ROLE_CFG_SLAVE_LOCK  = 0x03
 
+# Wlink flow-control state machine: 4 == LINK_IDLE == "the link is actually up".
+# cr/crack packets prove the M->S link LAYER is exchanging, but the FCSM can sit
+# short of LINK_IDLE with cr/crack already seen — so cr/crack alone is NOT
+# sufficient evidence the data plane will open. That gap let the heterogeneous
+# pair's F6 stall hide behind a green run here; see the het-testing repo's
+# docs/F6_ATTRIBUTION.md. Assert on the FCSM as well.
+FCSM_LINK_IDLE = 4
+
 # 3-write LL bootstrap; order matters (swreset first clears CR/CRACK sticky).
 LL_SWRESET_ON  = 0x00027F08
 LL_SWRESET_OFF = 0x00027F00
@@ -201,6 +209,25 @@ class Pair:
         f = self.dut.u_dieB.u_tidelink.u_chiplet_controller.u_wlink.tl2wl.wlink_tidelinktl
         return int(f.cr_pkt_seen_rx.value) and int(f.crack_pkt_seen_rx.value)
 
+    def _fcsm(self, die):
+        return getattr(self.dut, f"u_die{die}").u_tidelink.u_chiplet_controller \
+            .u_wlink.tl2wl.wlink_tidelinktl
+
+    def fcsm_state(self, die):
+        """Wlink FCSM state on one die. -1 if unresolvable (X at this instant)."""
+        v = self._fcsm(die).state.value
+        return int(v) if v.is_resolvable else -1
+
+    def link_is_up(self):
+        """BOTH dies at LINK_IDLE — the condition the data plane actually needs.
+
+        Strictly stronger than link_carries_m2s(): the autonomous-negotiation
+        posture reaches cr/crack and cal_done on both dies and still parks the
+        FCSM short of LINK_IDLE, so the peer aperture never opens. Measured on
+        this very testbench: manual posture -> 4/4; autoneg -> 1/1."""
+        return (self.fcsm_state("A") == FCSM_LINK_IDLE
+                and self.fcsm_state("B") == FCSM_LINK_IDLE)
+
     def observe_inbound(self):
         """The address die B's inbound D2D port (its ahb_mng) is presenting — read
         hierarchically so we can see the CAM's translated byte even before it
@@ -313,7 +340,14 @@ async def test_peer_write_crosses_to_die_b(dut):
     # -- Stage 1: the link. --------------------------------------------------
     await tb.bring_up()
     assert tb.link_carries_m2s(), "M->S link layer never came up (cr/crack not seen on die B)."
-    dut._log.info("STAGE 1 ok: link up (cal_done both dies; cr+crack seen on die B)")
+    a_st, b_st = tb.fcsm_state("A"), tb.fcsm_state("B")
+    assert tb.link_is_up(), (
+        f"Wlink FCSM did not reach LINK_IDLE ({FCSM_LINK_IDLE}): die A={a_st} die B={b_st}. "
+        "cr/crack were seen, so the link LAYER is exchanging — but the FCSM is short "
+        "of LINK_IDLE and the peer aperture will not open. Do not treat cr/crack as "
+        "proof the link is up.")
+    dut._log.info(f"STAGE 1 ok: link up (cal_done both dies; cr+crack on die B; "
+                  f"FCSM A={a_st} B={b_st} = LINK_IDLE)")
 
     # -- Stage 2: CAM on, peer write, observe die B's inbound + SRAM. --------
     cocotb.start_soon(tb.catch_inbound_writes())
