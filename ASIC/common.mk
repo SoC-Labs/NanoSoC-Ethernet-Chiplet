@@ -60,11 +60,22 @@ export CMSDK_DIR ?= $(ARM_IP_LIBRARY_PATH)/BP210/BP210-BU-00000-r1p1-00rel0
 # tcbn65lp standard-cell NLDM) and $::env(PHYS_IP) (Arm cln65lp sc12 base-cell
 # LEF/DB). set_env.sh does NOT export these, so the Genus flow (which includes
 # this common.mk) resolves them here. Both `?=` so a site/CI export wins.
-#   NOTE: TSMC_65_HOME currently points at a per-user tree — the ONLY copy that
-#   carries the STAGGERED IO2.5V lib (no /research/AAA copy exists). Override on
-#   any other host. PHYS_IP is the shared read-only Arm phys-IP library.
-export TSMC_65_HOME ?= /home/dwn1c21/SoC-Labs/phys_ip/TSMC/65
+#   TSMC_65_HOME is the GROUP-shared PDK (/tsmc65pdk, group tsmc65pdkgrp), not a
+#   per-user tree: the previous default (/home/dwn1c21/SoC-Labs/phys_ip/TSMC/65)
+#   is readable only to members of group `tsmc65`, which excludes CI and most
+#   hosts. /tsmc65pdk/65 carries the same CMOS/ + iolib/ layout — every path
+#   config.tcl builds off TSMC_65_HOME resolves identically under it, and it is
+#   the tree the hardcoded DRC ruledeck / GDS-out map in the flow already use.
+#   PHYS_IP is the shared read-only Arm phys-IP library.
+export TSMC_65_HOME ?= /tsmc65pdk/65
 export PHYS_IP      ?= /research/AAA/phys_ip_library
+
+# ── ASIC flow toolkit root ─────────────────────────────────────────────────
+# The Innovus stage scripts (2_pnr_setup / 3_pnr_clock / 4_pnr_route) do
+# `source $env(SOCLABS_ASIC_FLOW_DIR)/Cadence/procs.tcl` internally, so passing
+# them by path with `innovus -f` is NOT enough — without this export stage 2
+# aborts on the very first source. Nothing else in the repo sets it.
+export SOCLABS_ASIC_FLOW_DIR ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/asic-flows
 
 # ── Target module ──────────────────────────────────────────────────────────
 export MODULE ?= nanosoc_multicore_soc

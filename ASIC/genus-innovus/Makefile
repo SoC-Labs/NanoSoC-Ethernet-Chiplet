@@ -66,8 +66,41 @@ syn_norun:
 lec:
 	cd $(WORK_DIR)/; lec -xl -Dofile ./lec.dofile
 
+## The three Innovus stages, in order. Each reads the DB the previous one wrote
+## (`read_db $block_name` / `write_db $block_name` inside work/), so they must be
+## run in sequence and CANNOT be parallelised. Resume mid-flow by invoking the
+## stage you want — the DB in work/ carries the state.
+##
+##   pnr_place : floorplan + power plan + place_design + tie-offs   (2_pnr_setup)
+##   pnr_cts   : clock tree synthesis + post-CTS opt                (3_pnr_clock)
+##   pnr_route : route + filler + bondpads + GDS + reports + DRC    (4_pnr_route)
+##
+## pnr_route is the stage that emits the GDSII ($(OUT_DIR)/$(BLOCK).gds). It
+## needs asic-flows at b19e784 or later — the earlier revision stops after
+## routing and writes no stream. It runs Calibre DRC at the end only when
+## CALIBRE_HOME is set in the environment.
+BLOCK := nanosoc_eth_chiplet_pads
+
+.PHONY: pnr_place pnr_cts pnr_route pnr_all
+pnr_place: setup_dirs
+	cd $(WORK_DIR)/; innovus -stylus -f $(ASIC_FLOWS_DIR)/2_pnr_setup.tcl
+
+pnr_cts:
+	cd $(WORK_DIR)/; innovus -stylus -f $(ASIC_FLOWS_DIR)/3_pnr_clock.tcl
+
+pnr_route:
+	cd $(WORK_DIR)/; innovus -stylus -f $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
+	@test -s $(OUT_DIR)/$(BLOCK).gds \
+	    && echo "OK: GDSII $(OUT_DIR)/$(BLOCK).gds ($$(du -h $(OUT_DIR)/$(BLOCK).gds | cut -f1))" \
+	    || { echo "FAIL: no GDSII at $(OUT_DIR)/$(BLOCK).gds"; \
+	         echo "      check ASIC/asic-flows is at b19e784+ (write_stream lives there)"; exit 1; }
+
+## pnr_all: syn -> place -> CTS -> route -> GDSII, unattended. Multi-hour.
+pnr_all: syn pnr_place pnr_cts pnr_route
+
+## pnr_setup: interactive Innovus in work/, for debugging a stage by hand.
 pnr_setup:
-	cd $(WORK_DIR)/; innovus -stylus 
+	cd $(WORK_DIR)/; innovus -stylus
 
 drc:
 	cd $(WORK_DIR)/; calibre -gui
