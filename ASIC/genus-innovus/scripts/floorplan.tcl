@@ -1,0 +1,103 @@
+## Die size floorplan
+create_floorplan -site core -die_size 1600 2000 50 50 50 50
+
+## Place IOs
+delete_io_fillers
+read_io_file ../scripts/nanosoc_eth_chiplet_pads.io
+
+add_io_fillers -cells PFILLER20_G -prefix FILLER -side n
+add_io_fillers -cells PFILLER20_G -prefix FILLER -side e
+add_io_fillers -cells PFILLER20_G -prefix FILLER -side s 
+add_io_fillers -cells PFILLER20_G -prefix FILLER -side w 
+
+add_io_fillers -cells PFILLER10_G -prefix FILLER -side n
+add_io_fillers -cells PFILLER10_G -prefix FILLER -side e
+add_io_fillers -cells PFILLER10_G -prefix FILLER -side s 
+add_io_fillers -cells PFILLER10_G -prefix FILLER -side w 
+
+add_io_fillers -cells PFILLER5_G -prefix FILLER -side n
+add_io_fillers -cells PFILLER5_G -prefix FILLER -side e
+add_io_fillers -cells PFILLER5_G -prefix FILLER -side s 
+add_io_fillers -cells PFILLER5_G -prefix FILLER -side w 
+
+add_io_fillers -cells PFILLER1_G -prefix FILLER -side n
+add_io_fillers -cells PFILLER1_G -prefix FILLER -side e
+add_io_fillers -cells PFILLER1_G -prefix FILLER -side s 
+add_io_fillers -cells PFILLER1_G -prefix FILLER -side w 
+
+add_io_fillers -cells PFILLER05_G -prefix FILLER -side n
+add_io_fillers -cells PFILLER05_G -prefix FILLER -side e
+add_io_fillers -cells PFILLER05_G -prefix FILLER -side s 
+add_io_fillers -cells PFILLER05_G -prefix FILLER -side w 
+
+add_io_fillers -cells PFILLER0005_G -prefix FILLER -side n
+add_io_fillers -cells PFILLER0005_G -prefix FILLER -side e
+add_io_fillers -cells PFILLER0005_G -prefix FILLER -side s 
+add_io_fillers -cells PFILLER0005_G -prefix FILLER -side w 
+
+## Place macros
+unplace_obj -blocks
+create_place_halo -halo_deltas {3.6 3.6 3.6 3.6} -all_macros
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_ethmac_0/u_inner_u_eth_top_wishbone_bd_ram_u_sram/u_rf 1053.8000000000 1117.8100000000 R180
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_ethmac_0/u_inner_u_eth_top_wishbone_bd_ram_u_sram/u_rf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_bootrom_0_u_bootrom_u_rom_via 883.5350000000 1538.6000000000 MY
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_bootrom_0_u_bootrom_u_rom_via ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_dmem_0_u_sram_u_sram_gen_rf_16k.u_rf_sp_hdf 1058.6000000000 1360.4000000000 MY
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_dmem_0_u_sram_u_sram_gen_rf_16k.u_rf_sp_hdf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_eth_scratch_rx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf 590.2000000000 1338.8000000000 R0
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_eth_scratch_rx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_eth_scratch_tx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf 1049.8000000000 1653.8000000000 MY
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_eth_scratch_tx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf 290.8000000000 1513.4000000000 R0
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_tag_ram_0_i 911.2000000000 448.6900000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_tag_ram_0_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_tag_ram_0_i 898.8000000000 382.0900000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_tag_ram_0_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i 553.8000000000 460.4000000000 R0
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_3_i 516.6000000000 370.0400000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_3_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i 702.4000000000 280.0400000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_1_i 718.8000000000 325.0400000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_1_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_2_i 633.6000000000 507.2000000000 R0
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_2_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_3_i 564.4000000000 415.0400000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_3_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_0_i 708.6000000000 190.0400000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_0_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_1_i 727.8000000000 235.0400000000 MX
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_1_i ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf 1059.2000000000 203.9500000000 R180
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_shared_sram_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf 1052.4000000000 500.7100000000 R180
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_shared_sram_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf 1050.4000000000 953.6000000000 R0
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via 1237.3350000000 735.4650000000 R180
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via ] .place_status placed
+
+place_inst u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink/u_tidelink_fifo_u_fifo_mem_u_sram_u_rf 230.6000000000 1220.0000000000 R0
+set_db [get_db insts u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink/u_tidelink_fifo_u_fifo_mem_u_sram_u_rf ] .place_status placed
