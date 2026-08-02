@@ -36,7 +36,57 @@ export CHIPLET_TL_ASIC_FLIST := $(CHIPLET_HOME)/build/chip/flist/tidelink_asic.f
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
+ASIC_DIR     := $(CHIPLET_HOME)/ASIC/genus-innovus
+
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
+.PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc
+
+# Bare `make` used to run `bootstrap` — a 42-submodule fetch — because it was
+# the first target in the file. Show what is available instead.
+.DEFAULT_GOAL := help
+
+## help: the targets in this Makefile, grouped by what they are for.
+help:
+	@echo "nanosoc_eth_chiplet — integration top"
+	@echo ""
+	@echo "  Setup:"
+	@echo "    make bootstrap     fetch all 42 submodules (see scripts/bootstrap.sh)"
+	@echo ""
+	@echo "  Gates (what CI runs nightly — .github/workflows/nightly.yml):"
+	@echo "    make check         chip-boundary + Verilator lint. No EDA licence."
+	@echo "    make elab          VCS structural elaboration"
+	@echo "    make elab-strict   xrun -hal; fails on a synthesis-blocking multi-driver"
+	@echo "    make regress       every data-plane sim proof (ARGS=--quick to skip the long pole)"
+	@echo "    make cdc           structural CDC pass (Cadence HAL)"
+	@echo ""
+	@echo "  Individual checks:"
+	@echo "    make chip-boundary every RTL port classified exactly once"
+	@echo "    make chip-wrapper  ...and emit build/chip/rtl/nanosoc_eth_chiplet_chip.v"
+	@echo "    make lint          Verilator structural lint"
+	@echo ""
+	@echo "  ASIC implementation (delegates to ASIC/genus-innovus):"
+	@echo "    make asic-status   which flow stages have run"
+	@echo "    make asic-syn      synthesis (Genus)"
+	@echo "    make asic-pnr      place + CTS + route -> GDSII (Innovus). Multi-hour."
+	@echo "    make asic-gds      syn + pnr, unattended, end to end"
+	@echo "    make asic-drc      Calibre DRC on the built GDS"
+	@echo "    make asic          the ASIC flow's own help, with every target"
+	@echo ""
+	@echo "    make asic-flist    re-render the generated ASIC sub-flists"
+	@echo "    make clean         remove build/elab"
+
+#-----------------------------------------------------------------------------
+# ASIC pass-throughs
+#-----------------------------------------------------------------------------
+# So the implementation flow is reachable from the repo root like every other
+# gate, instead of requiring a cd into a directory you have to know about.
+# ASIC/genus-innovus/Makefile is the authority; these only forward.
+asic:        ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory help
+asic-status: ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory status
+asic-syn:    ; $(MAKE) -C $(ASIC_DIR) syn
+asic-pnr:    ; $(MAKE) -C $(ASIC_DIR) pnr_place pnr_cts pnr_route
+asic-gds:    ; $(MAKE) -C $(ASIC_DIR) pnr_all
+asic-drc:    ; $(MAKE) -C $(ASIC_DIR) drc_batch
 
 ## bootstrap: fetch all 42 submodules. Not `git clone --recursive` — see the script.
 bootstrap:
