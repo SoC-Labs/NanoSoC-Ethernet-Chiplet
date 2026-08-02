@@ -1,0 +1,97 @@
+#-----------------------------------------------------------------------------
+# nightly.yml — daily static + elaboration gates on main
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# Runs on a SELF-HOSTED runner (srv03335). It has to: every gate below needs
+# either an EDA licence (VCS, Xcelium) or the read-only lab IP trees under
+# /research, and neither exists on a GitHub-hosted runner.
+#
+# Scope is deliberately the FAST gates — chip-boundary, lint, elab, elab-strict.
+# The ASIC implementation flow (syn -> place -> CTS -> route -> GDSII) is NOT
+# here: it is a multi-hour job whose runs would overlap on a daily cadence, and
+# it needs ASIC/romlibs, which cannot be regenerated on this host (the Arm ROM
+# compiler lists zero generators since the RHEL 8.10 upgrade — see the
+# MEM_COMPILER_DIR note in ASIC/common.mk). Run it by hand: `make -C
+# ASIC/genus-innovus pnr_all`.
+#
+# See scripts/ci/install_runner.sh for how the runner is registered and started.
+#-----------------------------------------------------------------------------
+name: nightly
+
+on:
+  schedule:
+    # 02:00 UTC daily. Off-peak for the shared Synopsys/Cadence licence servers.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+# One nightly at a time. A second run must not race the first for the same
+# workspace or the same licence seats — queue it instead of cancelling, so a
+# manually-dispatched run never silently kills the scheduled one.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  gates:
+    runs-on: [self-hosted, linux, soclabs-eda]
+    timeout-minutes: 180
+
+    defaults:
+      run:
+        # LOGIN shell, not the default non-interactive one. The EDA PATH
+        # (/eda/synopsys/.../VCS_2022.06-SP2/bin, /eda/cadence/xcelium/tools/bin)
+        # and every *_LICENSE_FILE var come from the host's profile scripts. A
+        # non-login shell gets none of them and `make elab` dies on "vcs: not
+        # found" — which reads like a repo bug, not an environment one.
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # clean:false keeps the 42 populated submodules between runs. The
+          # default (`git clean -ffdx`) deletes them, forcing a full recursive
+          # re-clone of an 8-level tree — including the SoTON GitLab dep —
+          # every single night. bootstrap.sh below re-syncs them incrementally.
+          clean: false
+          # bootstrap.sh, not `submodules: recursive`: one submodule inside
+          # TideLink is declared over SSH at the commit we pin, and the script
+          # rewrites it to HTTPS for the fetch. See scripts/bootstrap.sh.
+          submodules: false
+          fetch-depth: 1
+
+      - name: Bootstrap submodules
+        run: |
+          git submodule sync --recursive
+          ./scripts/bootstrap.sh
+
+      - name: Drop stale build artefacts
+        # `make elab` writes simv_chiplet into build/elab. If a previous run
+        # left one there and this run's VCS invocation fails early, the old
+        # binary survives and downstream steps test LAST night's netlist.
+        # Removing the tree is the only reliable guard.
+        run: rm -rf build/elab build/lint verif/elab_strict/build
+
+      - name: check — chip-boundary + Verilator lint
+        run: make check
+
+      - name: elab — VCS structural elaboration
+        run: make elab
+
+      - name: elab-strict — xrun -hal multi-driver gate
+        run: make elab-strict
+
+      - name: Collect logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-logs-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/elab/*.log
+            build/lint/**
+            verif/elab_strict/build/**/*.log
