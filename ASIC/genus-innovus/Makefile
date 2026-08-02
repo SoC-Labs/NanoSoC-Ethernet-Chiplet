@@ -80,8 +80,19 @@ romlibs-check:
 	    echo "(b) a WORKING Arm mem compiler — see the MEM_COMPILER_DIR note in common.mk."; \
 	    exit 1; }
 
+## syn: Genus synthesis. The `test -s` is NOT belt-and-braces: when its -f
+## script fails, Genus prints "Encountered problems processing file", drops to
+## its interactive prompt, reads EOF and exits ZERO. Without this check `make
+## pnr_all` sails straight past a dead synthesis into place-and-route on a
+## netlist that was never written.
 syn: setup_dirs asic-flist romlibs-check
 	cd $(WORK_DIR)/; genus -f $(ASIC_FLOWS_DIR)/1_synthesis.tcl -log $(LOG_DIR)/syn_logs
+	@test -s $(OUT_DIR)/$(BLOCK)_gate_power.v || { \
+	    echo "FAIL: synthesis produced no netlist at $(OUT_DIR)/$(BLOCK)_gate_power.v"; \
+	    echo "      Genus exits 0 on a failed script — look for the real error with:"; \
+	    echo "        grep -nE 'Encountered problems|^Error|not set' $(LOG_DIR)/syn_logs.log*"; \
+	    exit 1; }
+	@echo "OK: netlist $(OUT_DIR)/$(BLOCK)_gate_power.v"
 
 syn_norun:
 	cd $(WORK_DIR)/; genus -log $(LOG_DIR)/syn_logs
@@ -102,19 +113,36 @@ lec:
 ## b19e784 or later — the earlier revision stops after routing and writes no
 ## stream. It runs Calibre DRC at the end only when CALIBRE_HOME is set in the
 ## environment, and that in-Innovus DRC is a no-op — see the `drc` target.
+## -files, NOT -f. Every one of the three stage scripts carries a header saying
+## "run: innovus -stylus -f <script>", and that is wrong: -f is legacy-UI only.
+## Stylus/Common UI rejects it with "**ERROR: (IMPSYT-468): Unknown argument -f"
+## and then, having printed a usage message, exits ZERO — so make treats the
+## stage as passed and moves to the next one. Three stages "ran" in under a
+## minute that way, and the only symptom was a missing GDS at the end.
+INNOVUS := innovus -stylus -files
+
 .PHONY: pnr_place pnr_cts pnr_route pnr_all
 pnr_place: setup_dirs
-	cd $(WORK_DIR)/; innovus -stylus -f $(ASIC_FLOWS_DIR)/2_pnr_setup.tcl
+	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/2_pnr_setup.tcl
+	@test -d $(WORK_DIR)/$(BLOCK) || { \
+	    echo "FAIL: placement wrote no DB at $(WORK_DIR)/$(BLOCK)"; exit 1; }
 
 pnr_cts:
-	cd $(WORK_DIR)/; innovus -stylus -f $(ASIC_FLOWS_DIR)/3_pnr_clock.tcl
+	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/3_pnr_clock.tcl
+	@test -s $(REPORT_DIR)/timing_summary_03_cts_opt.rep || { \
+	    echo "FAIL: CTS wrote no post-opt timing summary — stage did not complete."; exit 1; }
 
 pnr_route:
-	cd $(WORK_DIR)/; innovus -stylus -f $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
+	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
 	@test -s $(OUT_DIR)/$(BLOCK).gds \
 	    && echo "OK: GDSII $(OUT_DIR)/$(BLOCK).gds ($$(du -h $(OUT_DIR)/$(BLOCK).gds | cut -f1))" \
 	    || { echo "FAIL: no GDSII at $(OUT_DIR)/$(BLOCK).gds"; \
-	         echo "      check ASIC/asic-flows is at b19e784+ (write_stream lives there)"; exit 1; }
+	         echo "      innovus exits 0 on a rejected argument or a failed script;"; \
+	         echo "      find the real error with:"; \
+	         echo "        grep -nE '\*\*ERROR|Unknown argument' $(WORK_DIR)/innovus.log*"; \
+	         echo "      if the log looks clean, check ASIC/asic-flows is at b19e784+"; \
+	         echo "      (write_stream lives there; the earlier pin routes but streams nothing)."; \
+	         exit 1; }
 
 ## pnr_all: syn -> place -> CTS -> route -> GDSII, unattended. Multi-hour.
 pnr_all: syn pnr_place pnr_cts pnr_route

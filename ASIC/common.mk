@@ -50,6 +50,15 @@ export PHC_HOME                  ?= $(PHC_AHB_HOME)
 export AHB_QSPI_HOME             ?= $(NANOSOC_MULTICORE_HOME)/ahb_qspi
 export SOCLABS_AHB_QSPI_DIR      ?= $(AHB_QSPI_HOME)
 export IPC_MAILBOX_HOME          ?= $(NANOSOC_MULTICORE_HOME)/inter-processor-communications-ahb
+# The two chiplet-level components. The ASIC flist -f-includes
+# ${TIDECHART_HOME}/flist/tidechart.flist, and the generated tidelink sub-flist
+# is written entirely in ${TIDELINK_HOME} paths. Without these exports Genus
+# reads the whole SoC, then dies at the END of read_flist.tcl with
+# "Environment variable TIDELINK_HOME is not set" — ~10 minutes in, after every
+# other file has loaded, so it reads as a link-stage problem rather than a
+# missing export. set_env.sh defines them; the ASIC flows do not source it.
+export TIDELINK_HOME             ?= $(NANOSOC_ETH_CHIPLET_HOME)/tidelink
+export TIDECHART_HOME            ?= $(NANOSOC_ETH_CHIPLET_HOME)/tidechart
 
 # ── CMSDK path ─────────────────────────────────────────────────────────────
 # ARM Cortex-M System Design Kit (required for cmsdk_ahb_to_sram / AHB fabric)
