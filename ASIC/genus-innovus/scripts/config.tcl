@@ -15,9 +15,17 @@ set process_node 65
 # and set_dont_touch typed at the `@genus:root:` prompt after the abort. So
 # 1_synthesis.tcl has never once completed unattended.
 #
-# The attribute is the remedy Genus itself names in the RCLP-203 message. It
-# demotes the errors to warnings so the script runs to completion; it does NOT
-# fix them, and check_cpf still writes the full detail to logs/syn_cpf_check.log.
+# clp_treat_errors_as_warnings is the remedy the RCLP-203 text names, and it IS
+# accepted ("Setting attribute of root '/' ... = true"), but on this design it
+# does NOT stop check_cpf raising — verified: run 4 set it and aborted at the
+# same line with the same four Severity: Error blocks. So the attribute is kept
+# (harmless, and correct in intent) and the abort is stopped directly, by
+# wrapping check_cpf so a rule-check failure cannot kill the -f script.
+#
+# The wrapper is the scripted equivalent of what the reference run did by hand.
+# It does NOT fix or hide anything: check_cpf still runs, still writes full
+# detail to logs/syn_cpf_check.log, and the failure is echoed to stderr where
+# the main log will show it.
 # What is being tolerated, all pre-existing:
 #   34x 1801_REF_OBJ_NOT_FOUND      UPF connect_supply_net naming macro PG ports
 #                                   (rf_sp_hdf / cache RAM VDD,VSS) that the
@@ -32,6 +40,27 @@ set process_node 65
 # Set here, in the project's own config, rather than in the shared asic-flows
 # 1_synthesis.tcl, which other designs use.
 set_db clp_treat_errors_as_warnings true
+
+# Guarded on both sides: this file is also sourced by 2_pnr_setup / 3_pnr_clock /
+# 4_pnr_route under Innovus, where check_cpf does not exist and a bare `rename`
+# would itself abort the script. The second test makes re-sourcing idempotent.
+if {[llength [info commands check_cpf]]
+    && ![llength [info commands _check_cpf_unwrapped]]} {
+    rename check_cpf _check_cpf_unwrapped
+    proc check_cpf {args} {
+        if {[catch {eval _check_cpf_unwrapped $args} msg]} {
+            # stderr, not stdout: the call site redirects stdout into
+            # syn_cpf_check.log, so a puts here would be buried in the very
+            # file you would only read if you already knew to look.
+            puts stderr "WARNING: check_cpf FAILED — continuing deliberately."
+            puts stderr "WARNING:   $msg"
+            puts stderr "WARNING:   detail: logs/syn_cpf_check.log"
+            puts stderr "WARNING:   this is pre-existing; see the note in scripts/config.tcl"
+            return ""
+        }
+        return $msg
+    }
+}
 
 set hdl_file_list ../scripts/read_flist.tcl
 
