@@ -59,7 +59,16 @@ create_place_halo -halo_deltas {3.6 3.6 3.6 3.6} -all_macros
 ## way/word indices, macro type), which are stable, and ignore the separators
 ## and prefixes, which are not. place_macro insists on exactly one match.
 proc place_macro {pattern x y orient} {
-    set hits [get_db insts $pattern]
+    # Filter to MACROS explicitly. `get_db insts <pattern>` matches every
+    # instance, standard cells included, so a region-scoped glob like
+    # *region_eth_scratch_rx_0* returns the macro plus ~50 leaf cells in the
+    # same region. The base_class test is what makes the "exactly 1" check
+    # meaningful. Done in Tcl rather than with -if so there is no doubt about
+    # how a pattern and a predicate combine in this Innovus version.
+    set hits {}
+    foreach i [get_db insts $pattern] {
+        if {[get_db $i .base_cell.base_class] eq "block"} { lappend hits $i }
+    }
     if {[llength $hits] != 1} {
         error "place_macro: pattern '$pattern' matched [llength $hits] instances, expected exactly 1.\
                \n  Macro instance names change when Genus re-ungroups; re-run\
