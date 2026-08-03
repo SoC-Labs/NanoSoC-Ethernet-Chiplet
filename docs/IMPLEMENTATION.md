@@ -110,13 +110,22 @@ refactor the peer path, keep them and re-run `verif/g2_soc_pair` +
   findings. `LINT_FINDINGS.md`.
 - **TideLink pin**: `tidelink` is frozen on a feature branch; roll it to `main`
   and apply `patches/0001` upstream. `PIN_POLICY.md`.
-- **Peer READ round-trip**: **fixed** (2026-07-10). Both directions of the data
-  plane now cross between two real SoCs. The fix is a one-cycle read pipe-offset
-  mask in TideLink's `ahb_sub`, carried as a chiplet-local override
-  (`src/rtl/local_overrides/tidelink_top.sv`, swapped in by
-  `resolve_tidelink_flist.py`) with the minimal diff at
-  `patches/0003-*.patch` for upstreaming — the TideLink pin stays frozen.
+- **Peer READ round-trip**: **fixed** (2026-07-10), and the fix is now UPSTREAM.
+  Both directions of the data plane cross between two real SoCs. The fix is a
+  one-cycle read pipe-offset mask in TideLink's `ahb_sub`; it lives in TideLink
+  itself (as the I2 `rd_pipe_r` mask, 2026-07-29) and the flow compiles
+  `tidelink/src/rtl/tidelink_top.sv` directly.
   `G2_SOC_PAIR_STATUS.md` "read round-trip".
+
+  It was originally carried as a chiplet-local override
+  (`src/rtl/local_overrides/tidelink_top.sv` + `patches/0003-*.patch`) while the
+  TideLink pin was frozen. That override was **retired on 2026-08-03** — it had
+  outlived its reason and was silently pinning `tidelink_top` at 2026-07-10,
+  discarding 23 later commits including the I1 `SELF_ARM_TRAIN_EN` fix proven on
+  silicon and the RX-FIFO TWIN 2 chip-killer fix. `patches/0003` is obsolete.
+  If you ever add another override to that directory, give it an expiry check
+  against the submodule pin: the swap is by BASENAME, invisible at the point of
+  use, and nothing makes it expire.
 
 ## Load-bearing gotchas
 

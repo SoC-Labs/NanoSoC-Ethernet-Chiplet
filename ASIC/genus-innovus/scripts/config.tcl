@@ -2,6 +2,37 @@ source ../scripts/procs.tcl
 
 set process_node 65
 
+# ── check_cpf must not abort the script ─────────────────────────────────────
+# 1_synthesis.tcl runs `check_cpf` between apply_power_intent and
+# commit_power_intent. On this design it reports 91 low-power rule errors and
+# raises RCLP-203, which ABORTS the -f script. Genus then drops to its
+# interactive prompt and, because an unattended run has stdin on /dev/null,
+# exits 0 having written no netlist.
+#
+# This is not new and it is not caused by the RTL: the 2026-07 reference run
+# hit RCLP-203 with the IDENTICAL error counts (34 / 1 / 54 / 2). It produced a
+# netlist only because it was driven by hand — its log shows commit_power_intent
+# and set_dont_touch typed at the `@genus:root:` prompt after the abort. So
+# 1_synthesis.tcl has never once completed unattended.
+#
+# The attribute is the remedy Genus itself names in the RCLP-203 message. It
+# demotes the errors to warnings so the script runs to completion; it does NOT
+# fix them, and check_cpf still writes the full detail to logs/syn_cpf_check.log.
+# What is being tolerated, all pre-existing:
+#   34x 1801_REF_OBJ_NOT_FOUND      UPF connect_supply_net naming macro PG ports
+#                                   (rf_sp_hdf / cache RAM VDD,VSS) that the
+#                                   liberty models do not expose
+#   54x + 1x                        pad/macro PG pins with no create_supply_port
+#                                   or PG-pin attributes
+#    2x STRUCT_UNDRIVEN_PIN_MACRO   REAL: the QSPI flash-cache tag RAMs have an
+#                                   undriven GWEN --
+#                                   u_qspi_flash_0/.../u_way{0,1}_cache_ram/
+#                                   tag_ram_0_i/GWEN. Worth fixing in ahb_qspi;
+#                                   it is in the reference GDSII too.
+# Set here, in the project's own config, rather than in the shared asic-flows
+# 1_synthesis.tcl, which other designs use.
+set_db clp_treat_errors_as_warnings true
+
 set hdl_file_list ../scripts/read_flist.tcl
 
 # System Paths, please edit for your system

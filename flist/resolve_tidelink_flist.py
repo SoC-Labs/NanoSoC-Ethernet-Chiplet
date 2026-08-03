@@ -131,8 +131,23 @@ def main() -> int:
     # before it rolls forward lives in src/rtl/local_overrides/<same-basename>:
     # swap the frozen submodule's file for our copy, keeping exactly one definition
     # per module and NOT touching the submodule. Each override should carry a
-    # matching patches/NNNN-*.patch for upstreaming. Today: tidelink_top.sv (the
-    # ahb_sub peer-read pipe-offset fix, patches/0003 — see docs/G2_SOC_PAIR_STATUS.md).
+    # matching patches/NNNN-*.patch for upstreaming.
+    #
+    # CURRENTLY EMPTY, and that is the desired state. The one override this
+    # mechanism ever carried (tidelink_top.sv, for the ahb_sub peer-read
+    # pipe-offset fix / patches/0003) was retired on 2026-08-03 after the fix
+    # landed upstream. By then it had been stale for three weeks and was
+    # silently discarding 23 commits to tidelink_top.sv — including the I1
+    # SELF_ARM_TRAIN_EN fix proven on silicon and the RX-FIFO TWIN 2
+    # chip-killer fix. It only surfaced because Genus rejected a parameter the
+    # overridden module did not have; `make elab` had been passing against the
+    # stale module for weeks.
+    #
+    # So: the match is by BASENAME and is invisible at the point of use — the
+    # flist reads normally and the swap is one stderr line. Before adding an
+    # override here, decide how it EXPIRES. A good rule is to fail this script
+    # when the submodule's counterpart has changed since the override was
+    # committed, rather than let it win silently.
     ov_dir = os.path.join(os.environ.get("NANOSOC_ETH_CHIPLET_HOME", ""),
                           "src", "rtl", "local_overrides")
     if os.path.isdir(ov_dir):
