@@ -59,6 +59,28 @@
 // Upstream fix wanted: swap the deps path in tidelink_fpga.flist.
 -f ${NANOSOC_ETH_CHIPLET_HOME}/build/chip/flist/tidelink_asic.flist
 
+// TideLink observability modules — INSTANTIATED but not in TideLink's own ASIC
+// flist, so without these two lines they reach Genus as UNDEFINED modules.
+//
+// tidelink d98b58d added the instantiations (86d0f8f had neither):
+//     tidelink_fcemit_obs   src/rtl/local_overrides/Wlink.v:1554
+//     tidelink_winscan_obs  src/rtl/local_overrides/axi_chiplet_controller.sv:2983
+// Neither is gated by a define or parameter — they are unconditional.
+//
+// The result is not merely untidy: both blackboxes sit on the clk tree, and
+// ccopt_design REFUSES to run ("IMPCCOPT-1349: Clock tree clk connects to 2
+// module(s) without definitions", then IMPCCOPT-2196), so CTS dies. A netlist
+// with undefined modules is also not something to hand to a foundry.
+//
+// Compiling them is the conservative fix: they are small (165 and 212 lines,
+// three always blocks between them) and it makes the netlist well-formed.
+// The alternative — gating the instantiations off for ASIC — is the better
+// long-term answer but belongs upstream in TideLink, not here.
+// Upstream fix wanted: add these to tidelink_top_full_asic_v2.flist, or gate
+// the instantiations on a parameter that the ASIC build sets to 0.
+${TIDELINK_HOME}/src/rtl/tidelink_fcemit_obs.sv
+${TIDELINK_HOME}/src/rtl/tidelink_winscan_obs.sv
+
 // ── Component 3: TideChart chiplet-ID controller ─────────────────────────────
 -f ${TIDECHART_HOME}/flist/tidechart.flist
 
