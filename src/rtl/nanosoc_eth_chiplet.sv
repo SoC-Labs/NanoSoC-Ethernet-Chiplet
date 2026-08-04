@@ -606,7 +606,13 @@ module nanosoc_eth_chiplet #(
     // role_locked=0 -> mutual clock enable + calibrator stuck in reset ->
     // cal_done=0/fcsm=0). Conscious opt-in ONLY on this eth-chiplet instance;
     // every other tidelink integration keeps the 1'b0 default.
-    tidelink_top #(.NUM_PHY_LANES(NUM_PHY_LANES), .SELF_ARM_TRAIN_EN(1'b1)) u_tidelink (
+    // TXGEN_PRESENT(0): tidelink_top defaults it to 1'b1 for the FPGA bring-up
+    // builds, and nothing here was overriding it — so the PL-side TX traffic
+    // GENERATOR was being synthesised into silicon (1,771 u_tx_gen cells,
+    // ~2,981 um2). tidelink/src/rtl/asic/tidelink_dft_wrapper.sv:203 sets it to
+    // 0, but that wrapper is in no flist: the chip instantiates tidelink_top
+    // directly, so the gate never applied. Set it explicitly at the point of use.
+    tidelink_top #(.NUM_PHY_LANES(NUM_PHY_LANES), .SELF_ARM_TRAIN_EN(1'b1), .AUTO_ANCHOR_EN(1'b1), .TXGEN_PRESENT(1'b0)) u_tidelink (
         // Clocks / resets — all from the SoC clock/reset controller output.
         .hclk       (sys_hclk),
         .hresetn    (sys_hresetn),
