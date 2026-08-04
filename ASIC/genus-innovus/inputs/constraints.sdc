@@ -19,6 +19,15 @@ set_units -capacitance pF;
 set EXTCLK_PERIOD $::env(CLK_PERIOD);
 set SWDCLK_PERIOD [expr 4*$EXTCLK_PERIOD];
 set CLK_ERROR 0.35; #Error calculated from worst case characteristics of CDCM61001 low-jitter oscillator chip at 250MHz
+# HOLD uncertainty, deliberately NOT $CLK_ERROR. $CLK_ERROR is oscillator
+# jitter: a legitimate SETUP margin, but for a same-edge hold check the source
+# jitter is largely common-mode between launch and capture and cancels, so
+# charging hold the full 0.35ns asks every hold path for delay it does not
+# need. See the note on the set_clock_uncertainty calls below for what that
+# cost. 0.05ns covers residual (non-common-mode) jitter and PLL/duty-cycle
+# effects. THIS IS A SIGNOFF MARGIN — revisit it with the clocking spec, not
+# casually.
+set CLK_HOLD_ERROR 0.05
 set INTER_CLOCK_UNCERTAINTY 0.1
 
 create_clock -name "$EXTCLK" -period "$EXTCLK_PERIOD" -waveform "0 [expr $EXTCLK_PERIOD/2]" [get_ports CLK]
@@ -38,8 +47,21 @@ create_clock -name "$SWDCLK" -period "$SWDCLK_PERIOD" -waveform "0 [expr $SWDCLK
 # constraints. Bond the clocks and both files converge.
 
 
-set_clock_uncertainty $CLK_ERROR [get_clocks $EXTCLK]
-set_clock_uncertainty $CLK_ERROR [get_clocks $SWDCLK]
+# QUALIFIED -setup/-hold. These two lines previously carried NEITHER, and SDC
+# then applies the value to BOTH checks — so hold was being charged the full
+# 0.35ns oscillator-jitter margin on every path in the design.
+#
+# That was the dominant cause of the hold-buffer explosion: post-CTS hold
+# repair inserted 62,729 instances (+171,250 um2, utilisation 75.0% -> 89.6%)
+# and drove setup WNS from +0.001 to -0.729 doing it. ~30,000 of the inserted
+# cells are DEL0/DEL005/DEL01/DEL015 delay cells, and the worst hold violation
+# entering repair was -0.726ns — roughly half of which was this margin rather
+# than real skew. The 2026-07 reference run had the same bug (+148,558 um2 of
+# hold repair); it simply had less logic to apply it to.
+set_clock_uncertainty -setup $CLK_ERROR      [get_clocks $EXTCLK]
+set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks $EXTCLK]
+set_clock_uncertainty -setup $CLK_ERROR      [get_clocks $SWDCLK]
+set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks $SWDCLK]
 
 set_clock_uncertainty -setup $INTER_CLOCK_UNCERTAINTY -rise_from [get_clocks $SWDCLK] -rise_to [get_clocks $EXTCLK]
 set_clock_uncertainty -setup $INTER_CLOCK_UNCERTAINTY -rise_from [get_clocks $EXTCLK] -rise_to [get_clocks $SWDCLK]
