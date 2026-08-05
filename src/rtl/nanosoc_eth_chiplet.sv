@@ -278,10 +278,28 @@ module nanosoc_eth_chiplet #(
     // W cycle. Under wait states the SoC holds HWDATA stable, so the extra
     // register is harmless (same value in, same value out). ahb_sub carries only
     // the peer-aperture path, so an unconditional delay is safe.
+    // 2026-08-05 (Rank 2): the fixed 1-cycle delay was TIMING-FRAGILE — it only
+    // aligns when XHB500's W beat fires exactly one cycle after AW. On silicon the
+    // link-ingress AXI W channel backpressures (wready low >=1 cyc under CDC/credit/
+    // outstanding-write pressure), the W beat slips past the single held cycle, and
+    // the bridge captures 0 (the 5/5 peer-write data-phase drop; g2 sim is blind to
+    // it — idle link holds wready high). Replace shift-every-cycle with LOAD-and-
+    // HOLD: latch the write data during its peer-write data phase (the cycle after a
+    // peer-write address-accept) and HOLD it until the next peer write, so
+    // ahb_sub_hwdata is stable across any W-channel backpressure depth. ahb_sub
+    // carries only the peer-aperture path, so holding is safe.
+    reg         peer_wr_dph_r;        // high during a peer-WRITE data phase
     reg  [31:0] d2d_ahb_m_hwdata_q;
     always @(posedge sys_hclk or negedge sys_hresetn) begin
-        if (!sys_hresetn) d2d_ahb_m_hwdata_q <= 32'h0;
-        else              d2d_ahb_m_hwdata_q <= d2d_ahb_m_hwdata;
+        if (!sys_hresetn) begin
+            peer_wr_dph_r      <= 1'b0;
+            d2d_ahb_m_hwdata_q <= 32'h0;
+        end else begin
+            // address-accept of a peer write THIS cycle -> its data phase NEXT cycle
+            peer_wr_dph_r <= hsel_peer & d2d_ahb_m_hwrite & d2d_ahb_m_htrans[1] & d2d_ahb_m_hready;
+            // load the payload during its data phase; HOLD across W backpressure
+            if (peer_wr_dph_r) d2d_ahb_m_hwdata_q <= d2d_ahb_m_hwdata;
+        end
     end
 
     // Per-slave data-phase responses back into the decoder.
