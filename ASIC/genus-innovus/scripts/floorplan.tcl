@@ -77,7 +77,15 @@ proc place_macro {pattern x y orient} {
     set inst [get_db [lindex $hits 0] .name]
     place_inst $inst $x $y $orient
     set_db [get_db insts $inst] .place_status placed
+    # Record the RESOLVED name for power_plan.tcl's split_row/select_obj.
+    # power_plan.tcl used to carry its own hardcoded copy of these 21 paths and
+    # it drifted: the same 6 names that went stale here (the ethmac RF and the
+    # five QSPI way1 macros) were still stale there, so split_row silently ran
+    # on 15 of 21 macros — six IMPTCM-165 "does not match any object" warnings
+    # nobody was reading. Publishing the resolved list makes that impossible.
+    lappend ::PLACED_MACROS $inst
 }
+set ::PLACED_MACROS {}
 
 place_macro {*ethmac*bd_ram*u_rf} 1053.8000000000 1117.8100000000 R180
 place_macro {*u_network_core*u_region_bootrom_0*rom_via*} 883.5350000000 1538.6000000000 MY

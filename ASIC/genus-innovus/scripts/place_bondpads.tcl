@@ -1,3 +1,11 @@
+## Filler insertion — moved here from route_setup.tcl.
+## place_bondpads.tcl is sourced by 4_pnr_route.tcl AFTER route_design and
+## opt_design -post_route -hold, which is where filler belongs: the rows have
+## stopped changing, so -check_drc/-fix_drc has real routing to check and the
+## ANTENNA diodes see real antennas. Sourced before the bond pads themselves,
+## which sit on M8/M9/AP and do not compete for core rows.
+source ../scripts/filler.tcl
+
 set top_pads_outer [list \
 uPAD_VDDIO_T_0 \
 uPAD_VSS_T_0 \

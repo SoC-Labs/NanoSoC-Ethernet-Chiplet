@@ -80,6 +80,39 @@ romlibs-check:
 	    echo "(b) a WORKING Arm mem compiler — see the MEM_COMPILER_DIR note in common.mk."; \
 	    exit 1; }
 
+## cpf-patch: repair the CPF Genus writes, so the die actually gets filled.
+##
+## `write_power_intent -cpf` cannot translate this design's UPF supply commands
+## — the Genus log is full of "Unable to translate command 'create_supply_net'
+## ... from 1801 to CPF format" — and emits a CPF whose entire content is
+## `create_power_domain -name PD_TOP -default`. No power net, no ground net.
+##
+## Innovus reads that at 2_pnr_setup.tcl:40, and every filler pass then dies
+## with "IMPSP-5110: No supply-net names for Power Domain 'PD_TOP'". add_fillers
+## reports "For 0 new insts" and the die ships with ~95,568 free-site gaps
+## (~5.9% of the core) — no base-layer density fill, no ANTENNA diodes. That is
+## tapeout-blocking, and it is silent: the flow completes and streams a GDSII.
+##
+## This is NOT fixable with an Innovus command. `update_power_domain` there is
+## positional and has no -primary_power_net/-primary_ground_net options at all
+## (verified: IMPTCM-162 + usage string). They are CPF statements, so the file
+## is what needs repairing — which is exactly what the 2026-07 operator did by
+## hand mid-session, and why that run has fillers and ours did not.
+##
+## Idempotent: re-running on an already-patched CPF is a no-op.
+.PHONY: cpf-patch
+cpf-patch:
+	@cpf=$(OUT_DIR)/$(BLOCK)_gate1.cpf; \
+	test -s "$$cpf" || { echo "FAIL: no CPF at $$cpf — did synthesis run?"; exit 1; }; \
+	if grep -q 'create_power_nets' "$$cpf"; then \
+	    echo "OK: CPF already carries its supply nets"; \
+	else \
+	    grep -q 'end_design' "$$cpf" || { echo "FAIL: $$cpf has no end_design — unexpected format"; exit 1; }; \
+	    sed -i 's/^end_design/create_ground_nets -nets VSS\ncreate_power_nets -nets VDD\n\nupdate_power_domain -name PD_TOP -primary_power_net VDD -primary_ground_net VSS\n\nend_design/' "$$cpf"; \
+	    grep -q 'update_power_domain' "$$cpf" || { echo "FAIL: CPF patch did not apply"; exit 1; }; \
+	    echo "OK: patched $$cpf with VDD/VSS supply nets (add_fillers needs them)"; \
+	fi
+
 ## syn: Genus synthesis. The `test -s` is NOT belt-and-braces: when its -f
 ## script fails, Genus prints "Encountered problems processing file", drops to
 ## its interactive prompt, reads EOF and exits ZERO. Without this check `make
@@ -87,6 +120,7 @@ romlibs-check:
 ## netlist that was never written.
 syn: setup_dirs asic-flist romlibs-check
 	cd $(WORK_DIR)/; genus -f $(ASIC_FLOWS_DIR)/1_synthesis.tcl -log $(LOG_DIR)/syn_logs
+	@$(MAKE) --no-print-directory cpf-patch
 	@test -s $(OUT_DIR)/$(BLOCK)_gate_power.v || { \
 	    echo "FAIL: synthesis produced no netlist at $(OUT_DIR)/$(BLOCK)_gate_power.v"; \
 	    echo "      Genus exits 0 on a failed script — look for the real error with:"; \

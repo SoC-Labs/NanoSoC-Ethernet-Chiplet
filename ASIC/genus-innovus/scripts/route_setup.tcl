@@ -26,4 +26,10 @@ set_db route_design_with_si_driven 1
 ### Timing Analysis Type 
 set_db timing_analysis_type ocv
 
-source ../scripts/filler.tcl
+# filler.tcl deliberately NOT sourced here. This file is sourced by
+# 4_pnr_route.tcl BEFORE route_design, so sourcing filler here inserted filler
+# cells before there was any routing: add_fillers -check_drc -fix_drc then had
+# nothing to check against ("Found no DRC violations to fix"), the ANTENNA
+# diodes went in before any antenna existed, and post-route hold repair had to
+# carve its ~66,000 buffers back out of filled rows. Filler now runs from
+# place_bondpads.tcl, after opt_design -post_route -hold.

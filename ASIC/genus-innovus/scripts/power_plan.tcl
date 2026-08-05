@@ -5,8 +5,44 @@
 # Author : Srimanth Tenneti
 ######################################### 
 
+### Give PD_TOP its supply nets — WITHOUT THIS, add_fillers INSERTS NOTHING.
+#
+# 2_pnr_setup.tcl reads outputs/${block_name}_gate1.cpf, but Genus's
+# `write_power_intent -cpf` cannot translate the UPF supply commands: the
+# synthesis log is full of "Unable to translate command 'create_supply_net'
+# ... from 1801 to CPF format", and the CPF it emits contains ONLY
+# `create_power_domain -name PD_TOP -default` — no power net, no ground net.
+#
+# Innovus then fails every filler pass with
+#     IMPSP-5110: No supply-net names for Power Domain 'PD_TOP'
+# and `add_fillers` reports "For 0 new insts". The 2026-08 run shipped a GDSII
+# with ZERO filler cells and 95,568 free-site gaps (~5.9% of the core) — no
+# base-layer density fill and no ANTENNA diodes, which is tapeout-blocking.
+#
+# The 2026-07 reference run hit the identical error and only survived it
+# because the operator hand-edited the CPF mid-session and re-ran add_fillers
+# at the @innovus prompt. An unattended flow has nobody to do that.
+#
+# The fix is NOT an Innovus command. `update_power_domain` in this build takes
+# the domain POSITIONALLY and has no -primary_power_net/-primary_ground_net
+# options at all — its whole option set is floorplan geometry (core_to_*,
+# row_*, gap_*). Verified by running it: IMPTCM-162 plus the usage string.
+# Those are CPF STATEMENTS, so the repair belongs in the CPF file before
+# Innovus reads it. `make syn` now patches gate1.cpf (see the cpf-patch target
+# in ASIC/genus-innovus/Makefile), inserting before end_design:
+#     create_ground_nets -nets VSS
+#     create_power_nets  -nets VDD
+#     update_power_domain -name PD_TOP -primary_power_net VDD -primary_ground_net VSS
+# which is exactly what the 2026-07 operator hand-edited in mid-session.
+#
+# This guard is the backstop: if the CPF patch did not happen, fail HERE with a
+# clear reason rather than 3 hours later with a silently unfilled die.
+if {[llength [get_db power_domains PD_TOP]] == 0} {
+    error "power_plan: no PD_TOP power domain — check read_power_intent"
+}
+
 ### Connecting Global Nets
-connect_global_net VDD -type pg_pin -pin_base_name VDD -inst_base_name * 
+connect_global_net VDD -type pg_pin -pin_base_name VDD -inst_base_name *
 connect_global_net VDDIO -type pg_pin -pin_base_name VDDIO -inst_base_name * 
 connect_global_net VSS -type pg_pin -pin_base_name VSS -inst_base_name * 
 connect_global_net VSSIO -type pg_pin -pin_base_name VSSIO -inst_base_name * 
@@ -78,35 +114,39 @@ set_db add_stripes_orthogonal_only true
 set_db add_stripes_allow_jog { padcore_ring  block_ring }
 set_db add_stripes_skip_via_on_pin {  standardcell }
 set_db add_stripes_skip_via_on_wire_shape {  noshape   }
-add_stripes -nets {VDD VSS} -layer M9 -direction horizontal -width 3.6 -spacing 1.2 -set_to_set_distance 60 -extend_to all_domains -start_from left -start_offset 39.5 -stop_offset 0 -switch_layer_over_obs false -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
+# -spacing 3.05, NOT 1.2. The tech LEF gives M9 `WIDTH 2 ; SPACING 2 ;
+# MINENCLOSEDAREA 9`, so a 1.2um gap between two 3.6um-wide M9 stripes is
+# illegal by construction, and Innovus said so at the time:
+#   IMPPP-136: specified spacing 1.200000 ... less than the required spacing
+#              2.000000 for widths 3.600000 and 3.600000
+#   IMPPP-193: ... required min enclosed area for layer M9 is 9.000000 ...
+#              increase the spacing to around 3.050000
+# The cost was 44 SPACING violations, each a full-core-width strip exactly
+# 1.200um tall (e.g. Bounds (171.000, 888.100) (1429.000, 889.300)) — i.e.
+# literally the specified gap, reported back as a DRC. 3.05 clears both the
+# SPACING rule and MINENCLOSEDAREA. -set_to_set_distance is 60um, so the extra
+# 1.85um is absorbed without dropping stripes.
+# NOTE the M8 set above keeps 1.2 deliberately: M8's SPACINGTABLE requires only
+# 0.5um at this width, so 1.2 is legal there. This is an M9-only defect.
+add_stripes -nets {VDD VSS} -layer M9 -direction horizontal -width 3.6 -spacing 3.05 -set_to_set_distance 60 -extend_to all_domains -start_from left -start_offset 39.5 -stop_offset 0 -switch_layer_over_obs false -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
 
 deselect_obj -all
 
 
-# connect Macros
-select_obj [ list \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_ethmac_0/u_inner_u_eth_top_wishbone_bd_ram_u_sram/u_rf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_bootrom_0_u_bootrom_u_rom_via \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_dmem_0_u_sram_u_sram_gen_rf_16k.u_rf_sp_hdf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_eth_scratch_rx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_eth_scratch_tx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_network_core/u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_tag_ram_0_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_tag_ram_0_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_3_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_1_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_2_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_3_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_0_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_gen_way1.u_way1_cache_ram_data_ram_0_word_1_i \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_shared_sram_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via \
-    u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink/u_tidelink_fifo_u_fifo_mem_u_sram_u_rf \
-]
+# connect Macros — from the list floorplan.tcl publishes as it places them.
+# This was a hardcoded copy of 21 hierarchical paths and it had gone stale in
+# exactly the 6 places floorplan.tcl's pattern rewrite fixed (the ethmac RF,
+# and the five QSPI way1 macros that lost their `gen_way1.` prefix). Innovus
+# reported each miss as IMPTCM-165 "does not match any object ... in command
+# select_obj" and carried on, so split_row ran on 15 of 21 macros with no
+# failure. Consuming the resolved list removes the duplication entirely.
+if {![info exists ::PLACED_MACROS] || [llength $::PLACED_MACROS] == 0} {
+    error "power_plan: ::PLACED_MACROS is empty — floorplan.tcl must run first"
+}
+if {[llength $::PLACED_MACROS] != 21} {
+    puts stderr "WARNING: power_plan: expected 21 macros, got [llength $::PLACED_MACROS]"
+}
+select_obj $::PLACED_MACROS
 
 split_row -selected
 
