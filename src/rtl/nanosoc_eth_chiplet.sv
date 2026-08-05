@@ -288,17 +288,39 @@ module nanosoc_eth_chiplet #(
     // peer-write address-accept) and HOLD it until the next peer write, so
     // ahb_sub_hwdata is stable across any W-channel backpressure depth. ahb_sub
     // carries only the peer-aperture path, so holding is safe.
-    reg         peer_wr_dph_r;        // high during a peer-WRITE data phase
+    // 2026-08-06 (Rank 2 v2): the earlier version gated the load on a REGISTERED
+    // address-accept (peer_wr_dph_r), which stayed high one cycle too long and
+    // re-captured the RELEASED bus (0) at T+3 — bit-identical to the fragile 1-cycle
+    // delay (g2 test_diag_q_hold proved this; silicon still dropped 5/5). Gate the
+    // capture on dph_peer instead — the ACTUAL peer data phase, which drops the
+    // cycle the phase ends, so we capture only while the AHB master is driving and
+    // then genuinely HOLD. peer_wr_r latches write-ness at the address-accept so we
+    // never capture a peer READ's data phase.
+    // 2026-08-06 (Rank 2 v3): capture-ONCE-and-hold. hready_to_peer forces HREADY
+    // high at the data phase, so the AHB master drives the payload for exactly ONE
+    // cycle then releases (bus -> 0). Any capture-EVERY-cycle scheme (v1/v2) re-grabs
+    // that released 0 while dph_peer is still high, so hwdata_q reverts to 0 (g2
+    // test_diag_q_hold: payload at T+2, 0 at T+3 — identical to the fragile fix, and
+    // it dropped 5/5 on silicon). Instead latch the payload on the FIRST peer-write
+    // data-phase cycle only (cap_done_r), and HOLD it — so ahb_sub_hwdata presents
+    // the payload on every subsequent cycle regardless of when XHB500's W beat fires
+    // (any backpressure depth). cap_done_r re-arms when the data phase ends.
+    reg         peer_wr_r;            // in-flight peer access is a write
+    reg         cap_done_r;           // payload already latched for this data phase
     reg  [31:0] d2d_ahb_m_hwdata_q;
     always @(posedge sys_hclk or negedge sys_hresetn) begin
         if (!sys_hresetn) begin
-            peer_wr_dph_r      <= 1'b0;
+            peer_wr_r          <= 1'b0;
+            cap_done_r         <= 1'b0;
             d2d_ahb_m_hwdata_q <= 32'h0;
         end else begin
-            // address-accept of a peer write THIS cycle -> its data phase NEXT cycle
-            peer_wr_dph_r <= hsel_peer & d2d_ahb_m_hwrite & d2d_ahb_m_htrans[1] & d2d_ahb_m_hready;
-            // load the payload during its data phase; HOLD across W backpressure
-            if (peer_wr_dph_r) d2d_ahb_m_hwdata_q <= d2d_ahb_m_hwdata;
+            if (hsel_peer & d2d_ahb_m_hready)
+                peer_wr_r <= d2d_ahb_m_hwrite & d2d_ahb_m_htrans[1];
+            if (dph_peer & peer_wr_r & ~cap_done_r) begin
+                d2d_ahb_m_hwdata_q <= d2d_ahb_m_hwdata;   // capture the ONE valid cycle
+                cap_done_r         <= 1'b1;               // ...and never re-capture (hold)
+            end
+            if (~dph_peer) cap_done_r <= 1'b0;            // re-arm for the next peer write
         end
     end
 
