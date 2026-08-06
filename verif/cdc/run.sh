@@ -48,8 +48,13 @@ python3 "$CHIPLET_HOME/flist/flatten_soc_flist.py" \
     "${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore.flist" > "$CHIPLET_SOC_VCS_FLIST"
 
 echo "== resolving the TideLink flist (one definition per module) =="
+# V2, matching `make elab` and `make asic-flist` — V2 IS THE SHIP CONFIGURATION.
+# This resolved the V1 tidelink_fpga.flist, so it analysed the OLD standalone
+# deps/tidelink-gpio-phy (97 commits behind its own main) instead of the shared
+# deps/tidelink-phy the chip actually builds. A structural/CDC verdict over a
+# PHY the design does not ship is not evidence about the design.
 python3 "$CHIPLET_HOME/flist/resolve_tidelink_flist.py" \
-    "${TIDELINK_HOME}/flists/tidelink_fpga.flist" > "$CHIPLET_TL_VCS_FLIST"
+    "${TIDELINK_HOME}/flists/tidelink_fpga_v2.flist" > "$CHIPLET_TL_VCS_FLIST"
 
 # Assemble the TideChart flist (expand its ${VAR}) + the integration RTL, then
 # DEDUP the whole merge to one definition per module. xrun/Xcelium (like Verilator)

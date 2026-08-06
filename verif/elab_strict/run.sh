@@ -58,8 +58,13 @@ export CHIPLET_TL_VCS_FLIST="$BUILD/tidelink_vcs.f"
 echo "== assembling the tool-independent (one-def-per-module) integration flist =="
 python3 "$CHIPLET_HOME/flist/flatten_soc_flist.py" \
     "${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore.flist" > "$CHIPLET_SOC_VCS_FLIST"
+# V2, matching `make elab` and `make asic-flist` — V2 IS THE SHIP CONFIGURATION.
+# This resolved the V1 tidelink_fpga.flist, so it analysed the OLD standalone
+# deps/tidelink-gpio-phy (97 commits behind its own main) instead of the shared
+# deps/tidelink-phy the chip actually builds. A structural/CDC verdict over a
+# PHY the design does not ship is not evidence about the design.
 python3 "$CHIPLET_HOME/flist/resolve_tidelink_flist.py" \
-    "${TIDELINK_HOME}/flists/tidelink_fpga.flist" > "$CHIPLET_TL_VCS_FLIST"
+    "${TIDELINK_HOME}/flists/tidelink_fpga_v2.flist" > "$CHIPLET_TL_VCS_FLIST"
 {
     sed "s|\${TIDECHART_HOME}|${TIDECHART_HOME}|g; s|\$TIDECHART_HOME|${TIDECHART_HOME}|g" \
         "${TIDECHART_HOME}/flist/tidechart.flist"
@@ -75,10 +80,54 @@ python3 "$CHIPLET_HOME/flist/dedup_merged_flist.py" \
 cd "$BUILD"
 LOG="$BUILD/xrun_hal.log"
 echo "== xrun -hal: strict structural elaboration over $TOP (~25 min) =="
+# ---------------------------------------------------------------------------
+# WHY -BB_NONSYNTH: without it this gate silently checks NOTHING.
+#
+# halsynth (the synthesizability engine) counts errors and, past a threshold,
+# emits
+#   hal: *E,BLDSTP: Further processing stopped because of synthesizability errors.
+# and STOPS - before halstruct runs. MLTDRV is a halstruct rule, so it never
+# executes, the MLTDRV grep returns 0, and this script prints "elab-strict OK"
+# and exits 0. Observed 2026-08-06: 24 errors, HAL aborted at ~2 min (a complete
+# run is ~25 min) and the gate reported the design clean.
+#
+# -BB_NONSYNTH blackboxes the unsynthesizable modules instead of failing on
+# them, so halsynth completes and halstruct - the engine this gate depends on -
+# actually runs. The affected modules are vendor/generated (Forencich I2C/AXIS,
+# Arm DMA-350 register packages), already triaged as non-blocking in
+# docs/ELAB_STRICT_FINDINGS.md and already excluded from the gate by VENDOR_RE.
+#
+# Rejected alternatives: -xmwarn downgrades xmelab/xmvlog message codes, not HAL
+# rule codes, and had no effect. -NOHALSYNTH would also clear the abort but
+# discards the synthesizability triage this script reports.
 set +e
-timeout 2400 "$XRUN" -sv -hal -elaborate \
+# 3600, not 2400. Before -BB_NONSYNTH the run ABORTED at ~2 min and never
+# reached the structural rules; now that halstruct genuinely runs, a full
+# pass measured 00:37:04 - three minutes under the old 40-minute cap.
+timeout 3600 "$XRUN" -sv -hal -elaborate -halargs "-BB_NONSYNTH" \
     -f "$BUILD/merged_dedup.f" -top "$TOP" -l "$LOG" >/dev/null 2>&1
 set -e
+
+# The verdict below is a grep over $LOG, so it means something only if HAL
+# actually finished. Assert that before drawing any conclusion from it.
+if grep -aqE '\*E,BLDSTP|Analysis failed' "$LOG" 2>/dev/null; then
+    echo "== elab-strict FAIL: HAL ABORTED before the rule set completed =="
+    echo "   The MLTDRV verdict would be meaningless - the rules never ran."
+    grep -aE '\*E,BLDSTP|Analysis failed|Total errors' "$LOG" | head -5 | sed 's/^/   /'
+    echo "   log: $LOG"
+    exit 1
+fi
+# MLTDRV is a halstruct rule, so the verdict is only meaningful if halstruct
+# actually ran. HAL 22.03 prints no "Analysis complete" banner on success in
+# this mode (only "Analysis failed." on abort), so assert the engine's own
+# output instead: a complete run emits thousands of `halstruct:` lines, an
+# aborted one emits none.
+if ! grep -aq '^halstruct:' "$LOG" 2>/dev/null; then
+    echo "== elab-strict FAIL: halstruct never ran — no structural rules were applied =="
+    echo "   A zero MLTDRV count here would mean 'not checked', not 'clean'."
+    echo "   log: $LOG"
+    exit 1
+fi
 
 # Vendor / pre-verified IP we cannot edit — reported, not gated.
 VENDOR_RE='ip_library|Corstone|BP210|cmsdk|CMSDK|ethmac_patches|opencores|OpenCores|eth_wishbone|eth_top|xhb500|XHB500|/mem/|_model|behavioural|behavioral|/sram/|rf_[0-9]|axi-chiplet-controller|wlink|Wlink'

@@ -250,7 +250,10 @@ def cmd_run(args):
         rc, secs = sh(s["run"], dest / f"{sid}.log", timeout=s.get("timeout_s"))
 
         # POST-CONDITION. Several of these tools exit 0 while being wrong:
-        #   - lec's dofile ends `exit -f` (=0) even on non-equivalence
+        #   - lec: the dofile's own `puts` verdicts are the reliable signal.
+        #     (`exit -f` DOES return a nonzero bit-flag status on
+        #     non-equivalence - -Force only suppresses the confirm prompt - but
+        #     the Makefile discards it, and a regenerated dofile may differ.)
         #   - Calibre exits 0 with DRC violations
         #   - elab-strict greps for MLTDRV, so a HAL run that ABORTED before the
         #     multi-driver rules ran reports clean
