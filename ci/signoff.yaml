@@ -186,8 +186,6 @@ stages:
 # passes is misleading.
 # -----------------------------------------------------------------------------
 unsupported:
-  - id: lvs
-    reason: "No LVS runset or ruledeck wired into ASIC/genus-innovus; Calibre is present but DRC-only here"
   - id: sta-signoff
     reason: "No Tempus or PrimeTime installed. Timing evidence is limited to Genus/Innovus in-tool reports, which is not signoff STA"
   - id: antenna-signoff
@@ -198,16 +196,30 @@ unsupported:
     reason: "The lec stage compares RTL to the SYNTHESISED netlist only. Nothing compares RTL (or the synth netlist) to outputs/*_pnr.v"
   - id: gds-completeness
     reason: >
-      THE STREAMED GDS IS ABSTRACT-ONLY FOR STANDARD CELLS. write_stream in
-      4_pnr_route.tcl merges $gds_merge_list, which config.tcl defines as the
-      eight MEMORY MACRO GDS files only. The route log records
-      "IMPOGDS-218: Number of master cells not found after merging: 421" —
-      every tcbn65lp standard cell, every IO cell, every filler (FILL1 among
-      the named) and every bond pad is absent from the stream, because no
-      standard-cell GDS exists anywhere in this PDK install (Front_End
-      packages only). The GDS is therefore NOT manufacturable, and Calibre DRC
-      run against it checks routing geometry over empty cell footprints rather
-      than real layout. Same root cause as the LVS blocker.
+      THE STREAMED GDS HAS NO TRANSISTORS IN 424 OF ITS CELL MASTERS, and it
+      looks complete. write_stream merges only $gds_merge_list (the 8 memory
+      macros); the route log records "IMPOGDS-218: Number of master cells not
+      found after merging: 424". Because -output_macros was used, each missing
+      master still got its LEF pin/obstruction shapes, so every cell name
+      resolves and nothing errors: SDFCNQD1 is 94 polygons on M1 ONLY, INVD1 is
+      8, FILL1 is 2, PAD70GU is AP/RDL only — against 545 polygons across
+      OD/PO/CO/M1 for a correctly merged memory macro. Root cause: this PDK
+      ships Front_End packages only, and no *_BE directory exists anywhere on
+      the system. CONSEQUENCE: any DRC result over this stream must be
+      WITHDRAWN, not caveated — Calibre would be checking routing geometry over
+      M1-only shells. Blocked on the TSMC Back-End packages; see
+      docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+  - id: lvs
+    reason: >
+      Not merely unwired. Tooling is fully available and idle — Calibre
+      nmLVS-H (150 seats, 0 in use), Synopsys IC Validator (192, 0) and Cadence
+      Pegasus (41, 0) — the TSMC LVS decks are on disk, and a working v2lvs +
+      calibre -lvs harness already exists at
+      tidelink/syn/asic/calibre/scripts/run_calibre_lvs.sh. The blocker is
+      source data: there is no CDL and no GDS for tcbn65lp, tphn65lpgv2od3 or
+      tpbn65v anywhere on this system (one 92-byte unit.cdl in the whole PDK).
+      The Arm sc12 library DOES ship both, but has no IO or bond-pad library,
+      so it cannot close full-chip LVS. See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
   - id: power-signoff
     reason: "No power/IR-drop analysis stage (no Voltus/RedHawk); CPF exists for domains but is not verified here"
   - id: full-design-lint
