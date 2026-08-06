@@ -1,0 +1,242 @@
+#-----------------------------------------------------------------------------
+# asic-gds.yml — synthesis -> place -> CTS -> route -> GDSII -> submission zip
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# DISPATCH ONLY, DELIBERATELY. This is a five-to-seven hour job holding a Genus
+# and an Innovus seat the whole time. nightly.yml stays as it is — fast gates,
+# every night — and this runs when somebody wants a GDSII. Putting it on a daily
+# cron would mean overlapping runs fighting for one workspace and the shared
+# Cadence seats, which is exactly why nightly.yml excluded it in the first place.
+#
+# ONE JOB, SEQUENTIAL STEPS. The four stages hand state to each other through a
+# single Innovus DB in ASIC/genus-innovus/work (`write_db`/`read_db` under the
+# same block name). Separate JOBS do not share a workspace, so a job-per-stage
+# layout would have to re-run everything from synthesis each time. Steps it is.
+#
+# WHAT THIS NEEDS THAT THE SIM GATES DO NOT — see scripts/ci/preflight.sh, which
+# derives the `soclabs-pdk` label from exactly these:
+#   /tsmc65pdk/65                    TSMC 65nm PDK   (TSMC_65_HOME)
+#   /research/precompiled_mems/TSMC65  memory macros: LEF, lib, GDS, CDL
+#   /research/AAA/phys_ip_library    Arm physical IP
+#   ASIC/romlibs                     compiled ROMs — CANNOT be rebuilt on this
+#                                    host (the Arm ROM compiler lists zero
+#                                    generators since the RHEL 8.10 upgrade)
+#   a Cadence seat for Genus and for Innovus
+#
+# The runner is SANDBOXED (bubblewrap) and mounts only what the host's site.env
+# names in RESEARCH_PATHS. If /tsmc65pdk and /research/precompiled_mems are not
+# bound there, no runner can earn `soclabs-pdk` and this workflow cannot run.
+# That is a host-provisioning change, not a repo change. The preflight step
+# below reports precisely which of them is missing rather than dying five hours
+# later inside Innovus.
+#-----------------------------------------------------------------------------
+name: asic-gds
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner label to target (soclabs-pdk, or a hostname during bring-up)'
+        type: string
+        default: soclabs-pdk
+      from_stage:
+        description: 'Start here and run through to GDSII'
+        type: choice
+        default: 'syn'
+        options:
+          - 'syn'      # 1 — Genus. Only needed when RTL or constraints changed.
+          - 'place'    # 2 — floorplan + power plan + place_design
+          - 'cts'      # 3 — clock tree synthesis + post-CTS opt
+          - 'route'    # 4 — route + filler + bond pads + stream-out
+      clean:
+        description: 'Wipe work/ and reports/ first (else resume in place)'
+        type: boolean
+        default: false
+
+# Never two implementation runs at once: one workspace, one set of seats.
+# Queue rather than cancel — killing a run four hours in wastes the seat time
+# it already spent.
+concurrency:
+  group: asic-gds
+  cancel-in-progress: false
+
+jobs:
+  gds:
+    runs-on: [self-hosted, linux, "${{ inputs.runner }}"]
+    # Measured: ~5h place->GDSII, plus ~1-2h if synthesis is included. 15h leaves
+    # room for a congested run without letting a hung tool hold the seat forever.
+    timeout-minutes: 900
+
+    defaults:
+      run:
+        # LOGIN shell: the Cadence PATH and CDS_LIC_FILE come from the host's
+        # profile. A non-login shell gets neither and Innovus is simply absent.
+        shell: bash -l {0}
+
+    env:
+      ASIC_DIR: ASIC/genus-innovus
+      BLOCK: nanosoc_eth_chiplet_pads
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          # clean:false keeps populated submodules and, when resuming, the work
+          # DB. The default `git clean -ffdx` would delete both.
+          clean: false
+
+      # Fail in SECONDS if this runner cannot do the work, naming what is
+      # missing — not forty minutes into reading LEFs.
+      - name: Preflight (require soclabs-pdk)
+        run: scripts/ci/preflight.sh --require soclabs-pdk
+
+      # Only ONE submodule repo is private (SoC-Labs/TideLink-Chiplet-GPIO-PHY,
+      # which both PHY deps resolve to). SSH cannot work in the sandbox at all —
+      # the user is not in /etc/passwd and the SSSD socket is not bound — so
+      # rewrite GitHub remotes onto HTTPS with a token. Same mechanism as
+      # ci-ladder.yml; see its comment for the full diagnosis.
+      # All three GitHub submodule repos are public as of 2026-08-06, so the token
+      # is OPTIONAL — a hard requirement here would fail every run for no reason.
+      # Kept as an optional path so a repo going private again costs one secret.
+      - name: Rewrite GitHub submodules onto HTTPS
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            echo "SUBMODULE_TOKEN present — using authenticated HTTPS"
+            B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
+            git config --global --add url."${B}".insteadOf "https://github.com/"
+          else
+            echo "no SUBMODULE_TOKEN — anonymous HTTPS (all submodule repos are public)"
+            B="https://github.com/"
+          fi
+          git config --global url."${B}".insteadOf "git@github.com:"
+
+      - name: Bootstrap submodules
+        run: |
+          git submodule sync --recursive
+          ./scripts/bootstrap.sh
+
+      # The sandbox home persists between jobs; a token left in .gitconfig would
+      # outlive this run.
+      - name: Scrub credentials
+        if: always()
+        run: rm -f "$HOME/.gitconfig"
+
+      - name: Stage plan
+        id: plan
+        env:
+          FROM: ${{ inputs.from_stage }}
+        run: |
+          case "$FROM" in
+            syn) n=1 ;; place) n=2 ;; cts) n=3 ;; route) n=4 ;;
+            *) echo "::error::unknown from_stage '$FROM'"; exit 1 ;;
+          esac
+          echo "level=$n" >> "$GITHUB_OUTPUT"
+          echo "Starting at '$FROM' (level $n), running through to GDSII."
+
+      # Preserve the previous run's reports as the diff baseline BEFORE anything
+      # overwrites them. This doubles as the fix for a real trap: the stage
+      # assertions in the Makefile test for artefacts BY NAME, so a stale
+      # timing_summary_03_cts_opt.rep left in place would let a FAILED CTS report
+      # success. Moving them aside makes every assertion honest.
+      - name: Rotate previous run to baseline
+        run: |
+          cd "$ASIC_DIR"
+          if [ -d reports ] && [ -n "$(ls -A reports 2>/dev/null)" ]; then
+            B="baseline_$(date -u +%Y%m%dT%H%M%SZ)"
+            mkdir -p "$B"
+            mv reports "$B/reports"
+            echo "previous reports -> $ASIC_DIR/$B/reports"
+          fi
+          mkdir -p reports
+          # Keep only the three newest baselines; these accumulate per run.
+          ls -d baseline_* 2>/dev/null | sort | head -n -3 | xargs -r rm -rf
+
+      - name: Clean work area
+        if: inputs.clean
+        run: |
+          rm -rf "$ASIC_DIR/work" "$ASIC_DIR/logs"
+          echo "work/ and logs/ removed — this run starts from scratch."
+
+      - name: Fetch ROM libraries
+        run: make -C "$ASIC_DIR" romlibs-check || make -C "$ASIC_DIR" romlibs-fetch
+
+      # --- the four stages, each followed by its own report --------------------
+      # Every report step is `if: always()` so a FAILED stage still publishes its
+      # numbers. That is the whole point: a five-hour job that dies at CTS must
+      # still tell you what placement achieved.
+
+      - name: 'stage 1/4 — synthesis (Genus)'
+        if: fromJSON(steps.plan.outputs.level) <= 1
+        run: make -C "$ASIC_DIR" syn
+
+      - name: 'report — synthesis'
+        if: always() && fromJSON(steps.plan.outputs.level) <= 1
+        run: scripts/ci/asic_stage_report.sh syn >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 'stage 2/4 — floorplan + power plan + place'
+        if: fromJSON(steps.plan.outputs.level) <= 2
+        run: make -C "$ASIC_DIR" pnr_place
+
+      - name: 'report — place'
+        if: always() && fromJSON(steps.plan.outputs.level) <= 2
+        run: scripts/ci/asic_stage_report.sh place >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 'stage 3/4 — clock tree synthesis'
+        if: fromJSON(steps.plan.outputs.level) <= 3
+        run: make -C "$ASIC_DIR" pnr_cts
+
+      - name: 'report — CTS'
+        if: always() && fromJSON(steps.plan.outputs.level) <= 3
+        run: scripts/ci/asic_stage_report.sh cts >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 'stage 4/4 — route + fill + bond pads + GDSII'
+        if: fromJSON(steps.plan.outputs.level) <= 4
+        run: make -C "$ASIC_DIR" pnr_route
+
+      - name: 'report — route + GDSII'
+        if: always()
+        run: scripts/ci/asic_stage_report.sh route >> "$GITHUB_STEP_SUMMARY"
+
+      # --- hand-off ------------------------------------------------------------
+      - name: Package submission bundle
+        id: pkg
+        run: |
+          Z=$(scripts/ci/package_submission.sh | tail -1)
+          echo "zip=$Z" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Submission bundle"
+            echo
+            echo '```'
+            unzip -l "$Z" | tail -20
+            echo '```'
+            echo
+            echo "Read \`MANIFEST.txt\` before submitting — it lists what is NOT done"
+            echo "(cell-level GDS merge, metal density fill, LVS, seal ring)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload submission bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdsii-${{ github.run_number }}
+          path: ${{ steps.pkg.outputs.zip }}
+          retention-days: 90
+          if-no-files-found: error
+
+      # Separate, and `always()`: on a failed run the reports and logs are the
+      # only thing worth having, and they must not be withheld because the GDS
+      # never appeared.
+      - name: Upload reports and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asic-reports-${{ github.run_number }}
+          retention-days: 30
+          if-no-files-found: ignore
+          path: |
+            ASIC/genus-innovus/reports/**
+            ASIC/genus-innovus/logs/**

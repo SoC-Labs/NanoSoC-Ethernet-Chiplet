@@ -1,0 +1,157 @@
+#-----------------------------------------------------------------------------
+# asic-signoff.yml — staged ASIC signoff verification, artefacts at every stage
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# THIS VERIFIES; asic-gds.yml BUILDS. Implementation (syn -> place -> CTS ->
+# route -> GDSII -> submission bundle) lives in asic-gds.yml and is deliberately
+# NOT duplicated here — two entry points driving one Innovus DB is how a work
+# area gets corrupted. This workflow runs the checks, collects the evidence and
+# produces one signoff report.
+#
+# Intended order:
+#     asic-signoff (stages=rtl)  ->  asic-gds  ->  asic-signoff (stages=physical)
+# The physical stages (LEC, DRC) verify what asic-gds produced, so they need a
+# completed implementation run present in ASIC/genus-innovus/work.
+#
+# WHAT IS A STAGE, AND WHY A MANIFEST:
+#   Stages are declared in ci/signoff.yaml and driven by scripts/ci/signoff.py.
+#   The workflow does not know the design's target names — it just expands a
+#   selector and runs stages. That is what makes this portable to the compute
+#   chiplet: copy this file and the driver verbatim, write a new manifest.
+#   (The compute chiplet's `cdc` and `elab-strict` are SpyGlass and Genus rather
+#   than xrun -hal, and its signoff flow lives in ASIC/chiplet-pads — all of
+#   which is manifest content, not workflow content.)
+#
+# ARTEFACTS: every stage writes build/signoff/<stage>/ containing its log, its
+# preflight result, a status.json and every artefact its manifest entry declared.
+# Uploaded with `if: always()`, because a failed stage's logs are the ones you
+# actually need.
+#-----------------------------------------------------------------------------
+name: asic-signoff
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner label. RTL stages need soclabs-sim; physical need soclabs-pdk'
+        type: string
+        default: srv04936
+      stages:
+        description: "'rtl' | 'physical' | 'all' | explicit ids e.g. 'lint cdc'"
+        type: string
+        default: 'rtl'
+      keep_going:
+        description: 'Continue after a blocking failure, to gather all evidence in one run'
+        type: boolean
+        default: true
+
+# Shares a group with the implementation flow: signoff and implementation must
+# not run concurrently against the same work area or the same licence seats.
+concurrency:
+  group: eda-gates
+  cancel-in-progress: false
+
+jobs:
+  signoff:
+    runs-on: [self-hosted, linux, "${{ inputs.runner }}"]
+    timeout-minutes: 720
+    defaults:
+      run:
+        # LOGIN shell: Cadence/Synopsys PATH and licence vars come from the
+        # host profile, which a non-login shell never sources.
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          # clean:false preserves a populated work area, which the physical
+          # stages need — `git clean -ffdx` would delete the Innovus DB.
+          clean: false
+
+      # The sandbox binds a fake, empty $HOME, so nothing from the real home is
+      # visible. python must land in [3.7, 3.11): >=3.7 for PEP 563 in
+      # check_chip_boundary.py, <3.11 because the XHB500 generator calls
+      # open(...,'U'), removed in 3.11. See ci-ladder.yml for the full trace.
+      - name: Pin python3 and ensure generator deps
+        run: |
+          PY=""
+          for c in /usr/bin/python3.8 /usr/bin/python3.9 /usr/bin/python3.10; do
+            [ -x "$c" ] && { PY="$c"; break; }
+          done
+          [ -n "$PY" ] || { echo "::error::no python in [3.7, 3.11) — dnf install python38"; exit 1; }
+          mkdir -p "$HOME/.ci-bin" && ln -sf "$PY" "$HOME/.ci-bin/python3"
+          echo "$HOME/.ci-bin" >> "$GITHUB_PATH"
+          "$PY" -m pip install --user --quiet --disable-pip-version-check \
+              pyyaml jinja2 systemrdl-compiler peakrdl-regblock
+
+      # All submodule repos are public; the token stays optional so a repo going
+      # private again costs one secret rather than a workflow edit. SSH cannot
+      # work in the sandbox at all — see ci-ladder.yml rung 2.
+      - name: Rewrite GitHub submodules onto HTTPS
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
+            git config --global --add url."${B}".insteadOf "https://github.com/"
+          else
+            B="https://github.com/"
+          fi
+          git config --global url."${B}".insteadOf "git@github.com:"
+
+      - name: Bootstrap submodules
+        run: |
+          git submodule sync --recursive
+          ./scripts/bootstrap.sh
+
+      - name: Scrub credentials
+        if: always()
+        run: rm -f "$HOME/.gitconfig"
+
+      # Records exactly WHAT is being signed off: commit, all 43 submodule SHAs,
+      # every tool version, PDK, and whether the tree was dirty. A signoff report
+      # without this is an assertion about nothing in particular.
+      - name: Provenance
+        run: scripts/ci/signoff.py provenance
+
+      - name: Plan stages
+        id: plan
+        env:
+          SEL: ${{ inputs.stages }}
+        run: |
+          S=$(scripts/ci/signoff.py expand "$SEL")
+          echo "stages=$S" >> "$GITHUB_OUTPUT"
+          echo "Will run: $S"
+          scripts/ci/signoff.py list
+
+      # The driver enforces each stage's declared capability via preflight
+      # before running it, so a physical stage dispatched onto a host with no
+      # PDK fails in seconds naming what is missing.
+      - name: Run signoff stages
+        env:
+          KG: ${{ inputs.keep_going }}
+        run: |
+          ARGS=""
+          [ "$KG" = "true" ] && ARGS="--keep-going"
+          scripts/ci/signoff.py run $ARGS ${{ steps.plan.outputs.stages }}
+
+      - name: Signoff report
+        if: always()
+        run: |
+          scripts/ci/signoff.py report | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Per-stage evidence: build/signoff/<stage>/{<stage>.log, preflight.log,
+      # status.json, + declared artefacts}. Always uploaded — a failed stage's
+      # logs are the ones worth having.
+      - name: Upload per-stage artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signoff-${{ github.run_number }}-${{ inputs.stages }}
+          retention-days: 90
+          if-no-files-found: warn
+          path: build/signoff/**

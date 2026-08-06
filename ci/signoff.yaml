@@ -1,0 +1,194 @@
+# -----------------------------------------------------------------------------
+# ci/signoff.yaml — what "signoff" means for THIS design
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+# -----------------------------------------------------------------------------
+# Driven by scripts/ci/signoff.py; run stage-by-stage from .github/workflows/
+# asic-signoff.yml. THIS FILE IS THE ONLY PART THAT DIFFERS BETWEEN CHIPLETS —
+# the driver and the workflow are meant to be copied verbatim to the compute
+# chiplet, leaving the porting job as "edit this manifest".
+#
+# gate:  block  -> a failure means NOT SIGNED OFF
+#        report -> collected and reported, never fails the pipeline. Used where
+#                  the flow is real but its findings are not yet triaged to zero;
+#                  promoting report->block is how this pipeline gets stricter.
+# label: which runner capability the stage needs (see scripts/ci/preflight.sh).
+#        soclabs-sim needs EDA + /research; soclabs-pdk additionally needs
+#        /tsmc65pdk, so ONLY srv03335 can run the physical phase.
+# -----------------------------------------------------------------------------
+design: nanosoc_eth_chiplet
+top: nanosoc_eth_chiplet
+
+stages:
+  # --- RTL phase — no PDK, runs on either host --------------------------------
+  - id: chip-boundary
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "Every top-level port classified exactly once; pad ring agrees"
+    run: make chip-boundary
+    artifacts:
+      - build/chip/**
+
+  - id: lint
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "Verilator structural lint of authored RTL (3 files) + loop-detection sanity"
+    # run.sh logs each pass to a mktemp and deletes it, so build/lint/ holds
+    # only the four blackbox stubs. Tee the verdicts or there is no evidence.
+    run: make lint 2>&1 | tee build/lint/lint_verdicts.log; exit ${PIPESTATUS[0]}
+    artifacts:
+      - build/lint/**
+
+  - id: elab
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "VCS structural elaboration of the whole chiplet (598 files, 211 modules)"
+    # Both generators early-out on directory existence, so a previous FAILED run
+    # leaves partial trees the next run skips over. Derived state must go.
+    pre:
+      - rm -rf tidelink/deps/xhb500/generated nanosoc-multicore-system/build_soc build/elab
+    run: make elab
+    artifacts:
+      - build/elab/*.log
+      - build/elab/*.flist
+
+  - id: elab-strict
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "xrun -hal: multiple-driver gate over the elaborated design"
+    run: make elab-strict
+    # The gate greps the log for MLTDRV. If HAL ABORTS EARLY (*E,BLDSTP,
+    # "Analysis failed") the multi-driver rules never run, the grep finds
+    # nothing, and the stage reports OK — a false green, observed 2026-08-06.
+    # Assert the analysis actually completed before believing the verdict.
+    check: |
+      L=verif/elab_strict/build/xrun_hal.log
+      test -f "$L" || { echo "no HAL log at $L"; exit 1; }
+      if grep -q 'BLDSTP\|Analysis failed' "$L"; then
+        echo "HAL ABORTED before the rule set completed — the MLTDRV verdict is meaningless"
+        grep -m5 -E '\*E,(BLDSTP|[A-Z]+)' "$L"; exit 1
+      fi
+      grep -q 'Analysis complete' "$L" || { echo "HAL never reported 'Analysis complete'"; exit 1; }
+    artifacts:
+      - verif/elab_strict/build/*.log
+      - verif/elab_strict/build/*.f
+      - verif/elab_strict/build/xrun_hal.history
+      - verif/elab_strict/build/xcelium.d/run.*/invoke_failure
+
+  - id: cdc
+    phase: rtl
+    gate: report
+    label: soclabs-sim
+    description: "HAL structural + CDC (CLKDMN/CMBCDC/RSTSYN/INSYNC/FLSYNC) over the integrated top"
+    # report, not block: docs/CDC_FINDINGS.md calls this "a starting point for
+    # the physical team's CDC signoff, not a clean bill". Gating it today would
+    # gate on a known-nonzero baseline. Promote to block once triaged.
+    run: make cdc
+    artifacts:
+      - verif/cdc/build/*.log
+      - verif/cdc/build/*.err
+      - verif/cdc/build/*.f
+      - verif/cdc/build/xrun_hal.history
+
+  - id: regress
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "Functional regression suite"
+    run: make regress
+    artifacts:
+      - build/regress/*.log
+      - verif/g2_peer_aperture/results*.xml
+      - verif/g2_soc_pair/results*.xml
+
+  # --- Physical phase — srv03335 only (needs /tsmc65pdk + ASIC/romlibs) -------
+  #
+  # IMPLEMENTATION IS NOT HERE. syn -> place -> CTS -> route -> GDSII -> bundle
+  # is .github/workflows/asic-gds.yml, which already stages it, reports each
+  # stage to the job summary and uploads reports even on failure. Re-declaring
+  # those stages here would give two competing entry points to one Innovus DB.
+  #
+  # These stages VERIFY what that flow BUILT, so they need a completed
+  # implementation run in ASIC/genus-innovus/work first. Run order:
+  #     asic-signoff (rtl)  ->  asic-gds  ->  asic-signoff (physical)
+  - id: lec
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    needs_implementation: true
+    # NOTE this compares RTL -> SYNTHESISED netlist (via Genus's fv_map). It
+    # does NOT read outputs/*_pnr.v — there is no post-P&R LEC anywhere in the
+    # repo, despite package_submission.sh's MANIFEST claiming otherwise.
+    # Needs work/lec.dofile and work/fv/ from `syn`; `make clean` destroys both.
+    description: "Conformal LEC — RTL vs SYNTHESISED netlist equivalence (not post-P&R)"
+    run: make -C ASIC/genus-innovus lec
+    # The dofile ends `exit -f`, which returns 0 even when key points differ,
+    # and the Makefile adds no check. Without this, a non-equivalent design
+    # passes silently — the single worst false-green in the physical flow.
+    check: |
+      L=ASIC/genus-innovus/logs/lec.log
+      test -s "$L" || { echo "no LEC log at $L — did `syn` run in this work area?"; exit 1; }
+      if grep -qE 'Different Key Points|Abort Points|Unknown Key Points' "$L"; then
+        echo "LEC reported non-equivalence:"; grep -nE 'Different Key Points|Abort Points|Unknown Key Points' "$L" | head; exit 1
+      fi
+      grep -qE 'Compare Results:[[:space:]]*PASS|Equivalent' "$L" || {
+        echo "LEC never reported a passing compare — treating as NOT equivalent"; exit 1; }
+    artifacts:
+      - ASIC/genus-innovus/logs/lec.log*
+      - ASIC/genus-innovus/work/noneq.*
+
+  - id: drc
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    needs_implementation: true
+    description: "Calibre DRC on the routed GDS (signoff-grade ruledeck)"
+    run: make asic-drc
+    # Calibre exits 0 whether or not it found violations, and the Makefile does
+    # not parse the result. Count them here or this stage means nothing.
+    check: |
+      R=ASIC/genus-innovus/work/drc_run/DRC.rep
+      test -s "$R" || { echo "no DRC summary at $R — Calibre produced no result"; exit 1; }
+      python3 - "$R" <<'EOF'
+      import re, sys
+      txt = open(sys.argv[1], errors="replace").read()
+      # Calibre summary lines: "RULECHECK <name> ... TOTAL Result Count = N"
+      bad = [(n, int(c)) for n, c in
+             re.findall(r'RULECHECK\s+(\S+).*?TOTAL Result Count\s*=\s*(\d+)', txt, re.S)
+             if int(c) > 0]
+      if bad:
+          print(f"DRC violations in {len(bad)} rulechecks:")
+          for n, c in bad[:20]:
+              print(f"  {n}: {c}")
+          sys.exit(1)
+      print("DRC clean — no rulecheck reported a non-zero result count")
+      EOF
+    artifacts:
+      - ASIC/genus-innovus/work/drc_run/**
+      - ASIC/genus-innovus/work/calibre_drc.runset
+
+# -----------------------------------------------------------------------------
+# Checks a complete ASIC signoff would include that this pipeline does NOT do.
+# Listed so the report states its own limits — a signoff report that only shows
+# passes is misleading.
+# -----------------------------------------------------------------------------
+unsupported:
+  - id: lvs
+    reason: "No LVS runset or ruledeck wired into ASIC/genus-innovus; Calibre is present but DRC-only here"
+  - id: sta-signoff
+    reason: "No Tempus or PrimeTime installed. Timing evidence is limited to Genus/Innovus in-tool reports, which is not signoff STA"
+  - id: antenna-signoff
+    reason: "Innovus check_process_antenna DOES run and ANTENNA diodes ARE inserted by filler.tcl (reports/*_imp_antenna.rep), but nothing gates on the count and it is a router-level check, not foundry antenna signoff"
+  - id: metal-density-fill
+    reason: "add_metal_fill appears nowhere in the flow. Std-cell filler exists; per-layer metal density is unaddressed and will fail foundry density rules"
+  - id: post-pnr-lec
+    reason: "The lec stage compares RTL to the SYNTHESISED netlist only. Nothing compares RTL (or the synth netlist) to outputs/*_pnr.v"
+  - id: power-signoff
+    reason: "No power/IR-drop analysis stage (no Voltus/RedHawk); CPF exists for domains but is not verified here"
+  - id: full-design-lint
+    reason: "make lint covers 3 authored files of 598 compiled; the rest is linted only in component repos, if at all. See docs/LINT_FINDINGS.md section 5"
