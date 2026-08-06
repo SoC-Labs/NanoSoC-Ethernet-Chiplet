@@ -179,6 +179,26 @@ jobs:
         if: fromJSON(steps.plan.outputs.level) >= 4
         run: make lint
 
+      # A self-hosted workspace PERSISTS between runs, and both generators
+      # early-out on "does the output directory exist?" rather than on whether
+      # it is complete:
+      #   - tidelink/set_env.sh  -> "[skip] already generated"
+      #   - the SoC generator    -> "[skip] build_soc/rtl is already up to date"
+      # So a previous FAILED run leaves partial trees that the next run skips
+      # straight over. This is not hypothetical: after perl-File-Slurp was
+      # installed to fix XHB500 generation, the very next run still failed —
+      # it skipped generation over the half-written output from the run before,
+      # and never used the newly-installed perl module at all.
+      # Deleting derived state is the only reliable guard; the same reasoning
+      # already governs nightly.yml's "Drop stale build artefacts" step.
+      - name: Drop stale generated artefacts
+        if: fromJSON(steps.plan.outputs.level) >= 5
+        run: |
+          rm -rf tidelink/deps/xhb500/generated \
+                 nanosoc-multicore-system/build_soc \
+                 build/elab \
+                 verif/elab_strict/build
+
       - name: 'rung 5 — elab (VCS)'
         if: fromJSON(steps.plan.outputs.level) >= 5
         run: make elab
