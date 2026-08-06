@@ -177,10 +177,24 @@ else bad "unreadable" "$MEMS_DIR (ASIC flow only)"; gap_pdk+=("$(basename "$MEMS
 if [ -r "$PDK_DIR" ]; then ok "readable" "$PDK_DIR"
 else bad "unreadable" "$PDK_DIR (ASIC flow only)"; gap_pdk+=("$PDK_DIR"); fi
 
+# INFORMATIONAL ONLY — readability above is the authoritative test.
+#
+# Under the CI sandbox's --unshare-user, group ACCESS survives (the kernel
+# checks the underlying gids) but NAME RESOLUTION does not: gids resolve through
+# SSSD, whose socket is not bound, so `id -Gn` reports a bare number and
+# "nobody". Gating on the group name therefore fails inside the sandbox on a
+# host that can read the PDK perfectly well — it denied soclabs-pdk to srv03335,
+# which mounts the PDK and whose jobs can read every file in it.
+#
+# `[ -r "$PDK_DIR" ]` already answers the question the group check was a proxy
+# for, and answers it correctly in both environments. Keep the probe for
+# diagnostics; do not let it gate.
 if id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$PDK_GROUP"; then
     ok "group" "$PDK_GROUP"
+elif [ -r "$PDK_DIR" ]; then
+    warn "group" "'$PDK_GROUP' not resolvable (sandbox userns) but $PDK_DIR reads — OK"
 else
-    bad "group" "not in '$PDK_GROUP' (ASIC flow only)"; gap_pdk+=("group:$PDK_GROUP")
+    warn "group" "not in '$PDK_GROUP' — likely why $PDK_DIR is unreadable"
 fi
 
 # --- derive labels ----------------------------------------------------------

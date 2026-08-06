@@ -8,10 +8,21 @@
 # Sets up the runners .github/workflows/nightly.yml targets.
 #
 # TWO HOSTS, SPLIT BY CAPABILITY — NOT by preference:
-#   srv03335  soclabs-sim + soclabs-pdk   16 cores / 251 GB, /tsmc65pdk mounted,
-#                                         in group `tsmc65`
-#   srv04936  soclabs-sim                  8 cores /  62 GB, NO /tsmc65pdk, NOT
-#                                         in group `tsmc65`
+#   srv03335  soclabs-sim + soclabs-pdk   16 cores / 251 GB, /tsmc65pdk mounted
+#   srv04936  soclabs-sim                  8 cores /  62 GB, /tsmc65pdk is an
+#                                         EMPTY MOUNTPOINT — the autofs/NFS map
+#                                         entry (auto.direct.puppet ->
+#                                         fsresearch:/ifs/research/FPSE/
+#                                         FPSEallocated/tsmc65pdk) exists only on
+#                                         srv03335. Adding it is a Puppet change.
+#
+#   GROUP MEMBERSHIP IS NOT THE DIFFERENCE, contrary to what this comment used
+#   to say. BOTH hosts are in `tsmc65pdkgrp`, which is what guards /tsmc65pdk/65
+#   (mode 2770). `tsmc65` guards an older tree that ASIC/common.mk moved off.
+#   The difference is purely the mount. Note also that inside the CI sandbox's
+#   user namespace a group cannot be resolved to its NAME at all (SSSD is not
+#   reachable) while access still works, so preflight treats PDK readability —
+#   not group name — as authoritative.
 #
 #   The ASIC flow (syn -> pnr -> DRC) hardcodes the Calibre ruledeck and GDS-out
 #   layer map under /tsmc65pdk, so it can ONLY run on srv03335 — hence a separate
