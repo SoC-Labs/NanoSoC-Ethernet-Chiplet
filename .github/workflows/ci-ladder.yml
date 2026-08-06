@@ -144,10 +144,17 @@ jobs:
         env:
           SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
         run: |
+          # Of the GitHub submodules, only ONE repo is private:
+          # SoC-Labs/TideLink-Chiplet-GPIO-PHY. TideLink-Chiplet-Interconnect-AHB
+          # and ASIC-Flow are public, so they need no credential at all — but
+          # BOTH PHY deps (deps/tidelink-phy and deps/tidelink-gpio-phy) resolve
+          # to that one private repo, so the token is unavoidable.
           if [ -z "${SUBMODULE_TOKEN}" ]; then
-            echo "::error::secrets.SUBMODULE_TOKEN is empty. Create a fine-grained PAT with"
-            echo "::error::Contents:read on SoC-Labs/TideLink-Chiplet-Interconnect-AHB and"
-            echo "::error::SoC-Labs/TideLink-Chiplet-GPIO-PHY, add it as a repository secret."
+            echo "::error::secrets.SUBMODULE_TOKEN is empty. Only one submodule repo is"
+            echo "::error::private: SoC-Labs/TideLink-Chiplet-GPIO-PHY (both deps/tidelink-phy"
+            echo "::error::and deps/tidelink-gpio-phy point at it). Create a fine-grained PAT"
+            echo "::error::with Contents:read on that repo and add it as repository secret"
+            echo "::error::SUBMODULE_TOKEN — or make the repo public, and drop this step."
             exit 1
           fi
           B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
