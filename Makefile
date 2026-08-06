@@ -144,8 +144,16 @@ elab:
 	python3 "$(CHIPLET_HOME)/flist/flatten_soc_flist.py" \
 	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore.flist" > "$(CHIPLET_SOC_VCS_FLIST)"
 	# Resolve TideLink's filelist to one definition per module (tool-independent).
+	# V2, to match `asic-flist` — V2 IS THE SHIP CONFIGURATION. This gate used to
+	# resolve the V1 tidelink_fpga.flist, so it structurally elaborated a PHY
+	# configuration the chip does not ship, and it BROKE outright once the shared
+	# local_overrides/Wlink.v began instantiating tidelink_fcemit_obs and
+	# tidelink_winscan_obs: both are listed only in the V2 flist, so V1 failed
+	# with `Error-[CFCILFBI] Cannot find cell in liblist`. No define change is
+	# needed — the V2 flist carries TIDELINK_PHY_V2 via per-file shims rather
+	# than a +define+.
 	python3 "$(CHIPLET_HOME)/flist/resolve_tidelink_flist.py" \
-	    "$${TIDELINK_HOME}/flists/tidelink_fpga.flist" > "$(CHIPLET_TL_VCS_FLIST)"
+	    "$${TIDELINK_HOME}/flists/tidelink_fpga_v2.flist" > "$(CHIPLET_TL_VCS_FLIST)"
 	cd "$(BUILD)"
 	echo "== vcs $(VCS_FLAGS) -f $(FLIST) -top $(TOP) -o $(SIMV) =="
 	vcs $(VCS_FLAGS) -f "$(FLIST)" -top $(TOP) -o "$(SIMV)" -l "$(BUILD)/elab.log"

@@ -84,6 +84,14 @@ module tidechart_shim #(
 
     input  wire [NUM_PORTS-1:0]          link_active,
 
+    // Root-election tie-break. tidechart_controller gained this port in
+    // tidechart 3005d11 ("harden root election against dual-root", I6-I9) and
+    // it was never plumbed through this shim, so it sat unconnected — which
+    // silently reinstates the pre-fix behaviour the commit set out to remove:
+    // with no strap the election falls back to LFSR/PUF entropy and both dies
+    // can claim root. The two dies MUST see different values here.
+    input  wire [7:0]                    device_strap,
+
     // =========================================================================
     // Congestion sideband (Phase 2 — from tidelink_top instances)
     //   local_link_state_i FLATTENED to a packed *_flat vector (5 bits/element).
@@ -186,6 +194,7 @@ module tidechart_shim #(
         .tc_axis_tx_tready          (tc_axis_tx_tready),
 
         .link_active                (link_active),
+        .device_strap               (device_strap),
 
         .local_link_state_i         (local_link_state_i_arr),
         .local_link_state_change_i  (local_link_state_change_i),

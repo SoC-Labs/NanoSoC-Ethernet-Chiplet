@@ -783,6 +783,10 @@ module nanosoc_eth_chiplet #(
         .tl_bcast_ack_i         (tc_bcast_ack),
         // Link status.
         .link_active            (tc_link_active),
+        // Data-mode status: deliberately open. Explicitly tied rather than
+        // omitted so it reads as a decision, and so lint sees the waived
+        // PINCONNECTEMPTY instead of a PINMISSING that fails the gate.
+        .tl_data_mode_o         (),
         // Reset output — no consumer at this integration level.
         .d2d_reset_o            (d2d_reset_o),
         // Role selection (strap in; resolved role/lock outputs unused in v1).
@@ -865,6 +869,15 @@ module nanosoc_eth_chiplet #(
         .tc_axis_tx_tdata_flat      (tc_tx_tdata),
         .tc_axis_tx_tready          (tc_tx_tready),
         .link_active                (tc_link_active),
+        // Root-election tie-break. Derived from the existing role strap rather
+        // than a new port: the two dies already differ there (master ties 0,
+        // slave ties 1), which is exactly the distinctness the election needs,
+        // and it costs no pad. Left unconnected the election falls back to
+        // LFSR/PUF entropy and both dies can claim root — the very failure
+        // tidechart 3005d11 was written to remove.
+        // NOTE this overloads role_strap_i with a second meaning; if the roles
+        // and the election root ever need to differ, this becomes a real port.
+        .device_strap               ({7'b0, role_strap_i}),
         // Congestion sideband.
         .local_link_state_i_flat    (tc_local_link_state),
         .local_link_state_change_i  (tc_link_state_change),
