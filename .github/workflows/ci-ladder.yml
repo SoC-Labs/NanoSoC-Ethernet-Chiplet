@@ -98,15 +98,11 @@ jobs:
           submodules: false
           fetch-depth: 1
 
-      # The sandbox binds a FAKE, empty $HOME, so TWO things that exist on the
-      # host are invisible to a job:
-      #   - the ~/bin/python3 shim (bare `python3` here is 3.6, and
-      #     check_chip_boundary.py opens with `from __future__ import
-      #     annotations` — a SyntaxError before 3.7);
-      #   - PyYAML, which the host's 3.11 picks up from the REAL home's
-      #     ~/.local/lib/python3.11/site-packages.
-      # Both have to be established in-job. Do not "fix" either by editing the
-      # host: a job must not depend on hand-tweaks to somebody's home.
+      # The sandbox binds a FAKE, empty $HOME, so nothing set up in the real home
+      # — shims, pip --user packages — is visible. Everything below is therefore
+      # established in-job rather than assumed: a job must not depend on
+      # hand-tweaks to somebody's home directory.
+      #
       # python must land in the WINDOW [3.7, 3.11):
       #   >= 3.7  check_chip_boundary.py opens with `from __future__ import
       #           annotations` (PEP 563) — a SyntaxError on 3.6;
@@ -134,12 +130,18 @@ jobs:
           mkdir -p "$HOME/.ci-bin"
           ln -sf "$PY" "$HOME/.ci-bin/python3"
           echo "$HOME/.ci-bin" >> "$GITHUB_PATH"
-          # The sandbox home is fake and empty, so nothing installed into the
-          # REAL home is visible. pyyaml: check_chip_boundary. jinja2: the SoC
-          # generator's perf-probe backend ("jinja2 is required to render
-          # perf-probe harnesses"). --user persists here, so re-runs no-op.
+          # The sandbox home is fake and empty, so NOTHING installed into the
+          # real home is visible — every python dep must be established here:
+          #   pyyaml              check_chip_boundary
+          #   jinja2              SoC generator's perf-probe backend
+          #   systemrdl-compiler  ) device-discovery RTL. Without these the
+          #   peakrdl-regblock    ) generator only WARNS ("Skipping RTL
+          #                       ) generation for ..._discovery"), finishes
+          #                       ) "Done.", and leaves build_soc incomplete —
+          #                       ) elab then dies on a missing _discovery_pkg.sv.
+          # --user persists in the sandbox home, so re-runs no-op.
           "$PY" -m pip install --user --quiet --disable-pip-version-check \
-              pyyaml jinja2
+              pyyaml jinja2 systemrdl-compiler peakrdl-regblock
 
       - name: 'rung 1 — preflight (derives capability labels)'
         if: fromJSON(steps.plan.outputs.level) >= 1

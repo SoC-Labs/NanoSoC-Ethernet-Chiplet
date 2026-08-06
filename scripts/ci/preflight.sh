@@ -95,10 +95,16 @@ if p=$(command -v "$PYTHON_BIN" 2>/dev/null); then
         bad "python3" "$p is $pyver — too NEW: open(...,'U') gone, XHB500 generator dies"
         gap_sim+=("python<3.11")
     else
-        # Module deps, both absent from a sandbox's fake home even when the real
-        # home has them: yaml -> chip-boundary, jinja2 -> SoC perf-probe backend.
+        # Module deps, all absent from a sandbox's fake home even when the real
+        # home has them:
+        #   yaml              chip-boundary
+        #   jinja2            SoC generator's perf-probe backend
+        #   systemrdl         ) device-discovery RTL. Missing, the generator only
+        #   peakrdl_regblock  ) WARNS and still reports "Done.", leaving
+        #                     ) build_soc short a *_discovery_pkg.sv that elab
+        #                     ) then fails on. Silent-partial-success again.
         missing=""
-        for m in yaml jinja2; do
+        for m in yaml jinja2 systemrdl peakrdl_regblock; do
             "$p" -c "import $m" 2>/dev/null || missing="${missing}${missing:+ }$m"
         done
         if [ -z "$missing" ]; then
