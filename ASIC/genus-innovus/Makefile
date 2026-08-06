@@ -215,10 +215,18 @@ gui:
 	@echo "OK: DISPLAY=$$DISPLAY (X server responded)"
 	@test -d $(WORK_DIR)/$(BLOCK) || { \
 	    echo "FAIL: no saved DB at $(WORK_DIR)/$(BLOCK) — run 'make pnr_place' first."; exit 1; }
+	@# gui_show is REQUIRED, not decoration. Launched with -files, Innovus
+	@# creates its main window but never MAPS it: xwininfo reports
+	@# "Map State: IsUnMapped" and xprop reports no WM_STATE at all, i.e. the
+	@# window manager never took ownership. The session looks like a plain
+	@# text console and the GUI appears simply not to exist — with no error,
+	@# because from the tool's point of view nothing failed. An explicit
+	@# gui_show maps it (IsUnMapped -> IsViewable, verified).
 	@printf '%s\n' \
 	    'source ../scripts/config.tcl' \
 	    'read_db $(BLOCK)' \
-	    'puts "== $(BLOCK) loaded — this is the last-written DB =="' \
+	    'if {[catch {gui_show} e]} { puts stderr "WARNING: gui_show failed: $$e" }' \
+	    'puts "== $(BLOCK) loaded, GUI shown — this is the last-written DB =="' \
 	    > $(WORK_DIR)/open_db.tcl
 	cd $(WORK_DIR)/; $(INNOVUS) open_db.tcl
 
