@@ -77,18 +77,36 @@ done
 # python: the Makefile calls bare `python3`, and check_chip_boundary.py opens
 # with `from __future__ import annotations` — a SyntaxError on 3.6. Probe the
 # interpreter that `make` will actually reach, not merely "a" python.
+#
+# It is a WINDOW, not a floor. Too new breaks the build just as surely as too
+# old, and in a far less obvious place:
+#   >= 3.7   check_chip_boundary.py uses PEP 563 — SyntaxError on 3.6
+#   <  3.11  Arm's XHB500 generator calls open(..., 'U'); universal-newline mode
+#            was REMOVED in 3.11, so it dies with `ValueError: invalid mode: 'U'`
+#            mid-generation and `make elab` then fails on a missing source file.
+# Probe both ends by capability rather than by version number, so this stays
+# honest if a vendor script's requirements shift.
 if p=$(command -v "$PYTHON_BIN" 2>/dev/null); then
     pyver=$("$p" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "?")
-    if "$p" -c 'from __future__ import annotations' 2>/dev/null; then
-        if "$p" -c 'import yaml' 2>/dev/null; then
-            ok "python3" "$p ($pyver, yaml present)"
-        else
-            bad "python3 yaml" "$p ($pyver) has no PyYAML — chip-boundary needs it"
-            gap_sim+=("PyYAML")
-        fi
-    else
+    if ! "$p" -c 'from __future__ import annotations' 2>/dev/null; then
         bad "python3" "$p is $pyver — need >= 3.7 (chip-boundary uses PEP 563)"
         gap_sim+=("python>=3.7")
+    elif ! "$p" -c 'open("/dev/null","U").close()' 2>/dev/null; then
+        bad "python3" "$p is $pyver — too NEW: open(...,'U') gone, XHB500 generator dies"
+        gap_sim+=("python<3.11")
+    else
+        # Module deps, both absent from a sandbox's fake home even when the real
+        # home has them: yaml -> chip-boundary, jinja2 -> SoC perf-probe backend.
+        missing=""
+        for m in yaml jinja2; do
+            "$p" -c "import $m" 2>/dev/null || missing="${missing}${missing:+ }$m"
+        done
+        if [ -z "$missing" ]; then
+            ok "python3" "$p ($pyver, yaml+jinja2 present)"
+        else
+            bad "python3 modules" "$p ($pyver) missing: $missing"
+            gap_sim+=("py:$missing")
+        fi
     fi
 else
     bad "python3" "not on PATH"; gap_sim+=("python3")

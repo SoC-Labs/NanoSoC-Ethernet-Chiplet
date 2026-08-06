@@ -85,12 +85,27 @@ test for a known-terminal artefact (e.g. `logical/models/cells/generic/xhb500_fl
 rather than the directory. We work around it by deleting the tree before every
 elaboration.
 
-**Related, undocumented:** the Arm XHB500 generator requires the perl module
-**`File::Slurp`** (`perl-File-Slurp` on RHEL 8, in appstream). This is a host
-requirement of TideLink's `set_env.sh` and isn't mentioned in the README. Adding
-it to the prerequisites — or probing for it in `set_env.sh` with a clear message
-— would save the next integrator the trace above. We now probe for it in our own
-`scripts/ci/preflight.sh`.
+**Related, undocumented host requirements.** `set_env.sh` invokes the Arm XHB500
+generator as `python3 "${XHB500_GENERATOR}"`, i.e. against whatever `python3`
+happens to be on PATH. That generator needs:
+
+- the perl module **`File::Slurp`** (`perl-File-Slurp` on RHEL 8, in appstream);
+- a python in the window **`>= 3.7, < 3.11`**. It calls `open(..., 'U')`, and
+  universal-newline mode was **removed in 3.11**:
+
+  ```
+  ValueError: invalid mode: 'U'
+  %error	IP-XACT_generation	Error encountered during IP-XACT file generation
+  ```
+
+  Verified: 3.6 and 3.8 fine, 3.11 and 3.12 both fail. Combined with the silent
+  `[done]`, the result is a green-looking generation step and a mystifying VCS
+  failure later.
+
+Neither is mentioned in the README. Both bit us on a host that was otherwise
+perfectly capable. Probing for them in `set_env.sh` — or simply documenting them
+— would save the next integrator the whole trace above. We now check both in our
+`scripts/ci/preflight.sh`, along with the `jinja2` that the SoC generator needs.
 
 ---
 

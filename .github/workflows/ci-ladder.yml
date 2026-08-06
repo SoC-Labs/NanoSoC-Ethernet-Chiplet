@@ -107,15 +107,39 @@ jobs:
       #     ~/.local/lib/python3.11/site-packages.
       # Both have to be established in-job. Do not "fix" either by editing the
       # host: a job must not depend on hand-tweaks to somebody's home.
-      - name: Pin python3 and ensure PyYAML
+      # python must land in the WINDOW [3.7, 3.11):
+      #   >= 3.7  check_chip_boundary.py opens with `from __future__ import
+      #           annotations` (PEP 563) — a SyntaxError on 3.6;
+      #   <  3.11 Arm's XHB500 generator calls open(..., 'U'), and universal-
+      #           newline mode was REMOVED in 3.11 (ValueError: invalid mode).
+      # srv03335 satisfies this with 3.8.17. Pinning 3.11 here satisfies the
+      # first constraint and breaks the second, so pick explicitly rather than
+      # taking whatever `python3` happens to be.
+      - name: Pin python3 and ensure generator deps
         if: fromJSON(steps.plan.outputs.level) >= 1
         run: |
+          PY=""
+          for c in /usr/bin/python3.8 /usr/bin/python3.9 /usr/bin/python3.10; do
+            [ -x "$c" ] && { PY="$c"; break; }
+          done
+          if [ -z "$PY" ]; then
+            echo "::error::No python in [3.7, 3.11) on this host. >=3.7 is needed for"
+            echo "::error::check_chip_boundary.py (PEP 563); <3.11 for the XHB500"
+            echo "::error::generator's open(...,'U'), removed in 3.11."
+            echo "::error::Install python38 (3.8.17 — same as srv03335): dnf install python38"
+            ls -1 /usr/bin/python3.* 2>/dev/null | sed 's/^/::error::present: /'
+            exit 1
+          fi
+          echo "using $PY ($($PY --version 2>&1))"
           mkdir -p "$HOME/.ci-bin"
-          ln -sf /usr/bin/python3.11 "$HOME/.ci-bin/python3"
+          ln -sf "$PY" "$HOME/.ci-bin/python3"
           echo "$HOME/.ci-bin" >> "$GITHUB_PATH"
-          # --user lands in the sandbox home, which persists, so re-runs no-op.
-          /usr/bin/python3.11 -m pip install --user --quiet \
-              --disable-pip-version-check pyyaml
+          # The sandbox home is fake and empty, so nothing installed into the
+          # REAL home is visible. pyyaml: check_chip_boundary. jinja2: the SoC
+          # generator's perf-probe backend ("jinja2 is required to render
+          # perf-probe harnesses"). --user persists here, so re-runs no-op.
+          "$PY" -m pip install --user --quiet --disable-pip-version-check \
+              pyyaml jinja2
 
       - name: 'rung 1 — preflight (derives capability labels)'
         if: fromJSON(steps.plan.outputs.level) >= 1
