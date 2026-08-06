@@ -42,7 +42,13 @@ PYTHON_BIN="${PYTHON:-python3}"
 ARM_IP="${ARM_IP_LIBRARY_PATH:-/research/AAA/ip_library}"
 MEMS_DIR="${MEMS_DIR:-/research/precompiled_mems/TSMC65}"
 PDK_DIR="${PDK_DIR:-/tsmc65pdk/65}"
-PDK_GROUP="${PDK_GROUP:-tsmc65}"
+# tsmc65pdkgrp, NOT tsmc65. ASIC/common.mk sets TSMC_65_HOME=/tsmc65pdk/65, and
+# `stat -c %G /tsmc65pdk/65` is tsmc65pdkgrp; `tsmc65` guards the OLD tree under
+# a personal home that common.mk moved off. A host whose user is in
+# tsmc65pdkgrp but not the legacy tsmc65 would have been denied soclabs-pdk
+# while being perfectly able to read the PDK. It only ever passed here because
+# this account happens to be in BOTH groups.
+PDK_GROUP="${PDK_GROUP:-tsmc65pdkgrp}"
 
 MODE=report
 REQUIRE=""

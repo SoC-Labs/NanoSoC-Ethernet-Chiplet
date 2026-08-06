@@ -139,27 +139,25 @@ jobs:
       # GitHub ones — tidelink and its two PHY deps — are git@github.com, so
       # rewrite those onto HTTPS with a token. GITHUB_TOKEN covers THIS repo
       # only, hence a PAT.
-      - name: GitHub submodule credentials
+      # All three GitHub submodule repos (TideLink-Chiplet-Interconnect-AHB,
+      # TideLink-Chiplet-GPIO-PHY, ASIC-Flow) are public, so anonymous HTTPS is
+      # enough and no secret is required. SUBMODULE_TOKEN stays OPTIONAL: set it
+      # and this step uses it, so a repo going private again costs one secret
+      # rather than a workflow edit.
+      - name: Rewrite GitHub submodules onto HTTPS
         if: fromJSON(steps.plan.outputs.level) >= 2
         env:
           SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
         run: |
-          # Of the GitHub submodules, only ONE repo is private:
-          # SoC-Labs/TideLink-Chiplet-GPIO-PHY. TideLink-Chiplet-Interconnect-AHB
-          # and ASIC-Flow are public, so they need no credential at all — but
-          # BOTH PHY deps (deps/tidelink-phy and deps/tidelink-gpio-phy) resolve
-          # to that one private repo, so the token is unavoidable.
-          if [ -z "${SUBMODULE_TOKEN}" ]; then
-            echo "::error::secrets.SUBMODULE_TOKEN is empty. Only one submodule repo is"
-            echo "::error::private: SoC-Labs/TideLink-Chiplet-GPIO-PHY (both deps/tidelink-phy"
-            echo "::error::and deps/tidelink-gpio-phy point at it). Create a fine-grained PAT"
-            echo "::error::with Contents:read on that repo and add it as repository secret"
-            echo "::error::SUBMODULE_TOKEN — or make the repo public, and drop this step."
-            exit 1
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            echo "SUBMODULE_TOKEN present — using authenticated HTTPS"
+            B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
+            git config --global --add url."${B}".insteadOf "https://github.com/"
+          else
+            echo "no SUBMODULE_TOKEN — anonymous HTTPS (all submodule repos are public)"
+            B="https://github.com/"
           fi
-          B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
           git config --global url."${B}".insteadOf "git@github.com:"
-          git config --global --add url."${B}".insteadOf "https://github.com/"
 
       - name: 'rung 2 — bootstrap submodules'
         if: fromJSON(steps.plan.outputs.level) >= 2
