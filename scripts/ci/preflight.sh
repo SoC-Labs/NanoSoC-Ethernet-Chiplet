@@ -116,10 +116,17 @@ for v in SNPSLMD_LICENSE_FILE CDS_LIC_FILE; do
 done
 
 # --- read-only lab collateral ----------------------------------------------
-for d in "$ARM_IP" "$MEMS_DIR"; do
-    if [ -r "$d" ]; then ok "readable" "$d"
-    else bad "unreadable" "$d"; gap_sim+=("$(basename "$d")"); fi
-done
+# ARM_IP is a SIM requirement: the lint's blackbox generation reads CMSDK RTL
+# from it (verif/lint/run.sh), and the elab flists source Corstone/BP210.
+if [ -r "$ARM_IP" ]; then ok "readable" "$ARM_IP"
+else bad "unreadable" "$ARM_IP"; gap_sim+=("$(basename "$ARM_IP")"); fi
+
+# The TSMC65 memory outputs are referenced ONLY by ASIC/common.mk — they appear
+# nowhere in the elaboration flists. So they gate the ASIC flow, NOT the sim
+# gates. Grouping them with sim would wrongly disqualify a perfectly good
+# simulation host (it did exactly that to srv04936).
+if [ -r "$MEMS_DIR" ]; then ok "readable" "$MEMS_DIR"
+else bad "unreadable" "$MEMS_DIR (ASIC flow only)"; gap_pdk+=("$(basename "$MEMS_DIR")"); fi
 
 # --- PDK: only the ASIC flow needs it, and it needs BOTH mount and group ----
 if [ -r "$PDK_DIR" ]; then ok "readable" "$PDK_DIR"

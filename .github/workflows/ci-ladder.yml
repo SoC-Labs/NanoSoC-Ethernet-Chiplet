@@ -98,15 +98,24 @@ jobs:
           submodules: false
           fetch-depth: 1
 
-      # The Makefile calls bare `python3`, and check_chip_boundary.py opens with
-      # `from __future__ import annotations` — a SyntaxError on 3.6. The sandbox
-      # home is empty, so the shim has to be built here rather than assumed.
-      - name: Pin python3 (sandbox home has no shim)
+      # The sandbox binds a FAKE, empty $HOME, so TWO things that exist on the
+      # host are invisible to a job:
+      #   - the ~/bin/python3 shim (bare `python3` here is 3.6, and
+      #     check_chip_boundary.py opens with `from __future__ import
+      #     annotations` — a SyntaxError before 3.7);
+      #   - PyYAML, which the host's 3.11 picks up from the REAL home's
+      #     ~/.local/lib/python3.11/site-packages.
+      # Both have to be established in-job. Do not "fix" either by editing the
+      # host: a job must not depend on hand-tweaks to somebody's home.
+      - name: Pin python3 and ensure PyYAML
         if: fromJSON(steps.plan.outputs.level) >= 1
         run: |
           mkdir -p "$HOME/.ci-bin"
           ln -sf /usr/bin/python3.11 "$HOME/.ci-bin/python3"
           echo "$HOME/.ci-bin" >> "$GITHUB_PATH"
+          # --user lands in the sandbox home, which persists, so re-runs no-op.
+          /usr/bin/python3.11 -m pip install --user --quiet \
+              --disable-pip-version-check pyyaml
 
       - name: 'rung 1 — preflight (derives capability labels)'
         if: fromJSON(steps.plan.outputs.level) >= 1
