@@ -114,6 +114,21 @@ for t in vcs xrun; do
     else bad "$t" "not on PATH"; gap_sim+=("$t"); fi
 done
 
+# perl File::Slurp gates `make elab`, non-obviously. tidelink/set_env.sh
+# regenerates the XHB500 bridges on every run (the output is gitignored, and
+# actions/checkout's `clean: true` removes ignored files), and Arm's generator
+# is a perl script that requires File::Slurp. Without it the generator dies —
+# but _generate_xhb500 does not check its exit status and prints "[done]"
+# anyway, so the real symptom arrives minutes later as a VCS
+# `Error-[SFCOR] Source file cannot be opened` on xhb500_flop.sv. Catch it here
+# instead: it cost a full ladder climb to find the first time.
+if perl -MFile::Slurp -e '' 2>/dev/null; then
+    ok "perl File::Slurp" "XHB500 generator dependency"
+else
+    bad "perl File::Slurp" "XHB500 generator needs it (dnf install perl-File-Slurp)"
+    gap_sim+=("perl-File-Slurp")
+fi
+
 # Binaries present proves nothing about seats. Cheap reachability probe only —
 # a real checkout happens in `make elab`.
 for v in SNPSLMD_LICENSE_FILE CDS_LIC_FILE; do
