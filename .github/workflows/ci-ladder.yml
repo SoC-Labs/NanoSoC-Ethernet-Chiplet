@@ -1,0 +1,157 @@
+#-----------------------------------------------------------------------------
+# ci-ladder.yml — climb the gates one rung at a time, on demand
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# Bring-up instrument, not a gate. nightly.yml runs everything at 02:00 and tells
+# you only that the pile is red; this runs the SAME commands bottom-up and stops
+# at the first rung that breaks, so you learn WHICH tool is not wired up yet.
+#
+# `workflow_dispatch` ONLY — it must never queue against a runner that is not
+# attached, and it must never race the nightly for licence seats.
+#
+# ONE JOB, CONDITIONAL STEPS — deliberately not one job per rung. Jobs do not
+# share a workspace, so a per-job ladder would re-clone 43 submodules per rung.
+#
+# THE RUNNER IS SANDBOXED (SoC-Labs-Github-Runner, bubblewrap). Consequences the
+# steps below are written around:
+#   - $HOME is a FAKE home, empty on a fresh install. Nothing you set up in your
+#     real home — ssh keys, ~/bin shims, .gitconfig — is visible here.
+#   - Only paths named in the host's site.env are mounted. /research/AAA is
+#     bound; /research/precompiled_mems is NOT, unless RESEARCH_PATHS says so.
+#   - No SSH agent (SSH_AUTH_SOCK is unset), so submodules over git@github.com
+#     need credentials supplied by the job, not inherited.
+#   - `hostname` reports `ci-sandbox`, not the real host.
+#-----------------------------------------------------------------------------
+name: ci-ladder
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Hostname label of the runner to target'
+        type: string
+        default: srv04936
+      stage:
+        description: 'Climb rungs up to and including this one'
+        type: choice
+        default: '0-runner'
+        options:
+          - '0-runner'        # runner picks up a job at all; report what it sees
+          - '1-preflight'     # checkout + scripts/ci/preflight.sh
+          - '2-bootstrap'     # 43 submodules — first rung needing credentials
+          - '3-boundary'      # make chip-boundary  (python only)
+          - '4-lint'          # make lint           (verilator 4.028)
+          - '5-elab'          # make elab           (VCS licence seat)
+          - '6-elab-strict'   # make elab-strict    (Xcelium licence seat)
+
+# Never two ladders at once — they would fight over one workspace and the same
+# licence seats. NOTE nightly.yml currently uses its own group (`nightly`), so
+# this does NOT yet serialise against it; align both once the ladder is trusted.
+concurrency:
+  group: eda-gates
+  cancel-in-progress: false
+
+jobs:
+  ladder:
+    runs-on: [self-hosted, linux, "${{ inputs.runner }}"]
+    timeout-minutes: 120
+
+    steps:
+      # Via env, not direct interpolation, so the input never reaches the shell
+      # as code. '4-lint' -> '4'.
+      - name: Rung level
+        id: plan
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: echo "level=${STAGE%%-*}" >> "$GITHUB_OUTPUT"
+
+      # --- rung 0: does the runner take work, and what can it actually see? ---
+      - name: 'rung 0 — runner sanity'
+        run: |
+          echo "sandbox hostname : $(hostname)   (expect ci-sandbox)"
+          echo "user             : $(id -un)  groups: $(id -Gn)"
+          echo "cores / mem      : $(nproc) / $(free -g | awk '/^Mem:/{print $2}')GB"
+          echo "HOME             : $HOME"
+          echo "workspace        : $GITHUB_WORKSPACE"
+          echo
+          echo "-- tools on PATH --"
+          for t in git make python3 python3.11 verilator vcs xrun; do
+            printf '  %-12s %s\n' "$t" "$(command -v $t || echo MISSING)"
+          done
+          echo
+          echo "-- mounts a job needs --"
+          for d in /research/AAA/ip_library /research/precompiled_mems/TSMC65 /eda; do
+            [ -r "$d" ] && echo "  OK      $d" || echo "  ABSENT  $d  (add to RESEARCH_PATHS in the host's site.env)"
+          done
+          echo
+          echo "-- licence servers --"
+          for v in SNPSLMD_LICENSE_FILE CDS_LIC_FILE ARMLMD_LICENSE_FILE; do
+            echo "  $v=${!v:-<unset>}"
+          done
+
+      - name: Checkout (no submodules)
+        if: fromJSON(steps.plan.outputs.level) >= 1
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      # The Makefile calls bare `python3`, and check_chip_boundary.py opens with
+      # `from __future__ import annotations` — a SyntaxError on 3.6. The sandbox
+      # home is empty, so the shim has to be built here rather than assumed.
+      - name: Pin python3 (sandbox home has no shim)
+        if: fromJSON(steps.plan.outputs.level) >= 1
+        run: |
+          mkdir -p "$HOME/.ci-bin"
+          ln -sf /usr/bin/python3.11 "$HOME/.ci-bin/python3"
+          echo "$HOME/.ci-bin" >> "$GITHUB_PATH"
+
+      - name: 'rung 1 — preflight (derives capability labels)'
+        if: fromJSON(steps.plan.outputs.level) >= 1
+        run: |
+          python3 --version
+          # Report, do not gate: on this host the probe is EXPECTED to withhold
+          # soclabs-pdk (no /tsmc65pdk) and, until site.env binds it,
+          # /research/precompiled_mems too. We want the report, not a red X.
+          scripts/ci/preflight.sh || echo "^ gaps above are the point of this rung"
+
+      # --- rung 2: the first rung that needs credentials -----------------------
+      # tidelink and its two PHY deps are git@github.com; the SoC and tidechart
+      # are git.soton.ac.uk. GITHUB_TOKEN covers THIS repo only, and there is no
+      # agent in the sandbox, so cross-repo private submodules need a PAT/deploy
+      # key wired in here. Expect this rung to be where bring-up stops first.
+      - name: 'rung 2 — bootstrap submodules'
+        if: fromJSON(steps.plan.outputs.level) >= 2
+        run: |
+          git submodule sync --recursive
+          ./scripts/bootstrap.sh
+
+      - name: 'rung 3 — chip-boundary (python only)'
+        if: fromJSON(steps.plan.outputs.level) >= 3
+        run: make chip-boundary
+
+      - name: 'rung 4 — lint (verilator 4.028)'
+        if: fromJSON(steps.plan.outputs.level) >= 4
+        run: make lint
+
+      - name: 'rung 5 — elab (VCS)'
+        if: fromJSON(steps.plan.outputs.level) >= 5
+        run: make elab
+
+      - name: 'rung 6 — elab-strict (Xcelium)'
+        if: fromJSON(steps.plan.outputs.level) >= 6
+        run: make elab-strict
+
+      - name: Collect logs
+        if: always() && fromJSON(steps.plan.outputs.level) >= 4
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-ladder-${{ github.run_number }}-stage-${{ inputs.stage }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            build/lint/**
+            build/elab/*.log
+            verif/elab_strict/build/**/*.log

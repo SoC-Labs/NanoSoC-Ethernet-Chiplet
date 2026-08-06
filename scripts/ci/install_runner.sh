@@ -5,19 +5,25 @@
 #
 # Copyright 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
-# Sets up the runner .github/workflows/nightly.yml targets, on srv03335.
+# Sets up the runners .github/workflows/nightly.yml targets.
 #
-# WHY srv03335 and not srv04936:
-#   - /tsmc65pdk is not mounted on srv04936, and that tree holds the Calibre DRC
-#     ruledeck AND the GDS-out layer map the flow hardcodes.
-#   - dam1n19 is not in group `tsmc65` on srv04936, so the fallback PDK copy
-#     under /home/dwn1c21 is unreadable there too.
-#   - srv03335 has 16 cores / 251 GB against srv04936's 8 / 62, and the flow
-#     asks for `-local_cpu 8` / `-turbo 8`.
-#   Moving CI to srv04936 needs BOTH an /tsmc65pdk mount and tsmc65pdkgrp
-#   membership on that host. Until then this is the only host that works.
+# TWO HOSTS, SPLIT BY CAPABILITY — NOT by preference:
+#   srv03335  soclabs-sim + soclabs-pdk   16 cores / 251 GB, /tsmc65pdk mounted,
+#                                         in group `tsmc65`
+#   srv04936  soclabs-sim                  8 cores /  62 GB, NO /tsmc65pdk, NOT
+#                                         in group `tsmc65`
 #
-# Run this ON srv03335, as dam1n19:
+#   The ASIC flow (syn -> pnr -> DRC) hardcodes the Calibre ruledeck and GDS-out
+#   layer map under /tsmc65pdk, so it can ONLY run on srv03335 — hence a separate
+#   `soclabs-pdk` label rather than one blanket `soclabs-eda`. Splitting this way
+#   also parks the nightly sim gates on srv04936 and leaves the 16-core box free.
+#
+#   Note GitHub Actions has NO runner priority: if two idle runners carry the
+#   label a job asks for, the pick is arbitrary, and an offline preferred runner
+#   makes the job QUEUE rather than fail over. So preference has to be expressed
+#   as capability, which is what the labels above do.
+#
+# Run this ON the host being registered, as dam1n19:
 #
 #   REG_TOKEN=<token> bash scripts/ci/install_runner.sh
 #
@@ -27,13 +33,13 @@
 #-----------------------------------------------------------------------------
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_URL="https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet"
-RUNNER_DIR="${RUNNER_DIR:-$HOME/actions-runner-nanosoc-eth}"
-RUNNER_VERSION="${RUNNER_VERSION:-2.321.0}"
+# Hostname in the dir: the two runner hosts have SEPARATE homes today, but a
+# shared /home would silently make two runners fight over one work tree.
+RUNNER_DIR="${RUNNER_DIR:-$HOME/actions-runner-nanosoc-eth-$(hostname -s)}"
+RUNNER_VERSION="${RUNNER_VERSION:-2.336.0}"
 RUNNER_NAME="${RUNNER_NAME:-$(hostname -s)-nanosoc-eth}"
-# `soclabs-eda` is what nightly.yml keys on — it means "EDA tools + /research
-# + a TSMC65 PDK". Do not put it on a host that lacks any of the three.
-RUNNER_LABELS="${RUNNER_LABELS:-soclabs-eda}"
 
 if [ -z "${REG_TOKEN:-}" ]; then
     echo "FAIL: set REG_TOKEN. Get one (single-use, 1h TTL) from:" >&2
@@ -43,23 +49,20 @@ fi
 
 # The runner is only useful on a host that can actually run the gates. Check
 # now, loudly, rather than discovering it in a red workflow run at 02:00.
+#
+# Labels are DERIVED, not asserted: preflight.sh probes the host and reports
+# which capabilities it has actually earned. Hosts differ (srv04936 has no PDK
+# and cannot run the ASIC flow), and a hand-typed label that outlives the
+# capability it claims is how a pool starts returning different answers for the
+# same commit. Override RUNNER_LABELS only if you know better than the probe.
 echo "== preflight =="
-rc=0
-for t in vcs xrun verilator python3 make git; do
-    if command -v "$t" >/dev/null 2>&1; then
-        printf 'OK:      %-10s %s\n' "$t" "$(command -v "$t")"
-    else
-        printf 'MISSING: %s\n' "$t"; rc=1
-    fi
-done
-for d in /research/AAA/ip_library /research/precompiled_mems/TSMC65; do
-    if [ -r "$d" ]; then echo "OK:      $d"; else echo "MISSING: $d"; rc=1; fi
-done
-# Not fatal — the nightly gates don't need the PDK, only the ASIC flow does.
-[ -r /tsmc65pdk/65 ] \
-    && echo "OK:      /tsmc65pdk/65 (ASIC flow can run here too)" \
-    || echo "WARN:    /tsmc65pdk/65 unreadable — nightly gates fine, ASIC flow is not"
-[ "$rc" = 0 ] || { echo "== preflight FAILED — do not register a runner here =="; exit 1; }
+"$HERE/preflight.sh" || {
+    echo "== preflight FAILED — do not register a runner here ==" >&2
+    exit 1
+}
+RUNNER_LABELS="${RUNNER_LABELS:-$("$HERE/preflight.sh" --labels)}"
+echo
+echo "== labels: $RUNNER_LABELS =="
 
 echo
 echo "== installing runner $RUNNER_VERSION into $RUNNER_DIR =="
