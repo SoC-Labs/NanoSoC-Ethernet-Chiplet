@@ -42,10 +42,11 @@ if {[llength [get_db power_domains PD_TOP]] == 0} {
 }
 
 ### Connecting Global Nets
+# -pin_base_name is the PIN name, not the NET name (VDDPST/VSSPST on the pads).
 connect_global_net VDD -type pg_pin -pin_base_name VDD -inst_base_name *
-connect_global_net VDDIO -type pg_pin -pin_base_name VDDIO -inst_base_name * 
+connect_global_net VDDIO -type pg_pin -pin_base_name VDDPST -inst_base_name * 
 connect_global_net VSS -type pg_pin -pin_base_name VSS -inst_base_name * 
-connect_global_net VSSIO -type pg_pin -pin_base_name VSSIO -inst_base_name * 
+connect_global_net VSSIO -type pg_pin -pin_base_name VSSPST -inst_base_name * 
 ### Top and Bottom Metal Declartions
 set_db add_rings_stacked_via_top_layer M9
 set_db add_rings_stacked_via_bottom_layer M1 

@@ -191,6 +191,28 @@ pnr_setup:
 ## config.tcl. This is the one you want for inspecting a stage.
 .PHONY: gui
 gui:
+	@# Do NOT just test -n: a set-but-malformed DISPLAY (e.g. "12.0" with the
+	@# leading colon missing) passes that and Innovus then drops to no-window
+	@# mode with only a WARN, which reads as "the GUI silently didn't open".
+	@# Probe the display for real instead.
+	@test -n "$$DISPLAY" || { \
+	    echo "FAIL: DISPLAY is not set in THIS shell."; \
+	    echo "      A ThinLinc desktop's DISPLAY does NOT reach a VS Code Remote-SSH"; \
+	    echo "      terminal — they are separate shells. Run make from a terminal"; \
+	    echo "      INSIDE the ThinLinc desktop, or use 'ssh -X <host>'."; \
+	    echo "      Text-mode session on purpose?   make pnr_setup"; \
+	    exit 1; }
+	@xdpyinfo >/dev/null 2>&1 || { \
+	    echo "FAIL: DISPLAY is set to '$$DISPLAY' but no X server answers there,"; \
+	    echo "      so Innovus would start in no-window mode (IMPSYT-1507)."; \
+	    echo ""; \
+	    case "$$DISPLAY" in \
+	      [0-9]*) echo "      LOOK AT THE VALUE: it is missing the leading colon."; \
+	              echo "      Try:  export DISPLAY=:$$DISPLAY" ;; \
+	      *)      echo "      Check the session is still alive:  xdpyinfo | head -3" ;; \
+	    esac; \
+	    exit 1; }
+	@echo "OK: DISPLAY=$$DISPLAY (X server responded)"
 	@test -d $(WORK_DIR)/$(BLOCK) || { \
 	    echo "FAIL: no saved DB at $(WORK_DIR)/$(BLOCK) — run 'make pnr_place' first."; exit 1; }
 	@printf '%s\n' \
@@ -198,7 +220,7 @@ gui:
 	    'read_db $(BLOCK)' \
 	    'puts "== $(BLOCK) loaded — this is the last-written DB =="' \
 	    > $(WORK_DIR)/open_db.tcl
-	cd $(WORK_DIR)/; innovus -stylus -f open_db.tcl
+	cd $(WORK_DIR)/; $(INNOVUS) open_db.tcl
 
 #-----------------------------------------------------------------------------
 # Calibre DRC
