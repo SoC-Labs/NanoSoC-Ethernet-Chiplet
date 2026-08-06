@@ -118,15 +118,44 @@ jobs:
           scripts/ci/preflight.sh || echo "^ gaps above are the point of this rung"
 
       # --- rung 2: the first rung that needs credentials -----------------------
-      # tidelink and its two PHY deps are git@github.com; the SoC and tidechart
-      # are git.soton.ac.uk. GITHUB_TOKEN covers THIS repo only, and there is no
-      # agent in the sandbox, so cross-repo private submodules need a PAT/deploy
-      # key wired in here. Expect this rung to be where bring-up stops first.
+      # SSH CANNOT WORK IN THIS SANDBOX, and no key would fix it. `dam1n19` is
+      # not in /etc/passwd — nsswitch is `passwd: files sss`, so identity comes
+      # from SSSD, whose client socket (/var/lib/sss/pipes) is not bound and
+      # whose /run is replaced by a fresh tmpfs. getpwuid() therefore fails
+      # inside, and OpenSSH aborts with "No user exists for uid 74755" BEFORE it
+      # ever considers a key. (SSH_AUTH_SOCK is unset and the fake home has no
+      # .ssh either, but those are secondary — the passwd lookup is the wall.)
+      #
+      # The git.soton.ac.uk submodules are HTTPS and clone fine. Only the three
+      # GitHub ones — tidelink and its two PHY deps — are git@github.com, so
+      # rewrite those onto HTTPS with a token. GITHUB_TOKEN covers THIS repo
+      # only, hence a PAT.
+      - name: GitHub submodule credentials
+        if: fromJSON(steps.plan.outputs.level) >= 2
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::secrets.SUBMODULE_TOKEN is empty. Create a fine-grained PAT with"
+            echo "::error::Contents:read on SoC-Labs/TideLink-Chiplet-Interconnect-AHB and"
+            echo "::error::SoC-Labs/TideLink-Chiplet-GPIO-PHY, add it as a repository secret."
+            exit 1
+          fi
+          B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
+          git config --global url."${B}".insteadOf "git@github.com:"
+          git config --global --add url."${B}".insteadOf "https://github.com/"
+
       - name: 'rung 2 — bootstrap submodules'
         if: fromJSON(steps.plan.outputs.level) >= 2
         run: |
           git submodule sync --recursive
           ./scripts/bootstrap.sh
+
+      # The sandbox home PERSISTS between jobs, so a token left in .gitconfig
+      # would outlive this run. Scrub it whatever happened.
+      - name: Scrub credentials
+        if: always() && fromJSON(steps.plan.outputs.level) >= 2
+        run: rm -f "$HOME/.gitconfig"
 
       - name: 'rung 3 — chip-boundary (python only)'
         if: fromJSON(steps.plan.outputs.level) >= 3
