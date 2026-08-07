@@ -96,7 +96,7 @@ BASELINE_DIR= scripts/ci/asic_stage_report.sh route     # disable the diff
 
 Read the script before trusting it. It is the best available worked example of parsing
 these formats, and its comments record the traps — but it has one known undercount, noted
-under [`check_drc`](#check_drc--_imp_drcrep) below.
+under [`check_drc`](#check_drc-_imp_drcrep) below.
 
 ---
 
@@ -360,7 +360,7 @@ grep -A6 '^Total Power$' reports/nanosoc_eth_chiplet_pads_imp_power.rep
 **Read this as a relative/sanity number, not a datasheet figure.** There is no activity
 file (no VCD/SAIF) in this flow, so switching activity is the tool's default propagated
 estimate. `Physical-Only` reading ~0 is the fingerprint of the zero-filler defect
-described under [`check_filler`](#check_filler--_imp_fillerrep) — in a properly filled
+described under [`check_filler`](#check_filler-_imp_fillerrep) — in a properly filled
 design that row carries the filler leakage.
 
 Also verify which view produced it. The file's first line is
@@ -549,32 +549,32 @@ A zero here is not a pass; it is a smaller question answered.
 
 ---
 
-## Calibre DRC — `make drc` / `make drc_batch`
+## Calibre DRC — `make drc`
 
 Run from `ASIC/genus-innovus/`:
 
 ```bash
-make drc          # Calibre Interactive GUI, runset pre-loaded
-make drc_batch    # same deck, headless — use this for unattended/remote
+make drc          # headless — no X display, no GUI packages
 ```
 
 Ruledeck: `/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a`. Results land in
 `work/drc_run/`.
 
-`drc-preflight` runs first and fails loudly if the GDS is missing or the deck is
-unreadable (the latter needs the `/tsmc65pdk` mount and group `tsmc65pdkgrp`).
+`scripts/calibre/run_drc.sh` preflights and fails loudly if there is no licence, no GDS,
+or an unreadable deck (the last needs the `/tsmc65pdk` mount and group `tsmc65pdkgrp`).
 
 The TSMC deck ships with `LAYOUT PATH "GDSFILENAME"` / `LAYOUT PRIMARY "TOPCELLNAME"`
-placeholders, so layout and top cell **must** come from a Calibre Interactive runset. The
-Makefile generates `work/calibre_drc.runset` from `$(GDS)` and `$(BLOCK)` together so they
-cannot drift apart — an earlier reference run named `nanosoc_eth_chiplet.gds` (the
+placeholders, and `calibre -drc` has no command-line override for them, so layout and top
+cell come from the project's own wrapper deck, `scripts/calibre/nanosoc_eth_chiplet_pads.drc.rules`,
+which `INCLUDE`s the foundry deck untouched. Layout and top cell are set there together so
+they cannot drift apart — an earlier reference run named `nanosoc_eth_chiplet.gds` (the
 pre-pads stream) against top cell `nanosoc_eth_chiplet_pads`, which is not a cell in that
 file, and produced a 0-byte `DRC_RES.db`.
 
 Point it at someone else's stream without editing anything:
 
 ```bash
-make drc_batch GDS=/path/to/other.gds BLOCK=other_top
+make drc GDS=/path/to/other.gds
 ```
 
 ### The in-Innovus Calibre call is a no-op — use the Makefile
@@ -853,7 +853,7 @@ grep -c FILLER outputs/${B}_pnr.v
 | `..._imp_connectivity` | no `IMPVFC-200` | **329 opens**, file saturated at 1000 ❌ |
 | `..._imp_antenna` | `No Violations Found` | **clean** ⚠️ (no diodes were inserted) |
 | `..._imp_filler` | *no useful verdict — check the netlist* | **0 filler cells** ❌ |
-| Calibre `make drc_batch` | clean deck run | not signoff — cells are empty references ⚠️ |
+| Calibre `make drc` | clean deck run | not signoff — cells are empty references ⚠️ |
 
 Even a fully green column is **not** a signoff. Work through
 [09 — Signoff checklist](09-signoff-checklist.md), which covers the checks this flow does

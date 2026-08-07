@@ -210,7 +210,7 @@ $ grep -c FILLER ASIC/genus-innovus/baseline_2026-08-05/outputs/nanosoc_eth_chip
 
 And `check_filler` reported it as **fine** — `Total number of gaps found: 0` — because it
 could not evaluate the broken domain either. See
-[07](07-reading-reports.md#check_filler--_imp_fillerrep).
+[07](07-reading-reports.md#check_filler-_imp_fillerrep).
 
 The 2026-07 reference run hit the identical error and only survived because the operator
 hand-edited the CPF mid-session and re-ran `add_fillers` at the prompt. **An unattended
@@ -238,7 +238,7 @@ Triaged:
 |---|---|---|---|
 | `IMPLF-223` | 60 | `The LEF via 'VIA12_1cut' definition already exists ... will be ignored` | benign — duplicate LEF, first definition wins |
 | `TCLCMD-917` | 20 | `Cannot find 'pins' that match 'uPAD_VDD_B_0/VDD' (File ..._syn.sdc, Line 696)` | **worth chasing** — 20 SDC constraints are silently not applied |
-| `IMPSE-110` | 3 | `can't find package Tk 8.0` | explains why the in-Innovus Calibre call is dead ([07](07-reading-reports.md#the-in-innovus-calibre-call-is-a-no-op--use-the-makefile)) |
+| `IMPSE-110` | 3 | `can't find package Tk 8.0` | explains why the in-Innovus Calibre call is dead ([07](07-reading-reports.md#the-in-innovus-calibre-call-is-a-no-op-use-the-makefile)) |
 | `IMPMSMV-3501` | 3 | `Input power intent (CPF/UPF) does not define power_mode/power_state` | same root cause as `IMPSP-5110` |
 | `IMPSP-9099` | 2 | `Scan chains exist ... but are not defined for 30.55% flops` | **worth chasing** — affects placement and timing QoR |
 | `IMPDB-1221` | 2 | `GNC ... 'VDDIO' name pattern ... Unable to establish connection` | **worth chasing** — a power connection did not happen |
@@ -525,7 +525,7 @@ And truncation is **not proportional**. Re-run uncapped, the same design gives 3
 sed -n '/Begin Summary/,/End Summary/p' reports/${BLOCK}_imp_connectivity.rep
 ```
 
-Full treatment in [07](07-reading-reports.md#the-cap-trap--read-this-before-comparing-two-runs).
+Full treatment in [07](07-reading-reports.md#the-cap-trap-read-this-before-comparing-two-runs).
 
 ### Numbers propagate — re-derive them
 

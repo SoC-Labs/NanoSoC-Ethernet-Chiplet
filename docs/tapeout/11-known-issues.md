@@ -7,17 +7,17 @@ The live open items on `nanosoc_eth_chiplet_pads`. Each entry says **what is kno
 re-falsifying a hypothesis — and **what to do next**.
 
 Numbers come from the 2026-08-05 baseline unless stated otherwise:
-[`ASIC/genus-innovus/baseline_2026-08-05/reports/`](../../ASIC/genus-innovus/baseline_2026-08-05/reports/).
+`ASIC/genus-innovus/baseline_2026-08-05/reports/`.
 
 | | Issue | Severity | State |
 |---|---|---|---|
 | [a](#a-329-pg-opens-reported-by-check_connectivity) | 329 PG opens (`check_connectivity`) | **blocking** | root cause **unknown**; 2 hypotheses falsified |
-| [b](#b-bond-pad-obs-drc--318-pg-shorts) | Bond-pad OBS DRC, 318 PG shorts | **blocking** | root-caused; fix in flight |
+| [b](#b-bond-pad-obs-drc-318-pg-shorts) | Bond-pad OBS DRC, 318 PG shorts | **blocking** | root-caused; fix in flight |
 | [c](#c-qspi-flash-cache-tag-rams-have-an-undriven-gwen) | QSPI tag RAM `GWEN` undriven | medium | real RTL defect, present in the reference GDSII too |
 | [d](#d-power-intent-defines-no-power_modepower_state-impmsmv-3501) | No `power_mode`/`power_state` (`IMPMSMV-3501`) | low here | architectural; blocks always-on buffering |
-| [e](#e-clk_hold_error--005-is-an-unconfirmed-signoff-margin) | `CLK_HOLD_ERROR = 0.05` unconfirmed | medium | needs an owner decision, not a run |
+| [e](#e-clk_hold_error-005-is-an-unconfirmed-signoff-margin) | `CLK_HOLD_ERROR = 0.05` unconfirmed | medium | needs an owner decision, not a run |
 | [f](#f-check_cpf-errors-tolerated-by-a-wrapper-in-configtcl) | `check_cpf` errors tolerated by a wrapper | low | deliberate; conditions stated below |
-| [g](#g-1243-max_transition--618-max_capacitance-violations-post-route) | 1,243 `max_transition` + 618 `max_capacitance` | **high** | observed, **never triaged** |
+| [g](#g-1243-max_transition-618-max_capacitance-violations-post-route) | 1,243 `max_transition` + 618 `max_capacitance` | **high** | observed, **never triaged** |
 | [h](#h-filler-runs-post-route-and-nothing-cleans-up-after-it) | Filler post-route, no `eco_route` after | medium | two tool warnings, one silent no-op |
 | [i](#i-no-post-pr-logical-equivalence-exists) | No post-P&R LEC exists | **high** | coverage gap, not a bug |
 
@@ -57,7 +57,7 @@ distinction is the whole question.
 
 Note the geometry: the M5 stripes are added `-over_power_domain 1` with
 `-extend_to_closest_target {ring stripe}` at 15 µm pitch
-([`power_plan.tcl`](../../ASIC/genus-innovus/scripts/power_plan.tcl)), and `split_row` runs
+([`power_plan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/power_plan.tcl)), and `split_row` runs
 over the 21 placed macros. Most of the reported open coordinates cluster along macro edges
 (x ≈ 1058.9, x ≈ 589.9, x ≈ 1058.3), which is consistent with either explanation.
 
@@ -145,7 +145,7 @@ reach 36 µm further inboard.
 ### Already done
 
 - `CORE_TO_IO` raised **50 → 70** in
-  [`floorplan.tcl`](../../ASIC/genus-innovus/scripts/floorplan.tcl), giving 4 µm clearance.
+  [`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl), giving 4 µm clearance.
   4 µm clears both wide-metal rules — M8's `SPACINGTABLE` tops out at 1.5, M9 is a flat
   `SPACING 2`. Both layers are `MAXWIDTH 12` and the rings are 12 wide: legal, but on the
   limit. **Do not widen the rings.**
@@ -293,7 +293,7 @@ without isolation an unpowered link can corrupt the SoC's fabric.
    in the hand-off rather than leaving an `ERROR` in the log unexplained.
 2. **For the next revision**, add `add_power_state` / `create_power_state_group` (1801) or
    `create_power_mode` (CPF) to
-   [`inputs/nanosoc_eth_chiplet_pads.upf`](../../ASIC/genus-innovus/inputs/nanosoc_eth_chiplet_pads.upf),
+   [`inputs/nanosoc_eth_chiplet_pads.upf`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/inputs/nanosoc_eth_chiplet_pads.upf),
    and give `VDDIO`/`VDDACC` their own `supply_set` so they stop being folded into
    `PD_TOP`.
 3. **Do that before splitting the D2D domain**, not after. Read
@@ -307,7 +307,7 @@ without isolation an unpowered link can corrupt the SoC's fabric.
 
 ### What is known
 
-[`inputs/constraints.sdc`](../../ASIC/genus-innovus/inputs/constraints.sdc):
+[`inputs/constraints.sdc`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/inputs/constraints.sdc):
 
 ```tcl
 set CLK_ERROR 0.35       ;# oscillator jitter, CDCM61001 worst case at 250 MHz
@@ -352,7 +352,7 @@ confirmation that 0.05 ns is the right number**, and the file says so in as many
    distortion. **This is an owner decision with a paper trail, not a tool run.**
 2. **Bracket it cheaply.** Re-run `opt_design -post_route -hold` from the `_cts` snapshot
    (`read_db ${block_name}_cts`, ~1 h, not a 5 h flow re-run — see
-   [`route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl)) at 0.05 / 0.10 /
+   [`route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl)) at 0.05 / 0.10 /
    0.15 and record instance count and setup WNS at each. That gives a cost curve to argue
    from.
 3. **Read hold from the right file.** `timing_summary_05_route_opt.rep` is **setup only** —
@@ -367,7 +367,7 @@ confirmation that 0.05 ns is the right number**, and the file says so in as many
 
 ### What is known
 
-[`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl) renames `check_cpf` and wraps
+[`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) renames `check_cpf` and wraps
 it in a `catch`, so a rule-check failure cannot kill the `-f` script. Four error blocks are
 tolerated, all pre-existing:
 
@@ -385,7 +385,7 @@ Four independent reasons, in descending order of strength:
 
 1. **They are properties of the vendor libraries, not of our design.** 54 of them say TSMC
    ships its 2.5 V IO liberty without `pg_pin()` groups — which is true, and is also why
-   [`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl) carries a three-line LEF
+   [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) carries a three-line LEF
    override adding `USE POWER ;` / `USE GROUND ;`. We cannot fix a vendor liberty, and
    `/tsmc65pdk` is a read-only, lab-shared mount that must not be edited in place —
    deviations go in `ASIC/tech_wrappers/tsmc65/local_overrides/`. 34 more say the memory
@@ -487,7 +487,7 @@ Nothing — **this has not been investigated at all.** Do not read the empty col
    this design: the hold-repair `DEL*` delay-cell chains, and the pad/IO nets covered by
    `set_multicycle_path 2 -from uPAD*/* -to uPAD*/*`.
 2. **Check whether they are on real signal nets at all.** If they are on clock nets, the
-   CTS spec in [`cts_setup.tcl`](../../ASIC/genus-innovus/scripts/cts_setup.tcl) is where
+   CTS spec in [`cts_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/cts_setup.tcl) is where
    to look; if on the D2D pad interface, they may be constraint artefacts of the blanket
    async clock group (see [09 item 3](09-signoff-checklist.md)).
 3. **Then decide: fix or waive.** `opt_design -post_route -drv` is the tool's answer, but
@@ -502,7 +502,7 @@ Nothing — **this has not been investigated at all.** Do not read the empty col
 ### What is known
 
 Filler now runs from
-[`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl) — **after**
+[`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl) — **after**
 `route_design` and `opt_design -post_route -hold` — which is deliberate and correct: it was
 moved out of `route_setup.tcl` because running it *before* routing meant
 `add_fillers -check_drc -fix_drc` had nothing to check against, the `ANTENNA` diodes went
@@ -521,7 +521,7 @@ The side effects of that placement are two tool warnings and one silent no-op:
 1. **`eco_route -target` is never run.** `4_pnr_route.tcl` goes straight from
    `place_bondpads.tcl` to `check_drc`. Cadence's own recommendation for post-route filler
    is not followed.
-2. **The second `add_fillers` pass in [`filler.tcl`](../../ASIC/genus-innovus/scripts/filler.tcl)
+2. **The second `add_fillers` pass in [`filler.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/filler.tcl)
    is a no-op.** It is invoked `-check_drc true -fix_drc`, but `verifyGeometry` has not run
    at that point, so it has nothing to fix. The line executes and does nothing.
 
@@ -560,7 +560,7 @@ worst class of failure through silently.
   `fv_map`. It never reads `outputs/nanosoc_eth_chiplet_pads_pnr.v`.
 - **Nothing anywhere in this repository compares anything to the post-P&R netlist.**
   Declared as the `post-pnr-lec` coverage gap in
-  [`ci/signoff.yaml`](../../ci/signoff.yaml).
+  [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml).
 - `scripts/ci/package_submission.sh`'s MANIFEST item 6 nonetheless asks the reader to
   confirm LEC "has been run and passed for **THIS netlist**" — which `make lec` cannot do.
 - **`lec.dofile` ends `exit -f`, returning 0 even on non-equivalence**, and the Makefile

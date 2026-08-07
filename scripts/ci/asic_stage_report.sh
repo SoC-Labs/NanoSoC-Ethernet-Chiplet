@@ -33,7 +33,11 @@ REP="$ASIC_DIR/reports"
 OUT="$ASIC_DIR/outputs"
 
 if [ -z "${BASELINE_DIR+x}" ]; then
-    BASELINE_DIR=$(ls -d "$ASIC_DIR"/baseline_* 2>/dev/null | sort | tail -1)
+    # Prefer the newest completed runs/ directory (the new per-iteration layout,
+    # see scripts/ci/new_run.sh); fall back to the older baseline_* dirs.
+    BASELINE_DIR=$(ls -d "$ASIC_DIR"/runs/*/ 2>/dev/null | sort | tail -1)
+    [ -n "$BASELINE_DIR" ] || BASELINE_DIR=$(ls -d "$ASIC_DIR"/baseline_* 2>/dev/null | sort | tail -1)
+    BASELINE_DIR="${BASELINE_DIR%/}"
 fi
 BREP="${BASELINE_DIR:+$BASELINE_DIR/reports}"
 
@@ -66,17 +70,92 @@ area_field() {  # area_field <1=instcount 2=totalarea>
     ' "$f" 2>/dev/null | grep . || echo "n/a"
 }
 
-drc_total()   { local f="${1:-$REP}/${BLOCK}_imp_drc.rep"
-                [ -s "$f" ] && grep -cE '^[A-Z]+:' "$f" 2>/dev/null || echo "n/a"; }
-drc_bondpad() { local f="${1:-$REP}/${BLOCK}_imp_drc.rep"
-                [ -s "$f" ] && grep -c 'Blockage of Cell BuPAD' "$f" 2>/dev/null || echo "n/a"; }
-drc_pg_bp()   { local f="${1:-$REP}/${BLOCK}_imp_drc.rep"
-                [ -s "$f" ] && grep -c 'Special Wire of Net V.* & Blockage of Cell BuPAD' "$f" 2>/dev/null || echo "n/a"; }
+# Trust the report's OWN trailer ("Total Violations : 580 Viols.") ahead of counting
+# record lines. Counting with ^[A-Z]+: SILENTLY UNDERCOUNTS: `EndOfLine:` is mixed
+# case, so 41 of 580 records were dropped and the total was reported as 539 — a 7%
+# error that also shifted every derived percentage (PG shorts read as 59% of DRC
+# when the true share is 54.8%). Any new violation class whose keyword is not all
+# caps would have done the same. Fall back to a CASE-INSENSITIVE count only if the
+# trailer is missing.
+drc_total() {
+    local f="${1:-$REP}/${BLOCK}_imp_drc.rep"
+    [ -s "$f" ] || { echo "n/a"; return 0; }
+    local t
+    t=$(grep -oE 'Total Violations[ ]*:[ ]*[0-9]+' "$f" 2>/dev/null | tail -1 | grep -oE '[0-9]+$')
+    if [ -n "$t" ]; then echo "$t"
+    else grep -cE '^[A-Za-z]+:' "$f" 2>/dev/null || echo "n/a"; fi
+}
+# `grep -c` prints "0" AND exits 1 when there are no matches, so the obvious
+# `grep -c ... || echo n/a` prints BOTH — garbling the table precisely when the
+# count is zero, i.e. when the news is good. Guard the file test separately and
+# swallow only the exit status.
+drc_bondpad() {
+    local f="${1:-$REP}/${BLOCK}_imp_drc.rep"
+    [ -s "$f" ] || { echo "n/a"; return 0; }
+    grep -c 'Blockage of Cell BuPAD' "$f" 2>/dev/null || true
+}
+drc_pg_bp() {
+    local f="${1:-$REP}/${BLOCK}_imp_drc.rep"
+    [ -s "$f" ] || { echo "n/a"; return 0; }
+    grep -c 'Special Wire of Net V.* & Blockage of Cell BuPAD' "$f" 2>/dev/null || true
+}
 
 # NOTE check_connectivity caps its message list (1000 by default), so this is a
 # LOWER BOUND once it saturates. Labelled as such in the table for that reason.
-pg_opens() { local f="${1:-$REP}/${BLOCK}_imp_connectivity.rep"
-             [ -s "$f" ] && grep -c 'has special routes with opens' "$f" 2>/dev/null || echo "n/a"; }
+# check_connectivity CAPS its message list (1000 by default) and says so in the file:
+# "1000 total info(s) created." Once saturated the counts are LOWER BOUNDS, and
+# comparing a capped run against an uncapped one is meaningless — a "329 -> 318"
+# delta was reported that way once and was not a measurement at all. Mark it.
+# To get a true count, re-run: check_connectivity -error 200000 -warning 200000
+pg_opens() {
+    local f="${1:-$REP}/${BLOCK}_imp_connectivity.rep"
+    [ -s "$f" ] || { echo "n/a"; return 0; }
+    local n; n=$(grep -c 'has special routes with opens' "$f" 2>/dev/null || true)
+    if grep -qE '^ *[0-9]+ total info\(s\) created' "$f" 2>/dev/null; then
+        echo "$n (CAPPED)"
+    else
+        echo "$n"
+    fi
+}
+
+# HOLD IS NOT IN timing_summary_*.rep AT ALL.
+#
+# `report_timing_summary` with no options emits "# SETUP", "# DRV" and
+# "# Clock checks" sections and NOTHING for hold — the tool even labels its own
+# closing line `timing.setup.wns`. Reporting only that file is how a design with
+# hold WNS -1.167 ns, TNS -66,212 ns and 96,545 violating paths was described as
+# "timing closed, 0 failing endpoints" for an entire day. The hold numbers exist
+# only in the stage log's "Hold mode" table, so parse that.
+#
+# Field 2 of the table is the "all" column: WNS / TNS / Violating Paths.
+hold_field() {  # hold_field <logdir> <WNS|TNS|Violating>
+    local d="$1" key="$2" lg
+    # Pick the log by CONTENT, not mtime: logs/ also collects LEC selftest logs
+    # and anything else a tool drops there, and the newest is often not the P&R
+    # run. Both the Hold-mode and DRV tables live in the same stage log.
+    lg=$(grep -lE "^\|[ ]*Hold mode" "$d"/*.log 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
+    [ -n "$lg" ] && [ -s "$lg" ] || { echo "n/a"; return 0; }
+    awk -v k="$key" '
+        /Hold mode/ { inblk = 1 }
+        inblk && $0 ~ k {
+            n = split($0, f, "|")
+            gsub(/ /, "", f[3])
+            if (f[3] != "") { val = f[3] }
+        }
+        END { print (val == "" ? "n/a" : val) }
+    ' "$lg" 2>/dev/null | tail -1
+}
+
+drv_field() {  # drv_field <logdir> <max_cap|max_tran>
+    local d="$1" key="$2" lg
+    # Pick the log by CONTENT, not mtime: logs/ also collects LEC selftest logs
+    # and anything else a tool drops there, and the newest is often not the P&R
+    # run. Both the Hold-mode and DRV tables live in the same stage log.
+    lg=$(grep -lE "^\|[ ]*Hold mode" "$d"/*.log 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
+    [ -n "$lg" ] && [ -s "$lg" ] || { echo "n/a"; return 0; }
+    awk -v k="$key" '$0 ~ k && /\|/ { n=split($0,f,"|"); gsub(/ /,"",f[3]); if(f[3]!="") v=f[3] }
+                     END { print (v=="" ? "n/a" : v) }' "$lg" 2>/dev/null
+}
 
 antenna() {
     local f="$REP/${BLOCK}_imp_antenna.rep"
@@ -134,6 +213,13 @@ if [ "$STAGE" = route ]; then
     nb=$(drc_bondpad);      ob=$(drc_bondpad "$BREP")
     np=$(drc_pg_bp);        op=$(drc_pg_bp   "$BREP")
     no=$(pg_opens);         oo=$(pg_opens    "$BREP")
+    # Hold and DRV come from the LOG, not the timing summary — see hold_field().
+    BLOG="${BASELINE_DIR:+$BASELINE_DIR/logs}"
+    row "**hold WNS (ns)**"          "$(hold_field "$ASIC_DIR/logs" 'WNS')"        "$(hold_field "${BLOG:-/nonexistent}" 'WNS')"
+    row "**hold TNS (ns)**"          "$(hold_field "$ASIC_DIR/logs" 'TNS')"        "$(hold_field "${BLOG:-/nonexistent}" 'TNS')"
+    row "**hold violating paths**"   "$(hold_field "$ASIC_DIR/logs" 'Violating')"  "$(hold_field "${BLOG:-/nonexistent}" 'Violating')"
+    row "DRV max_tran nets(terms)"   "$(drv_field  "$ASIC_DIR/logs" 'max_tran')"   "$(drv_field  "${BLOG:-/nonexistent}" 'max_tran')"
+    row "DRV max_cap nets(terms)"    "$(drv_field  "$ASIC_DIR/logs" 'max_cap')"    "$(drv_field  "${BLOG:-/nonexistent}" 'max_cap')"
     row "instances"                  "$(area_field 1)"
     row "total cell area (um2)"      "$(area_field 2)"
     row "DRC total"                  "$nd" "$od" "$(delta "$nd" "$od")"

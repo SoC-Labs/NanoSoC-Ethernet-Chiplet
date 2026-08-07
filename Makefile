@@ -86,8 +86,7 @@ asic-status: ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory status
 asic-syn:    ; $(MAKE) -C $(ASIC_DIR) syn
 asic-pnr:    ; $(MAKE) -C $(ASIC_DIR) pnr_place pnr_cts pnr_route
 asic-gds:    ; $(MAKE) -C $(ASIC_DIR) pnr_all
-## `drc`, not `drc_batch`: drc_batch is the legacy `calibre -gui -drc -batch
-## -runset` path. scripts/calibre/run_drc.sh is the maintained headless harness
+## scripts/calibre/run_drc.sh is the maintained headless harness behind `drc`,
 ## and is what the signoff pipeline calls.
 asic-drc:     ; $(MAKE) -C $(ASIC_DIR) drc
 asic-lvs:     ; $(MAKE) -C $(ASIC_DIR) lvs

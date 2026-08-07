@@ -17,9 +17,9 @@ disappointed, and that expectation is written into
 "some of the 141 non-bond-pad violations may be filler-adjacent and may simply
 disappear". They will not.
 
-Sources: [`reports/nanosoc_eth_chiplet_pads_imp_drc.rep`](../../ASIC/genus-innovus/reports/nanosoc_eth_chiplet_pads_imp_drc.rep)
-and [`logs/pnr_run_core70.log`](../../ASIC/genus-innovus/logs/pnr_run_core70.log), against
-[`baseline_2026-08-05/`](../../ASIC/genus-innovus/baseline_2026-08-05/).
+Sources: `reports/nanosoc_eth_chiplet_pads_imp_drc.rep`
+and `logs/pnr_run_core70.log`, against
+`baseline_2026-08-05/`.
 
 ---
 
@@ -54,7 +54,7 @@ The same trap applies to the log: `grep -c IMPSP-5217 logs/pnr_run_core70.log` r
 | MINWIDTH | 1 | 0 | −1 |
 
 The `CORE_TO_IO 50 → 70` floorplan change did what
-[`floorplan.tcl`](../../ASIC/genus-innovus/scripts/floorplan.tcl) predicted and more:
+[`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl) predicted and more:
 **376 of the baseline's 379 shorts named a `BuPAD_*` bond-pad blockage, and zero do now.**
 The prediction in that header was 318; the delivered number is 376. Every other class also
 roughly halved, because the whole grid was redrawn on a smaller core.
@@ -67,7 +67,7 @@ by root cause only.
 
 | | count | share | who can fix it |
 |---|---:|---:|---|
-| `Special Wire` — power grid (`add_stripes` / `route_special`) | **64** | 63 % | [`power_plan.tcl`](../../ASIC/genus-innovus/scripts/power_plan.tcl) only |
+| `Special Wire` — power grid (`add_stripes` / `route_special`) | **64** | 63 % | [`power_plan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/power_plan.tcl) only |
 | `Regular Wire` / `Pin` — signal routing and cell pins | **38** | 37 % | `route_eco`, `add_fillers -fix_drc` |
 
 Baseline was 457/580 (79 %) special wire. The residue is getting *more* power-grid
@@ -91,7 +91,7 @@ The geometry checks out exactly:
 | | value | source |
 |---|---|---|
 | macro | `rf_16k`, `311.8 × 285.25` µm | `/research/precompiled_mems/TSMC65/rf_16k/rf_16k.lef` |
-| placement | `place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6 1340.4 MY` | [`floorplan.tcl:172`](../../ASIC/genus-innovus/scripts/floorplan.tcl) |
+| placement | `place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6 1340.4 MY` | [`floorplan.tcl:172`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl) |
 | macro bbox | `(1058.6, 1340.4) – (1370.4, 1625.65)` | 1340.4 + 285.25 = **1625.65** |
 | short | `y 1624.500 – 1625.650` | ends **on** the macro top edge |
 | macro OBS | `LAYER M1 M2 M3 M4` over the footprint | `rf_16k.lef` |
@@ -106,7 +106,7 @@ Bounds : ( 1214.330, 1624.500 ) ( 1214.485, 1625.650 )     <- 0.005 µm left of 
 
 **Root cause is not filler and not `add_stripes`.** There are no M4 stripes — `add_stripes`
 draws M5, M8 and M9 only. Every M4 special wire in this design comes from the second
-`route_special` in [`power_plan.tcl`](../../ASIC/genus-innovus/scripts/power_plan.tcl):
+`route_special` in [`power_plan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/power_plan.tcl):
 
 ```tcl
 route_special -connect {block_pin core_pin floating_stripe} \
@@ -289,7 +289,7 @@ unverified, none run**:
 - give the macros a block ring on a layer the OBS does not cover, so sroute has a legal
   target;
 - widen `create_place_halo -halo_deltas {3.6 3.6 3.6 3.6}`
-  ([`floorplan.tcl`](../../ASIC/genus-innovus/scripts/floorplan.tcl)) — but note the QSPI
+  ([`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl)) — but note the QSPI
   stack has only 8.64 µm between macros, so there is very little room.
 
 Do **not** simply re-enable `add_stripes_ignore_block_check` reasoning here: it is already
@@ -312,7 +312,7 @@ before treating either number as a measurement.
 
 ### What was wrong
 
-[`filler.tcl`](../../ASIC/genus-innovus/scripts/filler.tcl) inserted 102,760 filler
+[`filler.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/filler.tcl) inserted 102,760 filler
 instances into a fully routed design and stopped. Innovus objected twice per run and was
 ignored twice per run:
 
@@ -324,7 +324,7 @@ ignored twice per run:
 ```
 
 `add_fillers -fix_drc` reads the violation-marker database. The flow's only `check_drc`
-runs in [`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl) **after**
+runs in [`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl) **after**
 `place_bondpads.tcl` returns. So the marker database was empty when `-fix_drc` executed,
 on both runs, and the line did nothing.
 
@@ -358,7 +358,7 @@ re-routing the 64 power-grid markers `check_drc` has just written.
 
 ### The new order
 
-Made in [`filler.tcl`](../../ASIC/genus-innovus/scripts/filler.tcl). The two new lines are
+Made in [`filler.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/filler.tcl). The two new lines are
 marked:
 
 ```tcl
@@ -394,7 +394,7 @@ Four decisions worth recording:
    `place_bondpads.tcl` returns; it will simply now describe the repaired database. Same
    for `check_filler`.
 4. **`filler.tcl` stays sourced before the bond-pad loops** in
-   [`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl). That keeps
+   [`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl). That keeps
    the marker set core-only. Move it below the pad loops and the repair passes would be
    handed a database dominated by M8/M9/AP pad-ring geometry they cannot touch — the class
    that was 376 of 379 shorts in the baseline. A note to that effect has been added to the

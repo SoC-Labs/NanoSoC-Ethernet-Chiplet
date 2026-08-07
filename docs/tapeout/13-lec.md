@@ -6,7 +6,7 @@ Conformal LEC on `nanosoc_eth_chiplet_pads`: what is compared against what, why 
 pair and not another, how the verdict is made able to fail, and what is still not
 verified.
 
-Harness: [`ASIC/genus-innovus/scripts/lec/`](../../ASIC/genus-innovus/scripts/lec/)
+Harness: `ASIC/genus-innovus/scripts/lec/`
 (`README.md` there is the operating manual). Tool: `lec 22.10-s200` at
 `/eda/cadence/confrml/bin/lec`.
 
@@ -469,7 +469,7 @@ seconds apart — but it is static evidence, not a proof.
 Connectivity is checked; contents are not. See §3.
 
 **5. Bond pads are not checked by anything here** — no model exists. They are LVS scope,
-and [`ci/signoff.yaml`](../../ci/signoff.yaml) already records that LVS cannot run on
+and [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) already records that LVS cannot run on
 this site.
 
 **6. The `X`/undriven modelling is deliberately conservative and untested at scale.**
@@ -482,7 +482,7 @@ quick fix.
 **7. Equivalence is not timing.** LEC says the shipped netlist computes the same
 function. It says nothing about whether the 10,555 hold-repair delay cells actually fixed
 hold, or whether the design meets setup. That is STA, and
-[`ci/signoff.yaml`](../../ci/signoff.yaml) lists `sta-signoff` as unsupported: no Tempus
+[`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) lists `sta-signoff` as unsupported: no Tempus
 or PrimeTime is installed.
 
 ---

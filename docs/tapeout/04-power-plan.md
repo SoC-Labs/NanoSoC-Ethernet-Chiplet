@@ -2,9 +2,9 @@
 
 Block: `nanosoc_eth_chiplet_pads` · TSMC 65nm LP (9M_6X1Z1U) · Cadence Innovus 21.11-s130_1, STYLUS/Common-UI.
 
-Source of truth: [`ASIC/genus-innovus/scripts/power_plan.tcl`](../../ASIC/genus-innovus/scripts/power_plan.tcl).
-Sourced by [`2_pnr_setup.tcl`](../../ASIC/asic-flows/Cadence/2_pnr_setup.tcl) **immediately after**
-[`floorplan.tcl`](../../ASIC/genus-innovus/scripts/floorplan.tcl) and before `place_design`.
+Source of truth: [`ASIC/genus-innovus/scripts/power_plan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/power_plan.tcl).
+Sourced by [`2_pnr_setup.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/2_pnr_setup.tcl) **immediately after**
+[`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl) and before `place_design`.
 That order is mandatory — this file consumes `::PLACED_MACROS`, which floorplan publishes.
 
 Prev: [03-floorplan](03-floorplan.md) · Next: [05-place-cts-route](05-place-cts-route.md) · Index: [00-index](00-index.md)
@@ -85,7 +85,7 @@ Those are **CPF statements**. The repair therefore belongs in the CPF file, befo
 ### 1.4 The fix: the `cpf-patch` make target
 
 `make syn` now patches `outputs/${BLOCK}_gate1.cpf` automatically — see the `cpf-patch` target in
-[`ASIC/genus-innovus/Makefile`](../../ASIC/genus-innovus/Makefile). It inserts, before `end_design`:
+[`ASIC/genus-innovus/Makefile`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/Makefile). It inserts, before `end_design`:
 
 ```tcl
 create_ground_nets -nets VSS
@@ -176,7 +176,7 @@ around the periphery straight into the bond-pad M8/M9 blockages. Every `VDDIO`/`
 a "Regular Wire"; `VDD`/`VSS` had none. **76 violations.**
 
 The fix is a **local override** of the IO driver LEF, wired up in
-[`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl):
+[`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl):
 
 ```tcl
 set IO_PAD_DRIVER_LEF $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef
@@ -215,7 +215,7 @@ offset 2  +  VDD 12  +  spacing 4  +  VSS 12   =  core_edge+2 .. core_edge+30
 **This band is what collides with the staggered bond pads.** `add_rings` draws geometrically and does
 not honour the `PAD70NU` `OBS`, so the clearance has to come from the floorplan margin. That is the
 entire reason `CORE_TO_IO` is 70 rather than 50 — the full analysis lives in
-[03-floorplan §2](03-floorplan.md#2-why-the-margin-is-70-and-not-50--the-staggered-bond-ring).
+[03-floorplan §2](03-floorplan.md#2-why-the-margin-is-70-and-not-50-the-staggered-bond-ring).
 
 > **Do not widen the rings.** Both M8 and M9 are `MAXWIDTH 12` and the rings are exactly 12. Any
 > increase is illegal by construction. Any change to `-width`, `-spacing` or `-offset` also moves the

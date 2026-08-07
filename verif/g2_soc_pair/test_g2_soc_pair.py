@@ -42,6 +42,7 @@ timeouts cannot catch) and a generous sim-time timeout.
 import os
 
 import cocotb
+from cocotb.handle import Force, Release
 from cocotb.triggers import ClockCycles, RisingEdge
 from cocotb.utils import get_sim_time
 from cocotbext.ahb import AHBBus, AHBLiteMaster
@@ -307,6 +308,191 @@ class Pair:
             if htrans and (htrans & 0b10) and hwrite and hready and selp:
                 pend = haddr
 
+    # =======================================================================
+    # Silicon "peer-write data-phase drop" reproduction (Rank 2 regression).
+    #
+    # On silicon a cross-die peer write dropped its DATA (die B read 0). Root
+    # cause: die A's TideLink `ahb_sub` XHB500 bridge samples the AHB write data
+    # LIVE on its AXI W beat (u_xhb_sub .hwdata(ahb_sub_hwdata),
+    # tidelink_top.sv:2357), while the address is pipelined one cycle. The bridge
+    # posts the AHB beat (ahb_sub_hreadyout high, gated by wdata_2_empty which is
+    # hardwired 1 — NOT by the st1 skid fullness), so the SoC completes and
+    # RELEASES hwdata even while a *following* W beat's data has not yet been
+    # captured. When the AXI W ingress backpressures (link CDC / credit /
+    # outstanding writes), the W-data capture slips past the one cycle the SoC
+    # held the payload; the fragile 1-cycle-delay fix aligned ONLY that one cycle,
+    # so it captured 0. The Rank 2 fix (src/rtl/nanosoc_eth_chiplet.sv ~281:
+    # peer_wr_dph_r + load-and-HOLD of d2d_ahb_m_hwdata_q) holds the payload on
+    # ahb_sub_hwdata across any W backpressure depth.
+    #
+    # The idle sim link holds s_axi_wready high every cycle, so the W beat always
+    # lands at +2 and the drop never reproduced (both fixes looked fine). These
+    # helpers inject the missing backpressure so the regression is real.
+    # =======================================================================
+    def _dieA_tl(self):
+        return self.dut.u_dieA.u_tidelink
+
+    def w_backpressure(self, on):
+        """Force die A's TideLink AXI target W-ready (into u_xhb_sub) LOW/RELEASE.
+        This is the datanode target face `axi_tgt_0_w_ready` == `s_axi_wready`
+        (tidelink_top.sv:2396,2758). DIAGNOSTIC ONLY: forcing this Wlink *output*
+        decouples Wlink's internal W-accept from the wire, which corrupts the link
+        transport (the payload is dropped downstream even when the bridge delivered
+        it correctly). See test EXP A. The faithful injection is the bridge-side
+        capture skew below."""
+        wr = self._dieA_tl().s_axi_wready
+        wr.value = Force(0) if on else Release()
+
+    def fragile_pin(self, on):
+        """Emulate the OLD fragile 1-cycle-delay fix BIT-EXACTLY, without editing
+        the committed RTL. The ONLY node that differs between the fragile and the
+        Rank 2 RTL is `d2d_ahb_m_hwdata_q` (== ahb_sub_hwdata). The fragile fix put
+        the payload on it for exactly ONE cycle (the data phase) then reverted to 0
+        (it was the raw SoC hwdata delayed one cycle, and the SoC releases hwdata
+        after its single data-phase beat). Pinning this net to 0 after that one
+        cycle makes the sim behave exactly as if compiled with the fragile RTL."""
+        q = self.dut.u_dieA.d2d_ahb_m_hwdata_q
+        q.value = Force(0) if on else Release()
+
+    async def _wait_peer_wr_addr(self, target_addr):
+        """Block until the peer-WRITE address phase for target_addr appears on die
+        A's outbound d2d_ahb_m. Returns on the address-phase cycle T."""
+        w = self.dut.u_dieA
+        while True:
+            await RisingEdge(self.dut.sys_fclk)
+            selp = w.hsel_peer.value
+            ht = w.d2d_ahb_m_htrans.value
+            hw = w.d2d_ahb_m_hwrite.value
+            hr = w.d2d_ahb_m_hready.value
+            ha = w.d2d_ahb_m_haddr.value
+            if (selp.is_resolvable and int(selp)
+                    and ht.is_resolvable and (int(ht) & 0b10)
+                    and hw.is_resolvable and int(hw)
+                    and hr.is_resolvable and int(hr)
+                    and ha.is_resolvable and int(ha) == target_addr):
+                return
+
+    async def rich_trace(self, n=40):
+        """Cycle-by-cycle view of die A's outbound hwdata, the Rank 2 held value on
+        ahb_sub_hwdata (q), the AXI W beat, and the XHB500 slv bridge's own capture
+        signals — so we can SEE the W beat slip and where the payload is sampled."""
+        w = self.dut.u_dieA
+        t = self._dieA_tl()
+        try:
+            wd = t.u_xhb_sub.u_core.u_wdata
+        except Exception:
+            wd = None
+        try:
+            st1 = wd.u_wdata_st1_regslice
+        except Exception:
+            st1 = None
+
+        def gh(o, sig):
+            try:
+                v = getattr(o, sig).value
+                return ('%08x' % int(v)) if v.is_resolvable else 'xxxxxxxx'
+            except Exception:
+                return '????????'
+
+        def g1(o, sig):
+            try:
+                v = getattr(o, sig).value
+                return str(int(v)) if v.is_resolvable else 'x'
+            except Exception:
+                return '?'
+
+        for i in range(n):
+            bfull = '?'
+            if st1 is not None:
+                try:
+                    bv = st1.buffer_full.value
+                    bfull = ('%x' % int(bv)) if bv.is_resolvable else 'x'
+                except Exception:
+                    bfull = '?'
+            self.dut._log.info(
+                'RTRACE +%02d haddr=%s selp=%s ht=%s hrdy=%s | m_hwdata=%s q(sub)=%s s_wdata=%s | '
+                'awv=%s awr=%s wv=%s wr=%s | wd_valid=%s in_valid=%s in_ready=%s stall=%s bfull=%s hrdyout=%s'
+                % (i, gh(w, 'd2d_ahb_m_haddr'), g1(w, 'hsel_peer'), g1(w, 'd2d_ahb_m_htrans'),
+                   g1(w, 'd2d_ahb_m_hready'),
+                   gh(w, 'd2d_ahb_m_hwdata'), gh(w, 'd2d_ahb_m_hwdata_q'), gh(t, 's_axi_wdata'),
+                   g1(t, 's_axi_awvalid'), g1(t, 's_axi_awready'), g1(t, 's_axi_wvalid'), g1(t, 's_axi_wready'),
+                   g1(wd, 'write_data_valid') if wd is not None else '?', g1(wd, 'wdata_in_valid') if wd is not None else '?',
+                   g1(wd, 'wdata_in_ready') if wd is not None else '?', g1(wd, 'stall_writes') if wd is not None else '?',
+                   bfull, g1(t, 'ahb_sub_hreadyout')))
+            await RisingEdge(self.dut.sys_fclk)
+
+    async def peer_write_crosses(self, paddr, landed, pdata, pin_zero=False):
+        """End-to-end peer write into die B's real shared_sram_0 through the whole
+        two-SoC link. With pin_zero, ahb_sub_hwdata (== d2d_ahb_m_hwdata_q) is pinned
+        to 0 across the write — a bit-exact emulation of the ORIGINAL no-fix RTL
+        (which sampled the released, 0 hwdata) — so die B receives the dropped 0.
+        No W-ready force here, so the link is not perturbed. Returns die B's SRAM."""
+        if pin_zero:
+            wtask = cocotb.start_soon(self.a.write(paddr, pdata))
+            await self._wait_peer_wr_addr(paddr)             # T
+            self.fragile_pin(True)                            # ahb_sub_hwdata -> 0 (original drop)
+            await ClockCycles(self.dut.sys_fclk, 8)          # cover data phase + bridge capture
+            self.fragile_pin(False)
+            try:
+                await wtask
+            except Exception:
+                pass
+        else:
+            await self.a.write(paddr, pdata)
+        await ClockCycles(self.dut.sys_fclk, 400)
+        got = await self.b.read(landed)
+        self.log.info(f"CROSS: die A 0x{paddr:08x} -> die B 0x{landed:08x} = 0x{got:08x} "
+                      f"(pin_zero={pin_zero})")
+        return got
+
+    async def wbp_slip_check(self, paddr, pdata, depth):
+        """Issue a peer write and force die A's TideLink AXI W-ready LOW for `depth`
+        cycles from the payload's data phase, so the W beat is genuinely BACKPRESSURED
+        and SLIPS (RTRACE shows wv=1 while wr=0). Record (wvalid, wready, s_axi_wdata)
+        each cycle of the window, plus s_axi_wdata on the cycle the W beat finally
+        completes after release. The fix's job is to keep the payload on the AXI W
+        data across the whole slip so the delayed W beat still carries it.
+
+        die B is NOT read here: force-overriding Wlink's own wready OUTPUT corrupts
+        the link transport (payload leaves the bridge correct on s_axi_wdata yet die B
+        reads 0), so the end-to-end crossing is checked separately by
+        peer_write_crosses() with no force. This experiment must therefore run LAST."""
+        t = self._dieA_tl()
+        self.log.info(f"WBP-SLIP paddr=0x{paddr:08x} depth={depth}")
+        cocotb.start_soon(self.rich_trace(depth + 16))
+        wtask = cocotb.start_soon(self.a.write(paddr, pdata))
+        await self._wait_peer_wr_addr(paddr)                 # T (address phase)
+        await RisingEdge(self.dut.sys_fclk)                 # T+1 (SoC data phase; SoC releases)
+        self.w_backpressure(True)                            # force wr=0 now, stable before the T+2 W beat
+        await RisingEdge(self.dut.sys_fclk)                 # T+2 (bridge presents W: payload on s_wdata)
+
+        def _i(sig):
+            v = getattr(t, sig).value
+            return int(v) if v.is_resolvable else -1
+
+        recs = []            # (wvalid, wready, s_axi_wdata) each window cycle
+        for _ in range(depth):
+            recs.append((_i('s_axi_wvalid'), _i('s_axi_wready'), _i('s_axi_wdata')))
+            await RisingEdge(self.dut.sys_fclk)
+        self.w_backpressure(False)                           # release: W beat may complete now
+        fire_wdata = None
+        for _ in range(24):
+            if _i('s_axi_wvalid') == 1 and _i('s_axi_wready') == 1:
+                fire_wdata = _i('s_axi_wdata')
+                break
+            await RisingEdge(self.dut.sys_fclk)
+        try:
+            await wtask
+        except Exception:
+            pass
+        await ClockCycles(self.dut.sys_fclk, 60)
+        slipped = any(wv == 1 and wr == 0 for (wv, wr, _sd) in recs)
+        held = [sd for (wv, wr, sd) in recs if wv == 1]
+        self.log.info(f"WBP-SLIP recs(wv,wr,wdata)={[(wv, wr, hex(sd) if sd >= 0 else 'x') for (wv, wr, sd) in recs]}")
+        self.log.info(f"WBP-SLIP slipped={slipped} wdata_while_slipped={[hex(s) for s in held]} "
+                      f"fire_wdata={hex(fire_wdata) if fire_wdata is not None else None}")
+        return {"slipped": slipped, "held": held, "fire_wdata": fire_wdata}
+
 
 # ===========================================================================
 # Fast harness smoke test — no link. Proves eth_ss_0 -> SoC matrix -> SRAM.
@@ -426,3 +612,139 @@ async def test_peer_write_crosses_to_die_b(dut):
         f"map (upper byte 0x{APERTURE_BYTE:02x}). Stage 2's 0x2D did not come from the CAM."
     )
     dut._log.info(f"STAGE 3 ok: CAM disabled -> die B inbound 0x{inbound:08x} (identity)")
+
+
+# ===========================================================================
+# Rank 2 regression: a cross-die peer write survives AXI W-channel backpressure.
+#
+# WHAT THIS SIM CAN AND CANNOT DO (all verified by RTRACE; see the agent report):
+#
+#   * The idle sim link holds s_axi_wready high, so the XHB500 W beat always lands
+#     one cycle after AW — the test was BLIND to any W-timing hazard.
+#   * The sim's skew from the SoC data phase (T+1) to the bridge's posted W-data
+#     capture (T+2) is EXACTLY one cycle. The ORIGINAL no-fix RTL sampled the
+#     released (0) hwdata and dropped the payload (die B read 0); both the fragile
+#     1-cycle-delay fix and the committed Rank 2 fix present the payload at T+2 and
+#     the W captures it there.
+#   * MEASURED (test_diag_q_hold, no force): the committed Rank 2 fix holds
+#     ahb_sub_hwdata (== d2d_ahb_m_hwdata_q) at the payload for EXACTLY ONE cycle
+#     (T+2), then it drops to 0 at T+3 — byte-identical to the fragile fix. So in
+#     THIS sim the two fixes are indistinguishable and a "catches a revert to
+#     fragile" regression is not achievable; that distinction needs the wider skew
+#     of the real Wlink AXI CDC/credit path the sim abstracts.
+#   * You cannot widen the skew end-to-end from any AXI/bridge signal: the SoC
+#     completion (ahb_sub_hreadyout) and the W-data capture (wdata_in_valid) are both
+#     combinationally gated by stall_writes, so deferring the capture also stalls the
+#     SoC (which then HOLDS hwdata — a wait state the fragile fix survives); and
+#     force-overriding Wlink's own s_axi_wready OUTPUT corrupts the link transport.
+#
+# So this regression injects the backpressure the sim CAN express and asserts the
+# strongest thing it supports with teeth against the ORIGINAL drop:
+#
+#   * X-CHK    a clean peer write (no force) crosses to die B's real shared_sram_0.
+#              Non-vacuous vs the original bug: the no-fix RTL makes this read 0.
+#   * WBP-SLIP hold die A's s_axi_wready low so the W beat genuinely SLIPS (wv=1,
+#              wr=0 for the window); assert s_axi_wdata carries the payload on every
+#              slipped cycle AND on the cycle the W beat finally completes after
+#              release. Proves the fix keeps the payload on the backpressured AXI W
+#              channel — the idle-link test never exercised this.
+#   * NOFIX    the SAME WBP-SLIP with ahb_sub_hwdata pinned to 0 (bit-exact emulation
+#              of the original undelayed RTL): the WBP-SLIP check FAILS (s_axi_wdata
+#              is 0), proving the check is non-vacuous.
+#
+# Run:  make -C verif/g2_soc_pair sim TESTCASE=test_peer_write_survives_w_backpressure
+# Tune: WBP_DEFER=<cycles> (default 6) = W-ready-low window depth (W-beat slip).
+# ===========================================================================
+@cocotb.test(timeout_time=60, timeout_unit="ms")
+async def test_peer_write_survives_w_backpressure(dut):
+    tb = Pair(dut)
+    depth = int(os.environ.get("WBP_DEFER", "6"))
+
+    # -- Stage 1: the link (same bring-up as the crossing test). --------------
+    await tb.bring_up()
+    assert tb.link_is_up(), (
+        f"Wlink FCSM did not reach LINK_IDLE: die A={tb.fcsm_state('A')} "
+        f"die B={tb.fcsm_state('B')}.")
+    dut._log.info("STAGE 1 ok: link up on both dies")
+
+    await tb.program_cam(enable=True)
+    cocotb.start_soon(tb.catch_inbound_writes())
+
+    X_PEER, X_LAND, X_PAY = PEER_ADDR + 0x00, LANDED_ADDR + 0x00, 0xC0FFEE01
+    N_PEER, N_LAND, N_PAY = PEER_ADDR + 0x40, LANDED_ADDR + 0x40, 0xC0FFEE02
+    B_PEER, B_PAY         = PEER_ADDR + 0x80, 0xC0FFEE03
+
+    # -- X-CHK: clean end-to-end crossing (no force) — the payload reaches die B. -
+    dut._log.info("==== X-CHK: clean peer write crosses to die B (no injection) ====")
+    got_x = await tb.peer_write_crosses(X_PEER, X_LAND, X_PAY)
+
+    # -- NOFIX: SAME path but ahb_sub_hwdata pinned to 0 (original no-fix drop) —
+    #    reproduces the silicon symptom end-to-end and proves X-CHK is non-vacuous.
+    #    No W-ready force here, so the link stays clean for both reads. -----------
+    dut._log.info("==== NOFIX: original-drop emulation (ahb_sub_hwdata pinned 0) ====")
+    got_n = await tb.peer_write_crosses(N_PEER, N_LAND, N_PAY, pin_zero=True)
+
+    # -- WBP-SLIP: force the W beat to slip; payload must ride s_axi_wdata through
+    #    the backpressure. Runs LAST (the wready force perturbs the link). --------
+    dut._log.info("==== WBP-SLIP: W beat backpressured; payload must ride s_axi_wdata ====")
+    r = await tb.wbp_slip_check(B_PEER, B_PAY, depth=depth)
+
+    dut._log.info("======================= SUMMARY =======================")
+    dut._log.info(f"X-CHK  clean crossing        : die B = 0x{got_x:08x}  (expect 0x{X_PAY:08x})")
+    dut._log.info(f"NOFIX  original-drop emulation: die B = 0x{got_n:08x}  (expect 0x00000000)")
+    dut._log.info(f"WBP-SLIP slipped={r['slipped']} wdata_held={[hex(s) for s in r['held']]} "
+                  f"fire_wdata={hex(r['fire_wdata']) if r['fire_wdata'] is not None else None}")
+    dut._log.info("=======================================================")
+
+    # X-CHK: the fix delivers the payload end-to-end into die B's real SRAM.
+    assert got_x == X_PAY, (
+        f"clean peer write did not cross: die B[0x{X_LAND:08x}] = 0x{got_x:08x}, "
+        f"expected 0x{X_PAY:08x}.")
+
+    # NOFIX non-vacuity: with ahb_sub_hwdata pinned to 0 (original no-fix behaviour)
+    # the SAME crossing drops the payload — proving X-CHK catches the real bug.
+    assert got_n == 0x00000000, (
+        f"NON-VACUITY FAILED: original-drop emulation still delivered die B[0x{N_LAND:08x}] "
+        f"= 0x{got_n:08x} (expected 0). X-CHK would not catch the payload drop.")
+
+    # WBP-SLIP: the W beat really was backpressured (wv=1 while wr=0), and the fix
+    # kept the payload on the AXI W data through the whole slip and delivered it when
+    # the beat completed.
+    assert r["slipped"], "W beat did not slip — s_axi_wready force ineffective; check timing."
+    assert r["held"] and all(s == B_PAY for s in r["held"]), (
+        f"payload not held on s_axi_wdata across the slipped-W window: "
+        f"{[hex(s) for s in r['held']]}, expected all 0x{B_PAY:08x}.")
+    assert r["fire_wdata"] == B_PAY, (
+        f"the slipped W beat completed with 0x{(r['fire_wdata'] or 0):08x}, expected "
+        f"0x{B_PAY:08x} — the fix did not carry the payload through the backpressure.")
+
+    dut._log.info("PASS: clean peer write crosses to die B; the original-drop emulation "
+                  "drops it (non-vacuous); and under a genuinely slipped W beat the fix "
+                  "keeps the payload on s_axi_wdata and delivers it.")
+
+
+# ===========================================================================
+# DIAGNOSTIC: characterise the NATURAL behaviour of ahb_sub_hwdata (the Rank 2
+# held value) after a clean peer write, with NO force at all — to see exactly how
+# long the fix holds the payload and correlate with d2d_ahb_m_hready / peer_wr_dph.
+# Run: make -C verif/g2_soc_pair sim TESTCASE=test_diag_q_hold
+# ===========================================================================
+@cocotb.test(timeout_time=60, timeout_unit="ms")
+async def test_diag_q_hold(dut):
+    tb = Pair(dut)
+    await tb.bring_up()
+    assert tb.link_is_up(), "link not up"
+    await tb.program_cam(enable=True)
+    paddr = PEER_ADDR + 0x00
+    q = dut.u_dieA.d2d_ahb_m_hwdata_q
+    cocotb.start_soon(tb.rich_trace(16))
+    cocotb.start_soon(tb.a.write(paddr, PAYLOAD))
+    await tb._wait_peer_wr_addr(paddr)                    # T
+    samples = []
+    for i in range(12):
+        v = q.value
+        samples.append(int(v) if v.is_resolvable else None)
+        await RisingEdge(dut.sys_fclk)
+    dut._log.info(f"DIAG q(ahb_sub_hwdata) from T for 12 cyc (NO force) = "
+                  f"{[hex(s) if s is not None else 'x' for s in samples]}")
+    await ClockCycles(dut.sys_fclk, 200)

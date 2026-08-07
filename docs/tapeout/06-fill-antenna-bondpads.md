@@ -5,7 +5,7 @@
 The last three physical operations before `write_stream`. All three happen
 inside the route stage, after hold repair has finished, and all three are
 sourced from one file:
-[`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl).
+[`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl).
 
 Read [05-place-cts-route.md](05-place-cts-route.md) first — the ordering here
 only makes sense against the post-route optimisation flow described there.
@@ -14,7 +14,7 @@ only makes sense against the post-route optimisation flow described there.
 
 ## 1. What runs, and where it is invoked from
 
-[`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl):
+[`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl):
 
 ```tcl
 opt_design -post_route -hold
@@ -30,7 +30,7 @@ check_process_antenna  -out_file $REPORT_DIR/${block_name}_imp_antenna.rep
 ```
 
 and the first executable line of
-[`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl) is
+[`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl) is
 
 ```tcl
 source ../scripts/filler.tcl
@@ -46,8 +46,8 @@ keep a pre-fill state, snapshot it under a different name yourself.
 ## 2. Why filler runs here and not in `route_setup.tcl`
 
 This is the most instructive comment in the flow. It is at the top of both
-[`route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl) (lines
-29–35) and [`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl)
+[`route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl) (lines
+29–35) and [`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl)
 (lines 1–6), and it exists because filler used to be sourced from
 `route_setup.tcl`, which runs **before** `route_design`.
 
@@ -80,7 +80,7 @@ written by the engineer who fixed the bug.
 
 ### The script
 
-[`filler.tcl`](../../ASIC/genus-innovus/scripts/filler.tcl), in full:
+[`filler.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/filler.tcl), in full:
 
 ```tcl
 add_filler_gaps 0.2 -effort high
@@ -192,7 +192,7 @@ Verified by running it: `IMPTCM-162` plus the usage string.
 
 Those are **CPF statements**, so the repair belongs in the CPF file before
 Innovus reads it. `make syn` now patches `gate1.cpf` (the `cpf-patch` target in
-[`ASIC/genus-innovus/Makefile`](../../ASIC/genus-innovus/Makefile)), inserting
+[`ASIC/genus-innovus/Makefile`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/Makefile)), inserting
 before `end_design`:
 
 ```
@@ -208,7 +208,7 @@ confirmed in the log as:
 OK: patched .../nanosoc_eth_chiplet_pads_gate1.cpf with VDD/VSS supply nets (add_fillers needs them)
 ```
 
-[`power_plan.tcl`](../../ASIC/genus-innovus/scripts/power_plan.tcl) lines 40–42
+[`power_plan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/power_plan.tcl) lines 40–42
 are the backstop — if the patch did not happen, fail *there* with a clear reason
 rather than three hours later with a silently unfilled die:
 
@@ -244,7 +244,7 @@ get_db insts FILLER_PD_TOP* -if {.base_cell.name == ANTENNA}   ;# should be ~50k
 ## 5. Antenna
 
 Antenna is confirmed by `check_process_antenna`, which
-[`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl) runs into
+[`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl) runs into
 `reports/${block_name}_imp_antenna.rep`. The only acceptable content is:
 
 ```
@@ -283,7 +283,7 @@ Both are things the tool told us in the reference run. Neither is fixed in the
 tree today; both should be resolved before signoff.
 
 **(a) The `-fix_drc` pass is currently a no-op.** The second `add_fillers` call
-in [`filler.tcl`](../../ASIC/genus-innovus/scripts/filler.tcl) uses
+in [`filler.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/filler.tcl) uses
 `-check_drc true -fix_drc`, and the log answers:
 
 ```
@@ -319,7 +319,7 @@ from the tool, not noise.
 ### The ring
 
 82 bond pads in a **staggered** two-row ring, created and placed by
-[`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl):
+[`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl):
 
 | Row | Cell | Height | Count |
 |---|---|---|---|

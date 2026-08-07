@@ -590,18 +590,41 @@ PDDW16DGZ_G uPAD_TL_RX_7(
 // output enable, so OEN maps to _t DIRECTLY. Do NOT invert: `.OEN(~t)` drives
 // the bus exactly when TideLink is releasing it, which breaks wired-AND
 // arbitration and slave clock-stretching (axi_chiplet_controller.sv:3072).
+// I2C IS A WIRED-AND BUS. THESE PADS MUST NEVER DRIVE HIGH.
+//
+// PDUW16DGZ_G is a push-pull tristate cell (liberty: function "I",
+// three_state "OEN", output_voltage cmos, drive_current 16) -- when OEN=0 it
+// actively drives BOTH levels. The whole tphn65lpgv2od3_sl library contains no
+// open-drain digital pad (grep open_drain -> 0 hits), so open-drain has to be
+// built here.
+//
+// .I IS TIED LOW ON PURPOSE. The data goes to OEN instead:
+//     send 1 -> OEN=1 -> pad tristates -> external pull-up makes the high
+//     send 0 -> OEN=0 -> pad drives .I, which is a hard 0 -> low
+// Behaviourally identical to the previous wiring, which relied on the i2c
+// cores tying *_o and *_t to the same register. The difference is that this is
+// STRUCTURAL: there is no logic path to the pad's data input at all, so no RTL
+// edit, ECO or scan insertion can make it drive high. Previously that was an
+// RTL invariant nobody checked, and breaking it would have put a 16mA push-pull
+// driver on a wired-AND bus -- a cross-die short, with no tool warning.
+//
+// REN IS ACTIVE LOW (verilog model: `not (RE, REN)`), so tielo ENABLES the
+// pad's internal pull-up. Keep it. It is a weak bus-keeper (~tens of kOhm), NOT
+// an I2C pull-up: at 100kHz it only meets the 1us rise-time limit on a very
+// small bus. The real ~2.2k pull-ups belong on the PCB. Do not "tidy" REN to
+// tiehi.
 PDUW16DGZ_G uPAD_I2C_SCL(
   .C(soc_i2c_scl_i),
   .REN(tielo),
-  .I(soc_i2c_scl_o),
-  .OEN(soc_i2c_scl_t),
+  .I(tielo),
+  .OEN(soc_i2c_scl_o),
   .PAD(I2C_SCL)
 );
 PDUW16DGZ_G uPAD_I2C_SDA(
   .C(soc_i2c_sda_i),
   .REN(tielo),
-  .I(soc_i2c_sda_o),
-  .OEN(soc_i2c_sda_t),
+  .I(tielo),
+  .OEN(soc_i2c_sda_o),
   .PAD(I2C_SDA)
 );
 

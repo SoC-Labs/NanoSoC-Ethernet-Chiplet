@@ -24,7 +24,7 @@
 # Result: ../logs/macro_insts.txt
 #-----------------------------------------------------------------------------
 source ../scripts/config.tcl
-set_multi_cpu_usage -local_cpu 8
+soclabs_setup_multi_cpu
 set_db init_power_nets $power_nets
 set_db init_ground_nets $ground_nets
 read_mmmc ../scripts/${block_name}.mmmc

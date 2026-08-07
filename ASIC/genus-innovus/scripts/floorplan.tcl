@@ -1,5 +1,84 @@
-## Die size floorplan
-create_floorplan -site core -die_size 1600 2000 50 50 50 50
+## Die size floorplan.
+##
+## The four trailing numbers are CORE-TO-IO clearances, NOT core-to-die. The
+## pad cells are 135um tall (tphn65lpgv2od3_sl / tpbn65v: every PDDW*_G,
+## PVDD2*_G and PCORNER_G is `SIZE ... BY 135.000`), so the core box is inset
+## by 135 + CORE_TO_IO on all four sides. Confirmed against the placed DB:
+##     die  (0,0)-(1600,2000)     core (185,185)-(1415,1815)   at CORE_TO_IO 50
+##
+## Raised 50 -> 70 because the STAGGERED BOND PADS overrun the core rings.
+##
+## The bond ring is staggered: PAD70GU outer (86.685 tall), PAD70NU inner
+## (171.000 tall), placed by place_bondpads.tcl. Both are CLASS BLOCK, not
+## CLASS PAD, so create_floorplan -core_margins_by io DOES NOT SEE THEM — it
+## insets the core by the 135um IO driver height only. Nothing in the margin
+## computation knows the inner bond pads reach 36um further inboard, so the
+## clearance has to be added here by hand.
+##
+## PAD70NU's OBS is solid over its whole footprint on M8 AND M9:
+##     OBS LAYER M8 ; RECT 0 0 30 171 ;   LAYER M9 ; RECT 0 0 30 171 ;
+## which are exactly the core-ring layers (add_rings: left/right M8, top/bottom
+## M9). add_rings draws geometrically and does not honour OBS, so at 50 the
+## rings were drawn straight through them, on all four sides symmetrically:
+##     ring stack occupies core_edge+2 .. core_edge+30 (offset 2, 12+4+12)
+##     margin 50 -> ring outer edge 155/1445/155/1845 vs PAD70NU at
+##                  171/1429/171/1829  = 16.00um OVERLAP every side
+##     margin 70 -> ring outer edge 175/1425/175/1825  =  4.00um clear
+## 4um clears both wide-metal rules: M8 SPACINGTABLE tops out at 1.5, M9 is a
+## flat SPACING 2. (Both layers are MAXWIDTH 12 and the rings are 12 wide —
+## legal, but on the limit; do not widen them.)
+##
+## This was measured, not assumed. baseline_2026-08-05/reports/..._imp_drc.rep
+## (the CORE_TO_IO 50 run) has 580 violations — its own trailer says
+## `Total Violations : 580 Viols.` — of which 398 are wires shorting to a
+## bond-pad blockage:
+##     PAD70NU  366 violations, 318 of them VDD/VSS special wire
+##     PAD70GU   32 violations,   0 of them VDD/VSS special wire
+## Zero PG shorts on the OUTER pad is the control — its inboard edge (1513.3 on
+## the right) never reaches the ring band, and sure enough it is never hit.
+## Those 318 PG shorts are 54.8% of all DRC on this design and should disappear.
+##
+## (This comment previously said 539 and 59%. 539 came from a grep that counted
+## only upper-case record keywords and so missed the 41 mixed-case `EndOfLine:`
+## records; 580 is the report's own total. Record histogram, for anyone
+## re-deriving it: 379 SHORT, 108 SPACING, 41 EndOfLine, 28 MINSTEP, 14 MINHOLE,
+## 7 NSMETAL, 2 MINCUT, 1 MINWIDTH = 580. 318/580 = 54.8%.)
+##
+## RESULT — the fix worked. Today's run at CORE_TO_IO 70
+## (reports/nanosoc_eth_chiplet_pads_imp_drc.rep, logs/pnr_run_core70.log):
+##     Total Violations : 102 Viols.        was 580
+##     bond-pad blockage violations:    0   was 398   (no `BuPAD_` record at all)
+##     PG-ring vs bond-pad shorts:      0   was 318
+##     SHORT records overall:           1   was 379
+## The residual 102 are unrelated to the bond ring: 44 SPACING, 38 EndOfLine,
+## 10 MINSTEP, 6 MINHOLE, 3 NSMETAL, 1 SHORT. Do NOT lower CORE_TO_IO again to
+## reclaim the 5.6% of core area — see docs/tapeout/16-open-defects.md, which
+## records what the extra utilisation (89.5% -> 92.2%) cost elsewhere.
+##
+## The die is FIXED at 1600x2000, so the 20um per side comes straight out of
+## the core: 1230x1630 -> 1190x1590, a 5.6% area loss (112,800 um^2). Core
+## utilisation rises correspondingly — if placement starts failing, this is why.
+##
+## THE MACRO COORDINATES BELOW ARE ABSOLUTE DIE COORDINATES. They do not track
+## the core box, and because the die is anchored at (0,0) the core's lower-left
+## moves inward whenever CORE_TO_IO grows — you cannot avoid that by resizing
+## the die. At 70 this put five macros outside the core (way1_word_0 by 14.96,
+## eth_scratch_tx by 12.89, chip bootrom by 7.00, net imem rf_32k by 3.68,
+## chip imem rf_16k by 1.05). Seventeen macros were re-placed to fix it — the
+## five offenders plus twelve neighbours that would otherwise have been
+## collided into; each carries a `## MOVED` note with its delta. In particular
+## the ten QSPI cache RAMs move up as one rigid block, because they sit on a
+## 45um pitch with only 8.64um between them and nothing can move alone.
+## The re-place was chosen so that
+## every tight inter-macro gap is UNCHANGED from the as-built floorplan — the
+## 28um of vertical compression came out of the slack bands, not the channels.
+##
+## The containment check at the end of place_macro is the backstop: change this
+## number again and it will name every macro that no longer fits, at the point
+## of placement, instead of letting it surface as sroute damage hours later.
+set CORE_TO_IO 70
+create_floorplan -site core -die_size 1600 2000 \
+    $CORE_TO_IO $CORE_TO_IO $CORE_TO_IO $CORE_TO_IO
 
 ## Place IOs
 delete_io_fillers
@@ -77,6 +156,26 @@ proc place_macro {pattern x y orient} {
     set inst [get_db [lindex $hits 0] .name]
     place_inst $inst $x $y $orient
     set_db [get_db insts $inst] .place_status placed
+
+    # Assert the macro actually landed INSIDE the core box.
+    #
+    # place_inst takes absolute die coordinates and does not object when the
+    # result straddles or clears the core boundary — it places it and says
+    # nothing. The first symptom is a power/route mess hundreds of lines later,
+    # which reads as an sroute problem rather than a floorplan one. Raising
+    # CORE_TO_IO from 50 to 70 moved the core box in by 20um on every side and
+    # silently put five macros outside it; that is what this catches.
+    lassign [lindex [get_db current_design .core_bbox] 0] cx1 cy1 cx2 cy2
+    lassign [lindex [get_db [lindex $hits 0] .bbox] 0] mx1 my1 mx2 my2
+    if {$mx1 < $cx1 || $my1 < $cy1 || $mx2 > $cx2 || $my2 > $cy2} {
+        error "place_macro: '$inst' at ($mx1,$my1)-($mx2,$my2) lies outside the\
+               core box ($cx1,$cy1)-($cx2,$cy2).\
+               \n  Overhang: left [expr {$cx1-$mx1}], bottom [expr {$cy1-$my1}],\
+               right [expr {$mx2-$cx2}], top [expr {$my2-$cy2}] (negative = inside).\
+               \n  CORE_TO_IO is $::CORE_TO_IO, putting the core box 135+$::CORE_TO_IO\
+               in from each die edge. The coordinates in this file are ABSOLUTE\
+               \n  and must be re-placed by hand whenever that changes."
+    }
     # Record the RESOLVED name for power_plan.tcl's split_row/select_obj.
     # power_plan.tcl used to carry its own hardcoded copy of these 21 paths and
     # it drifted: the same 6 names that went stale here (the ethmac RF and the
@@ -89,22 +188,22 @@ set ::PLACED_MACROS {}
 
 place_macro {*ethmac*bd_ram*u_rf} 1053.8000000000 1117.8100000000 R180
 place_macro {*u_network_core*u_region_bootrom_0*rom_via*} 883.5350000000 1538.6000000000 MY
-place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6000000000 1360.4000000000 MY
+place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6000000000 1340.4000000000 MY  ;## MOVED -20 y: makes room for eth_scratch_tx below it
 place_macro {*region_eth_scratch_rx_0*} 590.2000000000 1338.8000000000 R0
-place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1653.8000000000 MY
-place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1513.4000000000 R0
-place_macro {*way1_cache_ram_tag_ram_0_i} 911.2000000000 448.6900000000 MX
-place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 382.0900000000 MX
-place_macro {*way0_cache_ram_data_ram_0_word_2_i} 553.8000000000 460.4000000000 R0
-place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 370.0400000000 MX
-place_macro {*way0_cache_ram_data_ram_0_word_0_i} 702.4000000000 280.0400000000 MX
-place_macro {*way0_cache_ram_data_ram_0_word_1_i} 718.8000000000 325.0400000000 MX
-place_macro {*way1_cache_ram_data_ram_0_word_2_i} 633.6000000000 507.2000000000 R0
-place_macro {*way1_cache_ram_data_ram_0_word_3_i} 564.4000000000 415.0400000000 MX
-place_macro {*way1_cache_ram_data_ram_0_word_0_i} 708.6000000000 190.0400000000 MX
-place_macro {*way1_cache_ram_data_ram_0_word_1_i} 727.8000000000 235.0400000000 MX
-place_macro {*u_chip_core*u_region_imem_0*rf_16k*} 1059.2000000000 203.9500000000 R180
-place_macro {*u_shared_sram_0*rf_08k*} 1052.4000000000 500.7100000000 R180
+place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1633.8000000000 MY  ;## MOVED -20 y: was 12.89 over the new core top
+place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1503.4000000000 R0  ;## MOVED -10 y: was 3.68 over the new core top
+place_macro {*way1_cache_ram_tag_ram_0_i} 911.2000000000 468.6900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 402.0900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way0_cache_ram_data_ram_0_word_2_i} 553.8000000000 480.4000000000 R0  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 390.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way0_cache_ram_data_ram_0_word_0_i} 702.4000000000 300.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way0_cache_ram_data_ram_0_word_1_i} 718.8000000000 345.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way1_cache_ram_data_ram_0_word_2_i} 633.6000000000 527.2000000000 R0  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way1_cache_ram_data_ram_0_word_3_i} 564.4000000000 435.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way1_cache_ram_data_ram_0_word_0_i} 708.6000000000 210.0400000000 MX  ;## MOVED +20 y: was 14.96 below the new core bottom
+place_macro {*way1_cache_ram_data_ram_0_word_1_i} 727.8000000000 255.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*u_chip_core*u_region_imem_0*rf_16k*} 1059.2000000000 209.9500000000 R180  ;## MOVED +6 y: was 1.05 below the new core bottom
+place_macro {*u_shared_sram_0*rf_08k*} 1052.4000000000 506.7100000000 R180  ;## MOVED +6 y: follows chip imem rf_16k, keeps the 11.51 gap
 place_macro {*u_chip_core*u_region_dmem_0*rf_08k*} 1050.4000000000 953.6000000000 R0
-place_macro {*u_chip_core*u_region_bootrom_0*rom_via*} 1237.3350000000 735.4650000000 R180
-place_macro {*u_tidelink*u_tidelink_fifo_u_fifo_mem_u_sram_u_rf} 230.6000000000 1220.0000000000 R0
+place_macro {*u_chip_core*u_region_bootrom_0*rom_via*} 1222.3350000000 735.4650000000 R180  ;## MOVED -15 x: was 7.00 past the new core right edge
+place_macro {*u_tidelink*u_tidelink_fifo_u_fifo_mem_u_sram_u_rf} 230.6000000000 1210.0000000000 R0  ;## MOVED -10 y: follows net imem rf_32k, keeps the 8.15 gap

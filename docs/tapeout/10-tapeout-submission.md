@@ -23,7 +23,7 @@ scripts/ci/package_submission.sh                 # -> ASIC/genus-innovus/submiss
 scripts/ci/package_submission.sh /path/to/dest   # or somewhere else
 ```
 
-Source: [`scripts/ci/package_submission.sh`](../../scripts/ci/package_submission.sh)
+Source: [`scripts/ci/package_submission.sh`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/scripts/ci/package_submission.sh)
 
 The script exits non-zero if there is no GDS — there is nothing to submit without one. It
 stages the files, writes `MANIFEST.txt`, zips, removes the staging directory and prints the
@@ -59,7 +59,7 @@ uploaded as artefact `gdsii-<run-number>` with 90-day retention.
 | `MANIFEST.txt` | Provenance, sha256 of every file, and the gap declaration | — |
 
 Sizes are from the 2026-08-05 baseline
-([`ASIC/genus-innovus/baseline_2026-08-05/`](../../ASIC/genus-innovus/baseline_2026-08-05/)).
+(`ASIC/genus-innovus/baseline_2026-08-05/`).
 The script prints `! MISSING <f>` for any file it cannot find rather than failing — **read
 its output**, a bundle missing `_pnr.v` is a bundle LVS cannot be run against.
 
@@ -91,7 +91,7 @@ somebody downstream to assume they were covered.**
 > `make lec` "has been run and passed for **THIS netlist**". `make lec` compares RTL to
 > the **synthesised** netlist via Genus's `fv_map` — it never reads `outputs/*_pnr.v`.
 > There is no post-P&R LEC in this repository (declared as the `post-pnr-lec` coverage gap
-> in [`ci/signoff.yaml`](../../ci/signoff.yaml)). State that plainly in the covering note.
+> in [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml)). State that plainly in the covering note.
 > See [09 item 6](09-signoff-checklist.md).
 
 ---
@@ -99,7 +99,7 @@ somebody downstream to assume they were covered.**
 ## 3. Why the GDS is not self-contained
 
 `gds_merge_list` in
-[`ASIC/genus-innovus/scripts/config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl)
+[`ASIC/genus-innovus/scripts/config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl)
 merges **8 files**, all memory macros under `/research/precompiled_mems/TSMC65/` and
 `ASIC/romlibs/`:
 
@@ -123,7 +123,7 @@ foundry cell libraries.** Everything downstream follows from this — it is why 
 not signoff DRC, and why LVS cannot run here at all.
 
 **Stream-out settings** (from
-[`ASIC/asic-flows/Cadence/4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl)):
+[`ASIC/asic-flows/Cadence/4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl)):
 
 ```tcl
 write_stream $OUT_DIR/${block_name}.gds \

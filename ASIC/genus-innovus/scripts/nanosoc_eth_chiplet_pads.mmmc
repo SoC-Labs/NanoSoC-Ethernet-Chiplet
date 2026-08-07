@@ -100,8 +100,72 @@ create_timing_condition -name tc_typ \
 
 
 
+### DELAY CORNERS ARE DECLARED TWO-SIDED, DELIBERATELY.
+#
+# Each corner below names -early_timing_condition AND -late_timing_condition
+# explicitly, even where both sides use the same library set. That is
+# SEMANTICALLY IDENTICAL to the single `-timing_condition` form it replaces --
+# one library set for all delay calculation -- but it is NOT equivalent in how
+# ccopt writes clock latency back, and that difference cost this design its hold
+# closure.
+#
+# WHAT WENT WRONG (measured on the 2026-08-06 run; present in 2026-08-05 too):
+#
+# A hold check uses the LAUNCH clock's early/min path and the CAPTURE clock's
+# late/max path. After CTS, ccopt_design writes the propagated tree delay back as
+# a negative source latency so I/O timing stays consistent -- but it writes it
+# PER VIEW, tagging only the sides that view actually has.
+# default_analysis_view_hold used default_delay_corner_min, declared with a
+# single `-timing_condition tc_min`, so the writeback emitted -min ONLY:
+#
+#   Clock: clk, View: default_analysis_view_hold, Propagated Latency: 1.07637
+#    Executing: set_clock_latency -source -early -min -rise -1.07637 [get_pins CLK]
+#    Executing: set_clock_latency -source -late  -min -rise -1.07637 [get_pins CLK]
+#
+# (Compare SWDCK, whose view carried both conditions: it got -min AND -max.)
+#
+# Harmless until scripts/route_setup.tcl sets `timing_analysis_type ocv` AFTER
+# CTS. The min/max split then activates, the capture side finds no -max value and
+# uses 0, and EVERY HOLD CHECK IN THE DESIGN LOSES 1.076 ns. The post-route hold
+# path shows it directly: Src Latency capture 0.000 / launch -1.076.
+#
+# The cost was not subtle:
+#   hold WNS -1.167 ns, TNS -66,212 ns, 96,545 violating paths
+#   hold repair added +37,407 instances / +90,682 um2 chasing skew that is not there
+#   density driven 83.6% -> 92.2%, which then BLOCKED DRV repair -- 153 max_tran
+#     nets unfixable for "gain not enough" / "location check rejected" /
+#     "max local density"
+#
+# And it was invisible: report_timing_summary emits NO hold section at all, and
+# labels its own closing line `timing.setup.wns`. The headline "WNS +0.079,
+# 0 failing endpoints" was setup only.
+#
+# The symmetric typical_analysis_view showed hold -0.116, so roughly 0.1 ns of
+# hold violation is REAL and still needs ordinary repair. This fix removes the
+# ~1.05 ns that was never there.
+#
+# STATUS 2026-08-07: THIS CHANGE DID NOT FIX THE HOLD PROBLEM. Recorded here so
+# nobody spends another 5-hour run rediscovering it.
+#
+# The two-sided form is kept because it is more explicit and costs nothing, but
+# the ccopt writeback is BYTE-IDENTICAL with and without it -- four lines for
+# CLK in the hold view, all -min, no -max, in both runs:
+#     -source -early -min -rise -1.07637 [get_pins CLK]
+#     -source -late  -min -rise -1.07637 [get_pins CLK]
+#     -source -early -min -fall -1.10823 [get_pins CLK]
+#     -source -late  -min -fall -1.10823 [get_pins CLK]
+# and post-CTS hold is identical too (WNS -0.577, 5,963 violating paths).
+#
+# The reason is simple in hindsight: `set_clock_latency -min/-max` is an SDC
+# attribute of the CLOCK, not a property of the delay corner. Giving the corner
+# two timing conditions does not give ccopt a second latency value to write.
+# The missing -max has to be supplied explicitly -- see scripts/route_setup.tcl.
+#
+# DO NOT collapse these back to the single-condition form to tidy them up, and
+# equally DO NOT expect them to fix hold on their own.
 create_delay_corner -name default_delay_corner_max\
-   -timing_condition {tc_max}\
+   -early_timing_condition {tc_max}\
+   -late_timing_condition {tc_max}\
    -rc_corner default_rc_corner_worst
 
 create_delay_corner -name default_delay_corner_ocv\
@@ -110,11 +174,13 @@ create_delay_corner -name default_delay_corner_ocv\
    -rc_corner default_rc_corner_typical
 
 create_delay_corner -name default_delay_corner_min\
-   -timing_condition tc_min\
+   -early_timing_condition {tc_min}\
+   -late_timing_condition {tc_min}\
    -rc_corner default_rc_corner_best
 
 create_delay_corner -name typical_delay_corner\
-   -timing_condition tc_typ\
+   -early_timing_condition {tc_typ}\
+   -late_timing_condition {tc_typ}\
    -rc_corner default_rc_corner_typical
 
 create_constraint_mode -name default_constraint_mode\

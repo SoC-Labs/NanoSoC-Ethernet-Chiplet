@@ -1,76 +1,66 @@
 #-----------------------------------------------------------------------------
-# nanosoc-multicore-system / syn/asic/genus_innovus/Makefile
+# nanosoc-ethernet-chiplet / ASIC/genus-innovus/Makefile
 # A joint work commissioned on behalf of SoC Labs, under Arm Academic
 # Access license.
 #
 # Contributors
 #
 # Daniel Newbrook (d.newbrook@soton.ac.uk)
+# David Mapstone (d.a.mapstone@soton.ac.uk)
 #
 # Copyright (C) 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
-# Flat Fusion Compiler P&R flow for the multicore SoC top. All stage logic
-# (fc_init -> fc_synth -> fc_cts -> fc_route -> fc_signoff -> fc_drc ->
-# fc_abstract, + fusion_lib / fc / fc_all / gui) lives in the
-# soclabs-asic-flow toolkit (syn/asic/_flow). This Makefile is a thin shim:
-# it sets DESIGN_DIR, pulls in the project's design-scoped common.mk, then
-# includes the toolkit.
+# Genus -> Innovus -> Conformal/Calibre for nanosoc_eth_chiplet_pads (TSMC 65nm).
+# The stage scripts live in ../asic-flows/Cadence; this Makefile drives them,
+# adds the result checks they omit, and owns the project-side workarounds.
+# `make help` for targets, `make status` for progress.
 #
-# Usage:
-#   make syn                  
-#   make help                        # toolkit target list
+# Rationale and failure modes: docs/tapeout/, esp. 08-debugging and
+# 17-silent-noops — both Genus and Innovus exit 0 after failing.
 #-----------------------------------------------------------------------------
 
 DESIGN_DIR := $(CURDIR)
 include $(CURDIR)/../common.mk
 
-ASIC_FLOWS_DIR:= $(DESIGN_DIR)/../asic-flows/Cadence
+ASIC_FLOWS_DIR := $(DESIGN_DIR)/../asic-flows/Cadence
 REPORT_DIR := $(DESIGN_DIR)/reports
-LOG_DIR := $(DESIGN_DIR)/logs
-OUT_DIR := $(DESIGN_DIR)/outputs
-WORK_DIR := $(DESIGN_DIR)/work
+LOG_DIR    := $(DESIGN_DIR)/logs
+OUT_DIR    := $(DESIGN_DIR)/outputs
+WORK_DIR   := $(DESIGN_DIR)/work
 
-# The design top. Everything the flow writes is named after it, so it is also
-# how `status` finds out which stages have run.
+# Design top; everything the flow writes is named after it.
 BLOCK := nanosoc_eth_chiplet_pads
-# `?=` so DRC can be pointed at a GDS built elsewhere (a reference run, or a
-# stream handed over for checking) without touching this file.
+# `?=`: DRC/LVS can be pointed at a stream built elsewhere.
 GDS   ?= $(OUT_DIR)/$(BLOCK).gds
 
-# Calibre DRC. Same deck the flow's own in-Innovus DRC uses; DRC_CPUS only
-# affects the GUI/batch runs driven from here.
-DRC_RULEDECK ?= /tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a
-DRC_RUNSET   := $(WORK_DIR)/calibre_drc.runset
-DRC_RUNDIR   := $(WORK_DIR)/drc_run
+DRC_RUNDIR := $(WORK_DIR)/drc_run
+DRC_CPUS   ?= 8
 
-# Where `romlibs-fetch` copies the built ROM libraries FROM. They cannot be
-# regenerated on srv03335 — the Arm ROM compiler starts but lists zero
-# generators since the RHEL 8.8 -> 8.10 upgrade (romlibs-preflight in
-# common.mk detects and explains it). This tree is the only built copy.
+# Source for `romlibs-fetch`. The ROM libs cannot be rebuilt on srv03335 — the
+# Arm compiler lists zero generators since RHEL 8.10 (romlibs-preflight in
+# common.mk explains it) — so this tree is the only built copy.
 ROMLIBS_REF ?= /home/dwn1c21/SoC-Labs/TAPEOUT/2026july/NanoSoC-Ethernet-Chiplet/ASIC/romlibs
 
-# Bare `make` used to run setup_dirs (just mkdir) and report success having
-# done nothing recognisable. Show the flow instead.
 .DEFAULT_GOAL := help
 
-setup_dirs:
-	mkdir -p $(REPORT_DIR)
-	mkdir -p $(LOG_DIR)
-	mkdir -p $(OUT_DIR)
-	mkdir -p $(WORK_DIR)
+.PHONY: setup_dirs asic-flist romlibs-check romlibs-fetch cpf-patch sdc-check \
+        syn syn_norun syn_eval syn_compare \
+        lec lec-pnr lec-gate lec-selftest \
+        pnr_place pnr_cts pnr_route pnr_all pnr_setup gui \
+        drc lvs lvs-preflight \
+        status clean distclean help
 
-## The two generated sub-flists the ASIC flist `-f`-includes. Rendered by the
-## top-level `make asic-flist` (which sources the three set_env.sh scripts in
-## dependency order — this Makefile deliberately does not try to reproduce that).
-## Regenerated every run so the TideLink V2 / SoC selection can never go stale.
-.PHONY: asic-flist
+setup_dirs:
+	mkdir -p $(REPORT_DIR) $(LOG_DIR) $(OUT_DIR) $(WORK_DIR)
+
+## Re-render the generated sub-flists every run, so the TideLink V2 / SoC
+## selection cannot go stale. Delegated: the top-level make sources the three
+## set_env.sh scripts in dependency order.
 asic-flist:
 	$(MAKE) -C $(NANOSOC_ETH_CHIPLET_HOME) --no-print-directory asic-flist
 
-## Genus reads the ROM .libs via config.tcl's lib_search_path_list. Without them
-## `syn` dies ~immediately inside set_db with "Cannot open file
-## 'rom_via_ss_1p08v_1p08v_125c.lib'". Check up front and say why.
-.PHONY: romlibs-check
+## Genus reads the ROM .libs via config.tcl's lib_search_path_list; without them
+## `syn` dies inside set_db with "Cannot open file rom_via_*.lib".
 romlibs-check:
 	@$(MAKE) -C $(DESIGN_DIR)/.. -f common.mk --no-print-directory romlibs-verify || { \
 	    echo ""; \
@@ -80,27 +70,11 @@ romlibs-check:
 	    echo "(b) a WORKING Arm mem compiler — see the MEM_COMPILER_DIR note in common.mk."; \
 	    exit 1; }
 
-## cpf-patch: repair the CPF Genus writes, so the die actually gets filled.
-##
-## `write_power_intent -cpf` cannot translate this design's UPF supply commands
-## — the Genus log is full of "Unable to translate command 'create_supply_net'
-## ... from 1801 to CPF format" — and emits a CPF whose entire content is
-## `create_power_domain -name PD_TOP -default`. No power net, no ground net.
-##
-## Innovus reads that at 2_pnr_setup.tcl:40, and every filler pass then dies
-## with "IMPSP-5110: No supply-net names for Power Domain 'PD_TOP'". add_fillers
-## reports "For 0 new insts" and the die ships with ~95,568 free-site gaps
-## (~5.9% of the core) — no base-layer density fill, no ANTENNA diodes. That is
-## tapeout-blocking, and it is silent: the flow completes and streams a GDSII.
-##
-## This is NOT fixable with an Innovus command. `update_power_domain` there is
-## positional and has no -primary_power_net/-primary_ground_net options at all
-## (verified: IMPTCM-162 + usage string). They are CPF statements, so the file
-## is what needs repairing — which is exactly what the 2026-07 operator did by
-## hand mid-session, and why that run has fillers and ours did not.
-##
-## Idempotent: re-running on an already-patched CPF is a no-op.
-.PHONY: cpf-patch
+## Repair the CPF Genus writes, so the die actually gets filled. Genus cannot
+## translate this design's UPF supply commands and emits a power domain with no
+## power or ground net; every Innovus filler pass then dies with IMPSP-5110
+## while the flow still completes and streams a GDS. Not fixable from Innovus —
+## these are CPF statements. Idempotent. See 06-fill-antenna-bondpads.md.
 cpf-patch:
 	@cpf=$(OUT_DIR)/$(BLOCK)_gate1.cpf; \
 	test -s "$$cpf" || { echo "FAIL: no CPF at $$cpf — did synthesis run?"; exit 1; }; \
@@ -113,87 +87,126 @@ cpf-patch:
 	    echo "OK: patched $$cpf with VDD/VSS supply nets (add_fillers needs them)"; \
 	fi
 
-## syn: Genus synthesis. The `test -s` is NOT belt-and-braces: when its -f
-## script fails, Genus prints "Encountered problems processing file", drops to
-## its interactive prompt, reads EOF and exits ZERO. Without this check `make
-## pnr_all` sails straight past a dead synthesis into place-and-route on a
-## netlist that was never written.
+#-----------------------------------------------------------------------------
+# Synthesis
+#-----------------------------------------------------------------------------
+## The artefact test is not belt-and-braces: Genus exits ZERO on a failed script,
+## so without it `pnr_all` runs P&R on a netlist that was never written.
 syn: setup_dirs asic-flist romlibs-check
 	cd $(WORK_DIR)/; genus -f $(ASIC_FLOWS_DIR)/1_synthesis.tcl -log $(LOG_DIR)/syn_logs
 	@$(MAKE) --no-print-directory cpf-patch
 	@test -s $(OUT_DIR)/$(BLOCK)_gate_power.v || { \
 	    echo "FAIL: synthesis produced no netlist at $(OUT_DIR)/$(BLOCK)_gate_power.v"; \
-	    echo "      Genus exits 0 on a failed script — look for the real error with:"; \
+	    echo "      find the real error with:"; \
 	    echo "        grep -nE 'Encountered problems|^Error|not set' $(LOG_DIR)/syn_logs.log*"; \
 	    exit 1; }
 	@echo "OK: netlist $(OUT_DIR)/$(BLOCK)_gate_power.v"
 
+## Interactive Genus in work/; reloads the saved syn session.
 syn_norun:
 	cd $(WORK_DIR)/; genus -log $(LOG_DIR)/syn_logs
 
-## lec: RTL vs the SYNTHESIS netlist, using the dofile Genus generates into
-## work/. TWO CAVEATS, both verified:
-##   1. It compares fv_map against outputs/$(BLOCK)_gate.v. It NEVER reads
-##      *_pnr.v, so the ~45,700 instances CTS/opt/hold-repair added to the
-##      netlist that actually became GDS are not covered. Use lec-pnr for that.
-##   2. The generated dofile ends `exit -f` and this recipe checks nothing, so a
-##      NON-EQUIVALENT result still reports success. Grep the log for
-##      "Compare Results:" before believing it. (lec-pnr does not have this
-##      flaw — it enforces the verdict twice, independently.)
-## The dofile is written BY SYNTHESIS, so this target needs `make syn` first.
+## A/B variant of synthesis, via scripts/1b_synthesis_eval.tcl. Writes to
+## logs|reports|outputs/eval, so it cannot clobber the baseline P&R inputs.
+## Each behaviour change is a knob, so it can be isolated:
+##     make syn_eval EVAL_ISPATIAL=1        # physical synthesis
+##     make syn_eval EVAL_DRV_FIX=1 EVAL_MAX_TRAN=0.60   # tighten DRV; see the
+##                                          # CONFIGURATION block before trusting
+##     make syn_eval EVAL_COST_GROUPS=0
+## To promote a result, redirect it at the real output dir — P&R takes its
+## constraints from outputs/$(BLOCK)_syn.sdc, which an eval run never writes:
+##     make syn_eval EVAL_OUT_DIR=../outputs && make cpf-patch
+## Promoting an EVAL_DRV_FIX=1 run also promotes its design-scoped
+## set_max_transition/set_max_capacitance into that SDC, so Innovus signs off
+## against the tighter limit. Check the written SDC before doing that.
+EVAL_LOG_DIR    ?= $(LOG_DIR)/eval
+EVAL_REPORT_DIR ?= $(REPORT_DIR)/eval
+EVAL_OUT_DIR    ?= $(OUT_DIR)/eval
+
+syn_eval: setup_dirs asic-flist romlibs-check
+	mkdir -p $(EVAL_LOG_DIR) $(EVAL_REPORT_DIR) $(EVAL_OUT_DIR)
+	cd $(WORK_DIR)/; \
+	    EVAL_LOG_DIR=$(EVAL_LOG_DIR) \
+	    EVAL_REPORT_DIR=$(EVAL_REPORT_DIR) \
+	    EVAL_OUT_DIR=$(EVAL_OUT_DIR) \
+	    genus -f $(DESIGN_DIR)/scripts/1b_synthesis_eval.tcl \
+	          -log $(EVAL_LOG_DIR)/syn_logs
+	@test -s $(EVAL_OUT_DIR)/$(BLOCK)_gate_power.v || { \
+	    echo "FAIL: eval synthesis produced no netlist at $(EVAL_OUT_DIR)/$(BLOCK)_gate_power.v"; \
+	    echo "      grep -nE 'EVAL-FAIL|Encountered problems|^Error' $(EVAL_LOG_DIR)/syn_logs.log*"; \
+	    exit 1; }
+	@echo "OK: eval netlist $(EVAL_OUT_DIR)/$(BLOCK)_gate_power.v — now: make syn_compare"
+
+## Side-by-side metrics for the baseline and eval runs. Override either side.
+SYN_CMP_A ?= $(DESIGN_DIR)/baseline_2026-08-05/reports
+SYN_CMP_B ?= $(EVAL_REPORT_DIR)
+
+syn_compare:
+	@$(DESIGN_DIR)/scripts/compare_syn.sh $(SYN_CMP_A) $(SYN_CMP_B)
+
+#-----------------------------------------------------------------------------
+# Equivalence checking (Conformal) — see 13-lec.md
+#-----------------------------------------------------------------------------
+## RTL vs the SYNTHESIS netlist, via the dofile synthesis writes into work/ (so
+## run `make syn` first). Two flaws to know: it reads only _gate.v, never the
+## post-P&R netlist, and its dofile ends `exit -f`, so a NON-EQUIVALENT result
+## still exits 0 — grep the log for "Compare Results:". lec-pnr has neither.
 lec:
 	cd $(WORK_DIR)/; lec -xl -Dofile ./lec.dofile
 
-## lec-pnr: post-P&R equivalence — outputs/$(BLOCK)_gate_power.v (synthesis)
-## against outputs/$(BLOCK)_pnr.v (the netlist that becomes GDS). This is the
-## check nothing in this repo previously performed. _gate_power.v is the golden
-## rather than _gate.v because it shares the same boundary (27 ports) and PG
-## convention; _gate.v has only 6 PG connections and would turn every leaf
-## supply into a false finding. Flat compare only — CTS pushed cloned clock nets
-## through module boundaries, so hierarchical compare is impossible. Hours, and
-## takes a Conformal seat. Exits non-zero on abort, non-equivalence, unmapped
-## points or a short log.
+## Post-P&R equivalence: _gate_power.v (golden — it shares _pnr.v's 27-port
+## boundary and PG convention, _gate.v does not) vs _pnr.v, the netlist that
+## becomes GDS. Flat compare only, hours, holds a Conformal seat. Exits non-zero
+## on abort, non-equivalence, unmapped points or a short log.
 lec-pnr:
 	$(DESIGN_DIR)/scripts/lec/run_lec.sh pnr
 
-## lec-gate: closes the joint in the chain — _gate.v vs _gate_power.v, i.e. the
-## netlist `lec` proves against RTL vs the one lec-pnr uses as its golden.
-## Statically identical (319 cell types, same counts, same 55,516 flop names).
+## Closes the joint in the chain: _gate.v (what `lec` proves against RTL) vs
+## _gate_power.v (what lec-pnr uses as golden).
 lec-gate:
 	$(DESIGN_DIR)/scripts/lec/run_lec.sh gate
 
-## lec-selftest: mutation-tests the LEC HARNESS in ~15s — proves it passes an
-## equivalent pair AND fails a one-gate mutation, an extra flop, and a missing
-## netlist. Run this before trusting any lec-pnr result on a new host. A check
-## that cannot fail is worth nothing, and this flow has shipped several.
+## Mutation-tests the LEC harness itself in ~15s. Run before trusting any
+## lec-pnr result on a new host.
 lec-selftest:
 	$(DESIGN_DIR)/scripts/lec/run_lec.sh selftest
 
-.PHONY: lec lec-pnr lec-gate lec-selftest
-
-## The three Innovus stages, in order. Each reads the DB the previous one wrote
-## (`read_db $block_name` / `write_db $block_name` inside work/), so they must be
-## run in sequence and CANNOT be parallelised. Resume mid-flow by invoking the
-## stage you want — the DB in work/ carries the state.
-##
-##   pnr_place : floorplan + power plan + place_design + tie-offs   (2_pnr_setup)
-##   pnr_cts   : clock tree synthesis + post-CTS opt                (3_pnr_clock)
-##   pnr_route : route + filler + bondpads + GDS + reports + DRC    (4_pnr_route)
-##
-## pnr_route is the stage that emits the GDSII ($(GDS)). It needs asic-flows at
-## b19e784 or later — the earlier revision stops after routing and writes no
-## stream. It runs Calibre DRC at the end only when CALIBRE_HOME is set in the
-## environment, and that in-Innovus DRC is a no-op — see the `drc` target.
-## -files, NOT -f. Every one of the three stage scripts carries a header saying
-## "run: innovus -stylus -f <script>", and that is wrong: -f is legacy-UI only.
-## Stylus/Common UI rejects it with "**ERROR: (IMPSYT-468): Unknown argument -f"
-## and then, having printed a usage message, exits ZERO — so make treats the
-## stage as passed and moves to the next one. Three stages "ran" in under a
-## minute that way, and the only symptom was a missing GDS at the end.
+#-----------------------------------------------------------------------------
+# Place and route (Innovus)
+#-----------------------------------------------------------------------------
+## -files, NOT -f (despite the stage-script headers): Stylus rejects -f with
+## IMPSYT-468, prints usage, and exits ZERO.
 INNOVUS := innovus -stylus -files
 
-.PHONY: pnr_place pnr_cts pnr_route pnr_all
-pnr_place: setup_dirs
+## The three stages share one DB in work/ and must run in order; resume a
+## part-finished flow by invoking the stage you stopped at.
+##   pnr_place : floorplan + power plan + place + tie-offs   (2_pnr_setup)
+##   pnr_cts   : clock tree synthesis + post-CTS opt         (3_pnr_clock)
+##   pnr_route : route + filler + bondpads + GDS + reports   (4_pnr_route)
+## Refuse to place against constraints synthesis has never seen. P&R does NOT
+## read inputs/*.sdc: scripts/$(BLOCK).mmmc feeds it outputs/$(BLOCK)_syn.sdc,
+## the SDC that SYNTHESIS writes. So editing a constraint and re-running
+## pnr_place changes precisely nothing, with no warning — which is the state
+## this tree was in on 2026-08-07 (four inputs/*.sdc edited that afternoon
+## against a _syn.sdc from 08-05). Override with SDC_STALE_OK=1.
+sdc-check:
+	@syn_sdc=$(OUT_DIR)/$(BLOCK)_syn.sdc; \
+	test -s "$$syn_sdc" || { \
+	    echo "FAIL: no $$syn_sdc — P&R takes its constraints from that file."; \
+	    echo "      Run 'make syn' first."; exit 1; }; \
+	newer=$$(find $(DESIGN_DIR)/inputs -name '*.sdc' -newer "$$syn_sdc" -printf '  inputs/%P\n' 2>/dev/null); \
+	if [ -n "$$newer" ] && [ "$(SDC_STALE_OK)" != "1" ]; then \
+	    echo "FAIL: these constraints are NEWER than the SDC place-and-route will use:"; \
+	    echo "$$newer"; \
+	    echo "      P&R reads $$syn_sdc (via scripts/$(BLOCK).mmmc), not inputs/."; \
+	    echo "      Re-run 'make syn' to regenerate it, or pass SDC_STALE_OK=1."; \
+	    exit 1; \
+	fi; \
+	echo "OK: $(BLOCK)_syn.sdc is at least as new as every inputs/*.sdc"
+
+## cpf-patch is idempotent and cheap; running it here means a hand-run or
+## resumed placement cannot proceed on an unpatched CPF. See power_plan.tcl.
+pnr_place: setup_dirs sdc-check cpf-patch
 	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/2_pnr_setup.tcl
 	@test -d $(WORK_DIR)/$(BLOCK) || { \
 	    echo "FAIL: placement wrote no DB at $(WORK_DIR)/$(BLOCK)"; exit 1; }
@@ -203,87 +216,54 @@ pnr_cts:
 	@test -s $(REPORT_DIR)/timing_summary_03_cts_opt.rep || { \
 	    echo "FAIL: CTS wrote no post-opt timing summary — stage did not complete."; exit 1; }
 
-## CALIBRE_HOME IS UNSET FOR THIS STAGE, DELIBERATELY.
-##
-## 4_pnr_route.tcl ends with two blocks guarded on $env(CALIBRE_HOME), and BOTH
-## are broken on this site — which matters because CALIBRE_HOME is always set
-## here (/eda/mentor/calibre), so both always fire:
-##
-##   1. `source .../queryenc/cal_enc.tcl` -> IMPSE-110 "can't find package Tk 8.0"
-##   2. `exec calibre -drc -hier -turbo 8 $drc_ruledeck`
-##        -> ERROR: Failure to open input file GDSFILENAME for read access.
-##      The rule deck expects GDSFILENAME defined in DECK syntax; the .tcl only
-##      sets a *Tcl* variable of that name, so Calibre looks for a file called
-##      literally "GDSFILENAME".
-##
-## A failing `exec` raises a Tcl error, which ABORTS the script before its final
-## `exit`. Innovus then drops to an interactive prompt and sits there forever —
-## holding a Cadence seat — so `make` never returns and no rc is ever written.
-## Seen on BOTH the 2026-08-05 and 2026-08-06 runs (3 occurrences in the
-## former's log): a completed 4.5-hour flow that looked like it had hung.
-##
-## Everything of value — write_stream, write_netlist, write_sdf, write_db and
-## every report — happens BEFORE these blocks, so skipping them loses nothing.
-## Calibre DRC has its own working entry point: the `drc` / `drc_batch` targets.
-##
-## Fixed project-side rather than by patching asic-flows, which is a shared
-## submodule that other designs build from.
+## CALIBRE_HOME is unset deliberately. 4_pnr_route.tcl's two trailing
+## $env(CALIBRE_HOME) blocks both fail on this site, and the failing `exec`
+## aborts the script before its `exit` — Innovus then sits at a prompt holding a
+## seat, so make never returns. Everything of value is written before them, and
+## `make drc` is the working Calibre path. Fixed here rather than in asic-flows,
+## which other designs share.
 pnr_route:
 	cd $(WORK_DIR)/; env -u CALIBRE_HOME $(INNOVUS) $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
 	@test -s $(OUT_DIR)/$(BLOCK).gds \
 	    && echo "OK: GDSII $(OUT_DIR)/$(BLOCK).gds ($$(du -h $(OUT_DIR)/$(BLOCK).gds | cut -f1))" \
 	    || { echo "FAIL: no GDSII at $(OUT_DIR)/$(BLOCK).gds"; \
-	         echo "      innovus exits 0 on a rejected argument or a failed script;"; \
-	         echo "      find the real error with:"; \
-	         echo "        grep -nE '\*\*ERROR|Unknown argument' $(WORK_DIR)/innovus.log*"; \
+	         echo "      grep -nE '\*\*ERROR|Unknown argument' $(WORK_DIR)/innovus.log*"; \
 	         echo "      if the log looks clean, check ASIC/asic-flows is at b19e784+"; \
-	         echo "      (write_stream lives there; the earlier pin routes but streams nothing)."; \
+	         echo "      — write_stream lives there; the earlier pin streams nothing."; \
 	         exit 1; }
 
-## pnr_all: syn -> place -> CTS -> route -> GDSII, unattended. Multi-hour.
+## syn -> place -> CTS -> route -> GDSII, unattended. Multi-hour.
 pnr_all: syn pnr_place pnr_cts pnr_route
 
-## pnr_setup: interactive Innovus in work/, empty session.
+## Interactive Innovus in work/, empty session — no config, no design.
 pnr_setup:
 	cd $(WORK_DIR)/; innovus -stylus
 
-## gui: interactive Innovus with the design ALREADY LOADED — config.tcl sourced
-## and the saved DB read. `pnr_setup` drops you in an empty session where
-## `read_db` alone fails, because the block name and every library path live in
-## config.tcl. This is the one you want for inspecting a stage.
-.PHONY: gui
+## Interactive Innovus with config.tcl sourced and the saved DB read — the one
+## for inspecting a stage. In pnr_setup a bare read_db fails, because the block
+## name and every library path live in config.tcl.
 gui:
-	@# Do NOT just test -n: a set-but-malformed DISPLAY (e.g. "12.0" with the
-	@# leading colon missing) passes that and Innovus then drops to no-window
-	@# mode with only a WARN, which reads as "the GUI silently didn't open".
-	@# Probe the display for real instead.
+	@# Probe the display for real: a malformed DISPLAY ("12.0", no leading colon)
+	@# passes `test -n`, and Innovus then falls back to no-window mode with a WARN.
 	@test -n "$$DISPLAY" || { \
-	    echo "FAIL: DISPLAY is not set in THIS shell."; \
-	    echo "      A ThinLinc desktop's DISPLAY does NOT reach a VS Code Remote-SSH"; \
-	    echo "      terminal — they are separate shells. Run make from a terminal"; \
-	    echo "      INSIDE the ThinLinc desktop, or use 'ssh -X <host>'."; \
+	    echo "FAIL: DISPLAY is not set in THIS shell. A ThinLinc desktop's DISPLAY"; \
+	    echo "      does not reach a VS Code Remote-SSH terminal — run make from a"; \
+	    echo "      terminal inside the desktop, or 'ssh -X <host>'."; \
 	    echo "      Text-mode session on purpose?   make pnr_setup"; \
 	    exit 1; }
 	@xdpyinfo >/dev/null 2>&1 || { \
-	    echo "FAIL: DISPLAY is set to '$$DISPLAY' but no X server answers there,"; \
-	    echo "      so Innovus would start in no-window mode (IMPSYT-1507)."; \
-	    echo ""; \
+	    echo "FAIL: DISPLAY='$$DISPLAY' but no X server answers there, so Innovus"; \
+	    echo "      would start in no-window mode (IMPSYT-1507)."; \
 	    case "$$DISPLAY" in \
-	      [0-9]*) echo "      LOOK AT THE VALUE: it is missing the leading colon."; \
-	              echo "      Try:  export DISPLAY=:$$DISPLAY" ;; \
-	      *)      echo "      Check the session is still alive:  xdpyinfo | head -3" ;; \
+	      [0-9]*) echo "      It is missing the leading colon. Try: export DISPLAY=:$$DISPLAY" ;; \
+	      *)      echo "      Check the session is still alive: xdpyinfo | head -3" ;; \
 	    esac; \
 	    exit 1; }
 	@echo "OK: DISPLAY=$$DISPLAY (X server responded)"
 	@test -d $(WORK_DIR)/$(BLOCK) || { \
 	    echo "FAIL: no saved DB at $(WORK_DIR)/$(BLOCK) — run 'make pnr_place' first."; exit 1; }
-	@# gui_show is REQUIRED, not decoration. Launched with -files, Innovus
-	@# creates its main window but never MAPS it: xwininfo reports
-	@# "Map State: IsUnMapped" and xprop reports no WM_STATE at all, i.e. the
-	@# window manager never took ownership. The session looks like a plain
-	@# text console and the GUI appears simply not to exist — with no error,
-	@# because from the tool's point of view nothing failed. An explicit
-	@# gui_show maps it (IsUnMapped -> IsViewable, verified).
+	@# gui_show is required, not decoration: launched with -files, Innovus creates
+	@# its main window but never maps it, so the GUI appears not to exist at all.
 	@printf '%s\n' \
 	    'source ../scripts/config.tcl' \
 	    'read_db $(BLOCK)' \
@@ -293,115 +273,39 @@ gui:
 	cd $(WORK_DIR)/; $(INNOVUS) open_db.tcl
 
 #-----------------------------------------------------------------------------
-# Calibre DRC
+# Physical verification (Calibre) — see 12-calibre-drc.md, 14-drc-triage.md
 #-----------------------------------------------------------------------------
-# The TSMC deck ships with placeholders --
-#     LAYOUT PATH    "GDSFILENAME"
-#     LAYOUT PRIMARY "TOPCELLNAME"
-# -- so the layout and top cell must come from a Calibre Interactive RUNSET,
-# which overrides them when the deck is expanded.
-#
-# Two things went wrong with that before:
-#   - `make drc` ran a bare `calibre -gui` and passed NO runset at all, so it
-#     opened a blank session. scripts/calibre_drc exists but never reached the
-#     tool, and its paths are relative to work/ so they only resolve from there.
-#   - layout and top cell were set independently and drifted apart. In the
-#     reference run the expanded deck names nanosoc_eth_chiplet.gds (the
-#     pre-pads stream) against top cell nanosoc_eth_chiplet_pads, which is not
-#     a cell in that file -- hence its 0-byte DRC_RES.db.
-#
-# Generating the runset here fixes both: the runset is always passed, paths are
-# absolute, and layout and top cell are derived from $(GDS)/$(BLOCK) together
-# so they cannot disagree.
-$(DRC_RUNSET): | setup_dirs
-	@printf '%s\n' \
-	    '// GENERATED by ASIC/genus-innovus/Makefile — edits will be overwritten.' \
-	    'drc.rulesFile.value = "$(DRC_RULEDECK)"' \
-	    'drc.runDir.value = "$(DRC_RUNDIR)"' \
-	    'drc.layout.layoutFile.value = "$(GDS)"' \
-	    'drc.layout.topCell.value = "$(BLOCK)"' \
-	    'cmn.turboCommand.runHow.value = "multi"' \
-	    > $@
-	@echo "OK: wrote $@"
-
-.PHONY: drc-preflight
-drc-preflight:
-	@test -s $(GDS) || { \
-	    echo "FAIL: no GDSII at $(GDS) — run 'make pnr_route' first."; exit 1; }
-	@test -r $(DRC_RULEDECK) || { \
-	    echo "FAIL: DRC ruledeck unreadable: $(DRC_RULEDECK)"; \
-	    echo "      needs the /tsmc65pdk mount and group tsmc65pdkgrp."; exit 1; }
-
-## Processors for Calibre turbo. srv03335 has 16 cores; 8 leaves headroom.
-DRC_CPUS ?= 8
-
-## drc: Calibre DRC on the built GDS, headless — no X display, no GUI packages,
-## no runset. This is the target that WORKS.
+## Calibre DRC on the built GDS, headless. The foundry deck's LAYOUT PATH /
+## LAYOUT PRIMARY are literal placeholders with no command-line override, so both
+## come from the project wrapper deck in scripts/calibre/, which INCLUDEs the
+## foundry deck untouched. run_drc.sh does its own preflight.
 ##
-## The foundry deck (CLN65S_9M_6X1Z1U.26_2a) carries, at lines 230-231:
-##     LAYOUT PATH    "GDSFILENAME"
-##     LAYOUT PRIMARY "TOPCELLNAME"
-## Those are LITERAL PLACEHOLDER STRINGS in SVRF, not variables. 4_pnr_route.tcl
-## did `set GDSFILENAME $OUT_DIR/${block_name}.gds` — a *Tcl* variable the deck
-## never sees — so Calibre looked for a file called literally "GDSFILENAME" and
-## died. That is why the in-flow Calibre step has NEVER produced a result, in
-## any run of this design. `calibre -drc` has no command-line layout/topcell
-## override, so the overrides must come from a project-owned wrapper deck, which
-## is what scripts/calibre/ provides. The foundry deck is INCLUDEd, never copied
-## or patched.
-##
-## The wrapper needs `DRC ICSTATION YES` or SVRF rejects the duplicate spec
-## statements with "Error SPC1 ... superfluous specification statement".
-##
-## CAVEAT ON ANY NUMBER THIS PRODUCES: the GDS carries routing, vias and memory
-## macros but NO standard-cell, IO or bond-pad device geometry (10,109 OD and
-## 12,854 PO shapes die-wide is a macro-only count), and no seal ring, passivation
-## or metal fill. Front-end, density and seal-ring rules will fail or be
-## meaningless. The back-end metal/via/antenna checks are the real signal.
-.PHONY: drc
-drc: drc-preflight
+## CAVEAT ON ANY NUMBER THIS PRODUCES: the GDS carries routing, vias and macros
+## but no standard-cell, IO or bond-pad geometry, no seal ring and no fill, so
+## front-end, density and seal-ring rules are meaningless here. The back-end
+## metal/via/antenna checks are the real signal.
+drc:
 	DRC_GDS=$(GDS) DRC_RUNDIR=$(DRC_RUNDIR) DRC_CPUS=$(DRC_CPUS) \
 	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
 
-## drc_gui: the old interactive path, kept as a fallback. Needs a runset and X.
-.PHONY: drc_gui
-## lvs-preflight: does this host have what LVS needs? Seconds, no tool launched.
-## Expected to FAIL today and to say exactly why: there is no transistor netlist
-## for the standard cells, IO drivers or bond pads, because every TSMC package
-## installed here is Front End (_FE). This is procurement, not engineering —
-## Calibre nmLVS-H has 150 idle seats and the decks are on disk. It turns green
-## by itself the day the _BE packages land.
-## See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+## Does this host have what LVS needs? Seconds, no tool launched. Expected to
+## FAIL today and to say why: every TSMC package installed here is Front End
+## (_FE), so there is no transistor netlist for cells, IO or pads. Procurement,
+## not engineering. See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
 lvs-preflight:
 	$(DESIGN_DIR)/scripts/calibre/run_lvs.sh --check
 
-## lvs: Calibre nmLVS over the streamed GDS against the P&R netlist. Refuses to
-## run until lvs-preflight passes, so it fails with the missing-data list rather
-## than an obscure tool error. NOTE the GDS is itself incomplete for the same
-## reason (424 cell masters are LEF shells), so LVS and a manufacturable stream
-## unblock together, not separately.
+## Calibre nmLVS, gated on lvs-preflight so it fails with the missing-data list
+## rather than an obscure tool error. The GDS is incomplete for the same reason
+## (424 cell masters are LEF shells), so both unblock together.
 lvs: lvs-preflight
 	$(DESIGN_DIR)/scripts/calibre/run_lvs.sh --run \
 	    $(GDS) $(OUT_DIR)/$(BLOCK)_pnr.v $(BLOCK) $(WORK_DIR) $(LOG_DIR)
 
-.PHONY: lvs lvs-preflight
-
-drc_gui: drc-preflight $(DRC_RUNSET)
-	cd $(WORK_DIR)/; calibre -gui -drc -runset $(DRC_RUNSET)
-
-## drc_batch: the same DRC headless. Use this for an unattended or remote run;
-## results land in $(DRC_RUNDIR).
-.PHONY: drc_batch
-drc_batch: drc-preflight $(DRC_RUNSET)
-	cd $(WORK_DIR)/; calibre -gui -drc -batch -runset $(DRC_RUNSET)
-	@echo "== DRC results in $(DRC_RUNDIR) =="
-
 #-----------------------------------------------------------------------------
 # Housekeeping
 #-----------------------------------------------------------------------------
-## romlibs-fetch: copy the built ROM libraries from a reference tree, because
-## they cannot be built here. Override the source with ROMLIBS_REF=<path>.
-.PHONY: romlibs-fetch
+## Copy the built ROM libraries from a reference tree; override with ROMLIBS_REF.
 romlibs-fetch:
 	@test -d "$(ROMLIBS_REF)" || { \
 	    echo "FAIL: no ROM-lib reference tree at $(ROMLIBS_REF)"; \
@@ -411,9 +315,7 @@ romlibs-fetch:
 	cp -r $(ROMLIBS_REF)/cc_rom $(ROMLIBS_REF)/eth_rom $(ROMLIBS_DIR)/
 	@$(MAKE) --no-print-directory romlibs-check
 
-## status: which flow stages have actually run, from the artefacts on disk.
-## Cheap, and the fastest way to see where a part-finished flow stopped.
-.PHONY: status
+## Which flow stages have actually run, from the artefacts on disk.
 status:
 	@echo "== $(BLOCK) =="
 	@printf '  %-14s %-4s %s\n' STAGE OK ARTEFACT
@@ -435,23 +337,19 @@ status:
 	    fi; \
 	done
 
-## clean: drop the rerunnable intermediates (work DB + logs). KEEPS outputs/
-## and reports/ so a finished GDS and its sign-off reports survive.
-.PHONY: clean
+## Drop the rerunnable intermediates; keeps outputs/ and reports/, so a finished
+## GDS and its sign-off reports survive.
 clean:
 	@echo "removing $(WORK_DIR) and $(LOG_DIR) (outputs/ and reports/ kept)"
 	rm -rf $(WORK_DIR) $(LOG_DIR)
 
-## distclean: clean, plus outputs/ and reports/ — DELETES the GDS. Prints what
-## it is about to destroy first.
-.PHONY: distclean
+## clean, plus outputs/ and reports/ — DELETES the GDS.
 distclean:
 	@echo "about to remove work/ logs/ outputs/ reports/ — including:"
 	@test -s $(GDS) && echo "  !! $(GDS) ($$(du -h $(GDS) | cut -f1))" || true
 	@du -sh $(OUT_DIR) $(REPORT_DIR) 2>/dev/null | sed 's/^/  /' || true
 	rm -rf $(WORK_DIR) $(LOG_DIR) $(OUT_DIR) $(REPORT_DIR)
 
-.PHONY: help
 help:
 	@echo "nanosoc_eth_chiplet ASIC flow — Genus + Innovus + Calibre (TSMC 65nm)"
 	@echo ""
@@ -460,20 +358,29 @@ help:
 	@echo "    make pnr_place     floorplan + place          (Innovus)"
 	@echo "    make pnr_cts       clock tree synthesis       (Innovus)"
 	@echo "    make pnr_route     route + fill + GDSII       -> $(GDS)"
-	@echo "    make drc           Calibre DRC on that GDS    (GUI; drc_batch for headless)"
+	@echo "    make drc           Calibre DRC on that GDS    (headless)"
 	@echo ""
-	@echo "    make pnr_all       all four, unattended. Multi-hour."
+	@echo "    make pnr_all       syn + all three P&R stages, unattended. Multi-hour."
 	@echo ""
 	@echo "  The stages share a DB in work/ and MUST run in order. To resume a"
 	@echo "  part-finished flow, invoke the stage you stopped at — 'make status'"
 	@echo "  shows which ones have run."
+	@echo ""
+	@echo "  Verification:"
+	@echo "    make lec           Conformal: RTL vs synthesis netlist"
+	@echo "    make lec-pnr       Conformal: synthesis vs post-P&R netlist"
+	@echo "    make lec-selftest  mutation-test the LEC harness (~15s)"
+	@echo "    make lvs           Calibre LVS   (lvs-preflight says what is missing)"
+	@echo ""
+	@echo "  Synthesis A/B:"
+	@echo "    make syn_eval      variant run   -> outputs/eval/"
+	@echo "    make syn_compare   diff syn vs syn_eval metrics"
 	@echo ""
 	@echo "  Setup / inspection:"
 	@echo "    make status        which stages have run"
 	@echo "    make romlibs-fetch copy the built ROM libs (they cannot be built here)"
 	@echo "    make asic-flist    re-render the generated sub-flists"
 	@echo "    make gui           Innovus with config + saved DB loaded"
-	@echo "    make lec           Conformal LEC on the synthesis dofile"
 	@echo "    make clean         drop work/ + logs/   (keeps the GDS)"
 	@echo "    make distclean     also drop outputs/ + reports/  (DELETES the GDS)"
 	@echo ""

@@ -7,19 +7,19 @@ Calibre session was opened. Everything below is derived from files already on di
 
 | Source | Path |
 |---|---|
-| Today's run (CORE_TO_IO 70) | [`ASIC/genus-innovus/logs/pnr_run_core70.log`](../../ASIC/genus-innovus/logs/pnr_run_core70.log), `reports/`, `outputs/` |
-| Previous run (CORE_TO_IO 50) | [`ASIC/genus-innovus/baseline_2026-08-05/`](../../ASIC/genus-innovus/baseline_2026-08-05/) |
+| Today's run (CORE_TO_IO 70) | `ASIC/genus-innovus/logs/pnr_run_core70.log`, `reports/`, `outputs/` |
+| Previous run (CORE_TO_IO 50) | `ASIC/genus-innovus/baseline_2026-08-05/` |
 
 Verdict summary, worst first:
 
 | | Item | Verdict | Impact |
 |---|---|---|---|
-| [1](#1--clock-source-latency-is-asymmetric-in-the-hold-view) | Clock source latency asymmetric in `default_analysis_view_hold` | **REAL — flow defect** | injects 1.076 ns of phantom skew into *every* hold check; is the root cause of item 2 |
-| [2](#2--post-route-drv-max_transition--max_capacitance) | Post-route DRV: 3,227 `max_transition` pins, 849 `max_capacitance` | **REAL — signoff blocker** | consequence of item 1; 2.6× worse than baseline |
-| [3](#3--qspi-flash-cache-tag-ram-undriven-gwen) | QSPI flash-cache tag RAM `GWEN` undriven | **REAL — RTL defect** | both tag RAMs stuck in write mode; cache never reads a tag |
-| [4](#4--vddio--vssio-have-no-routing) | `VDDIO` / `VSSIO` have no routing | **BENIGN, but unverified** | expected for an abutted pad ring; nothing checks the ring is continuous |
-| [5](#5--tclcmd-917-20-sdc-pins-not-found) | `TCLCMD-917` ×20+ on pad supply pins | **BENIGN — with a real side effect** | timing unaffected; but it exhausts the message limit that would report genuine failures |
-| [6](#6--impsp-9099-scan-chains-undefined-for-3055-of-flops) | `IMPSP-9099` scan chains undefined for 30.55% of flops | **BENIGN — false positive** | DFT is off by design; message is a misreading of functional mux use |
+| [1](#1-clock-source-latency-is-asymmetric-in-the-hold-view) | Clock source latency asymmetric in `default_analysis_view_hold` | **REAL — flow defect** | injects 1.076 ns of phantom skew into *every* hold check; is the root cause of item 2 |
+| [2](#2-post-route-drv-max_transition-max_capacitance) | Post-route DRV: 3,227 `max_transition` pins, 849 `max_capacitance` | **REAL — signoff blocker** | consequence of item 1; 2.6× worse than baseline |
+| [3](#3-qspi-flash-cache-tag-ram-undriven-gwen) | QSPI flash-cache tag RAM `GWEN` undriven | **REAL — RTL defect** | both tag RAMs stuck in write mode; cache never reads a tag |
+| [4](#4-vddio-vssio-have-no-routing) | `VDDIO` / `VSSIO` have no routing | **BENIGN, but unverified** | expected for an abutted pad ring; nothing checks the ring is continuous |
+| [5](#5-tclcmd-917-20-sdc-pins-not-found) | `TCLCMD-917` ×20+ on pad supply pins | **BENIGN — with a real side effect** | timing unaffected; but it exhausts the message limit that would report genuine failures |
+| [6](#6-impsp-9099-scan-chains-undefined-for-3055-of-flops) | `IMPSP-9099` scan chains undefined for 30.55% of flops | **BENIGN — false positive** | DFT is off by design; message is a misreading of functional mux use |
 
 > **The headline number is setup-only.** `qor_05_route_opt.rep` and
 > `timing_summary_05_route_opt.rep` report **WNS +0.079, TNS 0, FEP 0** — and both are
@@ -38,7 +38,7 @@ cause of item 2.**
 The same reg2reg path, reported at three points in the same run. Watch the `Src Latency`
 row — capture on the left, launch on the right:
 
-**Post-CTS-opt — clean.** [`reports/timing_03_cts_opt_early.rep`](../../ASIC/genus-innovus/reports/timing_03_cts_opt_early.rep)
+**Post-CTS-opt — clean.** `reports/timing_03_cts_opt_early.rep`
 ```
                        Capture       Launch
         Src Latency:+   -1.076       -1.076        <-- equal
@@ -46,7 +46,7 @@ row — capture on the left, launch on the right:
               Slack:=   -0.000
 ```
 
-**Post-route — broken.** [`reports/timing_04_route_early.rep`](../../ASIC/genus-innovus/reports/timing_04_route_early.rep)
+**Post-route — broken.** `reports/timing_04_route_early.rep`
 ```
                        Capture       Launch
         Src Latency:+    0.000       -1.076        <-- capture lost it
@@ -54,7 +54,7 @@ row — capture on the left, launch on the right:
               Slack:=   -1.090
 ```
 
-**Post-route, typical view — still clean.** [`reports/nanosoc_eth_chiplet_pads_imp_timing_typical_early.rep`](../../ASIC/genus-innovus/reports/nanosoc_eth_chiplet_pads_imp_timing_typical_early.rep)
+**Post-route, typical view — still clean.** `reports/nanosoc_eth_chiplet_pads_imp_timing_typical_early.rep`
 ```
                        Capture       Launch
         Src Latency:+   -1.549       -1.548        <-- equal
@@ -92,7 +92,7 @@ logs/pnr_run_core70.log:25996
 this view, so the max side defaults to 0.
 
 This is harmless while the min/max split is inactive. The log banner at the writeback says
-`Analysis Mode: MMMC Non-OCV`. Then [`scripts/route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl)
+`Analysis Mode: MMMC Non-OCV`. Then [`scripts/route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl)
 — sourced by `4_pnr_route.tcl`, i.e. **after** CTS — does:
 
 ```tcl
@@ -369,7 +369,7 @@ Net VSSIO: no routing
     2 Problem(s) (IMPVFC-98): Net has no global routing and no special routing.
 ```
 
-This is expected from the scripts. [`scripts/power_plan.tcl`](../../ASIC/genus-innovus/scripts/power_plan.tcl)
+This is expected from the scripts. [`scripts/power_plan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/power_plan.tcl)
 gives `VDDIO`/`VSSIO` a `connect_global_net` **and nothing else** — every `add_rings`,
 `add_stripes` and `route_special` in the file is `-nets {VDD VSS}`. Before the LEF fix the
 router treated them as ordinary signal nets and threaded them round the periphery (badly).
@@ -426,7 +426,7 @@ starts at line 148 — Innovus reports the line where a command ends:
 ```
 
 It comes from one line of hand-written SDC —
-[`inputs/constraints.sdc:79`](../../ASIC/genus-innovus/inputs/constraints.sdc):
+[`inputs/constraints.sdc:79`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/inputs/constraints.sdc):
 
 ```tcl
 ### Multicycle path through pads
@@ -511,7 +511,7 @@ Two changes, neither in this page's write scope:
 
 ### DFT is off
 
-[`scripts/config.tcl:123`](../../ASIC/genus-innovus/scripts/config.tcl) —
+[`scripts/config.tcl:123`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) —
 
 ```tcl
 set DFT 0
@@ -592,7 +592,7 @@ identical to the kept ones, since the message does not say.
 ## What changed in `floorplan.tcl`
 
 Item 6 of the original brief (stale comment figures) is applied in
-[`scripts/floorplan.tcl`](../../ASIC/genus-innovus/scripts/floorplan.tcl) — **comments
+[`scripts/floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl) — **comments
 only, no command, coordinate or value touched**:
 
 - `539 violations` → **580** (the DRC report's own trailer says

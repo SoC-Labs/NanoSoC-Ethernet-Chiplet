@@ -10,7 +10,7 @@ time: **both Genus and Innovus exit 0 when they fail.**
 
 Everything here is TSMC 65nm, Genus for synthesis, Innovus `v21.11-s130_1` in
 STYLUS/Common-UI mode for P&R, Calibre for DRC. All commands are run from
-[`ASIC/genus-innovus/`](../../ASIC/genus-innovus/).
+`ASIC/genus-innovus/`.
 
 Sibling pages: [00-index](00-index.md) ·
 [02-innovus-basics](02-innovus-basics.md) ·
@@ -40,7 +40,7 @@ place-and-route on a netlist that was never written.
 a minute this way, and the only symptom was a missing GDS at the end of a night's run.
 
 Consequence, and the design rule for this Makefile: **every stage target asserts on an
-artefact on disk, never on `$?`.** See [`Makefile`](../../ASIC/genus-innovus/Makefile):
+artefact on disk, never on `$?`.** See [`Makefile`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/Makefile):
 
 | target | assertion |
 |---|---|
@@ -86,8 +86,8 @@ make syn  ->  make pnr_place  ->  make pnr_cts  ->  make pnr_route  ->  [ make d
 
 `make pnr_all` = `syn pnr_place pnr_cts pnr_route`, unattended, multi-hour.
 
-All four `cd` into [`work/`](../../ASIC/genus-innovus/work) before launching the tool.
-That is not cosmetic: [`scripts/config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl)
+All four `cd` into `work/` before launching the tool.
+That is not cosmetic: [`scripts/config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl)
 defines `LOG_DIR ../logs`, `REPORT_DIR ../reports`, `OUT_DIR ../outputs` as **relative**
 paths, and every stage script begins with `source ../scripts/config.tcl`. Launch the tool
 from anywhere else and the sources fail or the outputs land somewhere unexpected.
@@ -124,14 +124,14 @@ the top-level Makefile), `romlibs-check` (fails fast if the ROM `.lib`/`.lef` fi
 absent — Genus would otherwise die inside `set_db` with `Cannot open file
 'rom_via_ss_1p08v_1p08v_125c.lib'`).
 
-Script: [`1_synthesis.tcl`](../../ASIC/asic-flows/Cadence/1_synthesis.tcl).
+Script: [`1_synthesis.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/1_synthesis.tcl).
 It sources:
 
 | sourced | what it provides |
 |---|---|
-| [`scripts/config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl) | block name, all library/LEF/GDS paths, `soclabs_setup_multi_cpu`, the `check_cpf` wrapper |
-| [`scripts/procs.tcl`](../../ASIC/genus-innovus/scripts/procs.tcl) | `expand_env` — expands `${VAR}` and `$(VAR)` in flists (sourced *by* config.tcl) |
-| [`scripts/read_flist.tcl`](../../ASIC/genus-innovus/scripts/read_flist.tcl) | the RTL, via `$hdl_file_list` |
+| [`scripts/config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) | block name, all library/LEF/GDS paths, `soclabs_setup_multi_cpu`, the `check_cpf` wrapper |
+| [`scripts/procs.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/procs.tcl) | `expand_env` — expands `${VAR}` and `$(VAR)` in flists (sourced *by* config.tcl) |
+| [`scripts/read_flist.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/read_flist.tcl) | the RTL, via `$hdl_file_list` |
 | `scripts/dft_setup.tcl` | only if `DFT == 1`; **`DFT` is 0** in config.tcl, so the whole scan path is off — and no such file exists in `scripts/` today |
 
 It reads `../inputs/nanosoc_eth_chiplet_pads.upf` (power intent) and
@@ -174,7 +174,7 @@ pre-existing and matches the 2026-07 reference run's error counts exactly.
 cd work/ ; innovus -stylus -files ../../asic-flows/Cadence/2_pnr_setup.tcl
 ```
 
-Script: [`2_pnr_setup.tcl`](../../ASIC/asic-flows/Cadence/2_pnr_setup.tcl). In order:
+Script: [`2_pnr_setup.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/2_pnr_setup.tcl). In order:
 
 1. `source ../scripts/config.tcl`, `soclabs_setup_multi_cpu`
 2. `set_db init_power_nets {VDD VDDACC VDDIO}` / `init_ground_nets {VSS VSSIO}`
@@ -205,7 +205,7 @@ Script: [`2_pnr_setup.tcl`](../../ASIC/asic-flows/Cadence/2_pnr_setup.tcl). In o
 `reports/qor_01_place.rep`.
 
 `SOCLABS_ASIC_FLOW_DIR` **must** be exported (step 9 sources through it). It is set by
-[`ASIC/common.mk`](../../ASIC/common.mk); nothing else in the repo sets it. Running the
+[`ASIC/common.mk`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/common.mk); nothing else in the repo sets it. Running the
 script by path without that export aborts the stage.
 
 ---
@@ -216,7 +216,7 @@ script by path without that export aborts the stage.
 cd work/ ; innovus -stylus -files ../../asic-flows/Cadence/3_pnr_clock.tcl
 ```
 
-Script: [`3_pnr_clock.tcl`](../../ASIC/asic-flows/Cadence/3_pnr_clock.tcl).
+Script: [`3_pnr_clock.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/3_pnr_clock.tcl).
 
 1. `source ../scripts/config.tcl`, `soclabs_setup_multi_cpu`
 2. **`read_db nanosoc_eth_chiplet_pads`** — picks up exactly what stage 2 wrote
@@ -247,7 +247,7 @@ out — see its own comment and [05-place-cts-route](05-place-cts-route.md).
 cd work/ ; innovus -stylus -files ../../asic-flows/Cadence/4_pnr_route.tcl
 ```
 
-Script: [`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl). This is the
+Script: [`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl). This is the
 stage that emits the GDSII.
 
 1. `source ../scripts/config.tcl`, `read_db nanosoc_eth_chiplet_pads`, `source .../procs.tcl`
@@ -261,7 +261,7 @@ stage that emits the GDSII.
 7. `report_end_step 05_route_opt`
 8. `write_db nanosoc_eth_chiplet_pads`
 9. `source ../scripts/place_bondpads.tcl` → which first sources
-   [`scripts/filler.tcl`](../../ASIC/genus-innovus/scripts/filler.tcl) (filler + ANTENNA
+   [`scripts/filler.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/filler.tcl) (filler + ANTENNA
    diodes, *after* routing — see [06-fill-antenna-bondpads](06-fill-antenna-bondpads.md)),
    then creates the `PAD70GU`/`PAD70NU` staggered bond pads
 10. `check_drc`, `check_filler`, `check_connectivity`, `check_process_antenna` → `reports/`
@@ -284,8 +284,8 @@ Two things to know about this stage:
 - The `timing_full_*.mtarpt` files are written to the **current directory**, i.e.
   `work/`, not `reports/` — the script uses a bare relative path for those.
 - The in-script Calibre run at step 16 is a no-op in practice (it passes only the
-  ruledeck, whose `LAYOUT PATH` / `LAYOUT PRIMARY` are placeholders). Use `make drc` /
-  `make drc_batch`, which generate a proper runset. See
+  ruledeck, whose `LAYOUT PATH` / `LAYOUT PRIMARY` are placeholders). Use `make drc`,
+  which drives Calibre through a project-owned wrapper deck that resolves both. See
   [09-signoff-checklist](09-signoff-checklist.md).
 - This stage needs `ASIC/asic-flows` at **`b19e784` or later**. The earlier revision stops
   after routing and writes no stream at all — the failure mode is a clean-looking log and
@@ -324,8 +324,8 @@ routing or hold repair costs a full re-run from placement (~4.5–5 h) instead o
 
 | snapshot | written by | at what point | contains |
 |---|---|---|---|
-| `nanosoc_eth_chiplet_pads_placed` | [`cts_setup.tcl`](../../ASIC/genus-innovus/scripts/cts_setup.tcl), first line | sourced by `3_pnr_clock.tcl` immediately after its `read_db` | exactly the **post-place** state |
-| `nanosoc_eth_chiplet_pads_cts` | [`route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl), first line | sourced by `4_pnr_route.tcl` immediately after its `read_db` | exactly the **post-CTS** state |
+| `nanosoc_eth_chiplet_pads_placed` | [`cts_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/cts_setup.tcl), first line | sourced by `3_pnr_clock.tcl` immediately after its `read_db` | exactly the **post-place** state |
+| `nanosoc_eth_chiplet_pads_cts` | [`route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl), first line | sourced by `4_pnr_route.tcl` immediately after its `read_db` | exactly the **post-CTS** state |
 | `nanosoc_eth_chiplet_pads` | every stage | end of each stage | the **latest** state — post-place, then post-CTS, then post-route |
 
 The placement is deliberate: each snapshot is taken by the *consuming* stage, right after
@@ -336,7 +336,7 @@ Cost is trivial — the three DBs on disk today are 47 MB (`_placed`), 57 MB (`_
 61 MB (current). Disk is not the constraint here; a 5-hour re-run is.
 
 To open a snapshot instead of the live DB, see
-[02-innovus-basics](02-innovus-basics.md#loading-a-snapshot).
+[02-innovus-basics](02-innovus-basics.md#loading-a-snapshot-instead-of-the-final-db).
 
 ---
 
@@ -369,7 +369,7 @@ $ make status
 The default goal. Bare `make` used to run `setup_dirs` — just `mkdir` — and report success
 having done nothing recognisable; it now prints the target list, the ordering rule, and
 the two env vars the flow needs (`TSMC_65_HOME`, `SOCLABS_ASIC_FLOW_DIR`, both exported by
-[`common.mk`](../../ASIC/common.mk)).
+[`common.mk`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/common.mk)).
 
 ### `make clean` vs `make distclean`
 
@@ -418,7 +418,7 @@ ASIC/romlibs/eth_rom/eth_rom_via.lef
 | `make asic-flist` | re-render the generated sub-flists (delegates to the top-level Makefile, which sources the `set_env.sh` scripts in dependency order) |
 | `make cpf-patch` | repair the Genus-written CPF; idempotent; run automatically by `syn` |
 | `make romlibs-check` | assert the four ROM files exist, with an explanation if not |
-| `make drc` / `make drc_batch` | Calibre DRC on the built GDS, GUI or headless, with a generated runset |
+| `make drc` | Calibre DRC on the built GDS, headless, via the project's wrapper deck |
 | `make lec` | Conformal LEC on the dofile synthesis wrote |
 | `make syn_norun` | Genus interactive in `work/` |
 

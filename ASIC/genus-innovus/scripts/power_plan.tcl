@@ -37,6 +37,27 @@
 #
 # This guard is the backstop: if the CPF patch did not happen, fail HERE with a
 # clear reason rather than 3 hours later with a silently unfilled die.
+#
+# It tests the CPF TEXT, not the loaded design, and that is the whole point.
+# The obvious check - `get_db power_domains PD_TOP` - CANNOT detect the broken
+# state: as the paragraph above says, the unpatched CPF still contains
+# `create_power_domain -name PD_TOP`, so the domain exists either way and the
+# check passes on exactly the input it was written to catch. What separates the
+# two states is the supply nets, i.e. the three statements cpf-patch inserts.
+# Same predicate as the Makefile's cpf-patch target, so the two cannot disagree.
+set cpf_file $OUT_DIR/${block_name}_gate1.cpf
+if {![file exists $cpf_file] || [file size $cpf_file] == 0} {
+    error "power_plan: no CPF at $cpf_file - run 'make syn', which also patches it."
+}
+set fh [open $cpf_file r] ; set cpf_text [read $fh] ; close $fh
+foreach stmt {create_power_nets create_ground_nets update_power_domain} {
+    if {![string match "*$stmt*" $cpf_text]} {
+        error "power_plan: $cpf_file is UNPATCHED - no '$stmt'.\
+             \nPD_TOP would get no supply net, every add_fillers pass would die with\
+             \nIMPSP-5110, and the run would still stream a GDS with zero filler and\
+             \nzero antenna diodes. Fix: make -C ASIC/genus-innovus cpf-patch"
+    }
+}
 if {[llength [get_db power_domains PD_TOP]] == 0} {
     error "power_plan: no PD_TOP power domain — check read_power_intent"
 }

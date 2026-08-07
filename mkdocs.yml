@@ -1,0 +1,173 @@
+site_name: NanoSoC Ethernet Chiplet
+site_description: >-
+  Working documentation for the NanoSoC Ethernet Chiplet — the Cadence
+  Genus/Innovus tapeout flow, its scripts line by line, and the design,
+  verification and bring-up record behind them.
+site_author: SoC Labs
+
+# No public site URL is claimed here. Set site_url once the docs are actually
+# published somewhere; Read the Docs injects the canonical URL itself.
+repo_url: https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet
+repo_name: SoC-Labs/NanoSoC-Ethernet-Chiplet
+edit_uri: ""
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    # Light
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    # Dark
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+
+# Report bad internal links loudly. These pages cross-reference each other
+# heavily and a silently-dead link is worse than a build failure.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+
+nav:
+  - Home: index.md
+
+  - Tapeout guide:
+      - Overview: tapeout/00-index.md
+      - Flow overview: tapeout/01-flow-overview.md
+      - Innovus basics: tapeout/02-innovus-basics.md
+      - Floorplan: tapeout/03-floorplan.md
+      - Power plan: tapeout/04-power-plan.md
+      - Place, CTS, route: tapeout/05-place-cts-route.md
+      - Fill, antenna, bond pads: tapeout/06-fill-antenna-bondpads.md
+      - Reading reports: tapeout/07-reading-reports.md
+      - Debugging: tapeout/08-debugging.md
+      - Signoff checklist: tapeout/09-signoff-checklist.md
+      - Tapeout submission: tapeout/10-tapeout-submission.md
+      - Known issues: tapeout/11-known-issues.md
+      - Calibre DRC: tapeout/12-calibre-drc.md
+      - LEC: tapeout/13-lec.md
+      - DRC triage: tapeout/14-drc-triage.md
+      - PG opens analysis: tapeout/15-pg-opens-analysis.md
+      - Open defects: tapeout/16-open-defects.md
+      - Silently ineffective commands: tapeout/17-silent-noops.md
+
+  - Script reference:
+      - Overview: tapeout/scripts/00-index.md
+      - Stage scripts and Makefile: tapeout/scripts/01-stage-scripts-and-makefile.md
+      - Config and filelists: tapeout/scripts/02-config-and-filelists.md
+      - MMMC, SDC and power intent: tapeout/scripts/03-mmmc-sdc-and-power-intent.md
+      - Floorplan and IO: tapeout/scripts/04-floorplan-and-io.md
+      - Power plan: tapeout/scripts/05-power-plan.md
+      - CTS and route: tapeout/scripts/06-cts-and-route.md
+      - Filler and bond pads: tapeout/scripts/07-filler-and-bondpads.md
+      - Portability refactor: tapeout/scripts/08-portability-refactor.md
+
+  - Design:
+      - Implementation: IMPLEMENTATION.md
+      - Physical handoff: PHYSICAL_HANDOFF.md
+      - Pin map: PIN_MAP.md
+      - Pin policy: PIN_POLICY.md
+      - Power domains: POWER_DOMAINS.md
+      - Reset ordering: RESET_ORDERING.md
+      - Status registers: STATUS_REGISTERS.md
+      - Peer aperture programming: PEER_APERTURE_PROGRAMMING.md
+      - System app transparent bridge: SYSTEM_APP_TRANSPARENT_BRIDGE.md
+
+  - Verification:
+      - CDC findings: CDC_FINDINGS.md
+      - Lint findings: LINT_FINDINGS.md
+      - Elaboration strict findings: ELAB_STRICT_FINDINGS.md
+      - Coverage gates run: COVERAGE_GATES_RUN_2026-08-06.md
+      - G2 testbench architecture: G2_TB_ARCHITECTURE.md
+      - G2 SoC pair status: G2_SOC_PAIR_STATUS.md
+      - G2 pair simulation: G2_PAIR_SIM.md
+      - TideChart test plan: TIDECHART_TEST_PLAN.md
+
+  - Cross-die and TideLink:
+      - Cross-die debug plan: CROSS_DIE_DEBUG_PLAN.md
+      - Cross-die debug 0C gate spec: CROSS_DIE_DEBUG_0C_GATE_SPEC.md
+      - Cross-die interrupts: CROSS_DIE_INTERRUPTS.md
+      - Cross-die test backlog: CROSS_DIE_TEST_BACKLOG.md
+      - Cross-die wedge root cause: CROSS_DIE_WEDGE_ROOTCAUSE.md
+      - AXI datanode recovery gap: AXI_DATANODE_RECOVERY_GAP_2026_07_31.md
+      - D2D HREADY loop: D2D_HREADY_LOOP.md
+      - TideLink silicon feedback: TIDELINK_SILICON_FEEDBACK.md
+      - TideLink KR260 port plan: TIDELINK_KR260_PORT_PLAN.md
+
+  - Bring-up:
+      - KR260 bench runbook: KR260_BENCH_RUNBOOK.md
+      - KR260 board wiring: KR260_BOARD_WIRING.md
+      - KR260 LAN8720 fpgahub plan: KR260_LAN8720_FPGAHUB_PLAN.md
+      - I1 FCSM bring-up regression: I1_FCSM_BRINGUP_REGRESSION.md
+      - I1 resolved handover: I1_RESOLVED_HANDOVER_2026_07_31.md
+      - Overnight HW campaign: OVERNIGHT_HW_CAMPAIGN_2026-08-05.md
+      - Overnight worklog: OVERNIGHT_WORKLOG.md
+      - Chiplet alignment: CHIPLET_ALIGNMENT.md
+      - Chiplet host tooling plan: CHIPLET_HOST_TOOLING_PLAN.md
+
+  - Correspondence:
+      - TSMC backend package request: TSMC_BACKEND_PACKAGE_REQUEST.md
+      - Upstreaming block YAMLs: UPSTREAMING_BLOCK_YAMLS.md
+      - "Proposal: auto-anchor RTL": PROPOSAL_AUTO_ANCHOR_RTL_2026_08_04.md
+      - "Dev message: axirec reconcile": DEV_MESSAGE_AXIREC_RECONCILE_2026_08_04.md
+      - "Reply: axirec reconcile (3 Aug)": REPLY_AXIREC_RECONCILE_2026_08_03.md
+      - "Reply: axirec reconcile (4 Aug)": REPLY_AXIREC_RECONCILE_2026_08_04.md
+      - "Dev message: TideLink CI findings": DEV_MESSAGE_TIDELINK_CI_FINDINGS_2026_08_06.md

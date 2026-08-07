@@ -4,6 +4,28 @@
 ## stopped changing, so -check_drc/-fix_drc has real routing to check and the
 ## ANTENNA diodes see real antennas. Sourced before the bond pads themselves,
 ## which sit on M8/M9/AP and do not compete for core rows.
+##
+## 2026-08-06: filler.tcl now also runs `check_drc` and `route_eco -target`
+## after inserting, because inserting was all it did. The premise of the
+## paragraph above — that -check_drc/-fix_drc "has real routing to check" — was
+## only half true: -check_drc did check routing, but -fix_drc needs a marker
+## database, and the flow's only check_drc runs later in 4_pnr_route.tcl, after
+## this file has returned. So the -fix_drc pass was inert on both the 2026-08-05
+## and 2026-08-06 runs (IMPSP-9082, once per run) and nothing ever performed the
+## post-route reroute the tool asks for (IMPSP-5217, once per add_fillers call).
+## The ordering above is unchanged and still correct; the repair now happens
+## inside it. Details, message text and the one violation this demonstrably
+## leaves behind are in filler.tcl's header.
+##
+## THE `source` BELOW MUST STAY WHERE IT IS, i.e. before the bond pads are
+## created. filler.tcl's new check_drc marks the violations that its -fix_drc
+## and route_eco -target passes then act on, and running it here means those
+## markers describe the CORE only. Move this source below the pad loops and the
+## marker set also carries every M8/M9/AP pad-ring violation — the class that
+## was 376 of 379 shorts in the 2026-08-05 baseline — and the filler repair
+## would be handed a database dominated by geometry it cannot touch. The pads
+## are still checked: 4_pnr_route.tcl's check_drc runs after everything and is
+## the signoff report.
 source ../scripts/filler.tcl
 
 set top_pads_outer [list \

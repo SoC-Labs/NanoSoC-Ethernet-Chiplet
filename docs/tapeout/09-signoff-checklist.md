@@ -65,8 +65,8 @@ scripts/ci/signoff.py provenance
 A dirty tree means the GDS cannot be rebuilt from a commit, so the bundle's
 `MANIFEST.txt` will carry a `-dirty` suffix and the submission is unreproducible.
 
-Driver: [`scripts/ci/signoff.py`](../../scripts/ci/signoff.py) ·
-manifest: [`ci/signoff.yaml`](../../ci/signoff.yaml)
+Driver: [`scripts/ci/signoff.py`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/scripts/ci/signoff.py) ·
+manifest: [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml)
 
 ### 1. Every stage actually produced its artefact
 
@@ -95,7 +95,7 @@ A GDS of a few MB means the merge or the stream failed.
 
 ## Tier 1 — RTL gates. No PDK, runs on either host.
 
-These are declared in [`ci/signoff.yaml`](../../ci/signoff.yaml) and driven by
+These are declared in [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) and driven by
 `scripts/ci/signoff.py run rtl`. All are `gate: block` except CDC.
 
 ### 2. Boundary, lint, elaboration, multi-driver
@@ -188,7 +188,7 @@ grep -qE 'Compare Results:[[:space:]]*PASS|Equivalent' "$L" \
 > the Makefile adds no check.** Without the grep above a non-equivalent design passes
 > silently. This is the worst false-green in the physical flow, and it is exactly the
 > failure mode that let the hollow July GDSII through. `signoff.py` enforces it via the
-> `check:` block on the `lec` stage in [`ci/signoff.yaml`](../../ci/signoff.yaml).
+> `check:` block on the `lec` stage in [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml).
 
 **Prerequisite:** `make clean` deletes `work/`, which destroys `lec.dofile` and `fv/`.
 LEC must run in the same work area as the `syn` that produced them, or not at all.
@@ -201,7 +201,7 @@ netlist Genus wrote; nothing compares anything to `outputs/nanosoc_eth_chiplet_p
 `scripts/ci/package_submission.sh`'s MANIFEST item 6 asks the reader to
 "confirm `make lec` has been run and passed for **THIS netlist**" — but `make lec` cannot
 do that. Declared as a coverage gap (`post-pnr-lec`) in
-[`ci/signoff.yaml`](../../ci/signoff.yaml).
+[`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml).
 
 **What this leaves uncovered:** anything CTS, `opt_design -post_route -hold` or the
 bond-pad/filler stage could change. Post-route hold repair inserted **65,250 instances**
@@ -219,10 +219,10 @@ Until then, say so in the hand-off rather than implying LEC covered the shipped 
 `4_pnr_route.tcl` runs all four of these after routing and bond-pad placement. Reading
 them costs nothing; the 2026-08-05 baseline numbers are quoted so you can spot a
 regression at a glance. Baseline:
-[`ASIC/genus-innovus/baseline_2026-08-05/reports/`](../../ASIC/genus-innovus/baseline_2026-08-05/reports/)
+`ASIC/genus-innovus/baseline_2026-08-05/reports/`
 
 A stage-by-stage diff against the baseline is emitted automatically by
-[`scripts/ci/asic_stage_report.sh`](../../scripts/ci/asic_stage_report.sh):
+[`scripts/ci/asic_stage_report.sh`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/scripts/ci/asic_stage_report.sh):
 
 ```bash
 scripts/ci/asic_stage_report.sh route
@@ -378,14 +378,13 @@ foundry may ask about. **This has not been triaged.** See [11g](11-known-issues.
 ### 13. Calibre DRC
 
 ```bash
-make drc_batch                    # headless; from ASIC/genus-innovus/
-make drc                          # same, in the Calibre GUI
+make drc                          # headless; from ASIC/genus-innovus/
 make asic-drc                     # equivalent, from the repo root
 scripts/ci/signoff.py run drc     # same, with the violation count enforced
 ```
 
 Deck: `/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a`
-(also `drc_ruledeck` in [`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl)).
+(also `drc_ruledeck` in [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl)).
 Results land in `work/drc_run/`.
 
 **Pass — Calibre will not tell you, so count it yourself:**
@@ -407,16 +406,17 @@ EOF
 **Two things that have bitten this design already:**
 
 1. **The TSMC deck ships with placeholders** — `LAYOUT PATH "GDSFILENAME"` and
-   `LAYOUT PRIMARY "TOPCELLNAME"`. They *must* be overridden by a Calibre Interactive
-   runset. The Makefile generates `work/calibre_drc.runset` with layout and top cell
-   derived together from `$(GDS)` and `$(BLOCK)`, so they cannot drift apart. In the July
-   reference run they did drift: the deck named the *pre-pads* stream against top cell
+   `LAYOUT PRIMARY "TOPCELLNAME"`. `calibre -drc` has no command-line override for them,
+   so they are resolved by the project's wrapper deck,
+   `ASIC/genus-innovus/scripts/calibre/nanosoc_eth_chiplet_pads.drc.rules`, which sets
+   layout and top cell together and `INCLUDE`s the foundry deck untouched. In the July
+   reference run they drifted apart: the deck named the *pre-pads* stream against top cell
    `nanosoc_eth_chiplet_pads`, which is not a cell in that file — hence its **0-byte
    `DRC_RES.db`**.
 2. **The `exec calibre` at the end of `4_pnr_route.tcl` is a no-op.** It passes the
-   ruledeck with no runset, so the placeholders are never resolved. The baseline's
-   `work/DRC_RES.db` is 0 bytes for that reason. **Use `make drc_batch`, not the
-   in-Innovus call.**
+   ruledeck with the placeholders unresolved. The baseline's `work/DRC_RES.db` is 0 bytes
+   for that reason — and `make pnr_route` unsets `CALIBRE_HOME` so that block never fires.
+   **Use `make drc`, not the in-Innovus call.**
 
 **And the caveat that outranks all of the above:** Calibre here runs over the **same
 incomplete GDS**. It cannot check anything inside a standard cell, an IO driver or a bond
@@ -428,7 +428,7 @@ necessary, and nowhere near sufficient.
 ## Tier 6 — cannot be closed on this site. Agree these with the recipient.
 
 Each of these is a real signoff requirement that **this repository cannot satisfy at all**.
-They are all declared as coverage gaps in [`ci/signoff.yaml`](../../ci/signoff.yaml) and
+They are all declared as coverage gaps in [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) and
 restated in the bundle's `MANIFEST.txt`. Take them to
 [10 — Tapeout submission](10-tapeout-submission.md) as questions, not tasks.
 
@@ -465,7 +465,7 @@ foundry data. **They run LVS; we cannot.**
 
 ### 17. Cell-level GDS merge — **the recipient must do this**
 
-`gds_merge_list` in [`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl) merges
+`gds_merge_list` in [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) merges
 **only the 8 memory macros** (`rf_32k`, `rf_16k`, `rf_08k`, `rf_01k`, `cc_rom`, `eth_rom`,
 `flash_cache_data`, `flash_cache_tag`) — those ship `.gds2` *and* `.cdl` locally.
 
@@ -475,7 +475,7 @@ stays at the foundry. **Standard cells, IO drivers and bond pads are therefore e
 references in our stream.**
 
 Layer map used by `write_stream`
-([`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl)):
+([`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl)):
 
 ```
 /tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map
@@ -511,7 +511,7 @@ table: **stages not run in this session**, **declared coverage gaps**, and a ver
 distinguishes `NOT SIGNED OFF` from `PARTIAL` from "all executed gates passed".
 
 The physical stages need `/tsmc65pdk`, so only `srv03335` can run them
-(`label: soclabs-pdk`, enforced by [`scripts/ci/preflight.sh`](../../scripts/ci/preflight.sh)).
+(`label: soclabs-pdk`, enforced by [`scripts/ci/preflight.sh`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/scripts/ci/preflight.sh)).
 Implementation itself is **not** in this pipeline — it is
 `.github/workflows/asic-gds.yml`. Run order:
 `asic-signoff (rtl)` → `asic-gds` → `asic-signoff (physical)`.
@@ -535,7 +535,7 @@ issues](11-known-issues.md) end to end, then confirm all of:
 - [ ] Setup WNS/TNS/FEP recorded from `05_route_opt`; hold read separately from the
       `_early` reports
 - [ ] DRV counts recorded — **currently 1,243 + 618, not zero**
-- [ ] Calibre DRC run via `make drc_batch`, result **counted**, not assumed
+- [ ] Calibre DRC run via `make drc`, result **counted**, not assumed
 - [ ] Items 15–19 answered **in writing** by the foundry or broker
 
 ---

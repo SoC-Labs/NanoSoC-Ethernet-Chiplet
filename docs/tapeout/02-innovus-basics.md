@@ -38,7 +38,7 @@ read_db nanosoc_eth_chiplet_pads
 Three things about that, in order of how often they catch people:
 
 **1. `cd` into `work/` first.** Not optional.
-[`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl) sets `LOG_DIR ../logs`,
+[`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) sets `LOG_DIR ../logs`,
 `REPORT_DIR ../reports`, `OUT_DIR ../outputs` as *relative* paths, and every stage script
 starts with `source ../scripts/config.tcl`. The databases also live in `work/`. Start
 anywhere else and either the source fails or your outputs land somewhere you will not
@@ -57,7 +57,7 @@ and *every library path* live. It sets
 
 `config.tcl` also needs `TSMC_65_HOME` and `NANOSOC_ETH_CHIPLET_HOME` in the environment
 (it dereferences `$::env(...)` directly and dies without them). Those are exported by
-[`ASIC/common.mk`](../../ASIC/common.mk), which means a shell that ran `make` has them and
+[`ASIC/common.mk`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/common.mk), which means a shell that ran `make` has them and
 a bare login shell does not. If `source ../scripts/config.tcl` dies on `$::env`, that is
 what happened.
 
@@ -93,8 +93,8 @@ read_db nanosoc_eth_chiplet_pads           ;# whatever the last stage left
 ```
 
 `_placed` is written by the first line of
-[`cts_setup.tcl`](../../ASIC/genus-innovus/scripts/cts_setup.tcl); `_cts` by the first
-line of [`route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl). Both are
+[`cts_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/cts_setup.tcl); `_cts` by the first
+line of [`route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl). Both are
 sourced by their consuming stage immediately after `read_db`, so they hold the clean
 hand-off state.
 
@@ -149,7 +149,7 @@ get_db current_design .bbox
 Read those together and you have the whole floorplan story: the die is fixed at
 1600 × 2000, anchored at the origin, and the core is inset 205 µm on every side — 135 µm
 of IO-driver height plus the `CORE_TO_IO 70` set in
-[`floorplan.tcl`](../../ASIC/genus-innovus/scripts/floorplan.tcl). (At the earlier
+[`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl). (At the earlier
 `CORE_TO_IO 50` the same query returned a core of 185…1415 / 185…1815; the 20 µm per side
 came straight out of the core, because the die is fixed. See
 [03-floorplan](03-floorplan.md).)
@@ -183,7 +183,7 @@ llength [get_db insts -if {.base_cell.base_class == block}]
 ```
 
 That exact query is the whole point of
-[`probe_macros.tcl`](../../ASIC/genus-innovus/scripts/probe_macros.tcl), the flow's
+[`probe_macros.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/probe_macros.tcl), the flow's
 diagnostic for `place_macro` patterns that stop matching (Genus runs with auto-ungroup on,
 so macro instance names move when the RTL changes):
 
@@ -342,12 +342,12 @@ write_sdf -min_view default_analysis_view_hold \
 |---|---|---|
 | `write_db <name>` | a directory `work/<name>/` | the full design state. **Give experiments their own name** — the flow's stages all write `nanosoc_eth_chiplet_pads`, so a bare `write_db $block_name` from an interactive session overwrites the flow's DB. |
 | `write_netlist <path>` | post-P&R Verilog | the flow writes `outputs/..._pnr.v` |
-| `write_stream <path>` | GDSII | needs the TSMC GDS-out map file **and** `-merge $gds_merge_list` (the RF/ROM/flash-cache macro GDS2s from `config.tcl`), or the macros come out empty. The exact invocation the flow uses is in [`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl). |
-| `write_sdf <path>` | back-annotation timing | the flow writes two: `work/design.sdf` at post-place with `-ideal_clock_network` (from [`postplace.tcl`](../../ASIC/genus-innovus/scripts/postplace.tcl)), and the three-view `outputs/..._pnr.sdf` at the end of routing |
+| `write_stream <path>` | GDSII | needs the TSMC GDS-out map file **and** `-merge $gds_merge_list` (the RF/ROM/flash-cache macro GDS2s from `config.tcl`), or the macros come out empty. The exact invocation the flow uses is in [`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl). |
+| `write_sdf <path>` | back-annotation timing | the flow writes two: `work/design.sdf` at post-place with `-ideal_clock_network` (from [`postplace.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/postplace.tcl)), and the three-view `outputs/..._pnr.sdf` at the end of routing |
 
 The analysis-view names above (`default_analysis_view_setup`, `default_analysis_view_hold`,
 `typical_analysis_view`) are defined in
-[`scripts/nanosoc_eth_chiplet_pads.mmmc`](../../ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc)
+[`scripts/nanosoc_eth_chiplet_pads.mmmc`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc)
 and read in at stage 2 by `read_mmmc`. If a `write_sdf` or `report_timing` complains about
 an unknown view, that file is where the real names are.
 
@@ -379,7 +379,7 @@ foreach i [get_db insts -if {.base_cell.base_class == block}] {
 ```
 
 Note both `[lindex … 0]` unwraps. That check is the scripted form of the containment
-backstop discussed in [`floorplan.tcl`](../../ASIC/genus-innovus/scripts/floorplan.tcl) —
+backstop discussed in [`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl) —
 raising `CORE_TO_IO` shrinks the core while the macro coordinates stay absolute, so macros
 fall out of the core silently and only surface as `sroute` damage hours later.
 

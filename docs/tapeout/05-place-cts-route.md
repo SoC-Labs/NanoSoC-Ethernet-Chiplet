@@ -33,9 +33,9 @@ distinguishing "finished" from "died quietly two hours ago".
 
 | Flow script | Project scripts it sources | Ends with |
 |---|---|---|
-| [`2_pnr_setup.tcl`](../../ASIC/asic-flows/Cadence/2_pnr_setup.tcl) | `floorplan.tcl`, `power_plan.tcl`, [`preplace.tcl`](../../ASIC/genus-innovus/scripts/preplace.tcl), [`postplace.tcl`](../../ASIC/genus-innovus/scripts/postplace.tcl) | `write_db $block_name` |
-| [`3_pnr_clock.tcl`](../../ASIC/asic-flows/Cadence/3_pnr_clock.tcl) | [`cts_setup.tcl`](../../ASIC/genus-innovus/scripts/cts_setup.tcl) | `write_db $block_name` |
-| [`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl) | [`route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl), [`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl) (→ `filler.tcl`) | `write_db $block_name` |
+| [`2_pnr_setup.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/2_pnr_setup.tcl) | `floorplan.tcl`, `power_plan.tcl`, [`preplace.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/preplace.tcl), [`postplace.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/postplace.tcl) | `write_db $block_name` |
+| [`3_pnr_clock.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/3_pnr_clock.tcl) | [`cts_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/cts_setup.tcl) | `write_db $block_name` |
+| [`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl) | [`route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl), [`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl) (→ `filler.tcl`) | `write_db $block_name` |
 
 Full ordering inside `4_pnr_route.tcl`, verified against two runs:
 
@@ -66,8 +66,8 @@ affordable:
 
 | Snapshot | Written by | State captured |
 |---|---|---|
-| `${block_name}_placed` | [`cts_setup.tcl`](../../ASIC/genus-innovus/scripts/cts_setup.tcl) line 9 | post-place (sourced right after `3_pnr_clock.tcl`'s `read_db`) |
-| `${block_name}_cts` | [`route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl) line 12 | post-CTS (sourced right after `4_pnr_route.tcl`'s `read_db`) |
+| `${block_name}_placed` | [`cts_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/cts_setup.tcl) line 9 | post-place (sourced right after `3_pnr_clock.tcl`'s `read_db`) |
+| `${block_name}_cts` | [`route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl) line 12 | post-CTS (sourced right after `4_pnr_route.tcl`'s `read_db`) |
 
 Each is roughly 109 MB. Disk is not the constraint; a re-run is. Without them,
 any change to routing or hold repair costs a full replay from placement (about
@@ -92,7 +92,7 @@ than `make pnr_setup`, which drops you into an empty session where a bare
 
 ### What runs
 
-[`preplace.tcl`](../../ASIC/genus-innovus/scripts/preplace.tcl), in full:
+[`preplace.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/preplace.tcl), in full:
 
 ```tcl
 set_db design_process_node 65
@@ -104,7 +104,7 @@ set_db place_design_floorplan_mode false
 ```
 
 then `place_design`, then
-[`postplace.tcl`](../../ASIC/genus-innovus/scripts/postplace.tcl):
+[`postplace.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/postplace.tcl):
 
 ```tcl
 write_sdf design.sdf -ideal_clock_network
@@ -116,7 +116,7 @@ add_tieoffs -lib_cell {TIEL TIEH} -prefix LTIE
 gaps available in the rows for later hold-buffer insertion. On a design that
 finishes hold repair above 90% density, that is not cosmetic — see §7.
 
-`DFT` is `0` in [`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl), so
+`DFT` is `0` in [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl), so
 the `read_def`/`reorder_scan` branches are dead on this build. The scan chain is
 not bonded.
 
@@ -166,7 +166,7 @@ core-area loss from raising `CORE_TO_IO`. See
 
 ### What runs
 
-[`cts_setup.tcl`](../../ASIC/genus-innovus/scripts/cts_setup.tcl) writes the
+[`cts_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/cts_setup.tcl) writes the
 `_placed` snapshot and then sets exactly one thing:
 
 ```tcl
@@ -183,7 +183,7 @@ run's clock tree used 41 228 `CKBD0`, 5 648 `CKND0`, 3 126 `CKBD1` — plus 3 29
 `BUFFD1`, a general-purpose buffer that a `cts_buffer_cells {CKB*}` list would
 have excluded.
 
-Then [`3_pnr_clock.tcl`](../../ASIC/asic-flows/Cadence/3_pnr_clock.tcl):
+Then [`3_pnr_clock.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/3_pnr_clock.tcl):
 
 ```tcl
 create_clock_tree_spec -out_file design_clk.spec
@@ -223,7 +223,7 @@ picture; contrast it with §7.
 ## 5. Clock uncertainty — the classic that costs you three hours
 
 This belongs on the CTS page because it is where the damage first shows, but it
-lives in [`inputs/constraints.sdc`](../../ASIC/genus-innovus/inputs/constraints.sdc).
+lives in [`inputs/constraints.sdc`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/inputs/constraints.sdc).
 
 ```tcl
 set CLK_ERROR      0.35   ;# oscillator jitter, CDCM61001 worst case at 250 MHz
@@ -282,7 +282,7 @@ documented in place:
 
 ### What runs
 
-[`route_setup.tcl`](../../ASIC/genus-innovus/scripts/route_setup.tcl), after
+[`route_setup.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/route_setup.tcl), after
 writing the `_cts` snapshot:
 
 ```tcl
@@ -293,7 +293,7 @@ set_db route_design_with_si_driven 1
 set_db timing_analysis_type ocv
 ```
 
-then, in [`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl):
+then, in [`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl):
 
 ```tcl
 route_design -global_detail
@@ -446,7 +446,7 @@ WNS −1.130, TNS −71 297. The baseline run ended its equivalent table at
 are printed against whatever view the optimiser is driving at that moment
 (`default_analysis_view_setup` in the `Worst View` column). The final
 `report_timing_summary` uses the analysis views selected at the end of
-[`4_pnr_route.tcl`](../../ASIC/asic-flows/Cadence/4_pnr_route.tcl):
+[`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl):
 
 ```tcl
 set_analysis_view -setup [list typical_analysis_view] -hold [list typical_analysis_view]
@@ -456,7 +456,7 @@ set_analysis_view -setup [list default_analysis_view_setup typical_analysis_view
 ```
 
 The view definitions are in
-[`nanosoc_eth_chiplet_pads.mmmc`](../../ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc):
+[`nanosoc_eth_chiplet_pads.mmmc`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc):
 `default_analysis_view_setup` is `tc_max` (wc lib) on `rcworst`;
 `default_analysis_view_hold` is `tc_min` (lt lib) on `rcbest`;
 `typical_analysis_view` is `tc_typ` on `typical`. So **do not raise an alarm off
@@ -481,7 +481,7 @@ a reporting artefact — see [11-known-issues.md](11-known-issues.md).
 
 srv03335, `-local_cpu 14` (16 physical cores, 4×4, no SMT; distribution off by
 default because the measured inter-host link is ~25 MB/s, ~37× slower than local
-disk — see [`config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl)).
+disk — see [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl)).
 
 | Stage | Wall |
 |---|---|

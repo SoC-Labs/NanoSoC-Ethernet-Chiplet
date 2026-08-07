@@ -75,3 +75,12 @@ innovus.cmd*
 # ASIC/*/{logs,outputs,reports,work} rules sit one directory level too high to
 # match them, since the copy nests them under ASIC/*/baseline_<date>/.
 ASIC/*/baseline_*/
+
+# MkDocs build output
+site/
+
+# Per-iteration ASIC run directories. Each is 2-3GB and self-describing
+# (config/ holds a copy of every script and constraint used). Reproducible
+# from the git SHA recorded in its MANIFEST.txt, so not tracked.
+ASIC/genus-innovus/runs/
+ASIC/genus-innovus/baseline_*/

@@ -101,9 +101,18 @@ READ THIS BEFORE SUBMITTING
    The die is 1600 x 2000 um with the pad ring starting at coordinate 0.
    Confirm who adds seal ring and scribe structures.
 
-6. LOGICAL EQUIVALENCE (RTL vs post-P&R netlist) — confirm `make lec` has been
-   run and passed for THIS netlist. A previous build silently lost an entire
-   datapath to Genus GLO-34 unused-logic removal; LEC is the check that sees it.
+6. LOGICAL EQUIVALENCE — READ THIS CAREFULLY, IT IS EASY TO OVERSTATE.
+   `make lec` runs Genus's generated dofile, which compares RTL against the
+   SYNTHESIS netlist (*_gate.v). It does NOT read *_pnr.v — the netlist that
+   became this GDS. The ~45,700 instances that CTS, optimisation and post-route
+   hold repair added (10,555 DEL* hold cells, 22,046 CKBD0, tie cells, bond
+   pads) are NOT covered by it.
+   Post-P&R equivalence is `make lec-pnr` (_gate_power.v -> _pnr.v). State
+   plainly in your covering note which of these has actually been run and
+   passed; do not let "LEC passed" stand unqualified.
+   Why this matters: a previous build silently lost an entire datapath to Genus
+   GLO-34 unused-logic removal. RTL-to-synthesis LEC is what catches that class;
+   post-P&R LEC is what catches anything the place-and-route tool did.
 -------------------------------------------------------------------------------
 EOF
 } > "$M"
