@@ -44,16 +44,29 @@ vivado*.str
 # to name the build dirs directly.
 /fpga/haps-sx/build/
 /fpga/haps-sx-pc/build/
-# Tool droppings written into $PWD rather than work/. Genus and IC Validator
-# both log relative to the directory they were LAUNCHED from, so invoking them
-# from the repo root -- which the one-off `genus -batch -command get_db` and
-# `icv` probes do -- lands them here instead of under ASIC/*/logs. Rotation
-# suffixes (genus.log1, genus.cmd2, ...) are globbed; the ASIC/*/logs rules do
-# not reach the root.
-/genus.log*
-/genus.cmd*
-/innovus.log*
-/innovus.cmd*
+# Tool droppings written into $PWD rather than work/. Genus, Innovus and IC
+# Validator all log relative to the directory they were LAUNCHED from, so a
+# one-off probe (`genus -batch -command get_db`, `icv`, or an ad-hoc
+# `innovus -files experiment.tcl`) lands them wherever it was started, which
+# the ASIC/*/{logs,work} rules do not reach.
+#
+# These rules are deliberately NOT anchored with a leading slash. They started
+# out as /genus.log* etc., which only ever matched the repo root -- and then a
+# scratch run in ASIC/genus-innovus/holdexp/ dropped 700 KB of innovus.log*,
+# innovus.logv* and innovus.cmd* into a directory that also holds hand-written
+# .tcl, so neither the anchored rules nor a whole-directory ignore would do.
+# Unanchored, they follow the tool to whatever directory it was invoked in.
+#
+# `log*` covers three families in one glob and is meant to: the plain log, the
+# VERBOSE log Innovus writes alongside it (innovus.logv -- this is a distinct
+# file, not a typo for .log), and the rotation suffixes both take on re-runs
+# (innovus.log1, innovus.logv2, innovus.cmd2, genus.log1, ...).
+genus.log*
+genus.cmd*
+innovus.log*
+innovus.cmd*
+# Anchored, unlike the above: a stray stderr capture at the root is a dropping,
+# but "err.txt" is an ordinary name for a test fixture somewhere in verif/.
 /err.txt
 .icv.*
 # Baseline P&R snapshots. scripts/ci/asic_stage_report.sh takes BASELINE_DIR and
