@@ -44,3 +44,21 @@ vivado*.str
 # to name the build dirs directly.
 /fpga/haps-sx/build/
 /fpga/haps-sx-pc/build/
+# Tool droppings written into $PWD rather than work/. Genus and IC Validator
+# both log relative to the directory they were LAUNCHED from, so invoking them
+# from the repo root -- which the one-off `genus -batch -command get_db` and
+# `icv` probes do -- lands them here instead of under ASIC/*/logs. Rotation
+# suffixes (genus.log1, genus.cmd2, ...) are globbed; the ASIC/*/logs rules do
+# not reach the root.
+/genus.log*
+/genus.cmd*
+/innovus.log*
+/innovus.cmd*
+/err.txt
+.icv.*
+# Baseline P&R snapshots. scripts/ci/asic_stage_report.sh takes BASELINE_DIR and
+# diffs the current run against one of these; each is a full copy of
+# logs/ outputs/ reports/ work/ and runs to ~2.7 GB. The existing
+# ASIC/*/{logs,outputs,reports,work} rules sit one directory level too high to
+# match them, since the copy nests them under ASIC/*/baseline_<date>/.
+ASIC/*/baseline_*/
