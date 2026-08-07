@@ -1,0 +1,74 @@
+//============================================================================
+// nanosoc_eth_chiplet_pads --- Calibre DRC wrapper deck   (PROJECT-OWNED)
+//
+// Run it with:   ASIC/genus-innovus/scripts/calibre/run_drc.sh
+// or by hand:    cd <rundir> && DRC_GDS=/abs/path/to.gds \
+//                calibre -drc -hier -turbo 8 -nowait <this file>
+//
+// WHY THIS FILE EXISTS
+// --------------------
+// The TSMC deck /tsmc65pdk/.../CLN65S_9M_6X1Z1U.26_2a ships with *placeholder*
+// specification statements that the customer is expected to replace:
+//
+//     LAYOUT PATH    "GDSFILENAME"          <- literal string, not a variable
+//     LAYOUT PRIMARY "TOPCELLNAME"          <- literal string, not a variable
+//     DRC RESULTS DATABASE "DRC_RES.db"
+//     DRC SUMMARY REPORT   "DRC.rep"
+//
+// Pointing Calibre straight at the foundry deck therefore fails with
+//     Failure to open input file GDSFILENAME for read access.
+// because Calibre looks for a file *named* "GDSFILENAME" in the current
+// directory. It is not a variable and nothing in Innovus, Tcl or the shell
+// substitutes it. (`set GDSFILENAME ...` in a Tcl script sets a *Tcl*
+// variable and has no effect whatsoever on the SVRF deck.)
+//
+// THE LOAD-BEARING LINE IS `DRC ICSTATION YES` -- DO NOT REMOVE IT
+// ---------------------------------------------------------------
+// SVRF normally rejects a specification statement that is given twice:
+//     ERROR: Error SPC1 on line N of <deck> -
+//            superfluous specification statement: layout primary.
+// so simply setting LAYOUT PRIMARY here and then INCLUDEing the foundry deck
+// (which sets it again) is a hard error -- verified on this site, both
+// orderings, with and without -turbo.
+//
+// `DRC ICSTATION YES` switches Calibre into the mode Calibre Interactive uses:
+// duplicate specification statements are tolerated and the ones in the
+// TOP-LEVEL rule file win. That is what makes this wrapper pattern legal.
+// Verified 2026-08-06 on Calibre v2023.1_18.8: removing this one line turns a
+// clean run back into SPC1.
+//
+// Everything below the INCLUDE is the unmodified foundry deck. The foundry
+// deck is READ-ONLY (/tsmc65pdk is shared, lab-wide collateral) and is not
+// copied, patched or sed-ed by this flow.
+//============================================================================
+
+// ---- must come first: enables top-level override of the deck's placeholders
+DRC ICSTATION YES
+
+// ---- input layout -----------------------------------------------------------
+// $DRC_GDS is expanded by Calibre itself. SVRF expands environment variables in
+// *file path* strings (LAYOUT PATH, INCLUDE, DRC RESULTS DATABASE) but NOT in
+// cell-name strings -- so LAYOUT PRIMARY below must stay literal. Verified.
+LAYOUT PATH    "$DRC_GDS"
+LAYOUT SYSTEM  GDSII
+LAYOUT PRIMARY "nanosoc_eth_chiplet_pads"
+
+// ---- outputs (relative -> they land in whatever directory you run from) -----
+DRC RESULTS DATABASE "nanosoc_eth_chiplet_pads.drc.results" ASCII
+DRC SUMMARY REPORT   "nanosoc_eth_chiplet_pads.drc.summary" REPLACE HIER
+DRC CELL NAME YES CELL SPACE XFORM
+
+// Cap results per check. A first full-chip run on a design that has never been
+// through signoff DRC can generate millions of results (density and sealring
+// checks especially) and an unbounded ASCII database will fill the disk.
+// Raise to ALL only once the count is known to be sane.
+DRC MAXIMUM RESULTS 1000
+DRC MAXIMUM VERTEX  4096
+
+// ---- the foundry deck, unmodified -------------------------------------------
+// 9-metal 6X1Z1U stack, matching the Innovus GdsOutMap used by write_stream
+// (PRTF_EDI_N65_gdsout_6X1Z1U.24a.map). Kept literal on purpose: the metal
+// option is fixed for this tapeout and a silently-wrong deck is worse than an
+// edit. If the metal stack ever changes, change this line AND the map file
+// passed to write_stream together.
+INCLUDE "/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a"

@@ -131,8 +131,45 @@ syn: setup_dirs asic-flist romlibs-check
 syn_norun:
 	cd $(WORK_DIR)/; genus -log $(LOG_DIR)/syn_logs
 
+## lec: RTL vs the SYNTHESIS netlist, using the dofile Genus generates into
+## work/. TWO CAVEATS, both verified:
+##   1. It compares fv_map against outputs/$(BLOCK)_gate.v. It NEVER reads
+##      *_pnr.v, so the ~45,700 instances CTS/opt/hold-repair added to the
+##      netlist that actually became GDS are not covered. Use lec-pnr for that.
+##   2. The generated dofile ends `exit -f` and this recipe checks nothing, so a
+##      NON-EQUIVALENT result still reports success. Grep the log for
+##      "Compare Results:" before believing it. (lec-pnr does not have this
+##      flaw — it enforces the verdict twice, independently.)
+## The dofile is written BY SYNTHESIS, so this target needs `make syn` first.
 lec:
 	cd $(WORK_DIR)/; lec -xl -Dofile ./lec.dofile
+
+## lec-pnr: post-P&R equivalence — outputs/$(BLOCK)_gate_power.v (synthesis)
+## against outputs/$(BLOCK)_pnr.v (the netlist that becomes GDS). This is the
+## check nothing in this repo previously performed. _gate_power.v is the golden
+## rather than _gate.v because it shares the same boundary (27 ports) and PG
+## convention; _gate.v has only 6 PG connections and would turn every leaf
+## supply into a false finding. Flat compare only — CTS pushed cloned clock nets
+## through module boundaries, so hierarchical compare is impossible. Hours, and
+## takes a Conformal seat. Exits non-zero on abort, non-equivalence, unmapped
+## points or a short log.
+lec-pnr:
+	$(DESIGN_DIR)/scripts/lec/run_lec.sh pnr
+
+## lec-gate: closes the joint in the chain — _gate.v vs _gate_power.v, i.e. the
+## netlist `lec` proves against RTL vs the one lec-pnr uses as its golden.
+## Statically identical (319 cell types, same counts, same 55,516 flop names).
+lec-gate:
+	$(DESIGN_DIR)/scripts/lec/run_lec.sh gate
+
+## lec-selftest: mutation-tests the LEC HARNESS in ~15s — proves it passes an
+## equivalent pair AND fails a one-gate mutation, an extra flop, and a missing
+## netlist. Run this before trusting any lec-pnr result on a new host. A check
+## that cannot fail is worth nothing, and this flow has shipped several.
+lec-selftest:
+	$(DESIGN_DIR)/scripts/lec/run_lec.sh selftest
+
+.PHONY: lec lec-pnr lec-gate lec-selftest
 
 ## The three Innovus stages, in order. Each reads the DB the previous one wrote
 ## (`read_db $block_name` / `write_db $block_name` inside work/), so they must be
@@ -166,8 +203,33 @@ pnr_cts:
 	@test -s $(REPORT_DIR)/timing_summary_03_cts_opt.rep || { \
 	    echo "FAIL: CTS wrote no post-opt timing summary — stage did not complete."; exit 1; }
 
+## CALIBRE_HOME IS UNSET FOR THIS STAGE, DELIBERATELY.
+##
+## 4_pnr_route.tcl ends with two blocks guarded on $env(CALIBRE_HOME), and BOTH
+## are broken on this site — which matters because CALIBRE_HOME is always set
+## here (/eda/mentor/calibre), so both always fire:
+##
+##   1. `source .../queryenc/cal_enc.tcl` -> IMPSE-110 "can't find package Tk 8.0"
+##   2. `exec calibre -drc -hier -turbo 8 $drc_ruledeck`
+##        -> ERROR: Failure to open input file GDSFILENAME for read access.
+##      The rule deck expects GDSFILENAME defined in DECK syntax; the .tcl only
+##      sets a *Tcl* variable of that name, so Calibre looks for a file called
+##      literally "GDSFILENAME".
+##
+## A failing `exec` raises a Tcl error, which ABORTS the script before its final
+## `exit`. Innovus then drops to an interactive prompt and sits there forever —
+## holding a Cadence seat — so `make` never returns and no rc is ever written.
+## Seen on BOTH the 2026-08-05 and 2026-08-06 runs (3 occurrences in the
+## former's log): a completed 4.5-hour flow that looked like it had hung.
+##
+## Everything of value — write_stream, write_netlist, write_sdf, write_db and
+## every report — happens BEFORE these blocks, so skipping them loses nothing.
+## Calibre DRC has its own working entry point: the `drc` / `drc_batch` targets.
+##
+## Fixed project-side rather than by patching asic-flows, which is a shared
+## submodule that other designs build from.
 pnr_route:
-	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
+	cd $(WORK_DIR)/; env -u CALIBRE_HOME $(INNOVUS) $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
 	@test -s $(OUT_DIR)/$(BLOCK).gds \
 	    && echo "OK: GDSII $(OUT_DIR)/$(BLOCK).gds ($$(du -h $(OUT_DIR)/$(BLOCK).gds | cut -f1))" \
 	    || { echo "FAIL: no GDSII at $(OUT_DIR)/$(BLOCK).gds"; \
@@ -270,9 +332,61 @@ drc-preflight:
 	    echo "FAIL: DRC ruledeck unreadable: $(DRC_RULEDECK)"; \
 	    echo "      needs the /tsmc65pdk mount and group tsmc65pdkgrp."; exit 1; }
 
-## drc: Calibre DRC in the GUI, runset pre-loaded and pointed at the built GDS.
+## Processors for Calibre turbo. srv03335 has 16 cores; 8 leaves headroom.
+DRC_CPUS ?= 8
+
+## drc: Calibre DRC on the built GDS, headless — no X display, no GUI packages,
+## no runset. This is the target that WORKS.
+##
+## The foundry deck (CLN65S_9M_6X1Z1U.26_2a) carries, at lines 230-231:
+##     LAYOUT PATH    "GDSFILENAME"
+##     LAYOUT PRIMARY "TOPCELLNAME"
+## Those are LITERAL PLACEHOLDER STRINGS in SVRF, not variables. 4_pnr_route.tcl
+## did `set GDSFILENAME $OUT_DIR/${block_name}.gds` — a *Tcl* variable the deck
+## never sees — so Calibre looked for a file called literally "GDSFILENAME" and
+## died. That is why the in-flow Calibre step has NEVER produced a result, in
+## any run of this design. `calibre -drc` has no command-line layout/topcell
+## override, so the overrides must come from a project-owned wrapper deck, which
+## is what scripts/calibre/ provides. The foundry deck is INCLUDEd, never copied
+## or patched.
+##
+## The wrapper needs `DRC ICSTATION YES` or SVRF rejects the duplicate spec
+## statements with "Error SPC1 ... superfluous specification statement".
+##
+## CAVEAT ON ANY NUMBER THIS PRODUCES: the GDS carries routing, vias and memory
+## macros but NO standard-cell, IO or bond-pad device geometry (10,109 OD and
+## 12,854 PO shapes die-wide is a macro-only count), and no seal ring, passivation
+## or metal fill. Front-end, density and seal-ring rules will fail or be
+## meaningless. The back-end metal/via/antenna checks are the real signal.
 .PHONY: drc
-drc: drc-preflight $(DRC_RUNSET)
+drc: drc-preflight
+	DRC_GDS=$(GDS) DRC_RUNDIR=$(DRC_RUNDIR) DRC_CPUS=$(DRC_CPUS) \
+	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
+
+## drc_gui: the old interactive path, kept as a fallback. Needs a runset and X.
+.PHONY: drc_gui
+## lvs-preflight: does this host have what LVS needs? Seconds, no tool launched.
+## Expected to FAIL today and to say exactly why: there is no transistor netlist
+## for the standard cells, IO drivers or bond pads, because every TSMC package
+## installed here is Front End (_FE). This is procurement, not engineering —
+## Calibre nmLVS-H has 150 idle seats and the decks are on disk. It turns green
+## by itself the day the _BE packages land.
+## See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+lvs-preflight:
+	$(DESIGN_DIR)/scripts/calibre/run_lvs.sh --check
+
+## lvs: Calibre nmLVS over the streamed GDS against the P&R netlist. Refuses to
+## run until lvs-preflight passes, so it fails with the missing-data list rather
+## than an obscure tool error. NOTE the GDS is itself incomplete for the same
+## reason (424 cell masters are LEF shells), so LVS and a manufacturable stream
+## unblock together, not separately.
+lvs: lvs-preflight
+	$(DESIGN_DIR)/scripts/calibre/run_lvs.sh --run \
+	    $(GDS) $(OUT_DIR)/$(BLOCK)_pnr.v $(BLOCK) $(WORK_DIR) $(LOG_DIR)
+
+.PHONY: lvs lvs-preflight
+
+drc_gui: drc-preflight $(DRC_RUNSET)
 	cd $(WORK_DIR)/; calibre -gui -drc -runset $(DRC_RUNSET)
 
 ## drc_batch: the same DRC headless. Use this for an unattended or remote run;

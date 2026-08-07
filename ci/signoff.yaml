@@ -150,6 +150,56 @@ stages:
       - ASIC/genus-innovus/logs/lec.log*
       - ASIC/genus-innovus/work/noneq.*
 
+  - id: lec-selftest
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    description: "Mutation-test the LEC harness itself — can it actually FAIL?"
+    # Runs BEFORE lec-pnr, deliberately. It feeds the harness an equivalent pair,
+    # a one-gate mutation, an extra flop and a missing netlist, and requires it
+    # to pass the first and fail the rest. ~1 min, no design data needed.
+    # A check that cannot fail is worth nothing, and this flow has shipped
+    # several — elab-strict reported a clean design while its rules never ran.
+    run: make -C ASIC/genus-innovus lec-selftest
+    artifacts:
+      - ASIC/genus-innovus/logs/lec_selftest*.log
+
+  - id: lec-pnr
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    needs_implementation: true
+    timeout_s: 21600
+    # Closes the gap this manifest previously declared under `unsupported`.
+    # Golden is outputs/*_gate_power.v — the exact netlist 2_pnr_setup.tcl hands
+    # to Innovus — so this isolates "did place/CTS/route/hold-fix change the
+    # logic" with no RTL-side confounders. Flat compare: CTS clock cloning and
+    # post-route opt punched new ports (MRxClk_clone1, FE_OFN*) through module
+    # boundaries, so hierarchical pairing is impossible.
+    # Unlike `lec` it needs nothing from work/ except its own inputs, so it
+    # survives `make clean`.
+    description: "Conformal LEC — synthesised netlist vs POST-P&R netlist"
+    run: make asic-lec-pnr
+    artifacts:
+      - ASIC/genus-innovus/logs/lec_pnr*.log
+      - ASIC/genus-innovus/work/noneq.*pnr*
+
+  - id: lvs-preflight
+    phase: physical
+    gate: report
+    label: soclabs-pdk
+    description: "Can LVS run at all? Reports the missing leaf-cell data by name"
+    # gate: report, NOT block — this fails today and will keep failing until the
+    # TSMC _BE packages are licensed. That is a procurement blocker, not a
+    # regression, and blocking on it would make every run red and train people
+    # to ignore the report. It appears in every signoff report as a dated,
+    # explicit "LVS BLOCKED - standard cells, IO drivers, bond pads" and turns
+    # green by itself the day the packages land.
+    # See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+    run: make asic-lvs-pre
+    artifacts:
+      - ASIC/genus-innovus/logs/calibre_lvs*.log
+
   - id: drc
     phase: physical
     gate: block
@@ -192,8 +242,6 @@ unsupported:
     reason: "Innovus check_process_antenna DOES run and ANTENNA diodes ARE inserted by filler.tcl (reports/*_imp_antenna.rep), but nothing gates on the count and it is a router-level check, not foundry antenna signoff"
   - id: metal-density-fill
     reason: "add_metal_fill appears nowhere in the flow. Std-cell filler exists; per-layer metal density is unaddressed and will fail foundry density rules"
-  - id: post-pnr-lec
-    reason: "The lec stage compares RTL to the SYNTHESISED netlist only. Nothing compares RTL (or the synth netlist) to outputs/*_pnr.v"
   - id: gds-completeness
     reason: >
       THE STREAMED GDS HAS NO TRANSISTORS IN 424 OF ITS CELL MASTERS, and it

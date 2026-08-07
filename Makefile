@@ -86,7 +86,13 @@ asic-status: ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory status
 asic-syn:    ; $(MAKE) -C $(ASIC_DIR) syn
 asic-pnr:    ; $(MAKE) -C $(ASIC_DIR) pnr_place pnr_cts pnr_route
 asic-gds:    ; $(MAKE) -C $(ASIC_DIR) pnr_all
-asic-drc:    ; $(MAKE) -C $(ASIC_DIR) drc_batch
+## `drc`, not `drc_batch`: drc_batch is the legacy `calibre -gui -drc -batch
+## -runset` path. scripts/calibre/run_drc.sh is the maintained headless harness
+## and is what the signoff pipeline calls.
+asic-drc:     ; $(MAKE) -C $(ASIC_DIR) drc
+asic-lvs:     ; $(MAKE) -C $(ASIC_DIR) lvs
+asic-lvs-pre: ; $(MAKE) -C $(ASIC_DIR) lvs-preflight
+asic-lec-pnr: ; $(MAKE) -C $(ASIC_DIR) lec-pnr
 
 ## bootstrap: fetch all 42 submodules. Not `git clone --recursive` — see the script.
 bootstrap:
