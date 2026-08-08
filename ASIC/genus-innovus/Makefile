@@ -115,13 +115,27 @@ syn_norun:
 ##     make syn_eval EVAL_COST_GROUPS=0
 ## To promote a result, redirect it at the real output dir — P&R takes its
 ## constraints from outputs/$(BLOCK)_syn.sdc, which an eval run never writes:
-##     make syn_eval EVAL_OUT_DIR=../outputs && make cpf-patch
-## Promoting an EVAL_DRV_FIX=1 run also promotes its design-scoped
-## set_max_transition/set_max_capacitance into that SDC, so Innovus signs off
-## against the tighter limit. Check the written SDC before doing that.
+##     make syn_eval EVAL_OUT_DIR=$(OUT_DIR) && make cpf-patch
+##
+## THE OVERRIDE MUST BE ABSOLUTE. This line used to read `EVAL_OUT_DIR=../outputs`
+## and that is a TRAP, because the variable is consumed in TWO DIFFERENT working
+## directories: genus runs under `cd $(WORK_DIR)` (so ../outputs = the right
+## place) but the mkdir and the netlist assertion below run in $(DESIGN_DIR)
+## (so ../outputs = ASIC/outputs, one level too high). The 2026-08-07 eval run
+## synthesised for 1h38m, wrote a perfectly good netlist, then failed its own
+## "produced no netlist" assertion against an empty directory it had just
+## created in the wrong place — and took the whole P&R chain down with it.
+## The guard below turns that silent hour into an immediate error.
 EVAL_LOG_DIR    ?= $(LOG_DIR)/eval
 EVAL_REPORT_DIR ?= $(REPORT_DIR)/eval
 EVAL_OUT_DIR    ?= $(OUT_DIR)/eval
+
+EVAL_RELDIRS := $(filter-out /%,$(EVAL_LOG_DIR) $(EVAL_REPORT_DIR) $(EVAL_OUT_DIR))
+ifneq ($(EVAL_RELDIRS),)
+$(error EVAL_*_DIR must be ABSOLUTE, got: $(EVAL_RELDIRS). \
+  genus runs in $(WORK_DIR) but the assertions run in $(DESIGN_DIR), so a \
+  relative path names two different directories. Use EVAL_OUT_DIR=$(OUT_DIR))
+endif
 
 syn_eval: setup_dirs asic-flist romlibs-check
 	mkdir -p $(EVAL_LOG_DIR) $(EVAL_REPORT_DIR) $(EVAL_OUT_DIR)
