@@ -95,10 +95,80 @@ echo "   wrote MANIFEST.txt"
 # The Makefile's stage assertions test for files BY NAME. A leftover report from
 # a previous run satisfies them, so a stage that dies still looks like it passed.
 cd "$ASIC"
-for d in work logs reports; do
+# outputs/ IS ROTATED TOO. It was not, in the first version of this script, and
+# that is a real hole: `make syn` asserts on outputs/<block>_gate_power.v, so a
+# netlist left from a previous run satisfies the check and a FAILED synthesis
+# reports success -- then place/CTS/route proceed on stale logic. The same trap
+# the reports/ rotation exists to close.
+for d in work logs reports outputs; do
     [ -d "$d" ] && mv "$d" "$RUN/prev_$d" && echo "   moved stale $d/ aside"
 done
 mkdir -p work logs reports outputs
+
+# --- 3b. optionally seed outputs/ from a previous run -------------------------
+# RESUMING A RUN THAT DIED DOWNSTREAM OF SYNTHESIS. Synthesis is the expensive
+# stage (1h38m on 2026-08-07); when the flow dies in cpf-patch/place/CTS/route
+# there is no reason to pay for it again. Point SEED_OUTPUTS_FROM at the run
+# directory holding the good netlist and its outputs/ are copied in before make
+# starts, so `make cpf-patch pnr_place ...` finds its inputs.
+#
+# This is DELIBERATELY opt-in and DELIBERATELY logged. Section 3 above exists to
+# stop a stale artefact being mistaken for a fresh one, and this is the single
+# sanctioned exception to it — so the MANIFEST records exactly which run the
+# netlist came from. A run directory whose outputs/ did not come from its own
+# synthesis must say so, or it is exactly the provenance trap this whole script
+# was written to close.
+if [ -n "${SEED_OUTPUTS_FROM:-}" ]; then
+    src="$SEED_OUTPUTS_FROM"
+    [ -d "$src/outputs" ] && src="$src/outputs"
+    if [ -s "$src/nanosoc_eth_chiplet_pads_gate_power.v" ]; then
+        # SDF IS DELIBERATELY EXCLUDED. _pnr.sdf is ~390 MB and _gate.sdf ~200 MB,
+        # and NOTHING downstream of a seeded run reads either: P&R takes the
+        # netlist and the SDC, lec takes _gate.v, LVS takes _pnr.v. Copying them
+        # forward on 2026-08-07 put six near-identical SDFs into runs/ and helped
+        # push the filesystem to 94%. They remain in the SOURCE run if anyone
+        # wants them for gate-level simulation.
+        find "$src" -maxdepth 1 -mindepth 1 ! -name '*.sdf' \
+             -exec cp -a {} outputs/ \;
+        echo "   SEEDED outputs/ from $src"
+        {
+            echo
+            echo "--- SEEDED OUTPUTS (synthesis NOT run in this run) ------------"
+            echo "  source   : $src"
+            echo "  netlist  : $(du -h "$src/nanosoc_eth_chiplet_pads_gate_power.v" | cut -f1)"
+            echo "  seeded   : $(ls outputs/ | tr '\n' ' ')"
+        } >> "$M"
+    else
+        echo "!! SEED_OUTPUTS_FROM=$src has no gate_power.v — refusing to seed" >&2
+        exit 1
+    fi
+fi
+
+# --- 3c. optionally seed work/ databases from a previous run ------------------
+# The same argument as 3b, one stage later. A ROUTE experiment should not cost a
+# re-run of placement and CTS (~3h): 4b_pnr_route_eval.tcl can resume a post-CTS
+# snapshot read-only, but only if that database is in work/ where pnr_read_db
+# looks. Name the run and the databases:
+#   SEED_WORK_FROM=<rundir> SEED_WORK_DBS="nanosoc_eth_chiplet_pads_cts"
+# Recorded in the MANIFEST for the same provenance reason as 3b.
+if [ -n "${SEED_WORK_FROM:-}" ]; then
+    wsrc="$SEED_WORK_FROM"
+    [ -d "$wsrc/work" ] && wsrc="$wsrc/work"
+    : "${SEED_WORK_DBS:?SEED_WORK_FROM needs SEED_WORK_DBS=\"db1 db2\"}"
+    echo "" >> "$M"
+    echo "--- SEEDED WORK DATABASES (upstream stages NOT run here) ------" >> "$M"
+    echo "  source   : $wsrc" >> "$M"
+    for db in $SEED_WORK_DBS; do
+        if [ -d "$wsrc/$db" ]; then
+            cp -a "$wsrc/$db" work/
+            echo "   SEEDED work/$db from $wsrc"
+            echo "  database : $db ($(du -sh "$wsrc/$db" | cut -f1))" >> "$M"
+        else
+            echo "!! SEED_WORK_FROM: no database $wsrc/$db — refusing to seed" >&2
+            exit 1
+        fi
+    done
+fi
 
 # --- 4. run ------------------------------------------------------------------
 LOG="$ASIC/logs/run.log"
@@ -131,6 +201,17 @@ mkdir -p "$ASIC/logs" "$ASIC/reports" "$ASIC/outputs" "$ASIC/work"
 } >> "$M"
 
 echo "$rc" > "$RUN/rc"
-ln -sfn "$RUN" "$ASIC/runs/latest"
+# `latest` FOLLOWS SUCCESS, NOT RECENCY. It used to be updated unconditionally,
+# so a run that died in its first seconds captured the pointer — on 2026-08-07 it
+# spent an evening aimed at a run with rc=2, empty reports/ and no GDS, and the
+# author of docs/tapeout/24-*.md cited it as the source of the shipped GDS. A
+# pointer that can name a failure is worse than no pointer. `last` always moves,
+# for when you genuinely want the most recent attempt including a failed one.
+ln -sfn "$RUN" "$ASIC/runs/last"
+if [ "$rc" = "0" ]; then
+    ln -sfn "$RUN" "$ASIC/runs/latest"
+else
+    echo "   NOT moving runs/latest — this run exited $rc (see runs/last)"
+fi
 echo "== done rc=$rc — $RUN  (also runs/latest)"
 exit $rc
