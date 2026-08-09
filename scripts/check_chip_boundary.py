@@ -136,11 +136,60 @@ def check_pad_ring(boundary, be) -> list[str]:
 
     reached = {re.sub(r"\[.*", "", mm.group(1))
                for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(\s*~?\s*([A-Za-z_]\w*)", src)}
+
+    # ---- open-drain pads ----------------------------------------------------
+    # An open-drain pad built from a push-pull cell folds the DATA onto OEN and
+    # hard-ties .I low, so sending a 1 tristates and lets the external pull-up
+    # make the high. Its `oe` net is therefore deliberately unrouted, and
+    # demanding that it reach a pad is a false failure -- which is exactly what
+    # this check produced for the two I2C pads.
+    #
+    # Rather than allowlist them, detect the construction and then ASSERT THE
+    # INVARIANT THAT MATTERS: .I must be a hard tie-low. I2C is a wired-AND bus,
+    # and a 16 mA push-pull driver on it is a cross-die short that no tool warns
+    # about. Structurally there must be no logic path to the pad's data input.
+    od_oen: set[str] = set()
+    for mm in re.finditer(r"\b([A-Z][A-Z0-9_]*)\s+(u\w+)\s*\(([^;]*?)\)\s*;", src):
+        body = mm.group(3)
+        pins = {p.group(1): p.group(2).strip()
+                for p in re.finditer(r"\.(\w+)\s*\(\s*([^()]*?)\s*\)", body)}
+        if "OEN" not in pins or "I" not in pins:
+            continue
+        oen, i_net = pins["OEN"], pins["I"]
+        if oen in ("tielo", "tiehi", ""):
+            continue                      # OEN is a constant: not data-on-OEN
+        if i_net == "tielo":
+            od_oen.add(re.sub(r"\[.*", "", oen))
+        # A live .I with a live OEN is an ORDINARY tristate bidir pad (SWD,
+        # QSPI, hostio4, MDIO) and is correct. Do NOT flag it: whether a bus is
+        # wired-AND is a property of the PROTOCOL, not of the netlist, and
+        # nothing here can tell the two apart. That knowledge lives in the
+        # pad-ring comment block. An earlier version of this check asserted it
+        # anyway and reported all 13 tristate pads as cross-die shorts.
+
+    # Map a wrapper port name -> the pad group it belongs to, so an open-drain
+    # pad found by its `out` net can exempt that same pad's `oe` net.
+    groups: dict[str, dict[str, str]] = {}
+    for p in be.boundary_ports():
+        groups.setdefault(p.get("pad"), {})[p.get("role")] = p["name"]
+    exempt_oe: set[str] = set()
+    for g in groups.values():
+        out_name = g.get("out")
+        oe_name = g.get("oe")
+        if not out_name or not oe_name:
+            continue
+        out_net = re.sub(r"\[.*", "", conn.get(out_name, "")).strip()
+        if out_net and out_net in od_oen:
+            exempt_oe.add(oe_name)
+
     for name in sorted(expected):
         net = re.sub(r"\[.*", "", conn.get(name, "")).strip()
-        if net and net not in ("tielo", "tiehi") and net not in reached:
-            bad.append(f"  pad ring: '{name}' -> '{net}' reaches no pad cell — "
-                       f"the signal never leaves the die")
+        if not net or net in ("tielo", "tiehi") or net in reached:
+            continue
+        if name in exempt_oe:
+            continue                      # open-drain: data is on OEN by design
+        bad.append(f"  pad ring: '{name}' -> '{net}' reaches no pad cell — "
+                   f"the signal never leaves the die")
     return bad
 
 
