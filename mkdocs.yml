@@ -108,6 +108,14 @@ nav:
       - PG opens analysis: tapeout/15-pg-opens-analysis.md
       - Open defects: tapeout/16-open-defects.md
       - Silently ineffective commands: tapeout/17-silent-noops.md
+      - Message census: tapeout/18-message-census.md
+      - Timing audit: tapeout/19-timing-audit.md
+      - Synthesis audit: tapeout/20-synthesis-audit.md
+      - Physical audit: tapeout/21-physical-audit.md
+      - Synthesis flow notes: tapeout/22-synthesis-flow-notes.md
+      - P&R flow notes: tapeout/23-pnr-flow-notes.md
+      - D2D link physical handover: tapeout/24-d2d-link-physical-handover.md
+      - What remains, explained: tapeout/25-what-remains-explained.md
 
   - Script reference:
       - Overview: tapeout/scripts/00-index.md

@@ -44,6 +44,22 @@ self-documentation commands that make Innovus stop being opaque.
 | 14 | [DRC triage](14-drc-triage.md) | The 102 surviving violations, classified and root-caused |
 | 15 | [PG opens analysis](15-pg-opens-analysis.md) | Evidence and ranked hypotheses for the unexplained opens |
 | 16 | [Open defects](16-open-defects.md) | The hold-timing defect, DRV, GWEN, and other live findings |
+| 17 | [Silent no-ops](17-silent-noops.md) | Eight commands that ran, logged nothing alarming, and did nothing |
+| 18 | [Message census](18-message-census.md) | Every message ID this design raises, counted and diagnosed |
+| 19 | [Timing audit](19-timing-audit.md) | R1–R14: constraint and timing-integrity findings |
+| 20 | [Synthesis audit](20-synthesis-audit.md) | The Genus side, measured |
+| 21 | [Physical audit](21-physical-audit.md) | P1–P14: floorplan, PG, vias, rows, fill, pad ring |
+| 22 | [Synthesis flow notes](22-synthesis-flow-notes.md) | The *why* behind `1b_synthesis_eval.tcl` — measurements and tool traps |
+| 23 | [P&R flow notes](23-pnr-flow-notes.md) | The *why* behind the `2b`/`3b`/`4b` eval stages and `pnr_utils.tcl` |
+
+**Pages 22 and 23 are companions to the evaluation scripts.** Those scripts are written
+to be read by someone learning the flow, so their comments explain *what each stage
+does*; the notes files hold the *why* — the measurements, the one-off findings and the
+tool behaviours that cost someone a day. A script comment saying "(Note 7.)" means
+page 22 for synthesis, page 23 for P&R.
+
+> **Pages 11–21 describe the 2026-08-06 run.** The 08-07 run closed hold and regressed
+> setup — see [23](23-pnr-flow-notes.md) note 1 before quoting any timing number here.
 
 ---
 
