@@ -115,3 +115,8 @@ ASIC/*/holdexp/*.out
 
 # Cocotb generates the per-node DUT filelists from the Makefile.
 cocotb/*/dut_src_*.f
+
+# Claude Code session automation (agent definitions, workflow scripts).
+# Local tooling, not design data -- and .claude/settings.local.json can carry
+# machine-specific paths. Track deliberately if a workflow becomes shared.
+.claude/
