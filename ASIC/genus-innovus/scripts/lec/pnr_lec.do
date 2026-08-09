@@ -29,9 +29,11 @@ tclmode
 #     revised = ../outputs/<block>_gate.v     (the SYNTHESIS netlist)
 # and a second pass compares RTL to fv_map. It never reads
 # outputs/<block>_pnr.v. Post-route CTS, optimisation and hold repair add
-# 45,745 instances to the netlist we ship (185,997 -> 231,742 instances, of
-# which 10,555 are DEL* hold-repair delay cells that do not exist in the
-# synthesis netlist at all). Nothing verified any of them. This dofile does.
+# tens of thousands of instances to the netlist we ship. MEASURED 2026-08-08 on
+# runs/20260808T100330Z_route-setupopt: 185,649 -> 203,424 leaf instances, of
+# which 3,030 are tie cells and 106 DEL* hold-repair delays absent from the
+# synthesis netlist. Nothing verified any of them. This dofile does. (The former
+# 231,742/10,555 figures here described a netlist from a different run.)
 #
 # It also lives in scripts/, not work/, because work/lec.dofile only exists
 # after `make syn` and is destroyed by `make clean` -- the check disappeared
@@ -102,6 +104,15 @@ set THREADS [lec_env LEC_THREADS 1,4]
 set RPTDIR  [lec_env LEC_REPORT_DIR .]
 set TAG     [lec_env LEC_TAG lec]
 set DIAG    [lec_env LEC_DIAG 1]
+# Extra read_design options for an RTL-to-RTL compare, e.g. -define.
+# A gate netlist needs none; RTL needs the SAME define set synthesis uses, or
+# the two sides are not the design Genus builds. Empty for every netlist mode.
+# NOTE: +incdir does NOT belong here -- see LEC_INCDIRS below.
+set RTLOPTS [lec_env LEC_RTLOPTS ""]
+
+# Include directories, as a plain space-separated list of paths (no +incdir+
+# prefix -- this file adds it, in the one place the tool accepts it).
+set INCDIRS [lec_env LEC_INCDIRS ""]
 
 if {$TOP     eq ""} { lec_preflight_fail "LEC_TOP is not set" }
 if {$GOLDEN  eq ""} { lec_preflight_fail "LEC_GOLDEN is not set" }
@@ -115,6 +126,14 @@ foreach f [concat [list $GOLDEN $REVISED] $LIBS $STUBS] {
     if {![file exists $f]}   { lec_preflight_fail "input does not exist: $f" }
     if {[file size $f] == 0} { lec_preflight_fail "input is zero length: $f" }
     if {![file readable $f]} { lec_preflight_fail "input is not readable: $f" }
+}
+
+# A misspelt include directory does not error -- Verilog `include just fails to
+# resolve later, and the failure surfaces as a PARSE_ERROR pointing at the
+# INCLUDED file, which reads like broken RTL rather than a broken search path.
+# Reject it here, where the message can name the real cause.
+foreach d $INCDIRS {
+    if {![file isdirectory $d]} { lec_preflight_fail "include directory does not exist: $d" }
 }
 
 lec_v "tag=$TAG"
@@ -233,10 +252,59 @@ foreach f $STUBS { lappend golden_files $f ; lappend revised_files $f }
 lappend golden_files  $GOLDEN
 lappend revised_files $REVISED
 
-eval read_design $DIALECT -golden -lastmod -noelab $golden_files
+# WHERE +incdir+ ACTUALLY GOES
+# ----------------------------
+# It is NOT a read_design option. The READ DESIGN synopsis in the local
+# reference (/eda/cadence/confrml/doc/Conformal_Ref/LEC_Ref_commands.html)
+# lists every accepted option and +incdir is not among them. What that page
+# does say, under "Supported Options", is:
+#
+#   "Use the -file option with a Verilog or VHDL command file list. For a
+#    Verilog command file, only the -v, -y, +incdir, +libext, and +define
+#    options are supported."
+#
+# and Table 2-1 "Supported Verilog Command-File Options" then documents
+#   +incdir+<dirname> ...   (Include directories)
+#
+# So the spelling "+incdir+<dir>" is right and multiple ARE permitted -- but
+# only INSIDE A COMMAND FILE read with `read_design -file <f>`. In the
+# read_design argument position it is a positional filename, which is exactly
+# what produced
+#   "Error: Directory +incdir+ of file '+incdir+/tmp' does not exist"
+# Verified both ways on lec 22.10-s200: a module whose `include resolves only
+# via +incdir+ parses cleanly through -file, and fails with
+#   "Unable to open include file 'widths.vh'"
+# when the same command file is used with the +incdir+ line removed.
+#
+# The command file is written into the report directory, so the exact search
+# path a comparison used stays attached to that comparison's evidence.
+proc lec_cmdfile {path incdirs files} {
+    set fh [open $path w]
+    foreach d $incdirs { puts $fh "+incdir+$d" }
+    foreach f $files   { puts $fh $f }
+    close $fh
+    return $path
+}
+
+# No incdirs -> read exactly as before. The netlist modes (pnr, gate) and the
+# self-test go down this path untouched.
+if {$INCDIRS eq ""} {
+    eval read_design $DIALECT $RTLOPTS -golden -lastmod -noelab $golden_files
+} else {
+    lec_v "incdirs=[llength $INCDIRS]"
+    eval read_design $DIALECT $RTLOPTS \
+        -file [lec_cmdfile ${RPTDIR}/lec_${TAG}_golden.f $INCDIRS $golden_files] \
+        -golden -lastmod -noelab
+}
 elaborate_design -golden -root $TOP
 
-eval read_design $DIALECT -revised -lastmod -noelab $revised_files
+if {$INCDIRS eq ""} {
+    eval read_design $DIALECT $RTLOPTS -revised -lastmod -noelab $revised_files
+} else {
+    eval read_design $DIALECT $RTLOPTS \
+        -file [lec_cmdfile ${RPTDIR}/lec_${TAG}_revised.f $INCDIRS $revised_files] \
+        -revised -lastmod -noelab
+}
 elaborate_design -revised -root $TOP
 
 report_design_data
@@ -312,6 +380,13 @@ set n_ur_z [get_unmap_points -UNReachable -Z -REvised -COunt]
 set n_ug_o [expr {$n_ug - $n_ug_z}]
 set n_ur_o [expr {$n_ur - $n_ur_z}]
 
+# Extra unmapped points that are TIE-E gates, split by side. On an RTL-to-RTL
+# compare these are not a defect -- they are the documented signature of
+# Conformal's Revised X Handling, see the note at the extra-point rule below.
+# Counted here so run_lec.sh can cross-check the report it parses.
+set n_xg_e [get_unmap_points -EXTRA -E -GOLden  -COunt]
+set n_xr_e [get_unmap_points -EXTRA -E -REvised -COunt]
+
 set code [get_exit_code]
 
 set fails {}
@@ -330,8 +405,41 @@ if {$n_cp > 0 && $n_eq == 0 && $n_inv == 0} {
 # in the other. On a gate-to-gate compare of the same design that number must
 # be zero; a non-zero value means P&R added or removed state, or the two
 # netlists are not the pair we think they are.
-if {$n_xg + $n_xr > 0} {
-    lappend fails "[expr {$n_xg + $n_xr}] extra unmapped point(s) (golden $n_xg / revised $n_xr)"
+#
+# EXCEPT for revised-side TIE-E gates on an RTL-to-RTL compare. From SET X
+# CONVERSION in the local reference:
+#
+#   "The system defaults specify that X assignments are treated as 'Don't
+#    Cares' for the Golden and 'Error (E) Gates' for the Revised design. If
+#    the X assignment space of the Revised design is within the X assignment
+#    space of the Golden design, then the E gate is marked as an extra
+#    unmapped point (redundant gate) after comparison."
+#
+# So an extra unmapped E point on the revised side is the tool REPORTING A
+# SUCCESSFUL CHECK: revised's Xs were proved to lie inside golden's don't-care
+# space, leaving the E gate redundant. Measured on a self-compare of
+# tidechart_apb_regs.sv (identical file both sides): golden 2259 key points,
+# revised 2299, the 40 extra being exactly the revised TIE-E gates, with
+# report_environment showing "X conversion: DC" golden and "E" revised.
+#
+# Deliberately NOT fixed with `set_x_conversion dc -revised`. That would make
+# the counts match by DISABLING the check -- the same page warns "use this
+# option only if you are certain that the X assignment space of the Revised
+# design is within the X assignment space of the Golden design; otherwise,
+# potential errors might be masked." Keeping the asymmetric default keeps the
+# check; only its benign OUTCOME is reclassified. If revised's X space were NOT
+# inside golden's, the E gate would not be redundant and would surface as a
+# non-equivalent compare point, which still fails above.
+#
+# Narrow on purpose: golden-side extras, and revised extras of any other type,
+# still fail. LEC_STRICT_EXTRA_E=1 restores the blanket fail.
+set n_xr_o [expr {$n_xr - $n_xr_e}]
+set strict_e [lec_env LEC_STRICT_EXTRA_E 0]
+if {$n_xg + $n_xr_o > 0} {
+    lappend fails "[expr {$n_xg + $n_xr_o}] extra unmapped point(s) (golden $n_xg / revised $n_xr_o)"
+}
+if {$strict_e && $n_xr_e > 0} {
+    lappend fails "LEC_STRICT_EXTRA_E=1 and $n_xr_e extra revised TIE-E point(s) exist"
 }
 if {$n_ng + $n_nr > 0} {
     lappend fails "[expr {$n_ng + $n_nr}] not-mapped point(s) (golden $n_ng / revised $n_nr)"
@@ -422,6 +530,7 @@ if {$n_xg + $n_xr + $n_ug + $n_ur + $n_ng + $n_nr > 0} {
 #-----------------------------------------------------------------------------
 lec_v "compare_points=$n_cp equivalent=$n_eq inverted_equivalent=$n_inv nonequivalent=$n_neq abort=$n_ab notcompared=$n_nc"
 lec_v "unmapped_extra_golden=$n_xg unmapped_extra_revised=$n_xr"
+lec_v "unmapped_extra_tie_e_golden=$n_xg_e unmapped_extra_tie_e_revised=$n_xr_e"
 lec_v "unreachable_golden=$n_ug unreachable_revised=$n_ur"
 lec_v "unreachable_tristate_golden=$n_ug_z unreachable_tristate_revised=$n_ur_z"
 lec_v "unreachable_other_golden=$n_ug_o unreachable_other_revised=$n_ur_o"

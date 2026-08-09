@@ -10,6 +10,9 @@
 #   scripts/lec/run_lec.sh pnr        # gate_power.v -> pnr.v   THE SHIPPED CHECK
 #   scripts/lec/run_lec.sh gate       # gate.v -> gate_power.v  (PG decoration)
 #   scripts/lec/run_lec.sh selftest   # mutation-test THIS harness (~1 min)
+#   scripts/lec/run_lec.sh rtl <golden.sv> <revised.sv> <top>
+#                                     # RTL-to-RTL, one module: prove a lint
+#                                     # fix did or did not change behaviour
 #
 # Exit status: 0 only if the comparison ran to completion and every key point
 # is equivalent. Anything else — abort, non-equivalence, an unmapped point, a
@@ -59,7 +62,24 @@ MEM_BASE="${MEM_BASE:-/research/precompiled_mems/TSMC65}"
 LEC_BIN="${LEC_BIN:-lec}"
 LEC_MODE="${LEC_MODE:--xl}"
 LEC_THREADS="${LEC_THREADS:-1,4}"
+# Remember whether the CALLER chose a dialect before defaulting it. `rtl` mode
+# needs -sv09 and the netlist modes need -VERILOG2K, and a single unconditional
+# default here silently wins over both: the rtl branch's own
+# `LEC_DIALECT="${LEC_DIALECT:--sv09}"` could never fire, because by the time it
+# ran LEC_DIALECT was already -VERILOG2K. That is what made `run_lec.sh rtl`
+# fail on every SystemVerilog module with
+#   "PARSE_ERROR ... parse error, expecting ')' near token 'clk'"
+# on the first `input logic` port -- diagnosed as a missing include directory,
+# but the file has no `include in it at all. It was the dialect.
+LEC_DIALECT_SET="${LEC_DIALECT+set}"
 LEC_DIALECT="${LEC_DIALECT:--VERILOG2K}"
+
+# Include dirs are an RTL-mode concept. Stash what the caller asked for and
+# then CLEAR it, so an exported LEC_INCDIRS in someone's shell cannot quietly
+# move the shipped pnr/gate compares onto the command-file read path. Only the
+# `rtl` branch puts it back.
+LEC_INCDIRS_REQ="${LEC_INCDIRS:-}"
+LEC_INCDIRS=""
 LEC_DIAG="${LEC_DIAG:-1}"
 LEC_MIN_LOG_LINES="${LEC_MIN_LOG_LINES:-50}"
 
@@ -187,6 +207,7 @@ run_compare() {
     LEC_NOTRANS="$LEC_NOTRANS" \
     LEC_STUBS="$STUBS" \
     LEC_DIALECT="$LEC_DIALECT" \
+    LEC_INCDIRS="$LEC_INCDIRS" \
     LEC_PG_PIN="${LEC_PG_PIN:-both}" \
     LEC_THREADS="$LEC_THREADS" \
     LEC_REPORT_DIR="$rundir" \
@@ -252,6 +273,40 @@ run_compare() {
     # sides. Equal counts are not the same as equal points, though, so the
     # names are diffed here. Anything that is unreachable on one side and not
     # the other is a structural difference and fails.
+    local unreachable_identical=0 pg_ports_only=0 extra_e_only=0
+    local xr="$rundir/lec_${tag}_unmapped_extra.rpt"
+
+    # RTL-to-RTL only: extra unmapped points that are ALL revised-side TIE-E
+    # gates. Conformal's X conversion defaults to "don't care" on the golden
+    # side and "Error (E) gate" on the revised side, and the reference states
+    # that when revised's X space is inside golden's, "the E gate is marked as
+    # an extra unmapped point (redundant gate) after comparison" -- i.e. these
+    # points are a check PASSING, not state appearing from nowhere. Measured on
+    # a self-compare of tidechart_apb_regs.sv: 40 extra points, every one
+    # "(R) <n> E /...". Verified BY TYPE AND SIDE from the report, so a genuine
+    # extra flop (type DFF) or anything on the golden side still fails, in the
+    # runner as well as in the dofile.
+    case "$tag" in rtl_*)
+        if [ -s "$xr" ]; then
+            local nrow nE
+            nrow=$(grep -cE '^[[:space:]]*\([GR]\)[[:space:]]+[0-9]+[[:space:]]+' "$xr")
+            nE=$(grep -cE '^[[:space:]]*\(R\)[[:space:]]+[0-9]+[[:space:]]+E[[:space:]]+' "$xr")
+            if [ "$nrow" -gt 0 ] && [ "$nrow" = "$nE" ]; then
+                extra_e_only=1
+                note "$tag: all $nE extra unmapped point(s) are revised-side TIE-E gates (Conformal Revised X Handling) - accepted"
+            fi
+        fi
+        ;;
+    esac
+
+    if [ "$tag" = "gate" ] && [ -s "$xr" ]; then
+        local got
+        got=$(sed -nE 's@^[[:space:]]*\(R\)[[:space:]]+[0-9]+[[:space:]]+PI[[:space:]]+/@@p' "$xr" | sort -u | tr '\n' ' ')
+        if [ "$got" = "VDD VDDIO VSS VSSIO " ]; then
+            pg_ports_only=1
+            note "$tag: the 4 extra revised PI are exactly the supply ports - expected for a PG-decoration compare"
+        fi
+    fi
     local ug="$rundir/lec_${tag}_unreachable_golden.rpt"
     local ur="$rundir/lec_${tag}_unreachable_revised.rpt"
     if [ -s "$ug" ] || [ -s "$ur" ]; then
@@ -268,15 +323,63 @@ run_compare() {
             say "LEC-RUNNER: --- unreachable only in revised ---"
             comm -13 <(printf '%s\n' "$a") <(printf '%s\n' "$b") | head -20
         else
+            unreachable_identical=1
             note "$tag: unreachable key points are identical on both sides ($(printf '%s\n' "$a" | grep -c . ) point(s)) -- accepted"
         fi
     fi
 
-    # The two sources must agree with each other.
+    # ACCEPTED-EXCEPTION PASS.
+    # The dofile computes its verdict before these reports are written, so it
+    # cannot tell a benign reason from a real one - it can only count. The
+    # runner can, because by now the reports exist. It emits one
+    # "LEC-VERDICT: reason=..." line per failure, so enumerate ALL of them and
+    # override only if EVERY one is independently verified benign. One
+    # unrecognised reason and the FAIL stands.
+    #
+    # Two reasons qualify, both measured 2026-08-08:
+    #   - unreachable points identical by NAME on both sides (checked above;
+    #     they are the 34 supply pads, which have no logic function)
+    #   - gate.v -> gate_power.v only: exactly VDD/VDDIO/VSS/VSSIO as extra
+    #     revised PI. Carrying the supply ports IS the difference between those
+    #     two netlists.
+    #
+    # ORDER MATTERS, AND IT USED TO BE WRONG. These two exit-status checks were
+    # BELOW this block, so the `"lec exited "*` entry in the strip list below
+    # could never match anything -- the problem it names had not been appended
+    # yet, and was appended immediately afterwards. Result: a compare whose only
+    # findings were independently verified benign still failed, with "lec exited
+    # 1" as the sole surviving reason. Both target modules of the RTL mode hit
+    # exactly that. The contradiction check stays a HARD failure and is
+    # deliberately absent from the strip list.
     if [ "$rc" -ne 0 ] && grep -q '^LEC-VERDICT: RESULT=PASS' "$log" 2>/dev/null; then
         problems+=("exit status $rc contradicts LEC-VERDICT=PASS")
     fi
     [ "$rc" -eq 0 ] || problems+=("lec exited $rc")
+
+    if [ ${#problems[@]} -gt 0 ]; then
+        local all_benign=1 nreason=0 r
+        while IFS= read -r r; do
+            nreason=$((nreason+1))
+            case "$r" in
+                *"non-tristate unreachable point(s)"*)
+                    [ "$unreachable_identical" = "1" ] || all_benign=0 ;;
+                *"extra unmapped point(s)"*)
+                    [ "$pg_ports_only" = "1" ] || [ "$extra_e_only" = "1" ] || all_benign=0 ;;
+                *) all_benign=0 ;;
+            esac
+        done < <(sed -nE 's/^LEC-VERDICT: reason=//p' "$log" 2>/dev/null)
+        if [ "$nreason" -gt 0 ] && [ "$all_benign" = "1" ]; then
+            note "$tag: all $nreason dofile reason(s) independently verified benign - PASS with accepted exceptions"
+            local keep=() q
+            for q in "${problems[@]}"; do
+                case "$q" in
+                    "LEC-VERDICT is not PASS"|"lec exited "*) : ;;
+                    *) keep+=("$q") ;;
+                esac
+            done
+            problems=("${keep[@]}")
+        fi
+    fi
 
     # Persist the verdict block for CI artefact collection.
     { grep '^LEC-VERDICT:' "$log" 2>/dev/null || true
@@ -363,6 +466,70 @@ usage() {
 
 MODE="${1:-}"
 case "$MODE" in
+    rtl)
+        # RTL-to-RTL equivalence for ONE module: prove a lint fix did (or did
+        # not) change behaviour.
+        #
+        #   run_lec.sh rtl <golden.sv> <revised.sv> <top-module>
+        #
+        # This is the gate behind verif/lint/full/prove_fix.sh G2. A change unit
+        # declares expect.lec, and the ONLY thing that makes that declaration
+        # worth anything is a compare that can come back either way. A fix
+        # claiming to be behaviour-preserving that returns NON-EQUIVALENT has
+        # changed silicon behaviour by accident; one claiming to be
+        # behaviour-changing that returns equivalent did nothing.
+        #
+        # Why it needs -define: Genus reads this RTL with -define SYNTHESIS
+        # (see the dofile Genus itself writes, runs/*/outputs/lec.dofile). Read
+        # without it, LEC compares `ifndef SYNTHESIS simulation code that never
+        # reaches the netlist. POWER_PINS is deliberately NOT set -- it guards
+        # only inout VDD/VSS plumbing, no logic.
+        #
+        # LEC_LIBS is still passed: for a pure RTL compare no library cell is
+        # instantiated, so it is inert, and the dofile refuses to start on an
+        # empty LEC_LIBS by design.
+        RTL_GOLDEN="${2:-}"; RTL_REVISED="${3:-}"; RTL_TOP="${4:-}"
+        [ -n "$RTL_GOLDEN" ] && [ -n "$RTL_REVISED" ] && [ -n "$RTL_TOP" ] || {
+            echo "usage: run_lec.sh rtl <golden.sv> <revised.sv> <top-module>" >&2
+            exit 2; }
+        # SystemVerilog unless the caller said otherwise. Tested with
+        # ${VAR+set}, not `:-`: the global default above has already given
+        # LEC_DIALECT a value, so `:-` here is a no-op.
+        [ -n "$LEC_DIALECT_SET" ] || LEC_DIALECT="-sv09"
+        LEC_PG_PIN="${LEC_PG_PIN:-none}"
+
+        # INCLUDE DIRECTORIES.
+        # Supply them as bare paths in LEC_INCDIRS -- NOT as +incdir+ in
+        # LEC_RTLOPTS. +incdir+ is a Verilog COMMAND-FILE option, not a
+        # read_design option; the dofile writes a command file and reads it with
+        # `read_design -file`, which is the only placement Conformal accepts.
+        # See the long note at read_design in pnr_lec.do.
+        #
+        #   LEC_INCDIRS="/a/inc /b/inc"  run_lec.sh rtl ...
+        #   LEC_INCDIRS=auto             run_lec.sh rtl ...
+        #
+        # `auto` resolves the whole design's include path from the ASIC flist
+        # with verif/lint/full/flist_resolve.py -- the same resolver the lint
+        # flow uses, so the search path matches what lint and Verilator see.
+        LEC_INCDIRS="$LEC_INCDIRS_REQ"
+        if [ "$LEC_INCDIRS" = "auto" ]; then
+            _flist="$REPO_ROOT/flist/nanosoc_eth_chiplet_asic.flist"
+            [ -r "$_flist" ] || die "LEC_INCDIRS=auto but $_flist is unreadable"
+            LEC_INCDIRS="$(python3 - "$REPO_ROOT/verif/lint/full/flist_resolve.py" "$_flist" <<'PY'
+import sys, os, json, importlib.util
+spec = importlib.util.spec_from_file_location("flist_resolve", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+r = m.Resolver(dict(os.environ)); r.read(sys.argv[2])
+print(" ".join(r.incdirs))
+PY
+)" || die "LEC_INCDIRS=auto: flist_resolve.py failed"
+            [ -n "$LEC_INCDIRS" ] || die "LEC_INCDIRS=auto resolved to an EMPTY include list — refusing to run a compare whose includes would silently not resolve"
+            note "LEC_INCDIRS=auto resolved $(printf '%s\n' $LEC_INCDIRS | wc -l) include director(y|ies) from $(basename "$_flist")"
+        fi
+        export LEC_RTLOPTS LEC_INCDIRS
+        run_compare "rtl_${RTL_TOP}" "$RTL_GOLDEN" "$RTL_REVISED" "$RTL_TOP"
+        exit $?
+        ;;
     pnr)
         # THE CHECK THAT WAS MISSING.
         #
