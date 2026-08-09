@@ -1,0 +1,43 @@
+id:    A3-rom-spec-word-count
+title: ROM compiler spec requests 2048 words; the delivered macro is 512
+area:  asic-flow
+risk:  flow-only
+# CORRECTED after the 2026-08-08 dry run. The chiplet-side ASIC/tech_wrappers
+# pair is DEAD: build/chip/flist/soc.flist:326-327 compiles the SUBMODULE pair,
+# and the submodule's tsmc_65_romlibs is what historically built the delivered
+# macros (memlib header 11 Jun 2026, five weeks before ASIC/ existed).
+files:
+  - nanosoc-multicore-system/syn/asic/tech_wrappers/tsmc65/eth_rom.spec
+  - nanosoc-multicore-system/syn/asic/tech_wrappers/tsmc65/nanosoc_rom.spec
+  - ASIC/tech_wrappers/tsmc65/eth_rom.spec
+  - ASIC/tech_wrappers/tsmc65/nanosoc_rom.spec
+
+defect: |
+  Verified: .spec line 31 says `words = 2048`; both delivered macros report
+  `NumberOfWords : 512` in their .memlib. Nothing reconciles the two.
+
+  MECHANISM CORRECTED by the dry run: both specs set `mode = random` (line 20),
+  which overrides `code_file` (line 9) AND the command-line -code_file. 0 of 512
+  words match the boot image. So this is NOT a "512-line file into a 2048-word
+  spec" bug.
+
+  The hazard is GEOMETRIC. A 2048-word macro is a ~4x array, so regeneration
+  invalidates the LEF SIZE (164.665 x 59.735) and both place_macro coordinates
+  (floorplan.tcl:225,243). And the 11-bit RTL wrapper (owned by B3) would then
+  connect CLEANLY, so nothing would complain. Armed, not yet fired.
+
+change: |
+  words = 2048 -> words = 512 in both specs.
+
+expect:
+  lec: n/a
+  lint_delta: {}
+  netlist_delta: none            # no regeneration in this CU
+gates:
+  unit:        []
+  integration: []
+  fpga:        none
+new_test:  required
+test_spec: |
+  Regenerate the romlibs; assert the .memlib NumberOfWords is 512 and the .lef
+  bbox matches docs/tapeout/03-floorplan.md. Covered permanently by A4.

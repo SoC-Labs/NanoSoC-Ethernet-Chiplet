@@ -1,0 +1,30 @@
+id:    A4-romlib-preflight-guard
+title: romlibs-preflight does not check spec words against the boot image
+area:  asic-flow
+risk:  flow-only
+files: [ASIC/common.mk]
+
+defect: |
+  romlibs-preflight checks the code file EXISTS but never its LENGTH. That is
+  the guard that would have caught A3 before it shipped.
+
+depends_on: [A3-rom-spec-word-count]
+
+change: |
+  CORRECTED after the dry run. Putting the assert INSIDE romlibs-preflight makes
+  it dead code: common.mk:293 probes the ROM compiler FIRST and exits, and
+  MEM_COMPILER_DIR defaults to another engineer's home directory that does not
+  exist on this host. A guard that cannot execute is not a guard.
+
+  Add a standalone `.PHONY: romlibs-wordcheck` that asserts
+  `spec words == $(wc -l < code_file)` for both ROMs, and make it a PREREQUISITE
+  of romlibs-preflight so it runs AHEAD of the compiler probe and can also be
+  run on its own on a host with no vendor tool.
+
+expect: {lec: n/a, lint_delta: {}, netlist_delta: none}
+gates: {unit: [], integration: [], fpga: none}
+new_test:  required
+test_spec: |
+  Mutation-prove it: `make -f ASIC/common.mk romlibs-wordcheck` must PASS after
+  A3 lands, and must FAIL if words is set back to 2048. Runs without the mem
+  compiler, which is the whole point of the standalone target.

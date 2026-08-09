@@ -1,0 +1,36 @@
+id:    A1-dma-err-irq-routing
+title: DMA-250 error indication reaches no interrupt controller
+area:  soc
+risk:  behaviour-changing
+files: [nanosoc-multicore-system/sys_desc/nanosoc_multicore_soc.yaml]
+
+defect: |
+  dmac_0_err_w occurs exactly TWICE in the generated SoC top: its declaration
+  (:266) and its port bind (:1190 .DMA_ERR). It is in no IRQ bus and no ETC
+  event router. A routed IRQ (spi_irq_w) occurs 4 times. Firmware can only
+  observe a DMA error by polling DMA-250 STATUS over APB.
+
+  Produced NO lint line: an assigned-but-never-read wire is HAL URDWIR, which
+  nanosoc-multicore-system/lint/hal.tcl:117 waives. Its recorded justification
+  is "dead-end sinks routed to named *_nc wires" -- dmac_0_err_w is not a *_nc
+  wire, so it falls outside the reason the waiver records.
+
+change: |
+  Route dmac_0_err_w into an IRQ bus in sys_desc, regenerate. Paired with
+  D2-narrow-urdwir-waiver so the class cannot hide again.
+  If poll-only is the deliberate design, document it and tie the wire to a
+  named *_nc sink so it matches the waiver's own justification.
+
+expect:
+  lec: non-equivalent            # a new IRQ path is new logic
+  lint_delta: {}                 # invisible to lint until D2 lands
+  netlist_delta: expected
+
+gates:
+  unit:        []
+  integration: ["make elab", "make elab-strict"]
+  fpga:        none
+new_test:  required
+test_spec: |
+  DMA-250 error injection: force a channel error, assert the SoC IRQ line
+  asserts and the NVIC pending bit sets. No existing test covers this path.

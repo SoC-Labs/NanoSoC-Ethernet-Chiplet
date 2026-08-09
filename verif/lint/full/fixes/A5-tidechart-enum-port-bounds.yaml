@@ -1,0 +1,46 @@
+id:    A5-tidechart-enum-port-bounds
+title: Peer-supplied port index is unvalidated and can stall the enum plane
+area:  tidechart
+risk:  behaviour-changing
+files:
+  - tidechart/src/rtl/tidechart_enum_fsm.sv
+  - tidechart/src/rtl/tidechart_crossbar.sv
+
+defect: |
+  crossbar.sv:239-241 selects tc_axis_tx_tready[enum_fc_tx_port] and
+  elect_tx_valid[enum_fc_tx_port]. enum_fc_tx_port is PORT_W=3 bits and, on a
+  relaying node, comes from first_hop() of the RECEIVED packet's path field
+  (enum_fsm.sv:500,683,728) -- peer wire data, no bounds check.
+
+  Ship config is NUM_PORTS=1 (src/rtl/nanosoc_eth_chiplet.sv:858), so the arrays
+  are [0:0] and any nonzero value is out of range. crossbar.sv:223 also gates
+  tvalid on (enum_fc_tx_port == gi), so no port asserts valid either: the FSM
+  holds fc_tx_valid waiting on a handshake that can never complete.
+
+  SILENT PERMANENT STALL of the enum plane from one corrupted FC beat. This link
+  has a documented data-drop and framing history, so a corrupted path field is
+  not hypothetical.
+
+change: |
+  Clamp at the source in enum_fsm.sv:
+    wire rx_egress_valid = ({1'b0, rx_egress_hop} < NUM_PORTS[PORT_W:0]);
+  require it before the PATH-transit branch (drop the packet otherwise).
+  Belt and braces in crossbar.sv: return ready=1'b1 for an out-of-range port so
+  a bad index can never wedge the FSM.
+
+expect:
+  lec: non-equivalent
+  lint_delta:
+    verilator: {WIDTH: -2}
+    hal:       {POOBID: -2}
+  netlist_delta: expected
+
+gates:
+  unit:        ["make -C tidechart/cocotb/tidechart_enum sim"]
+  integration: ["make regress"]
+  fpga:        kr260-eth-chiplet   # touches the D2D control plane
+new_test:  required
+test_spec: |
+  At NUM_PORTS=1 drive a DISCOVER_REQ with hop_count=2 whose hop 1 is port 3.
+  Assert the FSM returns to idle within N cycles and tc_axis_tx_tvalid never
+  hangs asserted. Before the fix it hangs. Build on the existing fc_stream_agent.

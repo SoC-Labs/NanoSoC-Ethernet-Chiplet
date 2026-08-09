@@ -1,0 +1,41 @@
+id:    A2-ptp-servo-lock-compare
+title: PTP servo lock can never latch because $unsigned() is used as abs()
+area:  tidelink
+risk:  behaviour-changing
+files: [tidelink/src/rtl/tidelink_ptp_servo.sv]
+
+defect: |
+  Line 637: if ($unsigned(offset_r) < servo_step_thresh_r[31:2])
+  offset_r is `logic signed [31:0]` (:362). $unsigned() reinterprets the bit
+  pattern -- it is NOT absolute value. Any negative offset becomes >= 2**31,
+  which always exceeds servo_step_thresh_r[31:2] (max 2**30-1), so the else arm
+  clears lock_counter_r and servo_locked. Lock can only latch after >= LOCK_COUNT
+  consecutive POSITIVE offsets, but a tracking PTP servo dithers about zero.
+
+  Line 586-587 of the same file does the equivalent test correctly with a
+  bidirectional $signed() compare, so this is an inconsistency, not house style.
+
+change: |
+  if ((offset_r <  $signed({2'b00, servo_step_thresh_r[31:2]})) &&
+      (offset_r > -$signed({2'b00, servo_step_thresh_r[31:2]}))) begin
+  Also resolves the HAL ULRELE (32-vs-30 bit) at the same line.
+
+expect:
+  lec: non-equivalent
+  lint_delta:
+    verilator: {}
+    hal:       {ULRELE: -1}
+  netlist_delta: expected
+
+gates:
+  unit:        ["make -C tidelink/cocotb/tidelink_ptp_servo sim"]
+  integration: []
+  fpga:        none              # PHC_LOCK_GATE_EN=0 in the shipped config
+new_test:  required
+test_spec: |
+  servo_locked is never asserted-on anywhere today: the only UVM test that uses
+  it FORCES it high. That gap is why this survived.
+    1. small NEGATIVE offset (|offset| < thresh/4), >= LOCK_COUNT+1 PI
+       iterations -> assert servo_locked == 1.  Reads 0 before the fix.
+    2. small positive offset still locks (no regression).
+    3. |offset| > thresh/4 clears lock.

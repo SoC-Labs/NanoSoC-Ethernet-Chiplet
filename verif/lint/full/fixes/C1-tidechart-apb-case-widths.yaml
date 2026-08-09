@@ -1,0 +1,33 @@
+id:    C1-tidechart-apb-case-widths
+title: Case tags narrower than the 7-bit selector (one file, ~192 findings)
+area:  tidechart
+risk:  behaviour-preserving
+files: [tidechart/src/rtl/tidechart_apb_regs.sv]
+
+defect: |
+  case (apb_waddr) has a 7-bit selector; the arms at :485-558 and :571-655 are
+  written 6'hXX. Unsigned zero-extension means 6'h03 -> 7'h03 and never aliases
+  7'h43, so the decode is CORRECT -- but it buries every genuine width finding
+  in this file. Line 485 already uses 7'h02, so the file contradicts itself.
+
+change: |
+  Size every case item to the selector: 6'hXX -> 7'hXX throughout both blocks.
+  Pure width normalisation, no value changes.
+
+expect:
+  lec: equivalent                # THE gate. Non-equivalent here = a typo.
+  lint_delta:
+    verilator: {WIDTH: -114}
+    hal:       {UELCIT: -78}
+  netlist_delta: none
+
+gates:
+  unit:        ["make -C tidechart/cocotb/tidechart_system sim"]
+  integration: []
+  fpga:        none
+new_test:  none
+test_spec: |
+  No new test. This is exactly the class where LEC beats simulation: 78
+  mechanical edits whose failure mode is one mistyped constant. The existing
+  50-test tidechart_system suite is the backstop, not the proof.
+  Reviewer check: every hunk in `git diff` must be a pure width change.

@@ -5,6 +5,13 @@ Result: our three integration modules are structurally clean; every finding is a
 waived by-design item. The lint's ability to catch the `D2D_HREADY_LOOP` class is
 proven by a sanity harness.**
 
+**Update 2026-08-09.** Re-checked at FULL-CHIP scope (`verif/lint/full/`, Verilator
++ HAL over the whole 590-file ASIC flist, with the real submodules rather than
+blackboxes). Every §4 verdict below still holds, with one change: the 20 open
+outputs in row 6 are no longer left as `.port()` — they are closed properly in
+**§4.1**. Integration-zone DESIGN findings: Verilator **0 → 0** (measured), HAL
+**21 → 0** (expected; HAL is licence-gated and re-runs centrally).
+
 This pass exists because `make elab` links a netlist but never evaluates it, so it
 is blind to the class of defect that motivated this work: combinational loops,
 unintended latches, width truncation in expressions, and undriven / multiply-driven
@@ -92,7 +99,55 @@ runner (`WAIVE_RE = UNUSED | PINCONNECTEMPTY`). Ranked by how much they matter:
 | 3 | noise | UNUSED | `nanosoc_eth_chiplet.sv:271` | `d2d_ahb_s_hprot[6:4]` unused | By design — TideLink drives AHB5 `hprot[6:0]`; the SoC consumes `[3:0]` (line 386). Deliberate AHB5→AHB-Lite narrowing. |
 | 4 | noise | UNUSED | `chiplet_d2d_decode.sv:68` | `haddr[31:25,23:20,15:0]` unused | By design — the decoder decodes only `haddr[24]` and `haddr[19:16]`; the full address fans out to the slaves at the top level, not through the decoder (module-header CONSTRAINT). |
 | 5 | noise | UNUSED | `chiplet_d2d_decode.sv:69` | `htrans[0]` unused | By design — the decoder qualifies on `htrans[1]` only ("a real transfer"). |
-| 6 | noise | PINCONNECTEMPTY ×20 | `nanosoc_eth_chiplet.sv` :376, :535, :564, :565, :568, :742, :747–750, :761–766, :809, :810, :812, :815 | Deliberately open outputs | By design — clock-gate hints (`APBACTIVE`), unused reduced-slave `hmastlock`, TideChart-APB `PSTRB`/`PPROT` it does not carry, the idle I2C-AXI slave responses, and the absent IRQC stream. Each is commented at its instance. |
+| 6 | ~~noise~~ **CLOSED 2026-08-09** | ~~PINCONNECTEMPTY ×20~~ | `nanosoc_eth_chiplet.sv` | Deliberately open outputs | Verdict unchanged (all 20 re-verified by-design at full-chip scope), but they are no longer left as `.port()`. Each now drives a **named `*_nc` sink** — see §4.1. |
+
+### 4.1 The 20 open outputs — re-verified at full-chip scope, and closed
+
+At the three-module scope these were `.port()` and waived. At **full-chip** scope
+(`verif/lint/full/`, both tools) the same 20 came back as **21 HAL `*W,UNCONN`**
+lines that nothing waived, because the merged integration ruleset waives HAL's
+`UNCONO` (a module's own undriven output) but **not `UNCONN`** (a dangling output
+at an *instance*) — `verif/lint/full/hal_rules.tcl:67`. Verilator's
+`PINCONNECTEMPTY` was waived; HAL's exact analogue was not. So the class was
+half-waived and accumulating.
+
+**Re-verified.** All 21 opened in the RTL, all still deliberate:
+
+| # | Instance | Port(s) | Why it is a dead end |
+|---|---|---|---|
+| 1 | `u_soc` | `d2d_ahb_m_hmastlock` | No slave in the D2D window has an `HMASTLOCK` port: TideLink's `ahb_sub`/`ahb_tx`/`ahb_fifo`/`ahb_ptp` declare none (`tidelink_top.sv` has no `*_hmastlock` port at all), and BP210 `cmsdk_ahb_to_apb.v:41-72` has no `HMASTLOCK` input. Nowhere to route it. |
+| 2–3 | `u_tlapb_bridge`, `u_tcapb_bridge` | `APBACTIVE` ×2 | Clock-gating hint. Both bridges run `PCLKEN=1` at HCLK with no APB clock gate in this build. |
+| 4–5 | `u_tcapb_bridge` | `PSTRB`, `PPROT` | `tidechart_shim`'s APB port is `paddr/psel/penable/pwrite/pwdata` only — it carries neither. |
+| 6 | `u_tidelink` | `tl_data_mode_o` | **No longer open.** Connected 2026-08-09 by the TideChart data-mode gate fix; it now drives `u_tidechart.link_active`. This is the one entry whose *verdict* changed. |
+| 7–17 | `u_tidelink` | 11 × `s_i2c_axi_*` response outputs | Every request-side input of that AXI slave is tied inactive at the same instance (`awvalid`/`wvalid`/`arvalid` = 0), so no transaction can start and no response can ever be produced. Tied off as a block. |
+| 18–21 | `u_tidechart` | 4 × IRQC AXI-Stream outputs | The `ahb-chiplet-irqc` block is not instantiated in this chiplet. The matching *inputs* are tied idle at the same instance. |
+
+**How they are closed.** Not by a new waiver: each unused output now drives a
+**named `*_nc` wire** declared in one commented block in
+`src/rtl/nanosoc_eth_chiplet.sv`, one line of reason each. That is:
+
+- the convention **nanosoc_gen already emits** in the generated SoC top
+  (`cc_periph_uart_txen_nc`, `dmac_0_apb_bridge_pstrb_nc`, `dap_ss_0_jtagnsw_nc`, …);
+- the pattern the **recorded HAL waiver actually names** — "intentional dead-end
+  sinks routed to named `*_nc` wires", `-nocheck URDWIR`,
+  `nanosoc-multicore-system/lint/hal.tcl:117`;
+- **empirically zero-finding**: the generated SoC top declares >100 `_nc` wires
+  and contributes exactly **two** HAL DESIGN findings, neither of them about an
+  `_nc` net.
+
+So the justification now applies to the thing it is waiving, which is the failure
+mode `docs/LINT_REMEDIATION_PLAN.md` §4 records: a rule-name waiver whose recorded
+reason was narrower than its effect is what hid the `dmac_0_err_w` DMA-error hole.
+
+**Zero silicon change** — a driven-but-unread wire has no load and is removed by
+synthesis; `.port()` and `→ *_nc` are the same netlist. **Measured** (Verilator,
+`verif/lint/full/verilator_lint.py`, integration zone): 20 `PINCONNECTEMPTY`
+became 20 `UNUSED`, both waived; DESIGN findings **0 → 0**.
+
+**Standing rule, now stated in the RTL itself:** never omit a pin (an omitted
+*input* floats — `PINMISSING`/`UNCONI`, and both gate); for an unused *output*,
+do not stop at `.port()` — give it a named `*_nc` sink with its reason, because
+`_nc` is greppable and a bare `()` is not.
 
 Notes:
 - `tidechart_shim.sv` linted **completely clean** — the flatten/unpack generate
