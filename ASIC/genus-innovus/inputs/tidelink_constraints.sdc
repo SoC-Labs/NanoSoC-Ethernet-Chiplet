@@ -28,6 +28,129 @@ set_clock_uncertainty -setup $CLK_ERROR      [get_clocks D2D_TX_CLK_0]
 set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks D2D_TX_CLK_0]
 
 # ===========================================================================
+# RECOVERED D2D RX WORD CLOCK (/16) — THE 16,653 UNCLOCKED FLOPS
+# ===========================================================================
+# Added 2026-08-08. Before this block the recovered RX WORD clock was never
+# declared, so check_timing_intent reported 16,653 sequential clock pins
+# "without clock waveform" (reports/eval/syn_timing_intent.pre.rep:17779) — the
+# ENTIRE D2D RX word domain, timed against nothing and un-balanceable by CTS.
+# That is the marginal-die_a RX-eye reliability gap: a recovered-clock domain
+# with no clock tree.
+#
+# WHAT THE CLOCK IS, FROM THE RTL (verified, not assumed):
+#   Each per-lane WavD2DGpioRx derives a /16 word clock and drives it out on its
+#   io_link_clk port. The generator is a free-running 4-bit counter `count`
+#   (tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v:400, +1 every capture
+#   clock, init 0xF); io_link_clk = ~count[3] (line 595 via io_link_clk_mux).
+#     * NOTE it is ~count[3], NOT ~adj_count[3] — the SoC Labs glitch fix of
+#       2026-06-09 (same file, lines 572-595) moved the divide OFF the
+#       phase-adjusted count and ONTO the free-running one, so the word clock is
+#       phase-INDEPENDENT of data alignment. Same /16 ratio; all 8 lanes share
+#       one capture clock and one POR, so the 8 word clocks are phase-aligned.
+#   count itself IS already clocked (its clk pin is NOT in the pre-report): the
+#   capture clock w_cnt_clk = io_pad_clk = io_pad_clk_rx = TL_CLK_RX at 1:1 in
+#   functional mode (WavD2DGpioRx_v2.v:665; the pad_clk scan mux passes the
+#   functional leg — proven by count_reg being clocked). So the divider path
+#   TL_CLK_RX -> count -> io_link_clk is OPEN and -source TL_CLK_RX resolves.
+#
+# HIERARCHY (verified against reports/eval/syn_hierarchy.rep and the RTL):
+#   u_wlink (Wlink) -> phy (WlinkGPIOPHY, Wlink.v:1389)
+#                   -> gpio (WavD2DGpio,  WlinkGPIOPHY*.v:117/248)
+#                   -> gpiorx_<0..7> (WavD2DGpioRx) . io_link_clk
+#   gpiorx_0/io_link_clk also leaves gpio as io_link_rx_rx_link_clk
+#   (WavD2DGpio_v2.v:1965) and is the deskew read/out_clk + the domain the whole
+#   framer / axi2wl / gb2wl / tl2wl / sp2wl / llrx / calibrator / lane_checker
+#   run in (the bulk of the 16,653). lanes 1-7 clock the per-lane deskew write
+#   side (WavD2DGpio_v2.v:899-902 lane_clk) + their own leaf link_data_reg.
+#   All 8 pins are defined so every flop in the domain gets a waveform + CTS.
+#
+# Defining the generated clock AT the io_link_clk pin (after the mux) asserts
+# the /16 waveform forward regardless of the scan-mux constant-propagation that
+# labelled these pins "Case constant(0)"; -source TL_CLK_RX / -divide_by 16
+# gives period 16*EXTCLK_PERIOD with a 50% duty cycle (~count[3] = 8 hi / 8 lo).
+set GPIO u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_chiplet_controller/u_wlink/phy/gpio
+set WL   u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_chiplet_controller/u_wlink
+set _rx_bound 0
+foreach n {0 1 2 3 4 5 6 7} {
+    set _pin [get_pins -quiet $GPIO/gpiorx_$n/io_link_clk]
+    # `error`, NOT `continue`. A skipped lane leaves ~1.8k flops with no waveform
+    # and no clock tree while the run completes and reports success - which is
+    # exactly how this hole survived the whole project. Measured 2026-08-09: all
+    # 8 pins resolve at read time (post-elaborate, pre-map), so a miss here means
+    # the hierarchy moved and the constraint must not be silently dropped.
+    if {[sizeof_collection $_pin] == 0} {
+        error "tidelink_constraints.sdc: D2D RX word-clock anchor\
+               $GPIO/gpiorx_$n/io_link_clk matched NOTHING. The recovered RX word\
+               domain (~14.7k flops) would be left untimed and CTS would build no\
+               tree for it. Refusing to continue."
+    }
+    create_generated_clock -name "D2D_RX_WORD_CLK_$n" \
+        -source [get_ports TL_CLK_RX] -divide_by 16 $_pin
+    # Mirror D2D_RX_CLK_0: never time these newly-clocked flops at ZERO margin.
+    # PLACEHOLDER values, same caveat as the D2D_RX_CLK_0 block above — $CLK_ERROR
+    # is the system oscillator jitter, not the D2D link budget. Replace with the
+    # real recovered-clock jitter when the link budget exists.
+    set_clock_uncertainty -setup $CLK_ERROR      [get_clocks "D2D_RX_WORD_CLK_$n"]
+    set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks "D2D_RX_WORD_CLK_$n"]
+    incr _rx_bound
+}
+if {$_rx_bound != 8} {
+    error "tidelink_constraints.sdc: bound $_rx_bound/8 RX word clocks"
+}
+
+# ---------------------------------------------------------------------------
+# D2D TX RECOVERED WORD CLOCK (/16) — the other half of the domain.
+#
+# Measured 2026-08-09 with a read-only Genus probe (elaborate -> read_sdc ->
+# check_timing_intent): with the RX block above ALONE, untimed sequential clock
+# pins fall 16,653 -> 1,979, and every one of the remaining 1,979 is TX-side:
+#   lltx 154, txpstate 21, txrouter 5, sp2wl/tx_fifo 14, plus the TX halves of
+#   the four axi2wl FC-replay blocks (enable_link_clk_demet, a2l_fc_replay write
+#   side). The gpiotx leaf count in the residual is ZERO — the TX *leaves* are
+#   fine; it is the TX word *domain* that has no waveform.
+#
+# `gpiotx_$n/io_link_clk` is measured to resolve 8/8 at read time, same as RX.
+# Do NOT anchor on count_reg[3]/QN: QN exists only post-map, and an SDC is read
+# after elaborate and before mapping, so it would match nothing here.
+#
+# -source is $WL/pad_clk_tx — the same pin D2D_TX_CLK_0 already uses, so the two
+# stay phase-coherent.
+set _tx_bound 0
+foreach n {0 1 2 3 4 5 6 7} {
+    set _pin [get_pins -quiet $GPIO/gpiotx_$n/io_link_clk]
+    if {[sizeof_collection $_pin] == 0} {
+        error "tidelink_constraints.sdc: D2D TX word-clock anchor\
+               $GPIO/gpiotx_$n/io_link_clk matched NOTHING. The TX word domain\
+               (~2k flops) would be left untimed. Refusing to continue."
+    }
+    create_generated_clock -name "D2D_TX_WORD_CLK_$n" \
+        -source [get_pins $WL/pad_clk_tx] -divide_by 16 $_pin
+    set_clock_uncertainty -setup $CLK_ERROR      [get_clocks "D2D_TX_WORD_CLK_$n"]
+    set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks "D2D_TX_WORD_CLK_$n"]
+    incr _tx_bound
+}
+if {$_tx_bound != 8} {
+    error "tidelink_constraints.sdc: bound $_tx_bound/8 TX word clocks"
+}
+
+# THE CONSTRAINT BINDING HERE IS NOT THE SAME AS IT REACHING P&R.
+# scripts/nanosoc_eth_chiplet_pads.mmmc:186-188 gives Innovus exactly ONE sdc
+# file — outputs/${block_name}_syn.sdc, written by Genus. This file is read by
+# GENUS ONLY. So these 16 clocks reach CTS only if `write_sdc` re-expresses them
+# onto post-map pins (Genus merges seven of the eight RX dividers). That has
+# never been demonstrated. 1b_synthesis_eval.tcl asserts 16/16 in the written
+# SDC immediately after write_sdc for exactly this reason — if that gate fires,
+# the fallback is a second -sdc_files entry in the mmmc, not a hand edit.
+# EXPECT MORE TIMING PATHS/VIOLATIONS ON THE NEXT RUN, NOT FEWER. These 16,653
+# flops were previously invisible to timing; now they are timed. That is the fix
+# WORKING. The success metric is check_timing_intent "Sequential clock pins
+# without clock waveform" collapsing from 16,653 toward 0 -- NOT the violation
+# count. FOLLOW-UP (separate change, out of scope here): the lane_deskew is an
+# async FIFO, so the lane<->lane and word<->capture (D2D_RX_CLK_0) crossings are
+# CDC and want set_clock_groups -asynchronous / set_false_path once these clocks
+# exist; without that the crossings will be timed and report spurious violations.
+
+# ===========================================================================
 # I/O DRIVE AND LOAD FOR THE DIE-TO-DIE LINK
 # ===========================================================================
 # Added 2026-08-07. Before this block the D2D ports had NO drive and NO load
