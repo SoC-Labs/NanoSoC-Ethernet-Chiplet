@@ -91,6 +91,27 @@ PEER_ADDR  = (APERTURE_BYTE << 24) | 0x001000   # 0x2F001000  (die A writes)
 LANDED_ADDR= (REMOTE_BYTE   << 24) | 0x001000   # 0x2D001000  (die B shared SRAM)
 PAYLOAD    = 0xC0FFEE01
 
+# --- TideChart controller APB ---------------------------------------------
+# Reached through the chiplet decode's tcapb bridge at 0x2E04_0000
+# (chiplet_d2d_decode.sv:48 -> hsel_tcapb; a 12-bit AHB->APB window whose APB
+# paddr is sliced to [7:0], nanosoc_eth_chiplet.sv:886). So AHB 0x2E04_0000|off
+# reaches TideChart register `off`. Offsets/bits from tidechart/src/sw/tidechart.h.
+TCAPB_BASE      = 0x2E04_0000
+TC_STATUS       = TCAPB_BASE + 0x00   # [0]election_done [1]is_root [2]enum_done [7:3]local_id [12:8]total
+TC_BEST_CLAIM   = TCAPB_BASE + 0x04   # [31:16]dev_class [15:0]random_id
+TC_CTRL         = TCAPB_BASE + 0x08   # [0]election_start [1]enum_start [2]force_root [3]reset (W1S)
+TC_TIMEOUT      = TCAPB_BASE + 0x0C   # [15:0]election_timeout [31:16]enum_timeout
+TC_DEVICE_CLASS = TCAPB_BASE + 0x10   # [15:0] this die's device_class (election primary key; LOWER wins)
+TC_RANDOM_ID    = TCAPB_BASE + 0x1C   # [15:0] {device_strap, lfsr[7:0]} (tiebreak; LOWER wins)
+TC_UPLINK_PORT  = TCAPB_BASE + 0x20   # [2:0]port [7]valid
+TC_PORT_COUNT   = TCAPB_BASE + 0x24
+TC_ENUM_STATE   = TCAPB_BASE + 0x28
+TC_ERROR        = TCAPB_BASE + 0x2C   # R/W1C [0]elec_to [1]enum_to [2]dual_root(never set in silicon)
+TC_PUF_STATUS   = TCAPB_BASE + 0x30   # [16]puf_ready [15:0]puf_seed
+
+TC_CTRL_ELECTION_START = 1 << 0
+TC_CTRL_ENUM_START     = 1 << 1
+
 
 async def _heartbeat(dut, every=2000):
     while True:
@@ -748,3 +769,119 @@ async def test_diag_q_hold(dut):
     dut._log.info(f"DIAG q(ahb_sub_hwdata) from T for 12 cyc (NO force) = "
                   f"{[hex(s) if s is not None else 'x' for s in samples]}")
     await ClockCycles(dut.sys_fclk, 200)
+
+
+# ===========================================================================
+# TideChart Tier-1, SYSTEM LEVEL — the first time TideChart is driven across two
+# REAL nanosoc_eth_chiplet dies. (Spec: docs/SYSVAL_TEST_BUILD_SPEC_2026-08-08.md
+# TIER-2 "TideChart Tier-1 sim"; the g2 TB already compiles TideChart and straps
+# die_a role=0 / die_b role=1, but no test drove it.)
+#
+# Root election runs cross-die: each die's tidechart_election_fsm broadcasts a
+# {device_class, random_id} claim that TideLink carries over the tc_axis seam
+# (nanosoc_eth_chiplet.sv:770-776) — so the link must be at FCSM=4 first. The RTL
+# elects the LOWEST claim (tidechart_election_fsm.sv:6-8, :181-184). Both dies
+# share DEVICE_CLASS=0x0001; the tiebreak is device_strap folded into random_id's
+# high byte (:310), and device_strap = {7'b0, role_strap_i}
+# (nanosoc_eth_chiplet.sv:880) => die_a strap 0 < die_b strap 1. So die_a MUST be
+# the sole root. Then the root enumerates and the two dies must hold DISTINCT
+# local_ids.
+#
+# Run:  make -C verif/g2_soc_pair sim TESTCASE=test_tidechart_election_root_is_die_a
+# ===========================================================================
+@cocotb.test(timeout_time=90, timeout_unit="ms")
+async def test_tidechart_election_root_is_die_a(dut):
+    tb = Pair(dut)
+
+    # -- Stage 1: the link (TideChart claims ride the tc_axis seam over TideLink). -
+    await tb.bring_up()
+    a_st, b_st = tb.fcsm_state("A"), tb.fcsm_state("B")
+    assert tb.link_is_up(), (
+        f"Wlink FCSM did not reach LINK_IDLE ({FCSM_LINK_IDLE}): die A={a_st} "
+        f"die B={b_st}. TideChart election claims cross the link, so it must be up "
+        "first.")
+    dut._log.info(f"STAGE 1 ok: link up (FCSM A={a_st} B={b_st})")
+
+    # -- Stage 2: pre-election observability. puf_ready must be 1 or election_start
+    #    is gated (tidechart_apb_regs.sv:321). PUF_ENABLE=0 here -> puf_ready==1. ---
+    dc_a = (await tb.a.apb_read(TC_DEVICE_CLASS)) & 0xFFFF
+    dc_b = (await tb.b.apb_read(TC_DEVICE_CLASS)) & 0xFFFF
+    puf_a = ((await tb.a.apb_read(TC_PUF_STATUS)) >> 16) & 1
+    puf_b = ((await tb.b.apb_read(TC_PUF_STATUS)) >> 16) & 1
+    dut._log.info(f"TC pre-election: die_a DEVICE_CLASS=0x{dc_a:04x} puf_ready={puf_a}; "
+                  f"die_b DEVICE_CLASS=0x{dc_b:04x} puf_ready={puf_b}")
+    assert puf_a and puf_b, (
+        f"puf_ready=0 (a={puf_a} b={puf_b}) -> election_start is gated at "
+        "tidechart_apb_regs.sv:321; the election would never start.")
+
+    # Widen the timeouts: election=0x2000, enum=0x1000 cycles — long enough for the
+    # claim to cross the link, short enough to settle well inside the budget.
+    for die in (tb.a, tb.b):
+        await die.apb_write(TC_TIMEOUT, (0x1000 << 16) | 0x2000)
+
+    # -- Stage 3: start election on BOTH dies. The FSM resets its convergence
+    #    timeout on every better claim received, so a small APB skew is harmless. --
+    await tb.a.apb_write(TC_CTRL, TC_CTRL_ELECTION_START)
+    await tb.b.apb_write(TC_CTRL, TC_CTRL_ELECTION_START)
+
+    done = False
+    for _ in range(400):
+        await ClockCycles(dut.sys_fclk, 200)
+        sa = await tb.a.apb_read(TC_STATUS)
+        sb = await tb.b.apb_read(TC_STATUS)
+        if (sa & 1) and (sb & 1):
+            done = True
+            break
+
+    bc_a = await tb.a.apb_read(TC_BEST_CLAIM)
+    bc_b = await tb.b.apb_read(TC_BEST_CLAIM)
+    rid_a = (await tb.a.apb_read(TC_RANDOM_ID)) & 0xFFFF
+    rid_b = (await tb.b.apb_read(TC_RANDOM_ID)) & 0xFFFF
+    err_a = await tb.a.apb_read(TC_ERROR)
+    err_b = await tb.b.apb_read(TC_ERROR)
+    a_done, a_root = sa & 1, (sa >> 1) & 1
+    b_done, b_root = sb & 1, (sb >> 1) & 1
+    dut._log.info(
+        f"ELECTION: die_a done={a_done} is_root={a_root} best=0x{bc_a:08x} "
+        f"rid=0x{rid_a:04x} err=0x{err_a:x} | die_b done={b_done} is_root={b_root} "
+        f"best=0x{bc_b:08x} rid=0x{rid_b:04x} err=0x{err_b:x}")
+
+    assert done and a_done and b_done, (
+        f"election_done not set on both dies (a={a_done} b={b_done}) — the two-die "
+        "election did not converge over the link within budget.")
+    nroot = a_root + b_root
+    assert nroot == 1, (
+        f"exactly ONE root required: a_is_root={a_root} b_is_root={b_root} "
+        f"({'DUAL-ROOT (G1 silent failure)' if nroot == 2 else 'NO ROOT'}).")
+    assert a_root == 1, (
+        f"die_a (device_strap 0 = the LOWER claim) must be the sole root, but die_b "
+        f"won (best_a=0x{bc_a:08x} best_b=0x{bc_b:08x}). RTL elects the lower claim "
+        "(tidechart_election_fsm.sv:181-184).")
+    assert bc_a == bc_b, (
+        f"the two dies disagree on the winning best_claim: 0x{bc_a:08x} vs "
+        f"0x{bc_b:08x} — the election did not truly converge.")
+    assert (rid_a >> 8) == 0x00, (
+        f"root random_id high byte must equal die_a strap 0x00, got 0x{rid_a:04x}.")
+    dut._log.info("EXACTLY-ONE-ROOT ok: die_a is the sole root (lower strap/claim wins).")
+
+    # -- Stage 4: enum on the root (die_a) -> distinct local_ids, total==2. --------
+    await tb.a.apb_write(TC_CTRL, TC_CTRL_ENUM_START)
+    enum_ok = False
+    for _ in range(400):
+        await ClockCycles(dut.sys_fclk, 200)
+        if ((await tb.a.apb_read(TC_STATUS)) >> 2) & 1:
+            enum_ok = True
+            break
+    sa = await tb.a.apb_read(TC_STATUS)
+    sb = await tb.b.apb_read(TC_STATUS)
+    id_a, id_b = (sa >> 3) & 0x1F, (sb >> 3) & 0x1F
+    total_a = (sa >> 8) & 0x1F
+    ed_a, ed_b = (sa >> 2) & 1, (sb >> 2) & 1
+    dut._log.info(f"ENUM: die_a enum_done={ed_a} local_id={id_a} total={total_a} | "
+                  f"die_b enum_done={ed_b} local_id={id_b}")
+    assert enum_ok and ed_a, "enum_done not set on the root die (die_a) within budget."
+    assert id_a != id_b, (
+        f"local_ids must be DISTINCT after enum: die_a={id_a} die_b={id_b}.")
+    dut._log.info(f"ENUM ok: distinct local_ids (die_a={id_a}, die_b={id_b}), "
+                  f"root total={total_a}.")
+    dut._log.info("PASS: two-die TideChart bootstrap — single die_a root + distinct IDs.")
