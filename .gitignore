@@ -84,3 +84,34 @@ site/
 # from the git SHA recorded in its MANIFEST.txt, so not tracked.
 ASIC/genus-innovus/runs/
 ASIC/genus-innovus/baseline_*/
+
+# ── Tool sandboxes and work libraries (2026-08-09) ──────────────────────────
+# ~370 MB of untracked droppings accumulated in one week. The globs are
+# deliberately loose: every one of these directories was an ad-hoc sandbox
+# invented mid-investigation, so anchoring to today's exact names just means
+# the same bulk reappears next week under a new one.
+
+# Xcelium/HAL work library, written to the repo root by verif/lint/full/hal_lint.sh.
+/xcelium.d/
+
+# HAL emits these beside wherever it was launched; regenerated every run.
+hal.design_facts
+hal.log
+hal.rpt
+
+# Conformal LEC sandboxes. run_lec.sh is pointed at these via its *_DIR knobs,
+# so each is a full copy of scripts/ + inputs/ plus netlists, work/fv scratch
+# and reports. NOTE: these also shadow the real flow scripts — never edit a
+# script inside one, the edit is silently lost (see docs/tapeout notes).
+ASIC/*/lec_*shadow/
+
+# Ad-hoc Innovus probe scratch. ASIC/*/work matches only the literal `work`,
+# so work_pgprobe/, work_probe/ and the next work_<something> escape it.
+ASIC/*/work_*/
+
+# Innovus console capture from the hold experiments. The .tcl beside them is
+# the reproducible input and IS tracked; the .out is just stdout.
+ASIC/*/holdexp/*.out
+
+# Cocotb generates the per-node DUT filelists from the Makefile.
+cocotb/*/dut_src_*.f
