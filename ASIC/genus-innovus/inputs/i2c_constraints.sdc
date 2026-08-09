@@ -218,6 +218,14 @@ set_load 100 [get_ports I2C_SDA]
 # a per-edge output slew limit tied to a Hi-Z release, so this ceiling is
 # written once and is only physically meaningful for the pull-down.
 set_max_transition 300 [get_ports I2C_SCL]
+## The 5.0ns violations are reported on uPAD_I2C_SCL/PAD and uPAD_I2C_SDA/PAD -
+## the pad INSTANCE pin, which a port constraint does not cover, so the library's
+## own 5.0ns limit applied. Constrain the pin too. Note a design constraint can
+## only ever TIGHTEN a library limit, so this documents intent rather than
+## relaxing it; the real resolution is a waiver citing UM10204 open-drain rise
+## times against a 100pF bus.
+set_max_transition 300 [get_pins uPAD_I2C_SCL/PAD]
+set_max_transition 300 [get_pins uPAD_I2C_SDA/PAD]
 set_max_transition 300 [get_ports I2C_SDA]
 
 

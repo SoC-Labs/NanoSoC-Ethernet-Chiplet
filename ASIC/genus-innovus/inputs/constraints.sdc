@@ -153,12 +153,44 @@ set_input_delay -clock [get_clocks $SWDCLK] -add_delay 0.1 [get_ports SWDIO]
 # blanket group: TideLink's own SDC constrains that crossing instead of grouping
 # it. See the note in constraints/nanosoc_eth_chiplet_cdc.sdc. This is the
 # bring-up cut, and it is deliberately conservative.
+# The 16 D2D word clocks join their OWN pad clock's group. tidelink_constraints.sdc
+# is sourced at line 112 above, so all 16 exist by the time this runs.
+#
+# WHY IN-GROUP AND NOT SEPARATE GROUPS. set_clock_groups cuts BETWEEN groups, never
+# within one. Putting D2D_RX_WORD_CLK_0..7 alongside D2D_RX_CLK_0 therefore cuts
+# them from the system clock, QSPI, RMII and SWD - crossings that are genuinely
+# asynchronous and would otherwise report ~16.5k newly-timed flops' worth of
+# nonsense - while leaving every path INSIDE the D2D receive domain still timed.
+# That is the conservative choice: nothing in the link gets silently false-pathed.
+#
+# [OWNER, DO NOT LET THIS SLIDE] Two intra-domain questions are deliberately left
+# TIMED here rather than decided in this file:
+#   - lane<->lane. All 8 share -source and -divide_by so they are phase-aligned by
+#     construction and should meet timing; if they do not, that is a real finding.
+#   - word<->capture (D2D_RX_CLK_0 -> D2D_RX_WORD_CLK_n) across u_deskew, which is
+#     an async FIFO. This one probably DOES want a narrow set_false_path on the
+#     FIFO's data path only - not a blanket group cut. Constrain it properly once
+#     the first run shows what it reports.
+# Plain foreach, not lmap/string cat: those need Tcl 8.6+, and an SDC is read by
+# whichever interpreter the tool embeds. A constraint file that errors on one tool
+# and not another is the worst possible failure here.
+set _rx_grp {D2D_RX_CLK_0}
+set _tx_grp {D2D_TX_CLK_0}
+foreach n {0 1 2 3 4 5 6 7} {
+    lappend _rx_grp "D2D_RX_WORD_CLK_$n"
+    lappend _tx_grp "D2D_TX_WORD_CLK_$n"
+}
+if {[llength $_rx_grp] != 9 || [llength $_tx_grp] != 9} {
+    error "constraints.sdc: D2D clock groups built wrong -\
+           rx [llength $_rx_grp], tx [llength $_tx_grp], expected 9 each"
+}
 set_clock_groups -asynchronous -name eth_chiplet_cdc \
     -group [get_clocks [list $EXTCLK QSPI_SCLK QSPI_SCLK_o]] \
-    -group [get_clocks {D2D_TX_CLK_0}] \
-    -group [get_clocks {D2D_RX_CLK_0}] \
+    -group [get_clocks $_tx_grp] \
+    -group [get_clocks $_rx_grp] \
     -group [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}] \
     -group [get_clocks [list $SWDCLK]]
+unset _rx_grp _tx_grp
 
 #### EXTERNAL DRIVE AND LOAD CHARACTERISATION #################################
 #
@@ -349,7 +381,26 @@ set_input_transition -min 0.50 [get_ports NRST] ;# [PLACEHOLDER] pad NLDM index_
 # delay section and from all three sourced IP SDCs. See the report.
 set_input_transition -max 2.00 [get_ports TEST]           ;# [CONVENTION] generic 3.3V LVCMOS board driver; static strap pin, no timing consequence
 set_input_transition -max 2.00 [get_ports SE]             ;# [CONVENTION] as TEST. NOTE: SE is otherwise unconstrained in every SDC
-set_input_transition -max 2.00 [get_ports {HOSTIO4_P1[*]}] ;# [CONVENTION] generic 3.3V LVCMOS driver (FPGA / host adapter) over a short trace
+set_input_transition -max 2.00 [get_ports {HOSTIO4_P1[*]}]
+
+# SCAN IS OFF IN MISSION MODE, AND SAYING SO IS WORTH REAL TIMING.
+# Without this, the scan multiplexer inside every SDFxx flop is timed in BOTH
+# states, so the SI/SE side of ~23.5k mux-D flops competes with the functional
+# D side for the critical path. Post-route STA on 2026-08-07 found violating
+# endpoints that were literally scan pins (adp_addr_reg[30]/SI, and an /SE),
+# i.e. margin spent on a path that cannot exist on this die.
+#
+# Safe here for a stronger reason than usual: the scan chain is NOT BONDED on
+# this tapeout (see the port table above), and the block comment 6 lines up
+# already states TEST and SE are "STATIC configuration pins -- strapped, and
+# never toggling in mission mode". This makes the timer agree with that.
+#
+# NOTE these are the only two set_case_analysis in the whole constraint set --
+# reports/eval/syn_case_analysis.rep was 0 bytes before this. If you ever DO
+# want to time the scan chain, comment these out rather than adding overrides.
+set_case_analysis 0 [get_ports SE]
+set_case_analysis 0 [get_ports TEST]
+ ;# [CONVENTION] generic 3.3V LVCMOS driver (FPGA / host adapter) over a short trace
 
 ### --- OUTPUT LOADING : package + board + far-end receiver -------------------
 #
