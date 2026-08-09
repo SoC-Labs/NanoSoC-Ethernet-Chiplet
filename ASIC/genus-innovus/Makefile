@@ -45,8 +45,9 @@ ROMLIBS_REF ?= /home/dwn1c21/SoC-Labs/TAPEOUT/2026july/NanoSoC-Ethernet-Chiplet/
 
 .PHONY: setup_dirs asic-flist romlibs-check romlibs-fetch cpf-patch sdc-check \
         syn syn_norun syn_eval syn_compare \
-        lec lec-pnr lec-gate lec-selftest \
+        lec lec-pnr lec-gate lec-selftest route-gate-selftest \
         pnr_place pnr_cts pnr_route pnr_all pnr_setup gui \
+        pnr_place_eval pnr_cts_eval pnr_route_eval pnr_all_eval \
         drc lvs lvs-preflight \
         status clean distclean help
 
@@ -185,6 +186,15 @@ lec-gate:
 lec-selftest:
 	$(DESIGN_DIR)/scripts/lec/run_lec.sh selftest
 
+## Mutation-tests the route gate's report parsers. Seconds, plain tclsh, no EDA
+## licence. It existed untracked with no way to run it, which is how the census
+## hole below survived: a DRC record naming only "Blockage of Cell" - no Wire,
+## no Pin - matched no class, so the gate printed "HARD FAILURES: none" on a
+## 265-violation run. pnr_route_eval depends on this: a gate nobody has seen
+## fail is not evidence.
+route-gate-selftest:
+	tclsh $(DESIGN_DIR)/scripts/selftest_route_gate.tcl
+
 #-----------------------------------------------------------------------------
 # Place and route (Innovus)
 #-----------------------------------------------------------------------------
@@ -248,6 +258,100 @@ pnr_route:
 
 ## syn -> place -> CTS -> route -> GDSII, unattended. Multi-hour.
 pnr_all: syn pnr_place pnr_cts pnr_route
+
+#-----------------------------------------------------------------------------
+# P&R evaluation flow — scripts/{2b,3b,4b}_*_eval.tcl + scripts/pnr_utils.tcl
+#-----------------------------------------------------------------------------
+## A/B variants of the three P&R stages, the way syn_eval is to syn. Each writes
+## to logs|reports|outputs/eval and to the $(BLOCK)_eval_* DB namespace, so an
+## eval run CANNOT disturb work/$(BLOCK), the production snapshots, or the
+## shipped GDS. Every behavioural difference is one knob.
+##
+## The stages share the eval DB and run in order, but each takes its INPUT DB
+## from a knob — so the usual mode is to resume a production snapshot rather
+## than re-run hours of upstream work:
+##     make pnr_cts_eval   EVC_IN_PREFIX=$(BLOCK)   # resume the real placement
+##     make pnr_route_eval EVR_IN_PREFIX=$(BLOCK)   # resume the real CTS run
+##
+## Knob prefixes are per stage: EVP_ (place), EVC_ (CTS), EVR_ (route).
+## Every knob lands in the stage manifest automatically, so a result can always
+## be traced back to the settings that produced it.
+##
+## No `env -u CALIBRE_HOME` on pnr_route_eval: unlike 4_pnr_route.tcl, the eval
+## script does not shell out to Calibre at all, so the trap that makes the
+## production stage hang on a held licence seat does not exist here.
+pnr_place_eval: setup_dirs cpf-patch
+	mkdir -p $(EVAL_LOG_DIR) $(EVAL_REPORT_DIR) $(EVAL_OUT_DIR)
+	cd $(WORK_DIR)/; \
+	    EVP_LOG_DIR=$(EVAL_LOG_DIR) \
+	    EVP_REPORT_DIR=$(EVAL_REPORT_DIR) \
+	    EVP_OUT_DIR=$(EVAL_OUT_DIR) \
+	    $(INNOVUS) $(DESIGN_DIR)/scripts/2b_pnr_place_eval.tcl < /dev/null
+	@# Artefact assertions, never $?. Three of them, because any one alone can
+	@# exist for the wrong reason. The manifest is written in the LAST section,
+	@# so its presence is what proves the script reached the end.
+	@test -d $(WORK_DIR)/$(BLOCK)_eval_placed || { \
+	    echo "FAIL: eval placement wrote no DB at $(WORK_DIR)/$(BLOCK)_eval_placed"; \
+	    echo "      grep -nE 'EVPLACE-FAIL|\*\*ERROR' $(WORK_DIR)/innovus.log*"; \
+	    exit 1; }
+	@test -s $(EVAL_REPORT_DIR)/timing_summary_01_place.rep || { \
+	    echo "FAIL: no 01_place timing summary — stage stopped before placement"; exit 1; }
+	@test -s $(EVAL_REPORT_DIR)/place_manifest.txt || { \
+	    echo "FAIL: no manifest — the script did not reach its final section"; exit 1; }
+	@echo "OK: eval placement $(WORK_DIR)/$(BLOCK)_eval_placed"
+	@echo "    read $(EVAL_REPORT_DIR)/place_manifest.txt, then place_pg_audit.rep"
+
+pnr_cts_eval: setup_dirs
+	mkdir -p $(EVAL_LOG_DIR) $(EVAL_REPORT_DIR) $(EVAL_OUT_DIR)
+	cd $(WORK_DIR)/; \
+	    EVC_LOG_DIR=$(EVAL_LOG_DIR) \
+	    EVC_REPORT_DIR=$(EVAL_REPORT_DIR) \
+	    EVC_OUT_DIR=$(EVAL_OUT_DIR) \
+	    $(INNOVUS) $(DESIGN_DIR)/scripts/3b_pnr_cts_eval.tcl < /dev/null
+	@test -d $(WORK_DIR)/$(BLOCK)_eval_cts || { \
+	    echo "FAIL: no eval CTS database at $(WORK_DIR)/$(BLOCK)_eval_cts"; \
+	    echo "      grep -nE 'EVCTS-FAIL|\*\*ERROR' $(WORK_DIR)/innovus.log*"; \
+	    exit 1; }
+	@# The source-latency census must have RUN. A missing census is not a pass.
+	@test -s $(EVAL_REPORT_DIR)/cts_latency_writeback.rep || { \
+	    echo "FAIL: no source-latency census — this run is UNVERIFIED, not passing."; exit 1; }
+	@# ...and must have PASSED: the hold view needs -max, and -max must match -min.
+	@# Deliberately duplicated outside the tool, so it survives the script being
+	@# edited. This is the 2026-08-06 defect: 96,545 phantom hold violations.
+	@awk '$$1=="default_analysis_view_hold" && $$2=="TOTAL" { \
+	        if ($$4+0 > 0 && $$4+0 == $$3+0) ok=1 } END { exit !ok }' \
+	    $(EVAL_REPORT_DIR)/cts_latency_writeback.rep || { \
+	    echo "FAIL: hold-view source-latency writeback is missing its -max side."; \
+	    echo "      scripts/cts_setup.tcl must set timing_analysis_type ocv BEFORE ccopt."; \
+	    echo "      $(EVAL_REPORT_DIR)/cts_latency_writeback.rep"; exit 1; }
+	@echo "OK: eval CTS $(WORK_DIR)/$(BLOCK)_eval_cts"
+	@echo "    read $(EVAL_REPORT_DIR)/cts_latency_writeback.rep"
+
+pnr_route_eval: setup_dirs
+	mkdir -p $(EVAL_LOG_DIR) $(EVAL_REPORT_DIR) $(EVAL_OUT_DIR)
+	cd $(WORK_DIR)/; \
+	    EVR_LOG_DIR=$(EVAL_LOG_DIR) \
+	    EVR_REPORT_DIR=$(EVAL_REPORT_DIR) \
+	    EVR_OUT_DIR=$(EVAL_OUT_DIR) \
+	    $(INNOVUS) $(DESIGN_DIR)/scripts/4b_pnr_route_eval.tcl < /dev/null
+	@# The script's own gate is the verdict; these catch the case where it never
+	@# reached the gate at all.
+	@test -s $(EVAL_REPORT_DIR)/route_gate.txt || { \
+	    echo "FAIL: no gate verdict at $(EVAL_REPORT_DIR)/route_gate.txt —"; \
+	    echo "      the stage did not reach its final section."; \
+	    echo "      grep -nE 'EVROUTE-FAIL|\*\*ERROR' $(WORK_DIR)/innovus.log*"; \
+	    exit 1; }
+	@test -s $(EVAL_OUT_DIR)/$(BLOCK).gds || { echo "FAIL: no GDSII at $(EVAL_OUT_DIR)/$(BLOCK).gds"; exit 1; }
+	@test -s $(EVAL_OUT_DIR)/$(BLOCK)_pnr.v || { \
+	    echo "FAIL: no post-P&R netlist — lec-pnr and LVS would have no input"; exit 1; }
+	@grep -q '^HARD FAILURES: none' $(EVAL_REPORT_DIR)/route_gate.txt || { \
+	    echo "FAIL: hard failures — see $(EVAL_REPORT_DIR)/route_gate.txt"; \
+	    sed -n '/^HARD FAILURES/,/^$$/p' $(EVAL_REPORT_DIR)/route_gate.txt; exit 1; }
+	@echo "OK: eval GDSII $(EVAL_OUT_DIR)/$(BLOCK).gds ($$(du -h $(EVAL_OUT_DIR)/$(BLOCK).gds | cut -f1))"
+	@sed -n '/^SIGNOFF BUDGETS/,/^$$/p' $(EVAL_REPORT_DIR)/route_gate.txt
+
+## place -> CTS -> route, all three eval stages. Multi-hour.
+pnr_all_eval: pnr_place_eval pnr_cts_eval pnr_route_eval
 
 ## Interactive Innovus in work/, empty session — no config, no design.
 pnr_setup:
@@ -342,7 +446,10 @@ status:
 	    "route:$(REPORT_DIR)/timing_summary_05_route_opt.rep" \
 	    "gds:$(GDS)" \
 	    "pnr-netlist:$(OUT_DIR)/$(BLOCK)_pnr.v" \
-	    "drc:$(DRC_RUNDIR)" ; do \
+	    "drc:$(DRC_RUNDIR)" \
+	    "place-eval:$(EVAL_REPORT_DIR)/place_manifest.txt" \
+	    "cts-eval:$(EVAL_REPORT_DIR)/cts_latency_writeback.rep" \
+	    "route-eval:$(EVAL_REPORT_DIR)/route_gate.txt" ; do \
 	    stage=$${spec%%:*}; path=$${spec#*:}; \
 	    if [ -s "$$path" ] || [ -d "$$path" ]; then \
 	        printf '  %-14s %-4s %s\n' "$$stage" "yes" "$$path"; \
@@ -389,6 +496,17 @@ help:
 	@echo "  Synthesis A/B:"
 	@echo "    make syn_eval      variant run   -> outputs/eval/"
 	@echo "    make syn_compare   diff syn vs syn_eval metrics"
+	@echo ""
+	@echo "  P&R A/B — knob-driven, self-checking, isolated to the _eval_* DBs:"
+	@echo "    make pnr_place_eval   floorplan + power plan + place  (EVP_ knobs)"
+	@echo "    make pnr_cts_eval     clock tree synthesis            (EVC_ knobs)"
+	@echo "    make pnr_route_eval   route + fill + GDSII + signoff  (EVR_ knobs)"
+	@echo "    make pnr_all_eval     all three, unattended. Multi-hour."
+	@echo ""
+	@echo "    Each stage takes its INPUT database from a knob, so the usual mode"
+	@echo "    is to resume a production snapshot instead of re-running upstream:"
+	@echo "      make pnr_cts_eval   EVC_IN_PREFIX=$(BLOCK)   # resume real placement"
+	@echo "      make pnr_route_eval EVR_IN_PREFIX=$(BLOCK)   # resume real CTS"
 	@echo ""
 	@echo "  Setup / inspection:"
 	@echo "    make status        which stages have run"

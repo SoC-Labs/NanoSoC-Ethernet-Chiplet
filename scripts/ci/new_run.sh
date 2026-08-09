@@ -158,13 +158,27 @@ if [ -n "${SEED_WORK_FROM:-}" ]; then
     echo "" >> "$M"
     echo "--- SEEDED WORK DATABASES (upstream stages NOT run here) ------" >> "$M"
     echo "  source   : $wsrc" >> "$M"
+    # Entries may be `name` or `src:dst`. The rename form exists because the
+    # stage scripts do not agree on a naming convention: 3_pnr_clock.tcl ends
+    # `write_db $block_name` (the bare shared name), while 4b_pnr_route_eval.tcl
+    # asks for `${block}_cts` -- a name that only route_setup.tcl creates, at the
+    # START of production route. So a chain of place -> CTS -> eval-route dies at
+    # the handover with "no Innovus database at nanosoc_eth_chiplet_pads_cts"
+    # unless the post-CTS database is presented under the name the next stage
+    # expects. That is exactly what route_setup.tcl itself does.
     for db in $SEED_WORK_DBS; do
-        if [ -d "$wsrc/$db" ]; then
-            cp -a "$wsrc/$db" work/
-            echo "   SEEDED work/$db from $wsrc"
-            echo "  database : $db ($(du -sh "$wsrc/$db" | cut -f1))" >> "$M"
+        src_db="${db%%:*}"; dst_db="${db##*:}"
+        if [ -d "$wsrc/$src_db" ]; then
+            cp -a "$wsrc/$src_db" "work/$dst_db"
+            if [ "$src_db" = "$dst_db" ]; then
+                echo "   SEEDED work/$dst_db from $wsrc"
+                echo "  database : $dst_db ($(du -sh "$wsrc/$src_db" | cut -f1))" >> "$M"
+            else
+                echo "   SEEDED work/$dst_db from $wsrc/$src_db (renamed)"
+                echo "  database : $src_db -> $dst_db ($(du -sh "$wsrc/$src_db" | cut -f1))" >> "$M"
+            fi
         else
-            echo "!! SEED_WORK_FROM: no database $wsrc/$db — refusing to seed" >&2
+            echo "!! SEED_WORK_FROM: no database $wsrc/$src_db — refusing to seed" >&2
             exit 1
         fi
     done
