@@ -117,6 +117,57 @@ add_io_fillers -cells PFILLER0005_G -prefix FILLER -side w
 ## Place macros
 unplace_obj -blocks
 create_place_halo -halo_deltas {3.6 3.6 3.6 3.6} -all_macros
+## Signal-routing halo over the macros. NOTE what this does NOT do: per
+## doc/TCRcom/create_route_halo.html, "the special router does not honor routing
+## halos. To block special routing, use routing blockages instead." All 64 DRC on
+## 2026-08-08 are Special Wire, so a halo cannot fix them - the route_special
+## split by connect type in power_plan.tcl is what does. This is kept only as
+## cheap defence against long signal routes over macros. `-all_blocks`, not
+## `-all_macros`: the latter is create_place_halo's spelling and errors out with
+## IMPTCM-48, which on 2026-08-08 dropped Innovus to a prompt mid-flow.
+create_route_halo -all_blocks -bottom_layer M1 -top_layer M4 -space 1.0
+
+## BOND-PAD M8/M9/AP KEEP-OUT.
+## place_bondpads.tcl creates the 82 PAD70NU/PAD70GU blocks from the ROUTE stage,
+## 175 commands after route_design - and after route_eco, the flow's only signal
+## DRC repair. NanoRoute therefore never sees their OBS (solid M8/M9/AP over the
+## whole footprint plus 12um wings) and nothing can repair what it lays there.
+## 2026-08-08: one 26.4um M8 jumper 14.5um inside BuPAD_TL_TX_7. The same failure
+## mode cost 76 Regular-Wire violations before (config.tcl:136). 73-87% of the
+## pad-ring perimeter is keep-out the router cannot see.
+## -except_pg_nets: route_special {pad_pin pad_ring} must still cross this band.
+## Metal fill is unaffected - blockages apply to fill only with -fills, and 35% of
+## M8 fill legitimately sits in here.
+## 171.0 literal, NOT queried. `[get_db base_cells PAD70NU .size.y]` errors with
+## IMPDBTCL-248 - base_cell has no `size` attribute - and took the flow down on
+## 2026-08-08. The value is a library constant: tpbn65v_9lm.lef, MACRO PAD70NU,
+## OBS LAYER M8, `RECT 0.000 0.000 30.000 171.000`. PAD70GU (the outer staggered
+## pad) is shallower, so 171 covers both rings.
+set _bp_d 171.0
+## Die box taken from create_floorplan above (-die_size 1600 2000), NOT from
+## [get_db current_design .bbox]. `.core_bbox` is proven in this flow; `.bbox` is
+## not, and two unverified attributes already took this flow down today. The
+## cross-check below catches the case where the die size is changed and this is
+## not.
+set _dx1 0.0 ; set _dy1 0.0 ; set _dx2 1600.0 ; set _dy2 2000.0
+lassign [lindex [get_db current_design .core_bbox] 0] _cx1 _cy1 _cx2 _cy2
+set _expect [expr {135.0 + $CORE_TO_IO}]
+if {abs($_cx1 - ($_dx1 + $_expect)) > 0.5 || abs($_cy1 - ($_dy1 + $_expect)) > 0.5} {
+    error "die box literals (${_dx1},${_dy1})-(${_dx2},${_dy2}) disagree with the\
+           actual core box [get_db current_design .core_bbox] at CORE_TO_IO\
+           $CORE_TO_IO. Update the literals beside create_floorplan."
+}
+if {$_dx1 + $_bp_d > $_cx1 - 30 || $_dy1 + $_bp_d > $_cy1 - 30} {
+    error "bondpad keep-out (depth $_bp_d) would reach the M8/M9 core rings.\
+           CORE_TO_IO is $CORE_TO_IO; raise it or re-derive this band."
+}
+create_route_blockage -name BONDPAD_KEEPOUT -layers {M8 M9 AP} -except_pg_nets \
+    -rects [list \
+        [list $_dx1                   $_dy1 [expr {$_dx1 + $_bp_d}] $_dy2] \
+        [list [expr {$_dx2 - $_bp_d}] $_dy1 $_dx2                   $_dy2] \
+        [list $_dx1 $_dy1                   $_dx2 [expr {$_dy1 + $_bp_d}]] \
+        [list $_dx1 [expr {$_dy2 - $_bp_d}] $_dx2 $_dy2]]
+unset _bp_d _dx1 _dy1 _dx2 _dy2 _cx1 _cy1 _cx2 _cy2 _expect
 
 
 ## Macro placement.

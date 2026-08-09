@@ -112,7 +112,9 @@ set constraints_file ../inputs/constraints.sdc
 
 set DFT 0
 
-set power_nets {VDD VDDACC VDDIO}
+## VDDACC dropped: zero occurrences in the netlist, so its "no problems" report
+## was checking nothing. Re-add it if an analogue supply is ever instantiated.
+set power_nets {VDD VDDIO}
 set ground_nets {VSS VSSIO}
 
 

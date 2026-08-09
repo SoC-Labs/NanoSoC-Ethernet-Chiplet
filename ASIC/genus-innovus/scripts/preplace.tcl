@@ -49,4 +49,13 @@ set_db place_design_floorplan_mode false
 # and the error direction is PESSIMISTIC (over-resistive M9). Revert this line
 # if congestion regresses materially; it is one line and independent of
 # everything else.
-set_db design_top_routing_layer 7
+# MEASURED 2026-08-08. 7 was one layer too conservative. The RC error is on M9
+# ONLY -- the table above shows M8 at 0.900 in BOTH the tech LEF and the ARM cap
+# table, i.e. modelled correctly; M9 is the 3.4 vs 0.9 outlier. Confining signals
+# to M1-M7 therefore gave up an accurately-modelled layer to avoid an
+# inaccurate one, and it cost real timing. Same CTS database, one knob:
+#     M1-M7   setup WNS -0.487   TNS -44   FEPS 319
+#     M1-M8   setup WNS -0.286   TNS -14   FEPS 146
+# with DRC 64 and PG 350/1518 bit-identical, and 32 s LESS wall time. M9 and AP
+# still carry zero signal, which is the whole point.
+set_db design_top_routing_layer 8
