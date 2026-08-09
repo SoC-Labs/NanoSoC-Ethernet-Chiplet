@@ -82,9 +82,18 @@ Standard cells, IO drivers and bond pads are empty references, because this site
 ships LEF and liberty but no GDS or CDL for them. Every DRC number this flow produces is a
 routing/PG check, **not signoff DRC**, and LVS cannot run here at all.
 
-**Hold timing does not close, and never has.** The headline "WNS +0.079, 0 failing
-endpoints" is **setup only**. Post-route hold is −1.167 ns WNS across 96,545 violating
-paths, and the July baseline has it too. See [open defects](tapeout/16-open-defects.md).
+**Hold timing is now essentially closed** (updated 2026-08-09). The historical claim
+here — "−1.167 ns WNS across 96,545 violating paths" — was true of the pre-08-07 runs
+and is **two orders of magnitude out of date**. The OCV-ordering fix in
+`scripts/cts_setup.tcl` closed it: post-route hold on the 08-08 route runs is
+**−0.014 ns WNS across 5 violating endpoints**, with setup at **−0.012 / 5**.
+
+Both are small enough to be ordinary P&R cleanup rather than a structural defect, but
+note two caveats before quoting either number: **derate is still disabled**
+(`EVC_DERATE`/`EVP_DERATE` default to 0), and the **D2D TX word domain remains
+unconstrained**, so a slice of the design is still not being timed at all. The RX word
+domain was constrained on 08-08. See [open defects](tapeout/16-open-defects.md) and
+[the D2D physical handover](tapeout/24-d2d-link-physical-handover.md).
 
 ---
 

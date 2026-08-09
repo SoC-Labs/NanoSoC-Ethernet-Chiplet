@@ -120,6 +120,31 @@ other five unchanged.
 
 ## The fixes
 
+> ⚠ **CORRECTION 2026-08-09 — BOTH options are now implemented.** The sentence
+> below ("Option 2 … is not done") is **false** and has been since 2026-07-05,
+> five days *before* this document was written. Do not re-do that work.
+>
+> TideLink dropped the `& ahb_sub_hready` qualifier from `ext_addr_phase` in its
+> own repo. Current RTL, `tidelink/src/rtl/tidelink_top.sv:1461`:
+>
+> ```systemverilog
+> wire ext_addr_phase = ahb_sub_hsel & ahb_sub_htrans[1];
+> ```
+>
+> with the rationale at `:1449-1460` ("SoC Labs 2026-07-05 comb-loop fix: do NOT
+> qualify with ahb_sub_hready"). `ahb_sub_hreadyout` (`:1897`) is now driven from
+> registered terms only. So the cycle is broken at **both** ends: at the source in
+> TideLink, and by `hready_to_peer` in the integration. Option 1 remains correct
+> defence-in-depth and should stay.
+>
+> The quoted RTL in "## The cycle" above (`:1119`, `:1169`) therefore describes
+> code that no longer exists — it is retained because the mechanism it explains is
+> still the best account of *why* the fix is shaped the way it is.
+>
+> Two other artefacts propagate the same stale premise and still need correcting:
+> `src/rtl/chiplet_d2d_decode.sv:89-90` and
+> `tidelink/docs/ETHERNET_CHIPLET_INTEGRATION.md:242-247`.
+
 Option 1 is **implemented and guarded**. Option 2 is the upstream fix and is not
 done — TideLink's pin is frozen and it is another repo's call.
 
