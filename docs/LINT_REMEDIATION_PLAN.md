@@ -378,3 +378,31 @@ Deliberate choices:
 
 Raise `batch` once the ladder has been through a full pass; set `allowFpga` only
 when the boards are leased.
+
+---
+
+## 9. Found while clearing the HAL errors — a design defect, not a lint finding
+
+Triaging the last authored HAL error (`*E,TERMST` on `tidechart_election_fsm`)
+turned up something underneath it that lint cannot see and no test covers:
+
+> **`ST_SETTLED` starves the shared FC RX channel.** One election-subtype beat
+> arriving at a settled die permanently stalls that die's ENTIRE cross-die
+> receive path — D2D RX data FIFO, TideChart, and the FC sideband APB, because
+> `tl_fc_l2a` carries all three. Trigger is ~20 us of boot skew between two
+> independently-booting dies; no fault required. No hardware-autonomous
+> recovery exists, and the `eth_ss_0` backdoor used for KR260 bring-up is tied
+> off in silicon.
+
+Full write-up, with every link verified against the RTL and the recovery paths
+established on the SHIPPING die: **`docs/TC_SETTLED_RX_WEDGE.md`**.
+
+The `TERMST` error itself was benign and is fixed
+(`state_next = restart ? ST_IDLE : ST_SETTLED;`, LEC equivalent 242/242).
+
+**The transferable point:** the lint error was not the bug, but triaging it
+properly is what surfaced the bug. Three of the seven authored HAL errors turned
+out to be worth fixing at source, one was genuinely unfixable and waived with its
+analysis, and the last one led here. A finding dismissed as "a false positive"
+without opening the surrounding code would have closed all of that off — which is
+exactly what the first triage of this same error did.

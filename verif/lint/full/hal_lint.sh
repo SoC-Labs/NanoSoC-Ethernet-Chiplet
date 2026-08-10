@@ -91,7 +91,10 @@ if [ -f "$DI" ]; then
     # Consequence when skipped: URDWIR is fully ON (its -nocheck was removed
     # deliberately, because the broad waiver hid a real finding). Noisier, but
     # nothing is hidden -- which is the correct direction to fail.
-    if grep -q '{pattern' "$DI"; then
+    # Strip // comments first: an earlier version grepped the raw file and
+    # matched the word "{pattern" inside a comment EXPLAINING that the clause is
+    # unsupported -- so the prose describing the trap triggered the trap.
+    if sed 's,//.*,,' "$DI" | grep -q '{pattern'; then
         echo "WARNING: $DI uses the {pattern=...} clause, which HAL 22.03 rejects."
         echo "         Skipping -design_info. URDWIR will report unnarrowed."
     else

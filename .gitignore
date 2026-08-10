@@ -13,6 +13,7 @@ ASIC/*/logs
 ASIC/*/outputs
 ASIC/*/reports
 ASIC/*/work
+ASIC/*/calibre_runs
 ASIC/romlibs
 build/
 build_soc/
@@ -120,3 +121,11 @@ cocotb/*/dut_src_*.f
 # Local tooling, not design data -- and .claude/settings.local.json can carry
 # machine-specific paths. Track deliberately if a workflow becomes shared.
 .claude/
+
+# v2lvs netlist-translation log. Written wherever the LVS flow is invoked
+# from, so it is matched anywhere rather than at a fixed path -- one run of
+# it reached 86 MB. The flow that produces it (ASIC/lvs-flow) IS tracked.
+v2lvs.log
+
+# Session scratch space. Never design data.
+scratchpad/
