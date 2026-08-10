@@ -48,7 +48,7 @@ ROMLIBS_REF ?= /home/dwn1c21/SoC-Labs/TAPEOUT/2026july/NanoSoC-Ethernet-Chiplet/
         lec lec-pnr lec-gate lec-selftest route-gate-selftest \
         pnr_place pnr_cts pnr_route pnr_all pnr_setup gui \
         pnr_place_eval pnr_cts_eval pnr_route_eval pnr_all_eval \
-        drc lvs lvs-preflight \
+        drc lvs lvs-preflight logo drc-logo \
         status clean distclean help
 
 setup_dirs:
@@ -422,6 +422,66 @@ gui:
 drc:
 	DRC_GDS=$(GDS) DRC_RUNDIR=$(DRC_RUNDIR) DRC_CPUS=$(DRC_CPUS) \
 	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
+
+#-----------------------------------------------------------------------------
+# Logo merge (klayout — no EDA licence)
+#-----------------------------------------------------------------------------
+## Merges the shuttle logo into a streamed GDS. Deliberately a SEPARATE step
+## from write_stream, not an entry in gds_merge_list: the un-logoed stream stays
+## the signoff artefact and the logoed one is the submission artefact, so a DRC
+## count can never be quoted against the wrong file.
+##
+## STRIP THE JACK BY DEFAULT. The broker requires the 158/LOGO marker, and in
+## the foundry deck 158 is NOT passive:
+##     LOGO.S.1  min clearance LOGO -> OD/PO/M1..M9 = 10.0um   (deck :20450)
+##     LOGO.R.4  OD/PO/M1x..M9x CUT LOGO is not allowed        (deck :20498)
+## The full 727.75x320.25um logo therefore needs 747.75x340.25um clear of ALL
+## routing. Measured 2026-08-10: dropped at die centre it cost >= 2020 extra DRC
+## results (2509 -> 4529), with LOGO.S.1 and LOGO.R.4 both SATURATED at the
+## 1000-result cap, landing on an rf_01k register file. Text-only is
+## 360.25x290.25um and needs 380.25x310.25um — a keep-out a floorplan can host.
+LOGO_GDS        ?= $(DESIGN_DIR)/logos/nanosoc_eth_Logo.gds
+LOGO_STRIP_JACK ?= 0
+## PLACEMENT. LOGO_X is the logo's bbox CENTRE, not its left edge — the cell is
+## drawn centred on its own origin, so anchoring by corner would silently offset
+## it by half its width. 663.875 puts the FULL logo (727.75x320.25um) at
+## (300.0,839.9)-(1027.8,1160.1), i.e. left edge exactly x=300, chosen off the
+## AP view as the gap between the upper and lower block clusters.
+##   leftmost legal centre with the jack kept = 135 + 363.875 = 498.875
+##   anything below that is rejected by merge_logo.py: at LOGO_X=300 the left
+##   edge lands at -63.9, off the die and inside the pad band.
+##
+## STRIP_JACK defaults OFF: the pictures are wanted. Keeping them costs a bigger
+## LOGO.S.1 keep-out (747.75x340.25um vs 380.25x310.25 text-only), which the
+## floorplan must reserve rather than the merge step avoid.
+LOGO_X          ?= 663.875
+LOGO_Y          ?= 1000.0
+LOGO_SRC        := $(if $(filter 1,$(LOGO_STRIP_JACK)),$(OUT_DIR)/logo_text.gds,$(LOGO_GDS))
+LOGO_GDS_OUT    ?= $(OUT_DIR)/$(BLOCK)_logo.gds
+
+## make logo                 — merge into the current $(GDS)
+## make logo LOGO_X=700      — move it
+## make logo LOGO_STRIP_JACK=0 — keep the ethernet jack (expect LOGO.S.1 to fire)
+logo:
+	@test -s $(GDS) || { echo "FAIL: no GDS at $(GDS) — run 'make pnr_route' first."; exit 1; }
+	@test -s $(LOGO_GDS) || { echo "FAIL: no logo GDS at $(LOGO_GDS)"; exit 1; }
+	@mkdir -p $(OUT_DIR)
+ifeq ($(LOGO_STRIP_JACK),1)
+	klayout -b -r $(DESIGN_DIR)/scripts/strip_logo_jack.py \
+	    -rd inp=$(LOGO_GDS) -rd out=$(LOGO_SRC) < /dev/null
+endif
+	klayout -b -r $(DESIGN_DIR)/scripts/merge_logo.py \
+	    -rd chip=$(GDS) -rd logo=$(LOGO_SRC) -rd out=$(LOGO_GDS_OUT) \
+	    -rd x=$(LOGO_X) -rd y=$(LOGO_Y) < /dev/null
+	@test -s $(LOGO_GDS_OUT) || { echo "FAIL: no merged GDS at $(LOGO_GDS_OUT)"; exit 1; }
+	@echo "OK: $(LOGO_GDS_OUT)"
+	@echo "    signoff artefact stays $(GDS) — DRC that one too, and quote them separately"
+
+## DRC the SUBMISSION artefact. Own rundir, so it never overwrites the signoff
+## run's results and the two counts can be compared.
+drc-logo: logo
+	DRC_GDS=$(LOGO_GDS_OUT) DRC_RUNDIR=$(WORK_DIR)/../calibre_runs/drc_logo_flow \
+	DRC_CPUS=$(DRC_CPUS) $(DESIGN_DIR)/scripts/calibre/run_drc.sh
 
 ## Does this host have what LVS needs? Seconds, no tool launched. Expected to
 ## FAIL today and to say why: every TSMC package installed here is Front End

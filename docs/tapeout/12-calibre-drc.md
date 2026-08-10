@@ -172,6 +172,31 @@ There are **no unresolved references**: 2,484 distinct structures are referenced
 
 ---
 
+## Parallel flow: rough DRC with KLayout, off the leash
+
+`ASIC/klayout-drc/` is a second opinion that needs no licence, no PDK mount and no lab
+machine — one open-source binary, a generated deck of 156 checks, and a GDS. A window of
+the die takes seconds to a minute; `make pack` produces a ~100 kB tarball you can run on
+a laptop.
+
+```sh
+cd ASIC/klayout-drc
+make deck                            # once, on a machine with /tsmc65pdk
+make drc CLIP=650,300,700,350        # anywhere
+make compare                         # its counts next to this page's
+```
+
+The deck is *generated* from the same tech LEF Innovus routed against and the same
+GdsOutMap `write_stream` used, so it asks "did the router obey its own tech file". It
+covers metal width/space/area/minstep/offgrid and via cut spacing, coverage and
+enclosure — and **nothing else**: no density, no seal ring, no front-end, no slotting,
+no connectivity. It is not signoff and does not replace this page.
+
+Read `ASIC/klayout-drc/README.md` before quoting a number from it — two of its check
+families are known to over-report, and it says which.
+
+---
+
 ## Alternative: the Calibre Interactive runset
 
 `calibre -gui -drc -batch -runset <runset>` also works, **including headless with

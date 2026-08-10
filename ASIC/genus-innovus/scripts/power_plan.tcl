@@ -105,12 +105,21 @@ set_db add_stripes_spacing_type edge_to_edge
 set_db add_stripes_spacing_from_block 0
 set_db add_stripes_stripe_min_length stripe_width
 set_db add_stripes_stacked_via_top_layer AP
-set_db add_stripes_stacked_via_bottom_layer M1
+## RESTORED to M5. The opens were NOT this - they were the core_pin range below.
+## This is a genuine win: 568 of 596 IMPPP-532 gone, and check_power_vias M8-AP
+## went from 8 missing VIA8 to clean.
+set_db add_stripes_stacked_via_bottom_layer M5
 set_db add_stripes_via_using_exact_crossover_size false
+## REVERTED to false 2026-08-09. Setting these two true (with the via-stack
+## change below) took DRC 64 -> 265: MINSTEP 10 -> 144, and new MINCUT/MINWIDTH
+## classes, 134 of them on M4. Those are via-patch geometry classes, so these
+## knobs are the prime suspects. Re-try one at a time, not as a pair.
 set_db add_stripes_split_vias false
 set_db add_stripes_orthogonal_only true
 set_db add_stripes_allow_jog { padcore_ring  block_ring }
-set_db add_stripes_skip_via_on_pin {  standardcell }
+## NOT skipping standardcell: doing so left the row-end risers as the ONLY
+## mesh-to-rail path, load-bearing at an 11% failure rate (IMPPP-570 x837).
+set_db add_stripes_skip_via_on_pin {  }
 set_db add_stripes_skip_via_on_wire_shape {  noshape   }
 add_stripes -nets {VDD VSS} -layer M8 -direction vertical -width 3.6 -spacing 1.2 -set_to_set_distance 60 -extend_to all_domains -start_from left -start_offset 39.5 -stop_offset 0 -switch_layer_over_obs false -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
 
@@ -129,12 +138,21 @@ set_db add_stripes_spacing_type edge_to_edge
 set_db add_stripes_spacing_from_block 0
 set_db add_stripes_stripe_min_length stripe_width
 set_db add_stripes_stacked_via_top_layer AP
-set_db add_stripes_stacked_via_bottom_layer M1
+## RESTORED to M5. The opens were NOT this - they were the core_pin range below.
+## This is a genuine win: 568 of 596 IMPPP-532 gone, and check_power_vias M8-AP
+## went from 8 missing VIA8 to clean.
+set_db add_stripes_stacked_via_bottom_layer M5
 set_db add_stripes_via_using_exact_crossover_size false
+## REVERTED to false 2026-08-09. Setting these two true (with the via-stack
+## change below) took DRC 64 -> 265: MINSTEP 10 -> 144, and new MINCUT/MINWIDTH
+## classes, 134 of them on M4. Those are via-patch geometry classes, so these
+## knobs are the prime suspects. Re-try one at a time, not as a pair.
 set_db add_stripes_split_vias false
 set_db add_stripes_orthogonal_only true
 set_db add_stripes_allow_jog { padcore_ring  block_ring }
-set_db add_stripes_skip_via_on_pin {  standardcell }
+## NOT skipping standardcell: doing so left the row-end risers as the ONLY
+## mesh-to-rail path, load-bearing at an 11% failure rate (IMPPP-570 x837).
+set_db add_stripes_skip_via_on_pin {  }
 set_db add_stripes_skip_via_on_wire_shape {  noshape   }
 # -spacing 3.05, NOT 1.2. The tech LEF gives M9 `WIDTH 2 ; SPACING 2 ;
 # MINENCLOSEDAREA 9`, so a 1.2um gap between two 3.6um-wide M9 stripes is
@@ -173,6 +191,8 @@ select_obj $::PLACED_MACROS
 split_row -selected
 
 set_db add_stripes_ignore_block_check false
+## Explicit, not inherited: M8/M9 now stop at M5, so this pass owns the run to M1.
+set_db add_stripes_stacked_via_bottom_layer M1
 set_db add_stripes_break_at none
 set_db add_stripes_route_over_rows_only false
 set_db add_stripes_rows_without_stripes_only false
@@ -186,5 +206,42 @@ add_endcaps -start_row_cap DCAP4 -end_row_cap DCAP4 -prefix ENDCAP
 
 route_special -connect {pad_pin pad_ring} -layer_change_range { M1(1) AP(10) } -block_pin_target nearest_target -pad_pin_port_connect {all_port all_geom} -pad_pin_target nearest_target -allow_jogging 1 -crossover_via_layer_range { M1(1) AP(10) } -nets { VDD VSS } -allow_layer_change 1 -pad_pin_width 6 -target_via_layer_range { M1(1) AP(10) }
 set_db route_special_via_connect_to_shape { padring stripe }
-route_special -connect {block_pin core_pin floating_stripe} -layer_change_range { M1(1) AP(10) } -block_pin_target nearest_target -pad_pin_port_connect {all_port one_geom} -pad_pin_target nearest_target -core_pin_target first_after_row_end -floating_stripe_target {block_ring pad_ring ring stripe ring_pin block_pin followpin} -allow_jogging 1 -power_domains { PD_TOP } -crossover_via_layer_range { M1(1) AP(10) } -nets { VDD VSS } -allow_layer_change 1 -block_pin use_lef -target_via_layer_range { M1(1) AP(10) }
+## Split by connect type. As ONE command all three shared -layer_change_range
+## {M1(1) AP(10)}, so the block_pin connect propagated the 1.0um M5 stripe width
+## down onto a 0.35um macro PG pin: 0.155 achieved vs 0.160 required, 5nm short.
+## 43 SPACING + the SHORT. Each connect type now gets only the layers it needs.
+## SINGLE CALL, with a per-connect-type block-pin bound.
+## The three-way split this replaces was justified by the claim that "as ONE
+## command all three shared -layer_change_range". That is FALSE for Innovus
+## 21.11: route_special has -block_pin_layer_range / -stripe_layer_range /
+## -core_pin_layer, documented at TCRcom/route_special.html. NOTE the spelling -
+## block_pin_layer_range takes layer NAMES, not the M4(4) numbered form the
+## other options use.
+##
+## The split cost more than the day it took to attribute. Measured on the
+## 2026-08-10 Calibre run against the previous single-call stream:
+##     G.4:M4i (5nm jogs on M4)   3 -> 275
+##     M4.S.2.1                  29 ->  76
+## and the apparent net improvement was entirely a bond-pad enclosure win
+## (VIA8.EN.5 350 -> 0, M9.EN.1 69 -> 0) masking that regression.
+##
+## Restoring the single call was measured on the PG probe: PG-only check_drc
+## 280 -> 69, connectivity flat (opens 337 -> 339, dangling 1432 -> 1423).
+## Independently, the Calibre layer mapping predicts it clears 368 of the 416
+## power-grid violations.
+##
+## KEEP M1(1) M9(9), NOT M5 AND NOT AP. Both lessons from the split still apply
+## to core_pin and floating_stripe: bounding at M5 put the M8 core ring out of
+## range (IMPSR-486) and collapsed VIA1 14061 -> 23, floating 4414 core ports;
+## bounding the crossover at AP took BuPAD to zero.
+route_special -connect {block_pin core_pin floating_stripe} \
+    -layer_change_range        { M1(1) M9(9) } \
+    -block_pin_layer_range     { M4 M5 } \
+    -target_via_layer_range    { M1(1) M9(9) } \
+    -crossover_via_layer_range { M1(1) M9(9) } \
+    -block_pin_target nearest_target -block_pin use_lef \
+    -core_pin_target first_after_row_end \
+    -floating_stripe_target {block_ring pad_ring ring stripe ring_pin block_pin followpin} \
+    -allow_jogging 1 -power_domains { PD_TOP } -nets { VDD VSS } -allow_layer_change 1
+
 

@@ -1,0 +1,100 @@
+#-----------------------------------------------------------------------------
+# Calibre Interactive LVS runset -- TEMPLATE.
+#
+#   cp runset_lvs.template runset_lvs
+#   calibre -gui -lvs -batch -runset runset_lvs     # headless, no X server
+#   calibre -gui -lvs        -runset runset_lvs     # GUI, then Run LVS / RVE
+#
+# Values below are ${VAR} references. Calibre Interactive expands environment
+# variables in runset fields, so exporting CONTRACT.md's variables is enough --
+# this file needs no editing to move between projects. Anything in <angle
+# brackets> has no CONTRACT variable and must be filled in or deleted.
+#
+# The GUI REWRITES this file when you press Save, dropping every comment and
+# adding its own bookkeeping keys. Keep this template in version control and
+# let the GUI scribble on the copy.
+#
+# Format: one `*key: value` record per line. Lines that do not start with `*`
+# are not records. If your Calibre version objects to them:
+#   grep '^\*' runset_lvs > runset_lvs.clean
+#-----------------------------------------------------------------------------
+
+# ---- rules and run directory ------------------------------------------------
+# The foundry deck, used UNMODIFIED. Interactive supplies layout/source/report
+# through the keys below instead of the sed-rewritten deck copy the batch
+# runner has to make, so nothing here needs write access to the PDK.
+*lvsRulesFile: ${LVS_DECK}
+
+# Everything Calibre writes lands here: svdb/, transcript, report, v2lvs output.
+*lvsRunDir: ${LVS_RUNDIR}
+
+# ---- layout side ------------------------------------------------------------
+*lvsLayoutPaths: ${LVS_GDS}
+*lvsLayoutPrimary: ${LVS_TOP}
+
+# ---- source (schematic) side ------------------------------------------------
+# VERILOG, not SPICE: Interactive runs v2lvs for you. This is the one real
+# capability the batch flow does not have -- batch decks reject
+# `SOURCE SYSTEM VERILOG` with INP1. Set SPICE here if you would rather feed
+# a pre-translated CDL (then point lvsSourcePath at the .cdl and drop the
+# library Verilog).
+*lvsSourceSystem: VERILOG
+
+# Space-separated, and ORDER MATTERS: the design netlist first, then every
+# library whose cells it instances. v2lvs must find a module for each leaf or
+# the compare dies with "No matching .SUBCKT". Standard cells, IO drivers and
+# any macro simulation models all belong on this line.
+*lvsSourcePath: ${LVS_SRC_V} ${STDCELL_VLOG} ${IO_VLOG}
+*lvsSourcePrimary: ${LVS_TOP}
+
+# ---- supplies ---------------------------------------------------------------
+# Substitutes for the deck's POWER_NAME / GROUND_NAME placeholders. Space
+# separated; include the IO rails, not just the core pair.
+*lvsPowerNames: ${LVS_POWER}
+*lvsGroundNames: ${LVS_GROUND}
+
+# ---- extra SVRF (this is where LVS BOX goes) --------------------------------
+# GUI: Setup -> Include SVRF Commands. It appends your SVRF to the deck without
+# touching the read-only original -- so the Interactive flow needs none of the
+# batch runner's awk splicing, and none of its care about landing the block
+# before the deck's TVF tail.
+# `make lvs_source` generates exactly this file (CONTRACT.md §2), so the two
+# flows can share one box list. Or write LVS BOX lines by hand.
+# Set cmnUseCustomFile to 0 to compare unboxed -- diagnostic only, see README.
+*cmnUseCustomFile: 1
+*cmnCustomFileName: ${LVS_RUNDIR}/${LVS_TOP}_lvs_box.svrf
+
+# ---- comparison controls ----------------------------------------------------
+*lvsReportFile: ${LVS_TOP}.lvs.rep
+# Discrepancies printed per class. Low numbers hide the pattern you need to
+# see; 1000 is a working default, the deck default is often 20.
+*lvsReportMaximumCount: 1000
+# NEVER 1. Ignoring ports turns a real port mismatch into a silent pass and is
+# the standard way to manufacture a fraudulent CORRECT. See README.
+*lvsIgnorePorts: 0
+# Connectivity checks (floating gates, shorted supplies) alongside LVS. Cheap.
+*lvsRunERC: 1
+
+# ---- run mode ---------------------------------------------------------------
+# Hierarchical. Flat on a full chip will not finish.
+*cmnRunHier: 1
+# Multi-threaded extraction (`-turbo`). The CPU count comes from the GUI's
+# Calibre-MT field / the licence, not from this file.
+*cmnRunTurbo: 1
+*cmnRunMT: 1
+*cmnTranscriptFile: calibre_lvs.log
+
+# ---- RVE --------------------------------------------------------------------
+# Both must be 0 for `-batch`, or Calibre waits for a display that is not there.
+*lvsStartRVE: 0
+*lvsViewReport: 0
+
+# ---- notes ------------------------------------------------------------------
+# Keys the GUI adds on Save and you can safely omit here:
+#   *lvsRulesFileLastLoad, *cmnV2LVS_LastTranslation   (cache timestamps)
+#   *cmnSlaveHosts, *cmnLSFSlaveTbl, *cmnGridSlaveTbl  (remote/queue config)
+# `*cmnUseCustomFile` / `*cmnCustomFileName` are the include-SVRF hook; confirm
+# the pairing once in the GUI on a new Calibre version before trusting a
+# headless run, because a silently ignored LVS BOX block looks exactly like a
+# design that mis-compares everywhere.
+#-----------------------------------------------------------------------------

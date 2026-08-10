@@ -1,0 +1,10 @@
+# The generated deck carries TSMC dimensions read out of /tsmc65pdk, which is
+# NDA collateral. The GENERATOR is committed; its OUTPUT never is.
+decks/
+
+# Run outputs and anything staged for a laptop.
+work/
+pack/
+*.tgz
+*.lyrdb
+*.counts
