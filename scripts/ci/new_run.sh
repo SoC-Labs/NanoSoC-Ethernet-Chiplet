@@ -202,6 +202,37 @@ mkdir -p "$RUN/outputs"
 for f in "$ASIC/outputs/"*; do
     [ -e "$f" ] && mv "$f" "$RUN/outputs/"
 done
+
+# --- 5a. re-point the databases' SDC symlinks at THIS run's outputs ----------
+# Innovus stores libs/mmmc/<block>_syn.sdc inside every saved database as a
+# SYMLINK into the live $ASIC/outputs/. The move above empties that directory,
+# so the instant a run is archived, every database it saved becomes unreadable:
+#
+#   read_db ... -> **ERROR: (TCLCMD-989): cannot open SDC file
+#                  '.../work/<block>/libs/mmmc/<block>_syn.sdc'
+#
+# One dangling link per database, in every run ever archived. That is why the
+# resume workflow route_setup.tcl:10-11 advertises has never worked on an
+# archived run, and why "just reload the database and re-check it" was never
+# an option - each question cost a fresh 3.5-hour flow instead.
+#
+# Copy rather than re-link: a copy still resolves after the run directory is
+# moved, renamed or shipped elsewhere, and the file is a few hundred KB.
+if [ -d "$RUN/work" ]; then
+    _relinked=0
+    while IFS= read -r _lnk; do
+        _src="$RUN/outputs/$(basename "$_lnk")"
+        [ -e "$_src" ] || continue
+        rm -f "$_lnk" && cp -p "$_src" "$_lnk" && _relinked=$((_relinked+1))
+    done < <(find "$RUN/work" -type l -name '*_syn.sdc' 2>/dev/null)
+    # NOT `| tee -a "$LOG"`: $LOG lives under $ASIC/logs, which the loop above has
+    # already moved into $RUN/logs, so tee fails with "No such file or directory".
+    # The manifest is the right home for this anyway - it is the record of what
+    # the run actually did.
+    echo "relinked $_relinked database SDC reference(s) to $RUN/outputs"
+    echo "db_sdc_relinked : $_relinked" >> "$M"
+fi
+
 mkdir -p "$ASIC/logs" "$ASIC/reports" "$ASIC/outputs" "$ASIC/work"
 
 {

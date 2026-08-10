@@ -682,6 +682,135 @@ write_power_intent      -design $block_name -base_name $OUT_DIR/${block_name}_ga
 write_sdf -timescale ns   > $OUT_DIR/${block_name}_gate.sdf      ;# delays, for sim
 write_sdc                 > $OUT_DIR/${block_name}_syn.sdc       ;# what P&R times against
 
+# ---- GATE A: did the D2D word clocks SURVIVE write_sdc? ----------------------
+# nanosoc_eth_chiplet_pads.mmmc:186-188 hands Innovus exactly ONE sdc file - this
+# one. inputs/tidelink_constraints.sdc is read by Genus and never by Innovus, so
+# a clock that binds during elaboration but does not appear HERE reaches neither
+# CTS nor timing, and the run still completes and reports success.
+#
+# That is not hypothetical: it is why 16,653 sequential pins (27% of the design)
+# had no clock waveform for the whole project. The RX block was added to
+# tidelink_constraints.sdc on 2026-08-08 21:20 and every subsequent run archived
+# it - while `D2D_RX_WORD_CLK` appeared ZERO times in any Innovus log, because no
+# synthesis ran after 21:32.
+#
+# The risk this gate exists for: io_link_clk is a hierarchical RTL pin that does
+# not survive mapping (Genus merges seven of the eight RX dividers), so write_sdc
+# has to re-express 8+8 clocks onto merged pins. Unproven. If this fires, do NOT
+# hand-edit the written SDC - add a second -sdc_files entry to the mmmc.
+# EXACT NAMES, not a regex count. The first version counted matches of
+# `D2D_(RX|TX)_WORD_CLK_`, which silently changed meaning the moment a clock was
+# added whose name contains that string as a PREFIX - D2D_RX_WORDN_CLK_n would
+# have counted as a 17th and failed for the wrong reason. Naming each one removes
+# the trap and says WHICH clock is missing.
+set _wc_want {}
+foreach n {0 1 2 3 4 5 6 7} {
+    lappend _wc_want "D2D_RX_WORD_CLK_$n"    ;# posedge word clock (io_link_clk = count_reg[3] QN)
+    lappend _wc_want "D2D_RX_WORDN_CLK_$n"   ;# negedge word clock (count_reg[3] Q) -> link_data_reg
+    lappend _wc_want "D2D_TX_WORD_CLK_$n"
+}
+set _wc_fh [open $OUT_DIR/${block_name}_syn.sdc r]
+set _wc_txt [read $_wc_fh] ; close $_wc_fh
+set _wc_missing {}
+foreach _c $_wc_want {
+    if {![regexp "create_generated_clock\[^\n\]*-name\[ \t\]+\"?${_c}\"?\[ \t\]" $_wc_txt]} {
+        lappend _wc_missing $_c
+    }
+}
+if {[llength $_wc_missing]} {
+    puts "**ERROR: GATE A FAILED - ${block_name}_syn.sdc is missing\
+          [llength $_wc_missing]/[llength $_wc_want] D2D word clocks:"
+    foreach _c $_wc_missing { puts "         $_c" }
+    puts "         Innovus reads ONLY this file, so a missing clock means CTS"
+    puts "         builds no tree for that domain and its flops go untimed while"
+    puts "         the run reports success."
+    if {[info commands flow_fail] ne ""} {
+        flow_fail "syn.sdc missing [llength $_wc_missing] D2D word clocks"
+    } else {
+        exit 1
+    }
+} else {
+    puts "GATE A: ${block_name}_syn.sdc carries all [llength $_wc_want] D2D word clocks - OK"
+}
+unset _wc_want _wc_fh _wc_txt _wc_missing
+
+# ---- GATE B: is anything still untimed? -------------------------------------
+# Gate A proves the clocks reached the file Innovus reads. It does NOT prove they
+# COVER every pin: run 20260809T133739Z_wordclk-gateA passed Gate A 16/16 and
+# still left all 128 bits of the RX data-capture register untimed. Two different
+# failures, so two independent gates.
+set _ti $REPORT_DIR/syn_timing_intent.rep
+if {![file exists $_ti]} {
+    puts "**ERROR: GATE B: $_ti absent - check_timing_intent did not run."
+    if {[info commands flow_fail] ne ""} { flow_fail "no syn_timing_intent.rep" } else { exit 1 }
+} else {
+    set _fh [open $_ti r] ; set _txt [read $_fh] ; close $_fh
+    if {![regexp {Sequential clock pins without clock waveform\s+(\d+)} $_txt -> _untimed]} {
+        set _untimed -1
+    }
+    if {$_untimed != 0} {
+        puts "**ERROR: GATE B FAILED - $_untimed sequential clock pins have no clock"
+        puts "         waveform. CTS builds no tree for them and no path to or from"
+        puts "         them is timed. Expected 0. History: 16,653 (no word clocks)"
+        puts "         -> 128 (RX+TX word clocks) -> 0 (negedge word clocks)."
+        if {[info commands flow_fail] ne ""} {
+            flow_fail "check_timing_intent: $_untimed untimed sequential clock pins"
+        } else { exit 1 }
+    } else {
+        puts "GATE B: 0 sequential clock pins without clock waveform - OK"
+    }
+    unset _fh _txt _untimed
+}
+unset _ti
+
+# ---- GATE C: is the D2D link rate still what both dies agreed? --------------
+# TL_CLK_RX is the PEER chiplet's forwarded transmit clock, not ours (see the
+# long note at the top of inputs/tidelink_constraints.sdc). It is constrained to
+# our own CLK_PERIOD, and that is only correct because both chiplets run from
+# the same clock source AND the same TideLink PHY configuration. Neither fact is
+# visible from inside this repo, and neither is enforced by anything.
+#
+# The exposure is asymmetric and nasty: if the two dies diverge, timing here
+# still reports clean, CTS still balances, and the part fails on silicon. And
+# this one number is the reference for all 24 word clocks (-divide_by 16), i.e.
+# for ~16,600 flops that were untimed until 2026-08-09.
+#
+# So assert both halves: the base period, and that every word clock is still a
+# /16 of it. Cheap, and it fails at synthesis rather than at bring-up.
+set _gc_want [expr {double($::env(CLK_PERIOD))}]
+set _gc_fh [open $OUT_DIR/${block_name}_syn.sdc r]
+set _gc_txt [read $_gc_fh] ; close $_gc_fh
+set _gc_bad {}
+if {[regexp {create_clock[^\n]*-name\s+"?D2D_RX_CLK_0"?[^\n]*-period\s+([0-9.]+)} \
+        $_gc_txt -> _gc_got]} {
+    if {abs($_gc_got - $_gc_want) > 1e-6} {
+        lappend _gc_bad "D2D_RX_CLK_0 period is $_gc_got, expected $_gc_want\
+                         (= CLK_PERIOD). The D2D link rate and the core clock\
+                         have diverged, or someone retimed one die and not the\
+                         other."
+    }
+} else {
+    lappend _gc_bad "no D2D_RX_CLK_0 create_clock with a -period in the written SDC"
+}
+# Every D2D word clock must still be a /16. A changed ratio here silently
+# rescales the timing reference for a quarter of the design.
+set _gc_n16 [regexp -all {create_generated_clock[^\n]*D2D_(RX|TX)_WORDN?_CLK_[0-7][^\n]*-divide_by\s+16} $_gc_txt]
+set _gc_nwc [regexp -all {create_generated_clock[^\n]*-name\s+"?D2D_(RX|TX)_WORDN?_CLK_[0-7]} $_gc_txt]
+if {$_gc_n16 != $_gc_nwc || $_gc_nwc == 0} {
+    lappend _gc_bad "$_gc_n16 of $_gc_nwc D2D word clocks are -divide_by 16 -\
+                     the PHY word width and the constraint no longer agree"
+}
+if {[llength $_gc_bad]} {
+    puts "**ERROR: GATE C FAILED - D2D link rate / word ratio:"
+    foreach _b $_gc_bad { puts "         $_b" }
+    if {[info commands flow_fail] ne ""} {
+        flow_fail "GATE C: [join $_gc_bad {; }]"
+    } else { exit 1 }
+} else {
+    puts "GATE C: D2D link period $_gc_want ns, $_gc_nwc word clocks all /16 - OK"
+}
+unset _gc_want _gc_fh _gc_txt _gc_bad _gc_n16 _gc_nwc
+
 if {$DFT == 1} {
     report_scan_setup        > $OUT_DIR/${block_name}_scan_setup_44pin.rep
     report_scan_registers    > $OUT_DIR/${block_name}_scan_registers_44pin.rep

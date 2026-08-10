@@ -70,3 +70,35 @@ set_db cts_delay_cells {DEL*}
 #     grep -v '^@file' <log> | grep -A1 'View: default_analysis_view_hold' \
 #       | grep -c ' -max '        # must be > 0
 set_db timing_analysis_type ocv
+
+# CPPR — clock reconvergence pessimism removal. OCV above derates launch and
+# capture clock paths INDEPENDENTLY, including the segment they physically
+# share, so a hold path whose two flops sit on the same buffer sees pessimism
+# that cannot exist in silicon. Nothing in this flow removed it: `cppr` had zero
+# occurrences in scripts/ before 2026-08-09. OCV without CPPR is the maximally
+# pessimistic combination.
+#
+# Spelling checked against /eda/cadence/innovus/doc/UGcom/Timing_Analysis.html
+# for this exact tool version (21.11-s130_1). Default threshold is 20 ps.
+#
+# Here, NOT after ccopt, for the same reason as the OCV line above: enabling the
+# analysis mode after the tree is built cost 96,545 fictional hold violations
+# and ~37,000 hold buffers on 2026-08-06 (see the note at the top of this file).
+set_db timing_analysis_cppr true
+
+# All FOUR derate arms, always. Innovus inherits the last defined value for any
+# arm left unspecified, so setting two of them silently mis-derates the other
+# two (documented at 3b_pnr_cts_eval.tcl:747). These are the values already
+# carried as EVC_DERATE_* defaults at 3b_pnr_cts_eval.tcl:130-133 - they existed
+# and were simply never applied, because EVC_DERATE defaulted to 0.
+#
+# Expected effect, to be checked against the next post-CTS hold report: hold was
+# 75 failing endpoints at WNS -0.008 (8 ps), which is BELOW the 20 ps CPPR
+# threshold, so most of it should disappear. Setup gain will be much smaller -
+# the -0.195 setup path is wire-dominated across the die with little common
+# clock to recover. Enabling CPPR and derate together is roughly slack-neutral
+# by design: the same margin, honestly accounted for rather than doubled.
+set_timing_derate -early -data  0.95
+set_timing_derate -late  -data  1.05
+set_timing_derate -early -clock 0.97
+set_timing_derate -late  -clock 1.03

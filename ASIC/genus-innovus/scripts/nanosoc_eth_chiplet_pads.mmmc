@@ -58,6 +58,37 @@ create_library_set -name typical_libset\
     [list ${base_path}/Back_End/celtic/tcbn65lp_200c/tcbn65lptc.cdb]
 
 
+# ---------------------------------------------------------------------------
+# PARASITIC EXTRACTION. Two problems are fixed here, both measured 2026-08-09.
+#
+# 1. THE CAP TABLES BELOW ARE FOR THE WRONG METAL STACK. `1p9m_6x2z` models a
+#    two-thick-metal option; this design is 6X1Z1U - one 0.9um Z (M8) and one
+#    3.4um U (M9), per PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef. 6x2z models M9 at
+#    0.9um, i.e. wrong by 3.8x on the layer that carries the power grid and the
+#    long routes. There is NO 6X1Z1U option in the ARM set (only 1p6m_4x1z,
+#    1p7m_4x2z, 1p7m_5x1z, 1p8m_5x2z, 1p8m_6x1z, 1p9m_6x2z) and the TSMC PDK
+#    ships no .captbl at all, so the cap tables cannot be made correct.
+#
+# 2. THERE IS A QRC DECK FOR THE EXACT STACK, AND THE FLOW SAID THERE WASN'T.
+#    preplace.tcl:31-34 claims "No correct dataset exists here" - it looked only
+#    in CMOS/util/, whose pack is 6X2Y. The stack-correct deck is:
+#      /tsmc65pdk/65/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile  (178 MiB)
+#    built from crn65lp_1p09m+alrdl_6x1z1u_typical.ict - `alrdl` = 14kA AP, which
+#    is exactly the Europractice mini@sic common flow (1p9m_6x1z1u_MIM_APRDL).
+#    Without it every post-route number reads "Parasitics Mode: No SPEF/RCDB"
+#    with extract_rc_effort substituted to `low`, which is why the 5 -> 103
+#    post-fill FEP swing cannot be separated into fill vs re-extraction.
+#
+# CAVEAT, STATED NOT BURIED: the deck on disk was generated from the TYPICAL
+# ICT. Applying it to the worst and best corners is an improvement over a
+# wrong-stack cap table, but it is NOT corner-correct. Corner-specific packs
+# exist as tarballs at CMOS/util/T-N65-CL-SP-036-V1_11a/RC_QRC_cln65lp_1p09m+
+# alrdl_{cbest,cworst,rcbest,rcworst,typical}.tar.gz; /tsmc65pdk is read-only, so
+# they must be unpacked into the project tree and wired per corner before this
+# is signoff-grade. VERIFY on the next run: IMPEXT-3518 must be absent and the
+# timing report header must name a real RC corner.
+set qrc_tech_file "/tsmc65pdk/65/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile"
+
 create_rc_corner -name default_rc_corner_worst\
    -pre_route_res 1\
    -post_route_res 1\
@@ -66,7 +97,8 @@ create_rc_corner -name default_rc_corner_worst\
    -post_route_cross_cap 1\
    -pre_route_clock_res 0\
    -pre_route_clock_cap 0\
-   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/rcworst.captbl
+   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/rcworst.captbl \
+   -qrc_tech ${qrc_tech_file}
 
 create_rc_corner -name default_rc_corner_best\
    -pre_route_res 1\
@@ -76,7 +108,8 @@ create_rc_corner -name default_rc_corner_best\
    -post_route_cross_cap 1\
    -pre_route_clock_res 0\
    -pre_route_clock_cap 0\
-   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/rcbest.captbl
+   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/rcbest.captbl \
+   -qrc_tech ${qrc_tech_file}
 
 create_rc_corner -name default_rc_corner_typical\
    -pre_route_res 1\
@@ -86,7 +119,8 @@ create_rc_corner -name default_rc_corner_typical\
    -post_route_cross_cap 1\
    -pre_route_clock_res 0\
    -pre_route_clock_cap 0\
-   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/typical.captbl
+   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/typical.captbl \
+   -qrc_tech ${qrc_tech_file}
 
 
 create_timing_condition -name tc_max \

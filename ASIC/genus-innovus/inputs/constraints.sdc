@@ -178,11 +178,12 @@ set _rx_grp {D2D_RX_CLK_0}
 set _tx_grp {D2D_TX_CLK_0}
 foreach n {0 1 2 3 4 5 6 7} {
     lappend _rx_grp "D2D_RX_WORD_CLK_$n"
+    lappend _rx_grp "D2D_RX_WORDN_CLK_$n"   ;# negedge half - same domain, opposite phase
     lappend _tx_grp "D2D_TX_WORD_CLK_$n"
 }
-if {[llength $_rx_grp] != 9 || [llength $_tx_grp] != 9} {
+if {[llength $_rx_grp] != 17 || [llength $_tx_grp] != 9} {
     error "constraints.sdc: D2D clock groups built wrong -\
-           rx [llength $_rx_grp], tx [llength $_tx_grp], expected 9 each"
+           rx [llength $_rx_grp], tx [llength $_tx_grp], expected 17 and 9"
 }
 set_clock_groups -asynchronous -name eth_chiplet_cdc \
     -group [get_clocks [list $EXTCLK QSPI_SCLK QSPI_SCLK_o]] \

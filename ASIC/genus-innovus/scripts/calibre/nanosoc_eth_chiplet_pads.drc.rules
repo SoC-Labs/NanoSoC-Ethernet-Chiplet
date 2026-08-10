@@ -65,10 +65,27 @@ DRC CELL NAME YES CELL SPACE XFORM
 DRC MAXIMUM RESULTS 1000
 DRC MAXIMUM VERTEX  4096
 
+// ---- process option: WE ARE LP, AND THE DECK DOES NOT ASSUME IT --------------
+// The foundry deck's `#DEFINE LP` is COMMENTED OUT in the shipped file, and the
+// deck never defines it itself. Without it the deck checks the wrong DPO.W.1 /
+// DPO.S.1/2/3 variants (deck :9008-9014 UNSELECTs the general forms and
+// substitutes the `.A` forms only under #IFDEF LP) and skips the N65LP HVD_N
+// block at :10446 entirely. This design is CLN65LP throughout - tcbn65lp std
+// cells, tphn65lpgv2od3_sl IO. Defining it HERE, before the INCLUDE, is legal
+// and leaves the read-only foundry deck untouched.
+#DEFINE LP
+
 // ---- the foundry deck, unmodified -------------------------------------------
 // 9-metal 6X1Z1U stack, matching the Innovus GdsOutMap used by write_stream
 // (PRTF_EDI_N65_gdsout_6X1Z1U.24a.map). Kept literal on purpose: the metal
 // option is fixed for this tapeout and a silently-wrong deck is worse than an
 // edit. If the metal stack ever changes, change this line AND the map file
 // passed to write_stream together.
+//
+// NOT FIXABLE FROM HERE: the deck also has `#DEFINE WLCSP_SEALRING` active at
+// its line 62, and we are WIRE BOND. That selects SR_EDGE = CHIP_WISR NOT
+// SCORE_WLCSP (:3501) rather than the wire-bond branch (:3503), so the CSR.*
+// corner geometry may be derived from degenerate inputs. SVRF has no
+// #UNDEFINE, so undoing it needs a project copy of the deck header - do that
+// only once the broker has confirmed their own switch set.
 INCLUDE "/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a"

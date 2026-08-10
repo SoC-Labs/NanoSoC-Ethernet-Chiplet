@@ -43,7 +43,7 @@ ROMLIBS_REF ?= /home/dwn1c21/SoC-Labs/TAPEOUT/2026july/NanoSoC-Ethernet-Chiplet/
 
 .DEFAULT_GOAL := help
 
-.PHONY: setup_dirs asic-flist romlibs-check romlibs-fetch cpf-patch sdc-check \
+.PHONY: setup_dirs asic-flist romlibs-check romlibs-fetch cpf-patch _cpf-patch-one sdc-check \
         syn syn_norun syn_eval syn_compare \
         lec lec-pnr lec-gate lec-selftest route-gate-selftest \
         pnr_place pnr_cts pnr_route pnr_all pnr_setup gui \
@@ -76,8 +76,25 @@ romlibs-check:
 ## power or ground net; every Innovus filler pass then dies with IMPSP-5110
 ## while the flow still completes and streams a GDS. Not fixable from Innovus —
 ## these are CPF statements. Idempotent. See 06-fill-antenna-bondpads.md.
+## PATCHES EVERY CPF, NOT JUST $(OUT_DIR)'s. syn_eval writes its outputs to
+## $(OUT_DIR)/eval, and pnr_place_eval depends on this target — so patching only
+## $(OUT_DIR) left the eval CPF untouched. Measured 2026-08-10: every gate1.cpf
+## under outputs/ is 730 b and patched; every one under outputs/eval/ is 591 b
+## and is not. power_plan.tcl:49 then aborts with "is UNPATCHED — no
+## create_power_nets", so NO POWER GRID IS BUILT — and because the PG probe's
+## step wrapper swallowed the error, the probe still reached its summary and
+## exited 0, reporting numbers for a design that had no special routing at all.
+## A missing supply net must never be a silent pass.
 cpf-patch:
-	@cpf=$(OUT_DIR)/$(BLOCK)_gate1.cpf; \
+	@for cpf in $(OUT_DIR)/$(BLOCK)_gate1.cpf $(EVAL_OUT_DIR)/$(BLOCK)_gate1.cpf; do \
+	    test -s "$$cpf" || continue; \
+	    $(MAKE) --no-print-directory _cpf-patch-one CPF="$$cpf" || exit 1; \
+	done; \
+	test -s $(OUT_DIR)/$(BLOCK)_gate1.cpf -o -s $(EVAL_OUT_DIR)/$(BLOCK)_gate1.cpf || { \
+	    echo "FAIL: no CPF at $(OUT_DIR) or $(EVAL_OUT_DIR) — did synthesis run?"; exit 1; }
+
+_cpf-patch-one:
+	@cpf=$(CPF); \
 	test -s "$$cpf" || { echo "FAIL: no CPF at $$cpf — did synthesis run?"; exit 1; }; \
 	if grep -q 'create_power_nets' "$$cpf"; then \
 	    echo "OK: CPF already carries its supply nets"; \

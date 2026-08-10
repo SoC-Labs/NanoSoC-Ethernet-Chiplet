@@ -1,5 +1,42 @@
 # Chiplet Interface
-create_clock -name "D2D_RX_CLK_0" -period "$EXTCLK_PERIOD"  -waveform "0 [expr $EXTCLK_PERIOD/2]" [get_ports TL_CLK_RX]
+#
+# THE D2D LINK RATE IS NOT OUR CLOCK — IT IS THE PEER DIE'S.
+# TL_CLK_RX is the OTHER chiplet's forwarded transmit clock arriving on a pad:
+#   pad_clk_tx <- gpio_io_pad_clk_tx   (WlinkGPIOPHY_v2.v:334)
+#                <- gpiotx_0_io_pad_clk (WavD2DGpio_v2.v:1966)
+# and axi_chiplet_controller.sv:805 states the relationship outright — this die's
+# forwarded pad_clk_tx "IS the peer's pad_clk_rx". So writing $EXTCLK_PERIOD here
+# is an assertion about a DIFFERENT CHIP, and until 2026-08-10 it was an
+# inheritance from our own build variable with nothing recording that.
+#
+# IT IS CORRECT, AND HERE IS WHY (confirmed 2026-08-10):
+#   1. Both chiplets — this one and the compute chiplet — run from the SAME
+#      clock source.
+#   2. Both instantiate the SAME TideLink PHY configuration, so whatever ratio
+#      the PHY applies between SoC clock and pad clock applies IDENTICALLY on
+#      both sides. Our own TX is create_generated_clock ... -divide_by 1 on
+#      TL_CLK_TX (below), so the relationship is symmetric by construction —
+#      not a guess that the peer happened to choose 100 MHz.
+#
+# MESOCHRONOUS, NOT SYNCHRONOUS. A shared source fixes the FREQUENCY and says
+# nothing about PHASE: the two dies have independent clock trees and there is
+# package flight time between them, so TL_CLK_RX arrives at an arbitrary phase.
+# That is why u_deskew and the calibrator exist, and why the D2D clocks stay in
+# a -asynchronous group in constraints.sdc rather than being timed against clk.
+#
+# WHY THIS MATTERS MORE THAN IT LOOKS. Every one of the 24 D2D word clocks below
+# is -divide_by 16 off this period, so this single number is the timing
+# reference for ~16,600 flops — 27% of the design — that were untimed until
+# 2026-08-09. If the two dies ever diverge in rate or PHY config, STA here still
+# reports clean and the part fails on silicon.
+#
+# KNOWN RISK, deliberately not closed for this tapeout: there is no D2D link
+# budget. $CLK_ERROR below is the SYSTEM OSCILLATOR jitter standing in for
+# recovered-clock uncertainty. A shared source means common-mode jitter largely
+# cancels, so the real terms are the two dies' independent clock-tree jitter,
+# pad/package flight variation and the deskew FIFO's own tolerance.
+set D2D_LINK_PERIOD $EXTCLK_PERIOD
+create_clock -name "D2D_RX_CLK_0" -period "$D2D_LINK_PERIOD"  -waveform "0 [expr $D2D_LINK_PERIOD/2]" [get_ports TL_CLK_RX]
 
 set_input_delay 1 -clock [get_clocks "D2D_RX_CLK_0"] [get_ports {TL_RX[*]}]
 
@@ -96,6 +133,74 @@ foreach n {0 1 2 3 4 5 6 7} {
 }
 if {$_rx_bound != 8} {
     error "tidelink_constraints.sdc: bound $_rx_bound/8 RX word clocks"
+}
+
+# ===========================================================================
+# RECOVERED D2D RX WORD CLOCK, NEGATIVE PHASE (/16) — THE RESIDUAL 128
+# ===========================================================================
+# The block above took untimed sequential clock pins 16,653 -> 128
+# (runs/20260809T133739Z_wordclk-gateA). The 128 that remain are NOT the divider
+# counters — those are already covered by D2D_RX_CLK_0 (their CP is io_pad_clk)
+# and appear nowhere in the report. The report's columns are (Pin | Source |
+# Reason), and reading Source as Pin is what made them look like the counters:
+#
+#   {gpiorx_0/link_data_reg_reg[0]/CP} {gpiorx_0/count_reg[3]/Q} {Disabled timing*}
+#      ... x16 bits x 8 lanes = 128     (reports/eval/syn_timing_intent.rep:17-144)
+#
+# The unclocked PIN is link_data_reg_reg[15:0]/CP. count_reg[3]/Q is where clock
+# propagation STOPPED. The reason is {Disabled timing}, NOT the Case constant(0)
+# that accounted for 16,634 of the original 16,653 — different failure, different
+# fix.
+#
+# WHY. WavD2DGpioRx_v2.v:1053 captures the recovered word on the FALLING edge:
+#     always @(negedge w_lnk_clk or posedge io_por_reset) link_data_reg <= ...
+# and io_link_clk == w_lnk_clk (:548). Genus takes that negedge off the divider's
+# COMPLEMENTARY output, so in the gate netlist (gate.v:341339, :340902):
+#     DFSND1  count_reg[3]         (.CP (io_pad_clk), .Q (count[3]), .QN (io_link_clk))
+#     DFCNQD1 link_data_reg_reg[0] (.CP (count[3]), ...)                x16
+# count[3] and io_link_clk are THE SAME CLOCK IN OPPOSITE PHASE on two different
+# PINS of one cell. A clock declared on QN cannot reach Q — no combinational path
+# exists, and clock does not propagate through a flop's CP->Q arc. So the negedge
+# half needs its own declaration. Measured: `CP (count[3])` occurs EXACTLY 128
+# times across the eight WavD2DGpioRx modules.
+#
+# WHAT IS UNTIMED WITHOUT THIS, and why it is not cosmetic. link_data_reg IS the
+# RX datapath — the whole 128-bit recovered word, the last register before the
+# deskew FIFO (WavD2DGpio_v2.v:899 wires u_deskew.lane_clk to the eight
+# gpiorx_N_io_link_clk). Unconstrained today in BOTH directions:
+#   link_data_word (D2D_RX_CLK_0, pad clock) -> link_data_reg   [a real check]
+#   link_data_reg -> u_deskew write side (D2D_RX_WORD_CLK_n)    [80 ns, half word]
+# And CCOpt does not see count[3] as a clock at all: it is routed as data, with
+# no skew target and no balancing against the pad clock tree — on the one
+# interface with a known marginal-eye data-drop failure mode.
+#
+# -invert, with the SAME -source and -divide_by as the positive-phase clock, so
+# the two are 180 degrees apart BY CONSTRUCTION, exactly as Q and QN of one flop
+# are. Do NOT give this its own -source or a hand-written -edges.
+#
+# ANCHOR count_reg[3]/Q. Measured 2026-08-09 by read-only probe: Q resolves 8/8
+# at read time, QN resolves 0/8, and this block binds 8/8 and takes
+# check_timing_intent's untimed count 128 -> 0 with multiple-waveform pins
+# unchanged at 496. That Q/QN asymmetry (Q pre-map, QN post-map only) is the only
+# reason this is expressible in SDC at all.
+set _rxn_bound 0
+foreach n {0 1 2 3 4 5 6 7} {
+    set _pin [get_pins -quiet $GPIO/gpiorx_$n/count_reg\[3\]/Q]
+    if {[sizeof_collection $_pin] == 0} {
+        error "tidelink_constraints.sdc: D2D RX negedge word-clock anchor\
+               $GPIO/gpiorx_$n/count_reg\[3\]/Q matched NOTHING. The 16 recovered\
+               data-capture flops of lane $n (the RX word itself) would be left\
+               untimed and CTS would build no tree for their clock. Refusing to\
+               continue."
+    }
+    create_generated_clock -name "D2D_RX_WORDN_CLK_$n" \
+        -source [get_ports TL_CLK_RX] -divide_by 16 -invert $_pin
+    set_clock_uncertainty -setup $CLK_ERROR      [get_clocks "D2D_RX_WORDN_CLK_$n"]
+    set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks "D2D_RX_WORDN_CLK_$n"]
+    incr _rxn_bound
+}
+if {$_rxn_bound != 8} {
+    error "tidelink_constraints.sdc: bound $_rxn_bound/8 RX negedge word clocks"
 }
 
 # ---------------------------------------------------------------------------

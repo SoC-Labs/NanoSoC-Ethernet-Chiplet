@@ -1,0 +1,65 @@
+//============================================================================
+// nanosoc_eth_chiplet_pads --- Calibre ANTENNA wrapper deck   (PROJECT-OWNED)
+//
+// Run it with:   DRC_GDS=/abs/path.gds scripts/calibre/run_ant.sh
+//
+// WHY THIS FILE EXISTS
+// --------------------
+// Same reason as the DRC wrapper beside it: the foundry deck
+// /tsmc65pdk/65/CMOS/util/ANTENNA_DRC/CN65S_9M_ANT.26_2a ships placeholder
+// specification statements the customer is expected to replace --
+//     LAYOUT PATH    "GDSFILENAME"      (deck line 35)
+//     LAYOUT PRIMARY "TOPCELLNAME"      (deck line 36)
+//     DRC RESULTS DATABASE "DRC_RES.db" (deck line 38)
+//     DRC SUMMARY REPORT   "DRC.rep"    (deck line 39)
+// -- and they are literal strings, not variables. `DRC ICSTATION YES` is what
+// makes overriding them from a top-level wrapper legal; see the long note in
+// nanosoc_eth_chiplet_pads.drc.rules. Verified on Calibre v2023.1_18.8.
+//
+// WHY IT MATTERS
+// --------------
+// Innovus check_process_antenna reports "No Violations Found" on this design,
+// and it is backed by real data (tcbn65lp_9lmT2.lef carries 3,897
+// ANTENNAGATEAREA/ANTENNADIFFAREA entries). But that is the ROUTER's model over
+// a stream with no transistors in it. The foundry deck has never been run here
+// -- there is no .ant.summary anywhere in this repo -- and the Europractice
+// mini@sic manual is unambiguous: "Antenna violations are never acceptable."
+//
+// READ THE RESULT WITH THE BLACK-BOX CAVEAT IN MIND. Standard cells, IO and
+// bond pads stream as empty references (their layouts are imported by the
+// broker), so every gate-area term inside a cell is absent. Checks that need
+// gate area will under-report. The signal here is the ROUTING contribution:
+// long M1-M9 antennas on nets that reach a cell pin.
+//
+// The foundry deck is READ-ONLY (/tsmc65pdk is shared lab collateral) and is
+// not copied, patched or sed-ed by this flow.
+//============================================================================
+
+// ---- must come first: enables top-level override of the deck's placeholders
+DRC ICSTATION YES
+
+// ---- input layout -----------------------------------------------------------
+// $DRC_GDS is expanded by Calibre itself in file-path strings. LAYOUT PRIMARY
+// must stay literal -- SVRF does not expand env vars in cell names.
+LAYOUT PATH    "$DRC_GDS"
+LAYOUT SYSTEM  GDSII
+LAYOUT PRIMARY "nanosoc_eth_chiplet_pads"
+
+// ---- outputs (relative -> they land in the run directory) --------------------
+DRC RESULTS DATABASE "nanosoc_eth_chiplet_pads.ant.results" ASCII
+DRC SUMMARY REPORT   "nanosoc_eth_chiplet_pads.ant.summary" REPLACE HIER
+DRC CELL NAME YES CELL SPACE XFORM
+
+DRC MAXIMUM RESULTS 1000
+DRC MAXIMUM VERTEX  4096
+
+// ---- process option ---------------------------------------------------------
+// We are CLN65LP (tcbn65lp std cells, tphn65lpgv2od3_sl IO). The shipped decks
+// leave LP undefined; define it here, before the INCLUDE, so the LP-specific
+// rule variants are selected. Harmless if this deck ignores it.
+#DEFINE LP
+
+// ---- the foundry antenna deck, unmodified -----------------------------------
+// 9-metal, matching the 9M_6X1Z1U stack used by write_stream and by the DRC
+// wrapper's deck (CLN65S_9M_6X1Z1U.26_2a).
+INCLUDE "/tsmc65pdk/65/CMOS/util/ANTENNA_DRC/CN65S_9M_ANT.26_2a"

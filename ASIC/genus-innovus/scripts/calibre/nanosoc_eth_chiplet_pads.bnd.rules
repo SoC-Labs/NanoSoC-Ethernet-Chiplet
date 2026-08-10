@@ -1,0 +1,54 @@
+//============================================================================
+// nanosoc_eth_chiplet_pads --- Calibre BOND PAD (BND) wrapper deck  (PROJECT-OWNED)
+//
+// Run it with:   DRC_GDS=/abs/path.gds scripts/calibre/run_bnd.sh
+//
+// WHY THIS FILE EXISTS
+// --------------------
+// The Europractice mini@sic manual requires the final GDS to be "DRC/ANT/BND
+// clean". BND is the wire-bond pad rule set and it has never been run on this
+// design. Foundry deck:
+//   /tsmc65pdk/65/CMOS/LP/pdk/Calibre/drc/wire_bond/CN65_WIRE_BOND_9M_6X1Z1U.20a
+// -- 9M_6X1Z1U, an exact match to our metal stack. Same placeholder problem as
+// the DRC and ANT decks (LAYOUT PATH/PRIMARY at deck lines 43-44, DRC RESULTS/
+// SUMMARY at 46-47), so the same `DRC ICSTATION YES` wrapper pattern applies.
+//
+// TWO DECK SWITCHES MATTER HERE, AND BOTH ARE LEFT AS THE FOUNDRY SET THEM
+// -------------------------------------------------------------------------
+//   #DEFINE with_AP   (deck line 33) -- "Turn on to use AP as the redistribution
+//                     metal or metal Fuse after passivation". Our stack IS
+//                     ...+AlRDL and the design has AP geometry, so leaving the
+//                     foundry default is correct. If a run says otherwise,
+//                     change it HERE, never in /tsmc65pdk.
+//   #DEFINE SINGLE_PAD (deck lines 263,266) -- pad arrangement.
+// If the broker's own switch set differs, theirs wins: ask before overriding.
+//
+// EXPECT NOISE ON THIS ONE, AND KNOW WHY
+// --------------------------------------
+// Bond pads (tpbn65v PAD70NU/PAD70GU) stream as near-empty black boxes -- 13
+// polygons each, on 38/40, 39/60 and 74/0 -- and the passivation-opening layer
+// CB (GDS 76) does not appear ANYWHERE in the stream. A bond-pad deck with no
+// CB openings cannot evaluate pad-opening rules, so those will be silent rather
+// than clean. The useful signal tonight is the metal/AP geometry around the pad
+// ring, not the pad openings themselves. Treat a green CB result as absence of
+// evidence, exactly as with the corner CSR checks.
+//
+// The foundry deck is READ-ONLY and is not copied, patched or sed-ed.
+//============================================================================
+
+DRC ICSTATION YES
+
+LAYOUT PATH    "$DRC_GDS"
+LAYOUT SYSTEM  GDSII
+LAYOUT PRIMARY "nanosoc_eth_chiplet_pads"
+
+DRC RESULTS DATABASE "nanosoc_eth_chiplet_pads.bnd.results" ASCII
+DRC SUMMARY REPORT   "nanosoc_eth_chiplet_pads.bnd.summary" REPLACE HIER
+DRC CELL NAME YES CELL SPACE XFORM
+
+DRC MAXIMUM RESULTS 1000
+DRC MAXIMUM VERTEX  4096
+
+#DEFINE LP
+
+INCLUDE "/tsmc65pdk/65/CMOS/LP/pdk/Calibre/drc/wire_bond/CN65_WIRE_BOND_9M_6X1Z1U.20a"
