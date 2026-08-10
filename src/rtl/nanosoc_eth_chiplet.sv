@@ -390,6 +390,100 @@ module nanosoc_eth_chiplet #(
     wire        tc_link_state_change;
     wire        tc_bcast_ack;
     wire        tc_link_active;
+    // FIX #3 (TideChart data-mode gate, 2026-08-09): the tidelink FCSM>=4
+    // "link carries FC/EXT words" strobe (tl_data_mode_o). It feeds the
+    // TideChart election gate below IN PLACE OF the premature tc_link_active
+    // (== role_locked_o, asserts ~5us before the link can carry a CLAIM), which
+    // caused the silent dual-root. Mirrors tb_tc_pair.sv:378.
+    wire        tc_data_mode;
+
+    //=========================================================================
+    // DEAD-END SINKS FOR DELIBERATELY UNUSED INSTANCE OUTPUTS
+    //
+    // POLICY (this supersedes the older "tie the pin to `()`" note; the reason
+    // it changed is recorded here so nobody re-litigates it):
+    //
+    //   1. NEVER omit a pin. An omitted pin is indistinguishable from an
+    //      oversight, and on an INPUT it floats — Z in simulation, tied
+    //      arbitrarily by synthesis. Verilator reports it as PINMISSING and HAL
+    //      as UNCONI, both of which gate. That rule is unchanged and absolute.
+    //
+    //   2. For an unused OUTPUT, do not stop at `.port()`. An empty output pin
+    //      is inert in silicon, but it is reported forever — Verilator
+    //      PINCONNECTEMPTY, HAL *W,UNCONN — and the integration ruleset waives
+    //      HAL's UNCONO (a module's own undriven output) without waiving UNCONN
+    //      (a dangling output at an instance). So `.port()` leaves a permanent,
+    //      unwaived, un-triaged residue that the next reviewer has to re-judge
+    //      from scratch. Twenty of them accumulated in this file.
+    //
+    //   3. Instead, drive the unused output into a NAMED `*_nc` wire declared
+    //      here with a one-line reason. That is the convention nanosoc_gen
+    //      already emits in the generated SoC top (`cc_periph_uart_txen_nc`,
+    //      `dmac_0_apb_bridge_pstrb_nc`, `dap_ss_0_jtagnsw_nc`, ...), and it is
+    //      the exact pattern the recorded HAL waiver names: "intentional
+    //      dead-end sinks routed to named `*_nc` wires" (`-nocheck URDWIR`,
+    //      nanosoc-multicore-system/lint/hal.tcl:117). The waiver's own
+    //      justification then actually applies to what it is waiving, which is
+    //      not true of a blanket code-level waiver — see
+    //      docs/LINT_REMEDIATION_PLAN.md §4, where exactly that mismatch hid
+    //      the `dmac_0_err_w` DMA-error hole.
+    //
+    // Net effect: zero silicon change (a driven-but-unread wire is removed by
+    // synthesis), and every one of these decisions is greppable as `_nc` with
+    // its reason attached instead of surviving as an anonymous lint line.
+    //
+    // ANYTHING ADDED HERE MUST BE A DELIBERATE DEAD END. If a signal has a
+    // plausible consumer, wire it up instead — `_nc` is a decision, not a
+    // parking space.
+    //=========================================================================
+
+    // SoC d2d manager: locked-transfer indication. Every slave in the D2D
+    // window has a REDUCED AHB shape with no HMASTLOCK port at all — TideLink's
+    // ahb_sub/ahb_tx/ahb_fifo/ahb_ptp declare none, and cmsdk_ahb_to_apb has no
+    // HMASTLOCK input (BP210 r1p1 cmsdk_ahb_to_apb.v:41-72). There is nowhere
+    // for it to go; the D2D window carries no locked sequences.
+    wire        soc_d2d_ahb_m_hmastlock_nc;
+
+    // cmsdk_ahb_to_apb APBACTIVE: a clock-gating HINT for an APB power domain.
+    // Neither APB bank is clock-gated in this build (both bridges run PCLKEN=1
+    // at HCLK), so there is no gate for the hint to drive.
+    wire        tlapb_apbactive_nc;
+    wire        tcapb_apbactive_nc;
+
+    // TideChart's APB slave port carries neither PSTRB nor PPROT (see the
+    // tidechart_shim port list: apb_paddr/psel/penable/pwrite/pwdata only), so
+    // the bridge's byte-strobe and protection outputs have no destination.
+    // Word writes only, unprivileged/secure attributes not policed.
+    wire  [3:0] tcapb_pstrb_nc;
+    wire  [2:0] tcapb_pprot_nc;
+
+    // TideLink I2C-sideband AXI slave. There is no CPU-driven I2C master path
+    // in v1: every request-side input of this port is tied inactive above
+    // (awvalid/wvalid/arvalid = 0), so the slave is permanently idle and its
+    // response channels can never carry a transaction. Tied off as a block; if
+    // an I2C master is ever added, ALL of these become real nets together.
+    wire        tl_i2c_axi_awready_nc;
+    wire        tl_i2c_axi_wready_nc;
+    wire        tl_i2c_axi_bvalid_nc;
+    wire  [1:0] tl_i2c_axi_bid_nc;
+    wire  [1:0] tl_i2c_axi_bresp_nc;
+    wire        tl_i2c_axi_arready_nc;
+    wire        tl_i2c_axi_rvalid_nc;
+    wire  [1:0] tl_i2c_axi_rid_nc;
+    wire [31:0] tl_i2c_axi_rdata_nc;
+    wire  [1:0] tl_i2c_axi_rresp_nc;
+    wire        tl_i2c_axi_rlast_nc;
+
+    // TideChart <-> IRQC AXI-Stream pair (TideChart phase P4). The
+    // ahb-chiplet-irqc block is NOT instantiated in this chiplet, so the
+    // TC->IRQC stream has no consumer and the IRQC->TC stream has no producer.
+    // The corresponding INPUTS are tied idle at the instance (tready_i = 0,
+    // tvalid_i = 0), which is what keeps the streams quiescent; these are the
+    // matching output ends.
+    wire        tc_to_irqc_tvalid_nc;
+    wire [47:0] tc_to_irqc_tdata_nc;
+    wire        tc_to_irqc_tlast_nc;
+    wire        irqc_to_tc_tready_nc;
 
     //=========================================================================
     // Link status to the boundary.
@@ -406,8 +500,19 @@ module nanosoc_eth_chiplet #(
     // The multicore SoC. Default parameters (SYS_ADDR_W=SYS_DATA_W=32, the
     // deployed memory map). Every non-d2d port maps straight to this boundary;
     // the d2d_* ports drive the link below.
+    //
+    // FIRMWARE BAKE (fw_p0 Rank 1, 2026-08-09): override ETH_IMEM_MEM_FPGA_IMG
+    // so CPU0 (network_core) IMEM comes up initialised from the "alive" app at
+    // bitstream time (the `ifdef RAM_PRELOAD ROM/preload-BRAM path in
+    // nanosoc_region_imem -> sl_ahb_rom -> sl_fpga_rom_word). Absolute path so
+    // $readmemh resolves both in the IP package OOC elaboration and the flat
+    // build synth. RAM_PRELOAD itself is baked in-body by the eth-chiplet
+    // filelist (vivado_ip/nanosoc_eth_chiplet_filelist.tcl) — the define does
+    // NOT survive ipx::package_project as a fileset property.
     //=========================================================================
-    nanosoc_multicore_soc u_soc (
+    nanosoc_multicore_soc #(
+        .ETH_IMEM_MEM_FPGA_IMG ("/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/eth_imem_alive.hex")
+    ) u_soc (
         // System clock / reset
         .sys_fclk                       (sys_fclk),
         .sys_sysresetn                  (sys_sysresetn),
@@ -437,7 +542,7 @@ module nanosoc_eth_chiplet #(
         .d2d_ahb_m_hburst               (d2d_ahb_m_hburst),
         .d2d_ahb_m_hprot                (d2d_ahb_m_hprot),
         .d2d_ahb_m_hwdata               (d2d_ahb_m_hwdata),
-        .d2d_ahb_m_hmastlock            (),   // reduced slaves carry no hmastlock — unused
+        .d2d_ahb_m_hmastlock            (soc_d2d_ahb_m_hmastlock_nc),  // reduced slaves carry no hmastlock
         .d2d_ahb_m_hrdata               (d2d_ahb_m_hrdata),
         .d2d_ahb_m_hready               (d2d_ahb_m_hready),
         .d2d_ahb_m_hresp                (d2d_ahb_m_hresp),
@@ -596,7 +701,7 @@ module nanosoc_eth_chiplet #(
         .PPROT      (tlapb_pprot),
         .PWDATA     (tlapb_pwdata),
         .PSEL       (tlapb_psel),
-        .APBACTIVE  (),               // clock-gating hint — unused
+        .APBACTIVE  (tlapb_apbactive_nc),   // clock-gating hint — no gate here
         .PRDATA     (tlapb_prdata),
         .PREADY     (tlapb_pready),
         .PSLVERR    (tlapb_pslverr)
@@ -625,11 +730,11 @@ module nanosoc_eth_chiplet #(
         .PADDR      (tcapb_paddr),
         .PENABLE    (tcapb_penable),
         .PWRITE     (tcapb_pwrite),
-        .PSTRB      (),               // TideChart APB has no PSTRB
-        .PPROT      (),               // TideChart APB has no PPROT
+        .PSTRB      (tcapb_pstrb_nc),       // TideChart APB has no PSTRB
+        .PPROT      (tcapb_pprot_nc),       // TideChart APB has no PPROT
         .PWDATA     (tcapb_pwdata),
         .PSEL       (tcapb_psel),
-        .APBACTIVE  (),               // clock-gating hint — unused
+        .APBACTIVE  (tcapb_apbactive_nc),   // clock-gating hint — no gate here
         .PRDATA     (tcapb_prdata),
         .PREADY     (tcapb_pready),
         .PSLVERR    (tcapb_pslverr)
@@ -757,8 +862,10 @@ module nanosoc_eth_chiplet #(
         .phc_hw_adj_valid           (d2d_phc_hw_adj_valid),
         .phc_hw_adj_ns_incr_frac    (d2d_phc_hw_adj_ns_incr_frac),
         .phc_locked_i               (1'b1),   // single-link deployment: PHC lock always granted
-        // Servo status — SoC's PHC servo_locked input is owned by the ethernet
-        // HA1588 servo (D2D_PORT.md §6f), so this TideLink status is left open.
+        // Servo status. NOT routed into the SoC: the SoC's PHC servo_locked
+        // input is owned by the ethernet HA1588 servo (D2D_PORT.md §6f). This
+        // is TideLink's own PTP servo lock, exported straight to the chiplet
+        // boundary for bring-up observability instead (see the port comment).
         .servo_locked               (servo_locked_o),
         // Interrupt outputs.
         .released_credits_irq (tl_released_credits_irq),
@@ -783,10 +890,11 @@ module nanosoc_eth_chiplet #(
         .tl_bcast_ack_i         (tc_bcast_ack),
         // Link status.
         .link_active            (tc_link_active),
-        // Data-mode status: deliberately open. Explicitly tied rather than
-        // omitted so it reads as a decision, and so lint sees the waived
-        // PINCONNECTEMPTY instead of a PINMISSING that fails the gate.
-        .tl_data_mode_o         (),
+        // Data-mode status (FCSM>=4): now CONNECTED (FIX #3, 2026-08-09) and
+        // routed to the TideChart shim's election gate below, in place of the
+        // premature link_active. Closes the silent dual-root sequencing race
+        // (root-cause: scratchpad/tidechart_rootcause.md sec 2/3).
+        .tl_data_mode_o         (tc_data_mode),
         // Reset output — no consumer at this integration level.
         .d2d_reset_o            (d2d_reset_o),
         // Role selection (strap in; resolved role/lock outputs unused in v1).
@@ -809,7 +917,8 @@ module nanosoc_eth_chiplet #(
         .i2c_sda_o              (i2c_sda_o),
         .i2c_sda_t              (i2c_sda_t),
         // I2C sideband AXI slave — no CPU-driven I2C master path in v1; drive all
-        // inputs inactive (no transactions), leave all responses open.
+        // request inputs inactive (no transactions can start), and sink every
+        // response output into a named `*_nc` dead end (see the sink block above).
         .s_i2c_axi_awvalid  (1'b0),
         .s_i2c_axi_awid     (2'b00),
         .s_i2c_axi_awaddr   (4'h0),
@@ -819,15 +928,15 @@ module nanosoc_eth_chiplet #(
         .s_i2c_axi_awlock   (1'b0),
         .s_i2c_axi_awcache  (4'h0),
         .s_i2c_axi_awprot   (3'b000),
-        .s_i2c_axi_awready  (),
+        .s_i2c_axi_awready  (tl_i2c_axi_awready_nc),
         .s_i2c_axi_wvalid   (1'b0),
         .s_i2c_axi_wdata    (32'h0),
         .s_i2c_axi_wstrb    (4'h0),
         .s_i2c_axi_wlast    (1'b0),
-        .s_i2c_axi_wready   (),
-        .s_i2c_axi_bvalid   (),
-        .s_i2c_axi_bid      (),
-        .s_i2c_axi_bresp    (),
+        .s_i2c_axi_wready   (tl_i2c_axi_wready_nc),
+        .s_i2c_axi_bvalid   (tl_i2c_axi_bvalid_nc),
+        .s_i2c_axi_bid      (tl_i2c_axi_bid_nc),
+        .s_i2c_axi_bresp    (tl_i2c_axi_bresp_nc),
         .s_i2c_axi_bready   (1'b0),
         .s_i2c_axi_arvalid  (1'b0),
         .s_i2c_axi_arid     (2'b00),
@@ -838,12 +947,12 @@ module nanosoc_eth_chiplet #(
         .s_i2c_axi_arlock   (1'b0),
         .s_i2c_axi_arcache  (4'h0),
         .s_i2c_axi_arprot   (3'b000),
-        .s_i2c_axi_arready  (),
-        .s_i2c_axi_rvalid   (),
-        .s_i2c_axi_rid      (),
-        .s_i2c_axi_rdata    (),
-        .s_i2c_axi_rresp    (),
-        .s_i2c_axi_rlast    (),
+        .s_i2c_axi_arready  (tl_i2c_axi_arready_nc),
+        .s_i2c_axi_rvalid   (tl_i2c_axi_rvalid_nc),
+        .s_i2c_axi_rid      (tl_i2c_axi_rid_nc),
+        .s_i2c_axi_rdata    (tl_i2c_axi_rdata_nc),
+        .s_i2c_axi_rresp    (tl_i2c_axi_rresp_nc),
+        .s_i2c_axi_rlast    (tl_i2c_axi_rlast_nc),
         .s_i2c_axi_rready   (1'b0),
         // I2C interrupts.
         .i2c_nbsy_irq       (tl_i2c_nbsy_irq),
@@ -868,7 +977,12 @@ module nanosoc_eth_chiplet #(
         .tc_axis_tx_tvalid          (tc_tx_tvalid),
         .tc_axis_tx_tdata_flat      (tc_tx_tdata),
         .tc_axis_tx_tready          (tc_tx_tready),
-        .link_active                (tc_link_active),
+        // FIX #3 (2026-08-09): gate the root election on DATA-MODE (FCSM>=4),
+        // NOT the premature tc_link_active (== role_locked_o). NUM_PORTS=1 here
+        // so the 1-bit tc_data_mode maps directly (tb_tc_pair.sv:378 uses
+        // {1'b0,m_data_mode} only because its shim is NUM_PORTS=2). tc_link_active
+        // stays driven and is still consumed by link_active_o + u_d2d_decode.
+        .link_active                (tc_data_mode),
         // Root-election tie-break. Derived from the existing role strap rather
         // than a new port: the two dies already differ there (master ties 0,
         // slave ties 1), which is exactly the distinctness the election needs,
@@ -896,13 +1010,14 @@ module nanosoc_eth_chiplet #(
         // Phase-P4 IRQC AXI-Stream pair — the ahb-chiplet-irqc block is NOT
         // present in this integration, so both streams are held idle: TC->IRQC
         // has no consumer (tready low), IRQC->TC has no producer (tvalid low).
-        .tc_to_irqc_tvalid_o        (),
-        .tc_to_irqc_tdata_o         (),
+        // The output ends go to named `*_nc` sinks (see the sink block above).
+        .tc_to_irqc_tvalid_o        (tc_to_irqc_tvalid_nc),
+        .tc_to_irqc_tdata_o         (tc_to_irqc_tdata_nc),
         .tc_to_irqc_tready_i        (1'b0),
-        .tc_to_irqc_tlast_o         (),
+        .tc_to_irqc_tlast_o         (tc_to_irqc_tlast_nc),
         .irqc_to_tc_tvalid_i        (1'b0),
         .irqc_to_tc_tdata_i         (32'h0),
-        .irqc_to_tc_tready_o        ()
+        .irqc_to_tc_tready_o        (irqc_to_tc_tready_nc)
     );
 
     //=========================================================================
