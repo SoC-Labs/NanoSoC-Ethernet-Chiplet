@@ -142,9 +142,17 @@ transistors, which is real verification.
 
 ## 5. What a pass means, and what it does not
 
-Black-box LVS proves **connectivity**: every cell instanced, every port wired as
-the netlist says, no shorts or opens in the routing. That is the majority of what
-LVS catches.
+Black-box LVS proves the **instance-level** picture: every cell present, of the
+right type, in the right count, and the routed nets between them reconciled
+against the netlist.
+
+Be careful about claiming more. On a PDK with no cell GDS, a boxed layout cell
+may carry no recognised pin shapes at all, so Calibre can match the instance
+while still reporting *non-floating extra pins* against the source stub's pins.
+That is what the archived compute-chiplet run shows — its entire INCORRECT
+OBJECTS section is that single class, on boxed leaves. So **pin-level**
+connectivity on boxed leaves is weakly checked at best; do not advertise "every
+port wired as the netlist says".
 
 It does **not** prove cell interiors — those are black boxes by construction.
 Full signoff LVS needs the foundry Back-End packages (transistor CDL + cell GDS).
@@ -153,16 +161,35 @@ Never claim a boxed run as signoff, and never suppress a discrepancy with
 
 ---
 
-## 6. Known open item: PG net naming
+## 6. Expected residual discrepancy classes
 
-`write_netlist` without `-include_pwr_gnd` emits no power/ground, and the stream
-carries no PG text. The layout supply grid stays unnamed and cannot equate to the
-source's global `VDD`/`VSS`. It surfaces as ~2 unmatched nets per side plus
-bulk-pin flags on macro transistors, and it is a **labelling** artifact, not a
-connectivity error.
+Two classes are artifacts of an FE-only PDK rather than design errors. Neither
+may be masked (no `LVS IGNORE PORTS`, no bulk-check suppression) — document them.
 
-The fix is on the P&R side — re-emit with `write_netlist -include_pwr_gnd -phys`
-and drop the `.GLOBAL`. Out of scope for this flow; document it, do not mask it.
+**a. Non-floating extra pins on boxed leaves.** The source stub declares pins;
+the boxed layout frame has none Calibre recognises, so it reports the source
+pins as extra. This is the class that actually drives the archived
+compute-chiplet verdict — its INCORRECT OBJECTS section contains this and
+nothing else. Counts there are capped by `LVS REPORT MAXIMUM 1000`.
+
+**b. PG net naming — only if your P&R emitted no PG.** `write_netlist` without
+`-include_pwr_gnd`, plus a stream carrying no PG text, leaves the layout supply
+grid unnamed so it cannot equate to the source's global supplies. Fix on the P&R
+side and re-emit; out of scope here.
+
+Check (b) applies before citing it: in the archived compute-chiplet report
+`VDD`/`VSS` are correspondence points and PG is *not* the discrepancy driver,
+despite that script's footer claiming it is.
+
+## 6b. Cell Verilog must match the netlist's PG convention
+
+If the P&R netlist wires `.VDD`/`.VSS` on cell instances, the `-e` stubs must
+declare those pins or Calibre rejects the whole source with `Wrong pin count`
+and never reaches a compare. Vendors ship both variants — TSMC's tcbn65lp
+release has `tcbn65lp.v` (no PG ports) beside `tcbn65lp_pwr.v` (`module INVD1
+(I, ZN, VDD, VSS)`). Pick the one matching your netlist, per library: an IO
+library whose pad instances carry no PG pins needs the plain variant even when
+the standard cells need `_pwr`.
 
 ---
 
