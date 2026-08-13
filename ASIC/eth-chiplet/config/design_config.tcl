@@ -275,3 +275,54 @@ set DFT 0
 if {[llength [info commands set_message]]} {
     set_message -no_limit
 }
+
+
+################################################################################
+# CLOCK-TREE CELL CHOICE: WITHDRAW THE PACK'S OPINION
+#
+# flow/steps/cts_setup.tcl documents its own rule exactly: buffers and inverters
+# are "left unset unless the tech pack has an opinion", because constraining the
+# choice changes the tree and therefore the hold profile, and that is "a physical
+# change to evaluate on its own rather than bundle with a hold experiment".
+#
+# The tsmc65 pack HAS an opinion -- cts_buffer_pattern CKB*, cts_inverter_pattern
+# CKN*, icg_cell_patterns {CKLHQ* CKLNQ* CKLD*} -- so on this design the step
+# would apply all three. This design has evidence against that, and it is the
+# reason ../genus-innovus/scripts/cts_setup.tcl:20,22 leaves the equivalent
+# set_db lines COMMENTED OUT rather than merely unwritten:
+#
+#   The shipped tree uses 3,290 BUFFD1 in its clock tree. That is a
+#   general-purpose buffer, and a CKB* list EXCLUDES it. Constraining the choice
+#   would rebuild the tree out of different cells -- changing insertion delay,
+#   skew, the hold profile, hold-buffer count and area -- and the only thing the
+#   run would say about it is one `say` line. Silent, and physical.
+#
+# icg_cell_patterns is worse than merely unwanted. The pack ALSO declares
+#   tech_set icg_dont_use {CKLHQD20 CKLHQD24 CKLNQD20 CKLNQD24}
+# because the vendor marks those cells dont_use -- and CKLHQ*/CKLNQ* MATCH them.
+# cts_setup's own message for the buffer case says setting these "OVERRIDES
+# vendor dont_use", so applying the ICG pattern can readmit exactly the cells
+# the pack is trying to keep out.
+#
+# Withdrawn HERE rather than by overriding the step, deliberately. An
+# overrides/cts_setup.tcl would replace the step wholesale and lose the two
+# gates it adds -- the OCV-before-ccopt ordering check, and the source-latency
+# writeback census -- which are strictly good and which this design needs: a
+# misordered run previously produced 96,545 fictional hold violations.
+#
+# This file is sourced during flow_boot AFTER the tech pack and long before
+# `flow_step cts_setup` (3_cts.tcl:462), so the step simply sees tech_has ->
+# false and does what it documents.
+#
+# TO SWEEP the cell choice deliberately, do NOT delete these: use the stage
+# knobs the step names for exactly that purpose, CTS_BUF_CELLS / CTS_INV_CELLS.
+################################################################################
+
+foreach __k {cts_buffer_pattern cts_inverter_pattern icg_cell_patterns} {
+    if {[tech_has $__k]} {
+        tech_unset $__k
+        puts "DESIGN-CFG: withdrew tech key '$__k' - CTS chooses its own cells\
+              (see the note in [info script])"
+    }
+}
+unset -nocomplain __k

@@ -98,7 +98,8 @@ jobs:
       # the user is not in /etc/passwd and the SSSD socket is not bound — so
       # rewrite GitHub remotes onto HTTPS with a token. Same mechanism as
       # ci-ladder.yml; see its comment for the full diagnosis.
-      # All three GitHub submodule repos are public as of 2026-08-06, so the token
+      # [2026-08-13] There are now FOUR, and nanoSoC-ASIC-Toolkit is PRIVATE, so the
+      # token is REQUIRED. Was: all three GitHub submodule repos public 2026-08-06, token
       # is OPTIONAL — a hard requirement here would fail every run for no reason.
       # Kept as an optional path so a repo going private again costs one secret.
       - name: Rewrite GitHub submodules onto HTTPS
@@ -110,8 +111,11 @@ jobs:
             B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
             git config --global --add url."${B}".insteadOf "https://github.com/"
           else
-            echo "no SUBMODULE_TOKEN — anonymous HTTPS (all submodule repos are public)"
-            B="https://github.com/"
+            echo "::error::SUBMODULE_TOKEN is not set, and ASIC/asic-toolkit"
+            echo "::error::(SoC-Labs/nanoSoC-ASIC-Toolkit) is a PRIVATE repository."
+            echo "::error::Anonymous HTTPS cannot clone it. Set the SUBMODULE_TOKEN"
+            echo "::error::repo secret to a PAT with read access to it."
+            exit 1
           fi
           git config --global url."${B}".insteadOf "git@github.com:"
 

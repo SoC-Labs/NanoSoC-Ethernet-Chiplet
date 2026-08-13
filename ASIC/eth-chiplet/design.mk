@@ -569,3 +569,68 @@ cpf-patch:
 syn place cts route: legacy-paths
 syn:   asic-flist romlibs-check
 place: cpf-patch
+
+# ── CTS derate ──────────────────────────────────────────────────────────────
+# The toolkit defaults CTS_DERATE to 0 and warns when it is off. The production
+# flow applies all four derate arms UNCONDITIONALLY
+# (../genus-innovus/scripts/cts_setup.tcl), and the values the toolkit would use
+# are identical -- the pack supplies the same four numbers. So this is the
+# difference between a signoff run and an optimistic one, not a tuning choice:
+# removing derate improves the report, not the silicon.
+#
+# Innovus inherits the last defined value for any arm left unspecified, so a
+# partial set silently mis-derates the rest. The toolkit sets all four together.
+export CTS_DERATE ?= 1
+
+# EXPORT IS LOAD-BEARING ON EVERY LINE ABOVE. The stage scripts read their knobs
+# with `opt`, which resolves from ::env(...) -- so a bare `CTS_DERATE = 1` in
+# this file is a make variable the tool never sees, and the knob silently keeps
+# its default. Measured the hard way: a 47-minute CTS run took the toolkit's
+# empty allowlist and its derate-off default despite both being set here,
+# because neither was exported. That is precisely the failure this flow says it
+# exists to stamp out -- a setting that did nothing and said nothing.
+
+# ── Diagnosed message IDs ───────────────────────────────────────────────────
+# The toolkit ships an EMPTY allowlist for every stage, deliberately: a default
+# that tolerates IDs would hand each new project someone else's undiagnosed
+# exemptions. So the exemptions belong HERE, per design, each with the diagnosis
+# that earned it. Both of these are carried by the production flow for this same
+# design (../genus-innovus/scripts/4b_pnr_route_eval.tcl:210-218).
+#
+#   IMPLF-223     Duplicate LEF via definitions across the LEF list; Innovus
+#                 ignores the later ones. 60 in the 2026-08-06 log, 20 shown in
+#                 2026-08-07 (message-capped). Recorded as benign in
+#                 docs/tapeout/16-open-defects.md.
+#   IMPMSMV-3501  The power intent defines no power_mode/power_state, so
+#                 always-on buffering is unsupported. Accepted for this tapeout:
+#                 the chip has ONE core power domain (docs/tapeout/
+#                 11-known-issues.md (d)). It is not a defect to fix here, it is
+#                 a consequence of a single-domain design.
+#
+# NEITHER is a licence or an environment artefact -- both are properties of this
+# design's collateral, and both would recur on every run forever. Anything NOT
+# on this list still fails the stage, which is the point.
+export PLACE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
+# CTS adds six more, and every one is a state this design chose:
+#   CHKCTS-18/19/20  buffer / inverter / clock-gating cells "not specified".
+#                    PERMANENT and INTENDED: config/design_config.tcl withdraws
+#                    the tech pack's CKB*/CKN*/CKLHQ* patterns so CCOpt picks
+#                    its own cells, matching the production flow. The shipped
+#                    tree uses 3,290 BUFFD1, which a CKB* list excludes. The
+#                    tool is correctly reporting a deliberate choice.
+#   CHKCTS-1/-2      no CTS max-transition target, 42 = trees x corners.
+#   CHKCTS-9         no clock route_type, same 42.
+#                    Both are documented gaps with knobs that close them
+#                    (CTS_TARGET_TRAN, CTS_ROUTE_TYPE). TRACKED DEBT, not
+#                    permanent -- remove them from this list when the knobs are
+#                    set, and expect the tree to change when they are.
+#
+# NOT allowlisted, deliberately: IMPSP-2021 "could not legalize 1 instance".
+# That is a real placement failure -- a CKBD16 clock buffer at (649.8, 1792.6),
+# 2.4 um below the core's top edge, with no legal site within 230 um. The
+# production flow does not report it. A defect, not a configuration state, and
+# adding it here would bury it.
+export CTS_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501 \
+                                CHKCTS-18 CHKCTS-19 CHKCTS-20 \
+                                CHKCTS-1 CHKCTS-2 CHKCTS-9
+export ROUTE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501

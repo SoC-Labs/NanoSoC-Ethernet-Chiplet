@@ -165,11 +165,16 @@ jobs:
       # GitHub ones — tidelink and its two PHY deps — are git@github.com, so
       # rewrite those onto HTTPS with a token. GITHUB_TOKEN covers THIS repo
       # only, hence a PAT.
-      # All three GitHub submodule repos (TideLink-Chiplet-Interconnect-AHB,
-      # TideLink-Chiplet-GPIO-PHY, ASIC-Flow) are public, so anonymous HTTPS is
-      # enough and no secret is required. SUBMODULE_TOKEN stays OPTIONAL: set it
-      # and this step uses it, so a repo going private again costs one secret
-      # rather than a workflow edit.
+      # [2026-08-13] SUBMODULE_TOKEN IS NOW MANDATORY, and was optional before.
+      # There are FOUR GitHub submodules, not three: TideLink-Chiplet-
+      # Interconnect-AHB, TideLink-Chiplet-GPIO-PHY and ASIC-Flow are public,
+      # but nanoSoC-ASIC-Toolkit is PRIVATE. Anonymous HTTPS cannot clone it.
+      #
+      # The mechanism below already handled this -- its author wrote it so that
+      # "a repo going private again costs one secret rather than a workflow
+      # edit", and that is exactly what happened. Only the requirement changed,
+      # so the guard below states the cause rather than letting rung 2 die
+      # inside a submodule clone with a 404 that names no repository.
       - name: Rewrite GitHub submodules onto HTTPS
         if: fromJSON(steps.plan.outputs.level) >= 2
         env:
@@ -180,8 +185,13 @@ jobs:
             B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
             git config --global --add url."${B}".insteadOf "https://github.com/"
           else
-            echo "no SUBMODULE_TOKEN — anonymous HTTPS (all submodule repos are public)"
-            B="https://github.com/"
+            echo "::error::SUBMODULE_TOKEN is not set, and ASIC/asic-toolkit"
+            echo "::error::(SoC-Labs/nanoSoC-ASIC-Toolkit) is a PRIVATE repository."
+            echo "::error::Anonymous HTTPS cannot clone it, so rung 2 would fail"
+            echo "::error::inside a submodule clone without naming the cause."
+            echo "::error::Set the SUBMODULE_TOKEN repo secret to a PAT with read"
+            echo "::error::access to that repository."
+            exit 1
           fi
           git config --global url."${B}".insteadOf "git@github.com:"
 

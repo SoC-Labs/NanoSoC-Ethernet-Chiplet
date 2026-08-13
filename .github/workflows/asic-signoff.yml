@@ -88,7 +88,10 @@ jobs:
           "$PY" -m pip install --user --quiet --disable-pip-version-check \
               pyyaml jinja2 systemrdl-compiler peakrdl-regblock
 
-      # All submodule repos are public; the token stays optional so a repo going
+      # [2026-08-13] NO LONGER TRUE, and the token is now REQUIRED: ASIC/asic-toolkit
+      # (SoC-Labs/nanoSoC-ASIC-Toolkit) is PRIVATE. Kept as a guard so a run fails
+      # naming the cause rather than inside a submodule clone. Originally: the
+      # token stayed optional so a repo going
       # private again costs one secret rather than a workflow edit. SSH cannot
       # work in the sandbox at all — see ci-ladder.yml rung 2.
       - name: Rewrite GitHub submodules onto HTTPS
@@ -99,7 +102,11 @@ jobs:
             B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
             git config --global --add url."${B}".insteadOf "https://github.com/"
           else
-            B="https://github.com/"
+            echo "::error::SUBMODULE_TOKEN is not set, and ASIC/asic-toolkit"
+            echo "::error::(SoC-Labs/nanoSoC-ASIC-Toolkit) is a PRIVATE repository."
+            echo "::error::Anonymous HTTPS cannot clone it. Set the SUBMODULE_TOKEN"
+            echo "::error::repo secret to a PAT with read access to it."
+            exit 1
           fi
           git config --global url."${B}".insteadOf "git@github.com:"
 
