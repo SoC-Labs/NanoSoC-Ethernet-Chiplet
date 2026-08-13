@@ -3,6 +3,29 @@ source ../scripts/flow_utils.tcl    ;# say/warn/step/try_step/die/fail/opt/repor
 
 set process_node 65
 
+# ── DESIGN_HOME — resolved ONCE, here ───────────────────────────────────────
+# Every stage script sources this file first (1b:45, 2b:63, 3b:74, 4b:62), so
+# this is the one place the repo root has to be worked out. Downstream code uses
+# $::design_home and never touches the environment again — that is what lets a
+# second chiplet reuse these scripts unedited.
+#
+# TWO NAMES, ON PURPOSE. DESIGN_HOME is the portable spelling (ASIC/common.mk
+# exports it); NANOSOC_ETH_CHIPLET_HOME is the historical, design-named one that
+# set_env.sh still exports and that any already-open shell is carrying. Checking
+# DESIGN_HOME first and falling back means the migration cannot strand a running
+# flow in either direction. Remove the fallback only when set_env.sh exports
+# DESIGN_HOME as well.
+#
+# `set ::design_home`, not `set design_home`: pnr_utils.tcl reads it from INSIDE
+# a proc, where a bare name would resolve to a nonexistent local.
+if {[info exists ::env(DESIGN_HOME)]} {
+    set ::design_home $::env(DESIGN_HOME)
+} elseif {[info exists ::env(NANOSOC_ETH_CHIPLET_HOME)]} {
+    set ::design_home $::env(NANOSOC_ETH_CHIPLET_HOME)
+} else {
+    error "neither DESIGN_HOME nor NANOSOC_ETH_CHIPLET_HOME is set"
+}
+
 # ── UNCAP THE MESSAGE LOG ───────────────────────────────────────────────────
 # Innovus prints at most 20 instances of any message ID and then goes silent.
 # Cadence's own doc for set_message states it plainly:
@@ -70,8 +93,8 @@ set rf_01k_dir /research/precompiled_mems/TSMC65/rf_01k/
 set flash_cache_data_dir /research/precompiled_mems/TSMC65/flash_cache_data
 set flash_cache_tag_dir /research/precompiled_mems/TSMC65/flash_cache_tag
 
-set bootrom_dir $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs/cc_rom
-set eth_rom_dir $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs/eth_rom
+set bootrom_dir $::design_home/ASIC/romlibs/cc_rom
+set eth_rom_dir $::design_home/ASIC/romlibs/eth_rom
 
 set lib_search_path_list "$io_lib_dir $sc_lib_dir $rf_32k_dir $rf_16k_dir $rf_08k_dir $rf_01k_dir $bootrom_dir $eth_rom_dir $flash_cache_data_dir $flash_cache_tag_dir"
 
@@ -107,7 +130,7 @@ set LOG_DIR ../logs
 set REPORT_DIR ../reports
 set OUT_DIR ../outputs
 
-set top_level_hdl $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v
+set top_level_hdl $::design_home/ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v
 set constraints_file ../inputs/constraints.sdc
 
 set DFT 0
@@ -124,7 +147,7 @@ set TECH_LEF $::env(TSMC_65_HOME)/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_
 #$::env(PHYS_IP)/arm/tsmc/cln65lp/arm_tech/r2p0/lef/1p9m_6x2z/sc12_tech.lef
 set BASE_LEF $::env(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Back_End/lef/tcbn65lp_200a/lef/tcbn65lp_9lmT2.lef
 set IO_PAD_LEF $::env(TSMC_65_HOME)/iolib/tpbn65v_200b_FE/TSMCHOME/digital/Back_End/lef/tpbn65v_200b/cup/9m/9M_6X1Z1U/lef/tpbn65v_9lm.lef
-# LOCAL OVERRIDE of the TSMC IO driver LEF — three added lines, nothing else.
+# PATCHED TSMC IO driver LEF — GENERATED AT BUILD TIME, three added lines.
 #
 # The IO supply pads declare their supply pins as plain signal pins:
 #     PIN VDDPST / DIRECTION INOUT ;      (PVDD2DGZ_G, PVDD2POC_G)
@@ -144,12 +167,38 @@ set IO_PAD_LEF $::env(TSMC_65_HOME)/iolib/tpbn65v_200b_FE/TSMCHOME/digital/Back_
 # IMPDB-1221 against a design loaded from the real DB, because the pin is not
 # classified as power. The LEF has to say so.
 #
-# Copied from $TSMC_65_HOME/.../tphn65lpgv2od3_sl_9lm.lef with `USE POWER ;` /
-# `USE GROUND ;` inserted after DIRECTION on exactly those three pins. The
-# shared PDK under /tsmc65pdk is READ-ONLY and is not modified — see the
-# read-only-filesystem rule in CLAUDE.md. Re-copy and re-apply if the PDK
-# revs; `diff` against the source shows only the three added lines.
-set IO_PAD_DRIVER_LEF $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef
+# DERIVED FROM THE READ-ONLY PDK, NOT COMMITTED. This path is a BUILD PRODUCT.
+# `USE POWER ;` / `USE GROUND ;` are inserted after DIRECTION on exactly those
+# three pins by ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py, which reads
+# the vendor file from $TSMC_65_HOME and writes here. The shared PDK under
+# /tsmc65pdk is READ-ONLY and is never modified — see the read-only-filesystem
+# rule in CLAUDE.md.
+#
+# The tree used to carry a committed 414 kB copy of the vendor LEF at
+# ASIC/tech_wrappers/tsmc65/local_overrides/. This repository is PUBLIC and
+# TSMC's licence does not permit reproducing their collateral, so what is
+# committed now is the transform, not the result. DO NOT COMMIT THIS FILE — it
+# is gitignored, and scripts/ci/check_no_vendor_collateral.sh fails if a copy
+# reappears anywhere in the tree (content-keyed, so renaming it does not evade).
+#
+# `make -C ASIC -f common.mk pad-lef` produces it. The toolkit flow depends on
+# that target already (ASIC/eth-chiplet/design.mk:581). The genus-innovus flow
+# hangs it off `setup_dirs`, which at the time of writing is an UNCOMMITTED edit
+# in ASIC/genus-innovus/Makefile owned by another session — so until that lands,
+# a fresh clone reaches this line with no generated LEF. Hence the check below:
+# a missing build product must say so and say what to run, not surface later as
+# a LEF parse error or, worse, as a silently unpadded design.
+set IO_PAD_DRIVER_LEF $::design_home/ASIC/tech_wrappers/tsmc65/generated/tphn65lpgv2od3_sl_9lm.patched.lef
+if {![file readable $IO_PAD_DRIVER_LEF]} {
+    error "the patched IO-driver LEF has not been generated.\
+           \n  expected: $IO_PAD_DRIVER_LEF\
+           \n  produce it with: make -C \$DESIGN_HOME/ASIC -f common.mk pad-lef\
+           \n\
+           \n  This file is DERIVED from the read-only PDK at build time and is\
+           \n  deliberately not committed -- it is TSMC collateral and this repo\
+           \n  is public. Do NOT satisfy this by copying the vendor LEF into the\
+           \n  tree; scripts/ci/check_no_vendor_collateral.sh will reject it."
+}
 
 
 # !! THESE SHOULD BE CORRECT FOR ANY ENVIRONMENT AS THEY ARE GENERATED BY MAKEFILE

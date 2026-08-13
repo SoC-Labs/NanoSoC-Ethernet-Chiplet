@@ -273,11 +273,18 @@ SDC_DIR ?= $(LEGACY_ASIC_DIR)/inputs
 # not assumed. The LEF has to classify the pin as power.
 #
 # The tech pack asks for the patched copy through THIS variable and reads the
-# vendor file when it is unset, which is the honest default. The patched copy is
-# the project's own - the PDK under /tsmc65pdk is a shared read-only mount and
-# is never modified. diff against the vendor file shows exactly three added
-# lines. Source: ../genus-innovus/scripts/config.tcl:175  `set IO_PAD_DRIVER_LEF`
-export TSMC65_IO_DRIVER_LEF ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef
+# vendor file when it is unset, which is the honest default. The PDK under
+# /tsmc65pdk is a shared read-only mount and is never modified.
+#
+# THE PATCHED FILE IS GENERATED, NOT COMMITTED. It used to be a committed 414 kB
+# copy of the vendor LEF under tech_wrappers/tsmc65/local_overrides/; this
+# repository is PUBLIC and TSMC's licence does not permit reproducing their
+# collateral, so the repo now carries the TRANSFORM (three lines of intent plus
+# the code to apply them) and the vendor bytes are read from the PDK at build
+# time. PAD_LEF comes from ../common.mk, which also defines the `pad-lef` target
+# that produces it; `syn` below depends on it. Never check the output in.
+# Source: ../genus-innovus/scripts/config.tcl:187  `set IO_PAD_DRIVER_LEF`
+export TSMC65_IO_DRIVER_LEF ?= $(PAD_LEF)
 
 # CLK_PERIOD comes from ../common.mk:174 (10.0 ns). Not restated here - one
 # definition, and a sweep is `make syn CLK_PERIOD=8.0` either way.
@@ -562,11 +569,16 @@ cpf-patch:
 # Prerequisite-only rules: no recipe, so the engine's own recipes are untouched
 # and make simply merges the lists. This is the whole of the consumer wiring.
 #
-#   every stage    the legacy-path bridge, before any tool opens a file
+#   every stage    the legacy-path bridge, and the patched IO-driver LEF -- both
+#                  before any tool opens a file. pad-lef (../common.mk) derives
+#                  that LEF from the read-only PDK; it is a build product, not a
+#                  committed file, so it must exist before the tech pack reads
+#                  TSMC65_IO_DRIVER_LEF. Idempotent and licence-free, so hanging
+#                  it off every stage costs nothing.
 #   syn            the generated sub-flists and the ROM libraries, the two
 #                  project-side gates the toolkit's worked example only assumes
 #   place          the CPF patch, between the two tools
-syn place cts route: legacy-paths
+syn place cts route: legacy-paths pad-lef
 syn:   asic-flist romlibs-check
 place: cpf-patch
 

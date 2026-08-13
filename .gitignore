@@ -69,6 +69,17 @@ innovus.cmd*
 # Anchored, unlike the above: a stray stderr capture at the root is a dropping,
 # but "err.txt" is an ordinary name for a test fixture somewhere in verif/.
 /err.txt
+# Scratch console captures dropped at the REPO ROOT. Nothing that belongs in the
+# tree is written here: every flow logs into ASIC/*/logs, verif/*/ or work/.
+# Two of these (bLb.log, census_base.log -- one-line "Unable to open file"
+# errors from throwaway python probes) sat untracked at the root for days.
+#
+# ANCHORED with a leading slash, deliberately. Bare `*.log` would shadow the
+# `verif/*/*.log` rule above and every other .log rule in this file, and would
+# also swallow any .log a test fixture legitimately carries anywhere in the
+# tree. This matches the repo root ONLY. Zero .log files are tracked today
+# (`git ls-files '*.log'` is empty), so nothing is being hidden by it.
+/*.log
 .icv.*
 # Baseline P&R snapshots. scripts/ci/asic_stage_report.sh takes BASELINE_DIR and
 # diffs the current run against one of these; each is a full copy of
@@ -129,3 +140,15 @@ v2lvs.log
 
 # Session scratch space. Never design data.
 scratchpad/
+
+# Patched TSMC IO-driver LEF, DERIVED at build time by
+# ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py from the read-only PDK.
+#
+# This repository is PUBLIC and the LEF is TSMC foundry collateral whose licence
+# does not permit reproduction. The tree used to carry a committed 414 kB copy
+# at ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef; what
+# is committed now is the transform (three lines of intent plus the code to
+# apply them), never the result. scripts/ci/preflight.sh fails if a vendor-sized
+# copy reappears under local_overrides/ -- this rule is the first line of that
+# defence, not the only one.
+ASIC/tech_wrappers/tsmc65/generated/

@@ -39,6 +39,7 @@ VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 ASIC_DIR     := $(CHIPLET_HOME)/ASIC/genus-innovus
 
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
+.PHONY: vendor-check
 .PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc
 
 # Bare `make` used to run `bootstrap` — a 42-submodule fetch — because it was
@@ -53,7 +54,7 @@ help:
 	@echo "    make bootstrap     fetch all 42 submodules (see scripts/bootstrap.sh)"
 	@echo ""
 	@echo "  Gates (what CI runs nightly — .github/workflows/nightly.yml):"
-	@echo "    make check         chip-boundary + Verilator lint. No EDA licence."
+	@echo "    make check         vendor-check + chip-boundary + Verilator lint. No EDA licence."
 	@echo "    make elab          VCS structural elaboration"
 	@echo "    make elab-strict   xrun -hal; fails on a synthesis-blocking multi-driver"
 	@echo "    make regress       every data-plane sim proof (ARGS=--quick to skip the long pole)"
@@ -63,6 +64,7 @@ help:
 	@echo "    make chip-boundary every RTL port classified exactly once"
 	@echo "    make chip-wrapper  ...and emit build/chip/rtl/nanosoc_eth_chiplet_chip.v"
 	@echo "    make lint          Verilator structural lint"
+	@echo "    make vendor-check  no TSMC collateral tracked in this PUBLIC repo"
 	@echo ""
 	@echo "  ASIC implementation (delegates to ASIC/genus-innovus):"
 	@echo "    make asic-status   which flow stages have run"
@@ -103,10 +105,19 @@ bootstrap:
 lint:
 	"$(CHIPLET_HOME)/scripts/lint.sh"
 
-## check: the fast, EDA-license-free gates a fresh clone can run — boundary
-## coverage + structural lint. `make elab` and the verif/ envs need VCS on top.
-check: chip-boundary lint
-	@echo "== check OK: chip-boundary + lint clean =="
+## vendor-check: no TSMC foundry collateral is TRACKED. This repository is
+## PUBLIC and the PDK licence does not permit reproducing vendor files; the tree
+## carried a 414 kB copy of TSMC's IO-driver LEF for months. Costs nothing and
+## needs no tool, so it runs first in `check`. See the script for the full
+## argument and for the "ship the transform, not the result" pattern.
+vendor-check:
+	"$(CHIPLET_HOME)/scripts/ci/check_no_vendor_collateral.sh"
+
+## check: the fast, EDA-license-free gates a fresh clone can run — licence
+## hygiene, boundary coverage, structural lint. `make elab` and the verif/ envs
+## need VCS on top.
+check: vendor-check chip-boundary lint
+	@echo "== check OK: vendor-check + chip-boundary + lint clean =="
 
 ## regress: the DYNAMIC gate — every simulation proof of the data plane, one
 ## pass/fail table (decode tx-gate + hready-loop guards, g2_peer_aperture, and

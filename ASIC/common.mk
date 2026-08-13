@@ -25,6 +25,21 @@ CHIPLET_HOME_DEFAULT := $(realpath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 export NANOSOC_ETH_CHIPLET_HOME ?= $(CHIPLET_HOME_DEFAULT)
 export NANOSOC_MULTICORE_HOME   ?= $(NANOSOC_ETH_CHIPLET_HOME)/nanosoc-multicore-system
 
+# ── DESIGN_HOME: the design-agnostic spelling of "the repo root" ────────────
+# The flow scripts used to read $::env(NANOSOC_ETH_CHIPLET_HOME) directly, which
+# bakes THIS design's name into files that are otherwise portable (config.tcl,
+# pnr_utils.tcl, the stage scripts). DESIGN_HOME is the same directory under a
+# name a second chiplet can use unchanged.
+#
+# BOTH NAMES STAY LIVE. Every Tcl call site resolves DESIGN_HOME first and falls
+# back to NANOSOC_ETH_CHIPLET_HOME, so a shell that sourced set_env.sh (which
+# exports only the old name) still runs, and so does a half-migrated tree. Drop
+# the fallback only once set_env.sh exports DESIGN_HOME too.
+#
+# `?=` for the same reason as everything else here: a sourced set_env.sh or a CI
+# export wins.
+export DESIGN_HOME ?= $(NANOSOC_ETH_CHIPLET_HOME)
+
 # ── Project / submodule / IP env (mirrors set_env.sh) ──────────────────────
 # The flists reference these via ${VAR}; export them here so the ASIC flows
 # resolve every RTL path WITHOUT requiring `source set_env.sh` first. All
@@ -361,3 +376,52 @@ gen_memories: bootrom
 	cd $(ROM_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rom_via_hdd_rvt_rvt/r0p0/bin/rom_via_hdd_rvt_rvt liberty -spec $(ROM_65nm_SPEC_FILE) -code_file $(BOOTROM_BIN_FILE);
 	cd $(ROM_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rom_via_hdd_rvt_rvt/r0p0/bin/rom_via_hdd_rvt_rvt all -spec $(ROM_65nm_SPEC_FILE) -code_file $(BOOTROM_BIN_FILE);
 	echo "Finished generating memory libraries"
+
+
+# ── THE PATCHED IO-DRIVER LEF ───────────────────────────────────────────────
+#
+# WHY THIS IS GENERATED AND NOT COMMITTED.
+#
+# `tphn65lpgv2od3_sl_9lm.lef` is TSMC foundry collateral and this repository is
+# PUBLIC. The tree used to carry a 414 kB copy of it at
+# ASIC/tech_wrappers/tsmc65/local_overrides/ — a verbatim vendor file with three
+# lines changed — which published vendor IP the licence does not permit us to
+# reproduce. What is committed now is the TRANSFORM (scripts/patch_pad_lef.py:
+# three lines of project-owned intent, plus the code to apply them); the vendor
+# bytes are read from the read-only PDK at build time and land here, gitignored.
+#
+# Same problem and same shape of fix as the stream-out map — see
+# genus-innovus/scripts/gdsmap_derive.py and its `gdsmap` target.
+#
+# WHY IT LIVES IN common.mk RATHER THAN IN ONE FLOW'S Makefile: BOTH flows read
+# it. genus-innovus/scripts/config.tcl sets IO_PAD_DRIVER_LEF from it, and
+# eth-chiplet/design.mk exports it as TSMC65_IO_DRIVER_LEF for the toolkit tech
+# pack. Generating it into either flow's work/ would make the other flow depend
+# on that flow's build tree. So it goes in a flow-neutral generated directory,
+# reached through NANOSOC_ETH_CHIPLET_HOME exactly as ASIC/romlibs is.
+#
+# The patch itself is a vendor defect workaround: three supply pads declare
+# their supply pin with no `USE POWER ;` / `USE GROUND ;`, so Innovus will not
+# match them with `connect_global_net -type pg_pin`, the VDDIO/VSSIO special
+# nets stay empty, and the router threads the IO supplies around the periphery
+# as ordinary signal nets. 76 DRC records on the 2026-08 reference run. The
+# script's docstring carries the full argument.
+PAD_LEF_GEN_DIR := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/generated
+PAD_LEF         := $(PAD_LEF_GEN_DIR)/tphn65lpgv2od3_sl_9lm.patched.lef
+PAD_LEF_GEN     := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py
+
+## make pad-lef — regenerate the patched IO-driver LEF from the read-only PDK.
+## Idempotent and cheap (no licence, ~0.01s): safe to hang off every stage.
+.PHONY: pad-lef
+pad-lef:
+	@python3 $(PAD_LEF_GEN) -o $(PAD_LEF)
+
+## make pad-lef-verify — the acceptance test. Proves the transform still
+## reproduces the exact file it replaced, without writing anything. This is what
+## catches a PDK bump changing the LEF under us: the script pins BOTH the vendor
+## input's SHA-256 and the patched output's, and fails rather than absorbing a
+## change silently.
+.PHONY: pad-lef-verify
+pad-lef-verify:
+	@python3 $(PAD_LEF_GEN) -o $(PAD_LEF) --check || exit 1
+	@python3 $(PAD_LEF_GEN) --print-delta
