@@ -412,9 +412,30 @@ PAD_LEF_GEN     := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/scripts
 
 ## make pad-lef — regenerate the patched IO-driver LEF from the read-only PDK.
 ## Idempotent and cheap (no licence, ~0.01s): safe to hang off every stage.
+##
+## It also restores a symlink at the file's OLD committed path. That is a
+## compatibility shim for ARCHIVED INNOVUS DATABASES, and it is load-bearing:
+## a saved database populates its own libs/lef/ with ABSOLUTE symlinks into the
+## project tree, and 78 saved databases under ASIC/genus-innovus/runs/ and
+## ASIC/eth-chiplet/build/ point at local_overrides/. Without the shim every one
+## of them fails to open --
+##     ERROR (IMPIMEX-7023): The file .../libs/lef/tphn65lpgv2od3_sl_9lm.lef
+##     inside the saved design directory was deleted.
+## -- which kills re-streaming, ECOs and any re-check of work already done. The
+## same trap is recorded for the mmmc symlinks in docs/tapeout/26 s5.
+##
+## A SYMLINK, not a copy: one source of truth, so the shim cannot drift from the
+## generated file. Both paths are gitignored, so no vendor bytes reach the index.
+PAD_LEF_COMPAT := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef
 .PHONY: pad-lef
 pad-lef:
 	@python3 $(PAD_LEF_GEN) -o $(PAD_LEF)
+	@mkdir -p $(dir $(PAD_LEF_COMPAT))
+	@ln -sfn $(PAD_LEF) $(PAD_LEF_COMPAT)
+	@test -e $(PAD_LEF_COMPAT) || { \
+	  echo "pad-lef: FAILED to restore the archived-database compatibility link"; \
+	  echo "         at $(PAD_LEF_COMPAT) -- saved databases will not open."; \
+	  exit 1; }
 
 ## make pad-lef-verify — the acceptance test. Proves the transform still
 ## reproduces the exact file it replaced, without writing anything. This is what
