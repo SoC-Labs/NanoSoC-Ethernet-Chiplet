@@ -326,3 +326,42 @@ foreach __k {cts_buffer_pattern cts_inverter_pattern icg_cell_patterns} {
     }
 }
 unset -nocomplain __k
+
+
+################################################################################
+# PROTECT THE PAD RING FROM SYNTHESIS
+#
+# The supply pads in ../tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v:192-213
+# are instantiated with EMPTY PORT LISTS:
+#
+#     PVDD2POC_G uPAD_VDDIO_T_0();
+#     PVDD2DGZ_G uPAD_VDDIO_T_1();
+#
+# To synthesis they are unloaded, undriven and worthless, and Genus deletes
+# every one of them. The SIGNAL pads have real connections and survive, so the
+# netlist still looks like a padded design.
+#
+# MEASURED on this toolkit's first run against this chip, before this block
+# existed: 82 pad instances in, 48 out. All 34 PVDD1DGZ_G / PVDD2DGZ_G /
+# PVDD2POC_G / PVSS1DGZ_G / PVSS2DGZ_G gone -- every core and IO supply pad and
+# every power-on-control cell. Confirmed three ways: absent from the synthesis
+# netlist, absent from the routed netlist, absent from the GDS; a top-level area
+# drop of 114,826 um2 against the 114,750 um2 those 34 pads occupy; and the IO
+# filler ring growing by exactly 850 um = 34 x 25.0 um of vacated slots.
+#
+# The result routes, streams a 296 MiB GDS, and is not a shippable die. It would
+# fail LVS. Nothing upstream of LVS notices: the bond-pad count gate checks
+# PAD70*, which is unaffected.
+#
+# The production flow has protected against this since it was written --
+# ../genus-innovus/scripts/1b_synthesis_eval.tcl:406-412 issues an
+# unconditional set_dont_touch on uPAD* and FAILS if the pattern matches
+# nothing. This is the same protection, in the toolkit's own idiom.
+#
+# uPAD* covers all 82: the supply pads above, the 48 signal drivers, and the
+# corner cells. Deliberately broad -- a pattern that matches too much costs some
+# optimisation on cells that must not be optimised anyway, while one that
+# matches too little is invisible until LVS.
+################################################################################
+
+set ::DONT_TOUCH_PATTERNS {uPAD*}

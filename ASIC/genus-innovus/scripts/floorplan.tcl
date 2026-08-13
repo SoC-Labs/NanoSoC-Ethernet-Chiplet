@@ -77,6 +77,30 @@
 ## number again and it will name every macro that no longer fits, at the point
 ## of placement, instead of letting it surface as sroute damage hours later.
 set CORE_TO_IO 70
+## ### THE DIE BOX IS DEFINED HERE, AND ONLY HERE. #############################
+## The `-die_size <w> <h>` below is the single source of truth for this design's
+## die. It is not just a description: it is the statement that creates the die,
+## and Innovus anchors the result at the origin, so the box is (0,0)-(w,h).
+##
+## The Calibre DRC deck's ChipWindow (xLB/yLB/xRT/yRT) is DERIVED from this
+## line, not typed alongside it: ASIC/genus-innovus/drc_project.mk reads the two
+## numbers straight out of this file with sed, and make_project_deck.sh
+## substitutes them into the deck template on every run. So a die resize here
+## reaches DRC with no second edit -- and cannot be forgotten, which is what
+## used to leave Calibre measuring boundary rules (CSR.*, SR.*, the density
+## windows via CHIP_EDGE) against a chip window that was not the chip.
+##
+## CONSEQUENCE FOR EDITING: keep this a plain `create_floorplan ... -die_size
+## <number> <number>` at the start of a line. That is what drc_project.mk
+## matches, and it deliberately does NOT match the two comments further down
+## that also quote these numbers. If you restructure this command, fix the sed
+## in drc_project.mk in the same commit -- it errors out rather than guessing,
+## so the flow will tell you.
+##
+## (Not yet collapsed: the _dx1/_dy1/_dx2/_dy2 literals at the bondpad keep-out
+## below are a third copy of the same numbers, inside this same file. They are
+## cross-checked against .core_bbox at runtime and will error if they drift, so
+## they are guarded rather than silent -- but they are still a copy.)
 create_floorplan -site core -die_size 1600 2000 \
     $CORE_TO_IO $CORE_TO_IO $CORE_TO_IO $CORE_TO_IO
 
@@ -167,7 +191,42 @@ create_route_blockage -name BONDPAD_KEEPOUT -layers {M8 M9 AP} -except_pg_nets \
         [list [expr {$_dx2 - $_bp_d}] $_dy1 $_dx2                   $_dy2] \
         [list $_dx1 $_dy1                   $_dx2 [expr {$_dy1 + $_bp_d}]] \
         [list $_dx1 [expr {$_dy2 - $_bp_d}] $_dx2 $_dy2]]
-unset _bp_d _dx1 _dy1 _dx2 _dy2 _cx1 _cy1 _cx2 _cy2 _expect
+
+## CHIP CORNER STRESS RELIEF keep-out.
+##
+## TSMC fits the sealring's 45-degree corner chamfer inside our die footprint, so
+## each corner must be empty of ALL metal. The foundry deck reserves 74.0um along
+## each leg (CLN65S_9M_6X1Z1U.26_2a:3636, `INT CHIP_NOSR < 74 ABUT == 90`) against
+## a measured 73.87um chamfer, and flags anything inside as CSR.R.1:<layer>. It is
+## a rejection criterion, not a warning: the mini@sic manual s6.2 states cleaning
+## these "is mandatory even when you have not added sealring, otherwise TSMC will
+## reject your submission". The same construct gates dummy fill --- DMn.EN.1 is
+## `DUMn NOT (SIZE CHIP_CHAMFERED BY -DMn_EN_1)` and CHIP_CHAMFERED is the die
+## with these four triangles already removed --- so one keep-out serves both.
+##
+## SQUARE, NOT TRIANGLE, AND DELIBERATELY SO. The exact keep-out is a right
+## triangle with two 74um legs, and create_route_blockage does take -polygon. But
+## the Innovus 21.11 reference for add_metal_fill states plainly: "Some
+## technologies use triangular shapes for Corner Stress Relief patterns. However,
+## metal fill does not support triangular route blockages currently." A triangular
+## blockage is silently ignored by fill --- which is exactly what the 2026-08-08
+## filled run shows, with CSR.R.1 firing 302 on DUM8_NEW, 225 on DUM9_NEW and 172
+## on APi. A 74x74 square is honoured, and over-blocks by one half-triangle per
+## corner: 4 x 2738um2 = 0.34% of the die. Cheap insurance against a reject.
+##
+## This does NOT clear the 56 CSR.R.1 results in the current stream. Those are the
+## four PCORNER_G corner cells (135x135, LEF OBS solid on M1..M7), and a blockage
+## does not move a placed instance. Removing them is a separate change gated on an
+## ESD ruling about pad-ring bus continuity through the corner.
+set _csr 74.0
+create_route_blockage -name CSR_CORNER_KEEPOUT -fills \
+    -layers {M1 M2 M3 M4 M5 M6 M7 M8 M9 AP} \
+    -rects [list \
+        [list $_dx1                  $_dy1                  [expr {$_dx1 + $_csr}] [expr {$_dy1 + $_csr}]] \
+        [list [expr {$_dx2 - $_csr}] $_dy1                  $_dx2                  [expr {$_dy1 + $_csr}]] \
+        [list $_dx1                  [expr {$_dy2 - $_csr}] [expr {$_dx1 + $_csr}] $_dy2] \
+        [list [expr {$_dx2 - $_csr}] [expr {$_dy2 - $_csr}] $_dx2                  $_dy2]]
+unset _csr _bp_d _dx1 _dy1 _dx2 _dy2 _cx1 _cy1 _cx2 _cy2 _expect
 
 
 ## Macro placement.
@@ -241,8 +300,39 @@ place_macro {*ethmac*bd_ram*u_rf} 1053.8000000000 1117.8100000000 R180
 place_macro {*u_network_core*u_region_bootrom_0*rom_via*} 883.5350000000 1538.6000000000 MY
 place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6000000000 1340.4000000000 MY  ;## MOVED -20 y: makes room for eth_scratch_tx below it
 place_macro {*region_eth_scratch_rx_0*} 590.2000000000 1338.8000000000 R0
-place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1633.8000000000 MY  ;## MOVED -20 y: was 12.89 over the new core top
-place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1503.4000000000 R0  ;## MOVED -10 y: was 3.68 over the new core top
+## ORPHAN CORRIDORS -- why these two macros moved UP on 2026-08-13
+##
+## A macro whose PLACE HALO stops one or two rows short of the core top leaves a
+## strip that admits standard cells but is walled in by macro on both sides for
+## hundreds of microns. CCOpt puts clock repeaters in it, the legalizer's 230 um
+## search finds ~1% legal row, and the run dies with
+##     IMPSP-2021 Could not legalize <1> instances
+##     IMPSP-2040 ... no legal location for CTS_ccl_buf_00605 (CKBD16) due to Blocked
+##
+## Measured before the move, with halo 3.6 and core top 1795.0:
+##     rf_32k          top 1788.68  halo 1792.28  gap 2.72 um = 1.51 rows
+##     eth_scratch_tx  top 1787.89  halo 1791.49  gap 3.51 um = 1.95 rows
+## Their x spans total ~904 um of the 1190 um core width, so ~76% of the top of
+## the core had ONE row as its only row.
+##
+## BOTH CORRIDORS WERE SCARS FROM THE EARLIER REPAIR RECORDED ABOVE. These two
+## macros were pushed DOWN out of the core boundary (-10 and -20), and the push
+## left slivers behind. Moving them back UP by exactly the residual gap puts each
+## halo top ON the core top, so the strip is not a row at all.
+##
+## The move also WIDENS the channel beneath each, which is why it is preferred to
+## hard-blocking the strips:
+##     rf_32k          gap to eth_scratch_rx below  10.51 -> 13.23 um
+##     eth_scratch_tx  gap to dmem rf_16k below      8.15 -> 11.66 um
+##
+## Nothing sits above them but the core boundary and the pad band, so there is no
+## overlap risk in the direction of travel. TO REVERT, restore 1503.4 and 1633.8
+## and expect IMPSP-2021 to return non-deterministically -- it depends on where
+## the netlist happens to want a repeater, which is why the production flow has
+## hit it on some runs and not others.
+place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1637.3100000000 MY  ;## MOVED +3.51 y: was 1633.8 (itself -20, "12.89 over the new core top")
+## [2026-08-13] MOVED +2.72 y, from 1503.4. See ORPHAN CORRIDORS below.
+place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1506.1200000000 R0  ;## was 1503.4 (itself -10 from 1513.4, "3.68 over the new core top")
 place_macro {*way1_cache_ram_tag_ram_0_i} 911.2000000000 468.6900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 402.0900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_data_ram_0_word_2_i} 553.8000000000 480.4000000000 R0  ;## MOVED +20 y: QSPI cache stack moves up as one block

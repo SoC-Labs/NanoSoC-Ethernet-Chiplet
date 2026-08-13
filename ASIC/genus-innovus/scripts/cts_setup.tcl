@@ -84,7 +84,25 @@ set_db timing_analysis_type ocv
 # Here, NOT after ccopt, for the same reason as the OCV line above: enabling the
 # analysis mode after the tree is built cost 96,545 fictional hold violations
 # and ~37,000 hold buffers on 2026-08-06 (see the note at the top of this file).
-set_db timing_analysis_cppr true
+#
+# `both`, NOT `true`. [2026-08-12] This line read `true` until today. That is
+# NOT a member of the enum. From the installed reference for this exact version,
+# /eda/cadence/innovus/doc/DBcom/root.html:
+#     timing_analysis_cppr  Type: enum
+#     Enum Values: both none setup hold      Default: none
+# Innovus accepted `true` SILENTLY - no warning anywhere in the 08-11 CTS log -
+# and coerced it to something active: CPPR 0.073 ns is visibly applied on the
+# worst hold path in that run's srclat report, so it did not fall back to the
+# `none` default. It worked by undocumented coercion, with nothing asserting
+# which of the four modes was actually selected and no warning if that ever
+# changes. `both` is the documented spelling for what the paragraph above asks
+# for - pessimism removed on the shared clock segment, setup AND hold.
+#
+# CPPR only ever REMOVES pessimism, so this cannot make a real violation
+# disappear; it can only stop a fictional one being reported. Verify on the next
+# CTS run that the hold CPPR term is still present and the hold WNS has not
+# moved materially from -0.005 ns.
+set_db timing_analysis_cppr both
 
 # All FOUR derate arms, always. Innovus inherits the last defined value for any
 # arm left unspecified, so setting two of them silently mis-derates the other

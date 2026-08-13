@@ -19,6 +19,11 @@
 ################################################################################
 set R [expr {[info exists ::env(PGPROBE_OUT)] ? $::env(PGPROBE_OUT) : [pwd]}]
 set TAG [expr {[info exists ::env(NULLTEST)] && $::env(NULLTEST) eq "1" ? "nulltest" : "asis"}]
+# PGTAG overrides the report-file tag so a sweep can keep its runs apart. It does
+# NOT change behaviour -- PGKNOBS below is what changes behaviour. Keep them
+# separate: a tag that implied a knob would let a mislabelled run masquerade as a
+# measurement of something it never set.
+if {[info exists ::env(PGTAG)] && $::env(PGTAG) ne ""} { set TAG $::env(PGTAG) }
 set T0 [clock seconds]
 proc pgr {s} { puts "PGR| $s" ; flush stdout }
 
@@ -126,6 +131,38 @@ if {$TAG eq "nulltest"} {
         set_db route_special_block_pin_route_with_pin_width true
         pgr "route_special_block_pin_route_with_pin_width = [get_db route_special_block_pin_route_with_pin_width]"
     }
+}
+
+# --- PGKNOBS: arbitrary set_db lines, applied AFTER floorplan, BEFORE power_plan.
+#
+# This exists so a knob sweep does not need a new copy of this file per run. The
+# string is Tcl and is evaluated as-is; a typo is a hard failure, not a silent
+# skip, because a knob that quietly failed to apply would produce a run that
+# looks like a measurement of the knob and is actually another baseline. That is
+# the same false-green this whole probe was rewritten to prevent (see the
+# 2026-08-10 note above), so it gets the same treatment: record it in PG_FAILED
+# and let pg_require abort before anything downstream is believed.
+#
+# Every knob is echoed back through get_db AFTER being set, so the log proves the
+# tool accepted the value rather than proving only that we sent it.
+#
+#   PGTAG=m4_jog08 PGKNOBS='set_db route_special_jog_threshold_ratio 0.8' innovus ...
+#
+if {[info exists ::env(PGKNOBS)] && [string trim $::env(PGKNOBS)] ne ""} {
+    pgstep pgknobs {
+        pgr "PGKNOBS: $::env(PGKNOBS)"
+        uplevel #0 $::env(PGKNOBS)
+        # Echo back every attribute the knob string mentions.
+        foreach a [regexp -all -inline {(?:set_db|setDb)\s+([A-Za-z0-9_]+)} $::env(PGKNOBS)] {
+            if {[string match "set_db*" $a] || [string match "setDb*" $a]} { continue }
+            if {[catch {get_db $a} v]} {
+                pgr "PGKNOB-READBACK $a = <unreadable: $v>"
+            } else {
+                pgr "PGKNOB-READBACK $a = $v"
+            }
+        }
+    }
+    pg_require pgknobs
 }
 
 pgstep power_plan { source ../scripts/power_plan.tcl }
