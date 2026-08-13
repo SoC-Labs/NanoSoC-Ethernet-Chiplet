@@ -88,19 +88,16 @@ oxide is damaged before the die is ever powered. The fix is a reverse-biased
 diode to substrate on the net, which gives the charge a path that is not the
 gate.
 
-TSMC's cell for this is `ANTENNA` in `tcbn65lp`. Its LEF (verified, from
-`tcbn65lp_9lmT2.lef` line 3657 onward):
+TSMC's cell for this is `ANTENNA` in `tcbn65lp`. Its abstract was read directly
+from `tcbn65lp_9lmT2.lef` (the `MACRO ANTENNA` block, from line 3657 onward). What
+it declares: `CLASS CORE`, on the `core` site, **two sites wide and one row tall**
+— the same footprint as `FILL2` — with the standard abutment VDD/VSS rails and a
+single input pin `I` that carries an `ANTENNADIFFAREA` value and **no**
+`ANTENNAGATEAREA`.
 
-```
-MACRO ANTENNA
-    CLASS CORE ;
-    SIZE 0.400 BY 1.800 ;
-    SITE core ;
-    PIN I
-        ANTENNADIFFAREA 0.1066 ;
-        DIRECTION INPUT ;
-        ...
-```
+> Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
+> `$TSMC_65_HOME/CMOS/LP/stclib/9-track/tcbn65lp-set/.../lef/tcbn65lp_9lmT2.lef`,
+> `MACRO ANTENNA`.
 
 `ANTENNADIFFAREA` and no `ANTENNAGATEAREA` is the signature of a diode: it
 *supplies* diffusion area to a net, it does not consume gate area. It is two
@@ -120,14 +117,19 @@ out of that LEF:
 | | `PAD70GU` (outer) | `PAD70NU` (inner) |
 |---|---|---|
 | `CLASS` | `BLOCK` | `BLOCK` |
-| `SIZE` | 30.000 × 86.685 µm | 30.000 × 171.000 µm |
-| AP opening (`OBS LAYER AP`, main `RECT`) | `-13.720 0.000 43.720 69.000` | `-13.720 102.000 43.720 171.000` |
-| AP opening size | 57.44 × 69 µm | 57.44 × 69 µm |
+| Cell height (the number the floorplan has to clear) | 86.685 µm | 171.000 µm |
+| AP opening | one rectangle, same size in both cells | ditto |
+| Where the opening sits in the cell | at the bottom of the cell body | **102 µm higher** |
 | `PIN` statements | **none** | **none** |
 
-The two cells carry the **same 57.44 × 69 µm opening**; the only difference is
-where along the cell it sits — y 0–69 in the outer cell, y 102–171 in the inner
-one. That 102 µm offset *is* the stagger.
+> Vendor LEF geometry redacted — TSMC licence forbids reproduction. The AP-opening
+> rectangles, the polygon wings and the full `SIZE`/`OBS` statements are in
+> `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`, macros `PAD70GU`
+> and `PAD70NU`.
+
+The two cells carry the **same aluminium opening**; the only difference is where
+along the cell it sits. That 102 µm offset *is* the stagger, and 171 µm is where
+this design's bond-pad keep-out comes from.
 
 The trade, stated plainly:
 
@@ -197,8 +199,9 @@ Stylus TCR, `add_filler_gaps` (`TCRcom/add_filler_gaps.html`):
 > move cells to make it smaller.
 
 - **`0.2`** is `min_gap`, positional, **microns** (`Data_type: float, required`).
-  0.2 µm is exactly one `core` site: `SITE core / SIZE 0.200 BY 1.800`
-  (`tcbn65lp_9lmT2.lef:2151`). So the request is "leave me at least one legal
+  0.2 µm is exactly **one `core` site** — the site pitch declared in
+  `tcbn65lp_9lmT2.lef:2151` (geometry not reproduced here, TSMC licence). So the
+  request is "leave me at least one legal
   filler site wherever you can" — the smallest thing `FILL1` can occupy. The
   header of `06-fill-antenna-bondpads.md` says to confirm the units with `-help`;
   they are confirmed here, from the manual.
@@ -387,21 +390,22 @@ Two things the reader should hold on to:
 
 ### 2.8 The cell list: what each class contributes physically
 
-`tcbn65lp` names its filler cells by **site count**, not by micron width. The
-`core` site is 0.200 × 1.800 µm (`tcbn65lp_9lmT2.lef:2151`), and every one of
-these cells is exactly `SIZE (n × 0.200) BY 1.800`:
+`tcbn65lp` names its filler cells by **site count**, not by micron width: the
+digit in the name *is* the width in `core` sites, and every one of these cells is
+one row tall. Multiply by the site pitch (`tcbn65lp_9lmT2.lef:2151`) to get
+microns — the LEF dimensions themselves are not reproduced here (TSMC licence).
 
-| Cell | `SIZE` (µm) | Sites | Contents (from LEF `PIN` sections) | 08-06 count | 08-05 count |
-|---|---|---:|---|---:|---:|
-| `FILL64` | 12.800 × 1.800 | 64 | M1 VDD + VSS `SHAPE ABUTMENT` rails only | 386 | 674 |
-| `FILL32` | 6.400 × 1.800 | 32 | ditto | 64 | 93 |
-| `FILL16` | 3.200 × 1.800 | 16 | ditto | 328 | 379 |
-| `FILL8` | 1.600 × 1.800 | 8 | ditto | 835 | 1 194 |
-| `FILL4` | 0.800 × 1.800 | 4 | ditto | 9 626 | 18 391 |
-| `FILL2` | 0.400 × 1.800 | 2 | ditto | 19 822 | 27 799 |
-| `FILL1` | 0.200 × 1.800 | 1 | ditto | 30 482 | 51 788 |
-| `ANTENNA` | 0.400 × 1.800 | 2 | same rails **plus** `PIN I` with `ANTENNADIFFAREA 0.1066` | **41 217** | **50 274** |
-| | | | **Total** | **102 760** | **150 592** |
+| Cell | Sites | Contents (from the LEF `PIN` sections) | 08-06 count | 08-05 count |
+|---|---:|---|---:|---:|
+| `FILL64` | 64 | M1 VDD + VSS `SHAPE ABUTMENT` rails only | 386 | 674 |
+| `FILL32` | 32 | ditto | 64 | 93 |
+| `FILL16` | 16 | ditto | 328 | 379 |
+| `FILL8` | 8 | ditto | 835 | 1 194 |
+| `FILL4` | 4 | ditto | 9 626 | 18 391 |
+| `FILL2` | 2 | ditto | 19 822 | 27 799 |
+| `FILL1` | 1 | ditto | 30 482 | 51 788 |
+| `ANTENNA` | 2 | same rails **plus** `PIN I` carrying an `ANTENNADIFFAREA` value | **41 217** | **50 274** |
+| | | **Total** | **102 760** | **150 592** |
 
 Counts from `baseline_2026-08-06/logs/pnr_run_core70.log:33676-33684` and
 `baseline_2026-08-05/logs/pnr_all.log:38338-38346`.
@@ -895,36 +899,30 @@ mechanism.
 
 ### 4.5 The M8/M9/AP blockage, and what it collides with
 
-`PAD70GU` and `PAD70NU` are `CLASS BLOCK` and carry **only `OBS`, no `PIN`**. The
-full M8 obstruction of `PAD70NU`, verbatim from `tpbn65v_9lm.lef`:
+`PAD70GU` and `PAD70NU` are `CLASS BLOCK` and carry **only `OBS`, no `PIN`**.
+Read the `PAD70NU` `OBS` section of `tpbn65v_9lm.lef` and the shape of the problem
+is immediate: on **M8 and M9 it is the same five-shape figure** — a rectangle
+covering the whole cell body, a rectangle either side of it, and a chamfered
+polygon capping each of those — and on **AP** a single wide rectangle with a
+chamfered polygon at each end. No pins, no routing targets, blockage only.
 
-```
-OBS
-    LAYER M8 ;
-    POLYGON  44.000 167.500 42.000 169.500 42.000 103.500 44.000 105.500 ;
-    RECT  30.000 103.500 42.000 169.500 ;
-    RECT  0.000 0.000 30.000 171.000 ;
-    RECT  -12.000 103.500 0.000 169.500 ;
-    POLYGON  -12.000 169.500 -14.000 167.500 -14.000 105.500 -12.000 103.500 ;
-    LAYER M9 ;   ... identical ...
-    LAYER AP ;
-    POLYGON  45.500 169.220 43.720 171.000 43.720 102.000 45.500 103.780 ;
-    RECT  -13.720 102.000 43.720 171.000 ;
-    POLYGON  -13.720 171.000 -15.500 169.220 -15.500 103.780 -13.720 102.000 ;
-```
+> Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
+> `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`,
+> the `OBS` section.
 
 > **A second correction.** `floorplan.tcl:18-19` and
-> `06-fill-antenna-bondpads.md:380-384` both record this as
-> `OBS LAYER M8 ; RECT 0 0 30 171 ; LAYER M9 ; RECT 0 0 30 171 ;` — the third
-> `RECT` only. The real obstruction is **five shapes per layer**, spanning
-> x = −14 … +44 on M8/M9 and x = −15.5 … +45.5 on AP, on a cell that is 30 µm
-> wide. It is 59.5 µm wide, not 30.
+> `06-fill-antenna-bondpads.md:380-384` both record this obstruction as a single
+> full-cell rectangle on M8 and M9 — the **body rectangle only**. The real
+> obstruction is **five shapes per layer**, and the outer ones reach past both
+> sides of the cell body: measured across all of them it is **59.5 µm wide, not
+> 30**.
 >
 > **The inboard-direction arithmetic in `floorplan.tcl` is unaffected** — every
-> shape stays within y = 0 … 171 — so the 16 µm overlap at `CORE_TO_IO 50` and the
-> 4 µm clearance at 70 are both correct. The extra width is **along the ring**, in
-> the ±14 µm "wings" that let the pad reach its neighbours' routing channels. Do
-> not re-derive along-ring pad spacing from the 30 µm cell width.
+> shape stays within the cell's own 171 µm height — so the 16 µm overlap at
+> `CORE_TO_IO 50` and the 4 µm clearance at 70 are both correct. The extra width is
+> **along the ring**, in the side "wings" that let the pad reach its neighbours'
+> routing channels. Do not re-derive along-ring pad spacing from the 30 µm cell
+> width.
 
 Three interlocking facts make this the design's dominant DRC source at
 `CORE_TO_IO 50`:
@@ -954,9 +952,10 @@ wire, because the shorter outer pad's inboard edge never reaches the ring band.
 Confirmed in the shipped report — `grep -c BuPAD` on the 2026-08-06
 `_imp_drc.rep` returns **0**.
 
-The 4 µm clears both wide-metal rules: M8's `SPACINGTABLE` tops out at 1.5 and M9
-is a flat `SPACING 2`. Both layers are `MAXWIDTH 12` and the rings are 12 wide —
-legal, but on the limit. Do not widen them.
+The 4 µm clears both wide-metal rules — M8's `SPACINGTABLE` and M9's flat
+`SPACING`, at their worst bands, both ask for less than that. And both layers'
+`MAXWIDTH` limit is exactly the 12 µm the rings already use: legal, but on the
+limit. Do not widen them. (Rule values not reproduced — TSMC licence.)
 
 ### 4.6 Routing between pad and driver: there isn't any
 

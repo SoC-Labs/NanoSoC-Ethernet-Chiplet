@@ -115,13 +115,9 @@ Split by pad type:
 | `PAD70GU` (outer, 86.685 µm tall) | 32 | **0** |
 
 **Root cause — measured, not assumed.** `PAD70NU`'s `OBS` is solid over its whole
-footprint on **M8 and M9**:
-
-```
-OBS  LAYER M8 ; RECT 0 0 30 171 ;   LAYER M9 ; RECT 0 0 30 171 ;
-```
-
-Those are exactly the core-ring layers (`add_rings … -layer {top M9 bottom M9 left M8
+footprint on **M8 and M9** — read the `MACRO PAD70NU` `OBS` section of the vendor bond-pad
+LEF, `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef` (geometry not reproduced
+here, TSMC licence). Those are exactly the core-ring layers (`add_rings … -layer {top M9 bottom M9 left M8
 right M8}`). `add_rings` draws geometrically and **does not honour `OBS`**, so at
 `CORE_TO_IO = 50` the rings were drawn straight through the inner bond pads on all four
 sides symmetrically:
@@ -146,9 +142,9 @@ reach 36 µm further inboard.
 
 - `CORE_TO_IO` raised **50 → 70** in
   [`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl), giving 4 µm clearance.
-  4 µm clears both wide-metal rules — M8's `SPACINGTABLE` tops out at 1.5, M9 is a flat
-  `SPACING 2`. Both layers are `MAXWIDTH 12` and the rings are 12 wide: legal, but on the
-  limit. **Do not widen the rings.**
+  4 µm clears both wide-metal rules — M8's `SPACINGTABLE` and M9's flat `SPACING` both ask
+  for less. Both layers' `MAXWIDTH` limit is exactly the 12 µm the rings already use: legal,
+  but on the limit. **Do not widen the rings.** (Rule values not reproduced — TSMC licence.)
 - The cost was taken out of the core, which is fixed inside a fixed die: 1230 × 1630 →
   **1190 × 1590**, a 5.6 % area loss (112,800 µm²).
 - **17 of the 21 macros were re-placed.** Raising the margin moved the core box inward and

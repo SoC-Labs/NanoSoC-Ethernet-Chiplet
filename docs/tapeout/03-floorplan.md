@@ -42,7 +42,9 @@ core box  = (205, 205) – (1600-205, 2000-205) = (205,205)–(1395,1795)
 ```
 
 The 135 µm comes straight out of the pad LEF — every `PDDW*_G`, `PVDD2*_G` and `PCORNER_G` in
-`tphn65lpgv2od3_sl` is `SIZE ... BY 135.000`. Verified against the placed database at both margins:
+`tphn65lpgv2od3_sl` is that tall, which is what makes it the IO row height. (The LEF statements
+themselves are not reproduced here — TSMC licence.) Verified against the placed database at both
+margins:
 
 | `CORE_TO_IO` | Core box | Core size |
 |---|---|---|
@@ -67,10 +69,10 @@ The design uses a **staggered** bond pad ring from `tpbn65v`, placed by
 [`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl) with
 `create_relative_floorplan` against each driver pad:
 
-| Cell | Role | `SIZE` | Count |
+| Cell | Role | Height (µm) — the dimension the margin must clear | Count |
 |---|---|---|---|
-| `PAD70GU` | outer row | 30.000 × 86.685 | 42 |
-| `PAD70NU` | inner row | 30.000 × **171.000** | 40 |
+| `PAD70GU` | outer row | 86.685 | 42 |
+| `PAD70NU` | inner row | **171.000** | 40 |
 
 The inner row is 84.3 µm taller, so it reaches **36 µm further inboard** than the driver pads do
 (171 − 135). And here is the trap:
@@ -83,23 +85,16 @@ let alone that they overhang. The clearance has to be added by hand, which is ex
 `CORE_TO_IO` is doing.
 
 Verified directly in the PDK LEF (read-only, `.../tpbn65v_200b/cup/9m/9M_6X1Z1U/lef/tpbn65v_9lm.lef`):
+`MACRO PAD70NU` is declared `CLASS BLOCK`, 171 µm tall — the number the floorplan has to clear.
 
-```lef
-MACRO PAD70NU
-    CLASS BLOCK ;
-    SIZE 30.000 BY 171.000 ;
-```
+> Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
+> `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`.
 
 ### 2.2 `PAD70NU` blocks M8 and M9 solidly — the core-ring layers
 
-```lef
-OBS
-    LAYER M8 ;   RECT 0.000 0.000 30.000 171.000 ;   ...
-    LAYER M9 ;   RECT 0.000 0.000 30.000 171.000 ;   ...
-```
-
-The blockage is solid over the pad's entire footprint on **both** M8 and M9 (there are additional
-"wing" polygons either side, but the body rect alone is what matters here). Those are precisely the
+The same macro's `OBS` section blocks **both M8 and M9 solidly over the pad's entire footprint**
+(there are additional "wing" polygons either side, but the body blockage alone is what matters
+here — see [scripts/07 §4.5](scripts/07-filler-and-bondpads.md) for the correction). Those are precisely the
 core-ring layers — `add_rings` uses left/right M8 and top/bottom M9, see [04-power-plan](04-power-plan.md#3-core-rings).
 
 `add_rings` draws **geometrically**. It does not honour OBS. So the rings were simply drawn straight
@@ -119,11 +114,12 @@ left / right / bottom / top.
 4 µm clears both wide-metal rules, confirmed against the tech LEF
 (`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`):
 
-- **M8** — `SPACINGTABLE` tops out at **1.5** µm (the `WIDTH 4.500` row at `PARALLELRUNLENGTH 4.500`).
-- **M9** — a flat `SPACING 2`.
+- **M8** — its `SPACINGTABLE` requirement, at its very worst width band, is well under 4 µm.
+- **M9** — a single flat `SPACING` rule, also under 4 µm.
 
-Both layers are `MAXWIDTH 12` and the rings are exactly 12 µm wide. **Legal, but on the limit — do not
-widen the rings.**
+Both layers' `MAXWIDTH` limit is **exactly the 12 µm the rings already use**. **Legal, but on the
+limit — do not widen the rings.** (Rule values not reproduced — TSMC licence; read them from the
+tech LEF above.)
 
 ### 2.4 The evidence
 
@@ -417,11 +413,12 @@ margin change, this is why — it is not a placer regression.
 
 **Verified this week against the real database, the PDK LEFs and the run logs:**
 
-- Pad height 135.000, `PAD70GU` 30 × 86.685, `PAD70NU` 30 × 171.000, both `CLASS BLOCK` — read from
-  `tpbn65v_9lm.lef`.
-- `PAD70NU` `OBS` solid on M8 **and** M9 over the full 30 × 171 footprint — read from the same LEF.
-- M9 `WIDTH 2 / SPACING 2 / MAXWIDTH 12 / MINENCLOSEDAREA 9`; M8 `SPACINGTABLE` max 1.5, `MAXWIDTH 12`
-  — read from `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`.
+- IO row height 135, `PAD70GU` 86.685 tall, `PAD70NU` 171.000 tall, both `CLASS BLOCK` — read from
+  `tpbn65v_9lm.lef`. These three heights are the only vendor dimensions this floorplan depends on.
+- `PAD70NU` `OBS` solid on M8 **and** M9 over its full footprint — read from the same LEF.
+- M9's flat spacing/area rules and M8's `SPACINGTABLE` were both read from
+  `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`, and 4 µm clears both. (Values not reproduced — TSMC
+  licence.)
 - 42 `PAD70GU` + 40 `PAD70NU`, matching the `.io` per-side counts exactly.
 - 366 / 318 / 32 / **0** DRC breakdown across the two bond-pad rows — independently parsed from the
   baseline DRC report.

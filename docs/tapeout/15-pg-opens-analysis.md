@@ -92,27 +92,37 @@ per-net summary bbox, not a location. Real localised opens are 327 / 316.)
 
 ### 2.2 The 0.330 µm number is the standard-cell power rail width
 
-From `tcbn65lp_9lmT2.lef`, `MACRO DCAP4`:
+Read `MACRO DCAP4` in `tcbn65lp_9lmT2.lef` — and any other core cell, they are all
+built the same way. Its `PIN VSS` and `PIN VDD` are M1 abutment rails straddling the
+row boundary, and each one measures **0.330 µm** across the row's short axis. That is
+the number, and it is a property of the 9-track `core` site, not of this cell.
 
-```
-PIN VSS  LAYER M1 ; RECT 0.465 -0.165 0.800 0.165 ;    ->  0.330 µm tall
-PIN VDD  LAYER M1 ; RECT 0.465  1.635 0.800 1.965 ;    ->  0.330 µm tall
-SITE core  SIZE 0.200 BY 1.800 ;
-```
+> Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
+> `$TSMC_65_HOME/CMOS/LP/stclib/9-track/tcbn65lp-set/.../lef/tcbn65lp_9lmT2.lef`,
+> `MACRO DCAP4` and `SITE core`.
 
 `route_special` propagates the source wire width up the stack, which is why the
 riser is 0.330 µm wide **and** why the GUI fragment reported earlier (an M5 VSS
 special wire 14.6 µm long and **0.33 µm tall**) has the same number — same mechanism,
 horizontal leg instead of vertical.
 
-Two tech rules matter at this width (`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`):
+Four rule families in the tech LEF (`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`) bite at
+this width, and between them they set up the whole failure:
 
-```
-M1/M2/M3/M4/M5   MINIMUMCUT 2 WIDTH 0.300        -> a 0.33 µm wire needs >=2 cuts
-M2, M4           PITCH 0.200 ; OFFSET 0.100      -> vertical tracks at 0.100 + 0.200k
-VIA1..VIA3       cut 0.100 x 0.100, SPACING 0.100 / 0.130 ADJACENTCUTS 3 WITHIN 0.140
-VIA12_1cut       M1 enclosure 0.090 x 0.050 ; M2 enclosure 0.050 x 0.090
-```
+- **`MINIMUMCUT` on M1–M5.** A 0.33 µm wire is over the threshold, so every via
+  landing on it must be a **≥2-cut array**. Dropping to a single small cut is not an
+  option the router has.
+- **The M2/M4 vertical track grid.** Routing tracks are on a fixed pitch and offset,
+  so the riser cannot be nudged — it lands on a track or not at all. This is what
+  §2.3 measures.
+- **VIA1–VIA3 cut size, cut spacing and `ADJACENTCUTS`.** These decide how wide the
+  2-cut array has to be.
+- **Per-variant metal enclosure on the VIA12 cuts.** The enclosure differs between
+  the `VIA12_1cut` and `VIA12_1cut_V` variants, which is what makes the outcome
+  depend on which one viaGen happens to pick. §3.
+
+> Vendor tech-LEF rule values redacted — TSMC licence forbids reproduction. Source:
+> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`.
 
 ### 2.3 Position: a delta function at ±0.300 µm from macro vertical edges
 
@@ -130,8 +140,8 @@ Signed offset of each riser's centre from the nearest macro left/right edge:
 | anything else | **0** | **0** |
 
 There is no spread. Every riser is on the first vertical routing track that clears
-the macro outline. Worked example, `chip_imem16k` (rf_16k at 1059.2, 209.95, so right
-edge = 1059.2 + 311.8 = **1371.000**):
+the macro outline. Worked example, `chip_imem16k` (an rf_16k placed at 1059.2, 209.95;
+adding its LEF width puts its right edge at **1371.000** in die coordinates):
 
 ```
 M4/M2 tracks near the edge : ... 1370.900   1371.100   1371.300   1371.500 ...
@@ -193,32 +203,36 @@ of a categorical blocker.
 ## 3. The blocking geometry
 
 Every memory macro obstructs **the entire cut stack over its whole footprint**, flush to
-the SIZE box — verified on rf_16k, rf_08k, flash_cache_data:
+the `SIZE` box — verified on rf_16k, rf_08k, flash_cache_data. Reading the `OBS` sections
+of those three LEFs:
 
-```
-rf_16k  SIZE 311.8 BY 285.25
-   OBS M1   (0.000,0.000)-(311.800,285.250)   overhang L +0.000  R +0.000
-   OBS VIA1 (0.000,0.000)-(311.800,285.250)   overhang L +0.000  R +0.000
-   OBS M2   (0.000,0.000)-(311.800,285.250)
-   OBS VIA2 (0.000,0.000)-(311.800,285.250)
-   OBS M3   (0.000,0.000)-(311.800,285.250)
-   OBS VIA3 (0.000,0.000)-(311.800,285.250)
-   OBS M4   (1.860,0.000)-(309.940,285.250)   <- only M4 is inset, by 1.86
-```
+- **M1, VIA1, M2, VIA2, M3, VIA3** are each blocked over the **complete** macro
+  outline, with **zero overhang and zero inset** on the left and right edges. There is
+  no sliver of unobstructed area anywhere along a vertical macro edge on any of them.
+- **M4 is the single exception** — its blockage is inset from the left and right edges
+  by **1.86 µm**, and it is the only layer left open.
 
-The macro PG pins are **M4, vertical, full macro height**, 0.200/0.350 µm wide
-(rf_08k: 158 VDD rects, 82 VSS rects). M4 is the only layer left open.
+> Vendor macro LEF geometry redacted — licence forbids reproduction. Source: the
+> compiled-memory LEFs under `/research/precompiled_mems/TSMC65/<macro>/<macro>.lef`
+> (ARM-confidential, TSMC 65 nm).
+
+The macro PG pins are **M4, vertical, full macro height** (rf_08k: 158 VDD rects, 82 VSS
+rects). M4 is the only layer left open.
 
 So the riser must climb M1 → M2 → M3 → M4 → M5 within **0.135 µm** of a solid
 VIA1/VIA2/VIA3/M1/M2/M3 blockage.
 
-**Inferred** (not measured — flagged as inference): with `VIA12_1cut_V`
-(M1 enclosure 0.050 in x) the via's M1 shape reaches to 0.135 − 0.050 = **0.085 µm**
-from the macro's M1 OBS, against an M1 SPACINGTABLE requirement of **0.090 µm** at this
-wire width. It is short by 5 nm. With `VIA12_1cut` (M1 enclosure 0.090) it is short by
-45 nm. `MINIMUMCUT 2 WIDTH 0.300` forbids dropping to a single small cut. A 5 nm
-shortfall that depends on which via variant viaGen picks locally is exactly consistent
-with the observed ~11 % scatter.
+**Inferred** (not measured — flagged as inference): subtract the via's own M1 enclosure
+from that 0.135 µm and the via's M1 shape stops **just short** of the M1 spacing
+requirement that applies at this wire width. With the narrow-enclosure variant
+(`VIA12_1cut_V`) it is short by **5 nm**; with `VIA12_1cut`, whose enclosure is larger in
+x, it is short by **45 nm**. The `MINIMUMCUT` rule forbids escaping by dropping to a
+single small cut. A 5 nm shortfall that depends on which via variant viaGen picks locally
+is exactly consistent with the observed ~11 % scatter.
+
+> The enclosure and spacing figures behind this arithmetic are vendor tech-LEF values and
+> are not reproduced — TSMC licence. Re-derive from
+> `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef` if you need to re-check the 5 nm.
 
 ---
 

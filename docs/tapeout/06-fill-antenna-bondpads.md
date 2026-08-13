@@ -377,11 +377,10 @@ for the whole run. Placing them last is deliberate.
 
 ### The clearance problem they cause
 
-`PAD70NU`'s `OBS` is solid over its entire footprint on both M8 and M9:
-
-```
-OBS LAYER M8 ; RECT 0 0 30 171 ; LAYER M9 ; RECT 0 0 30 171 ;
-```
+`PAD70NU`'s `OBS` is solid over its entire footprint on both M8 and M9 — and, as
+[scripts/07 §4.5](scripts/07-filler-and-bondpads.md) records, wider than the cell
+body besides. (Vendor LEF geometry not reproduced here — TSMC licence; source is
+`$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`.)
 
 Those are exactly the core-ring layers (`add_rings`: left/right M8, top/bottom
 M9). And because both bond-pad cells are `CLASS BLOCK` rather than `CLASS PAD`,

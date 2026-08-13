@@ -49,7 +49,7 @@ place+CTS: 81.5 min stage time, 87 min end-to-end
 3. **No parasitic extraction deck is wired.** Every post-route number reads `Parasitics Mode: No SPEF/RCDB` with `extract_rc_effort low`. The cap tables at `nanosoc_eth_chiplet_pads.mmmc:69,79,89` are ARM `1p9m_6x2z` — **the wrong metal stack**, modelling M9 at 0.9 µm when the tech LEF says 3.4 µm. The 5→103 post-fill FEP swing is fill *and* re-extraction, not separable. [V]
 4. **Calibre has never been run here.** Zero `.drc.summary`, `.drc.results`, `_lvs.rep`, `.ant.results` anywhere.
 5. **Every archived database in `runs/` fails to load.** `read_db` dies with `TCLCMD-989` — `work/<design>/libs/mmmc/<design>_syn.sdc` is a symlink into the live `outputs/`, which `scripts/ci/new_run.sh:198-203` empties when archiving. One dangling link per DB. **This is why "just re-check the database" has never been done.** The pgfix-verify post-CTS DB *does* exist: a complete 57 MB tree saved 09:35:22. [V]
-6. **The corners are occupied.** `PCORNER_G`, `SIZE 135.000 BY 135.000`, at all four die corners. Verified at GDS level: `grep -a -c PCORNER_G` on the streamed GDS → **5** (one `STRNAME` + four `SREF`s). [V]
+6. **The corners are occupied.** A `PCORNER_G` sits at each of the four die corners, and it is a full-height IO-row square — it fills the corner completely, so the triangular keep-out the shuttle demands is not merely encroached on, it is entirely covered. That is why the CSR keep-out is a real blocker and not a clearance tweak. Verified at GDS level: `grep -a -c PCORNER_G` on the streamed GDS → **5** (one `STRNAME` + four `SREF`s). [V] (Corner-cell LEF dimensions not reproduced — TSMC licence; read them from the `tphn65lpgv2od3_sl` IO LEF.)
 7. **The evaluation gates cannot be trusted until repaired** (§6). Worst case: the route gate judged `setup FEP 5` on a run whose filled database measured **103**.
 
 ### 1.4 Good news, under-recorded
@@ -154,7 +154,9 @@ Nothing downstream can be believed until this is done.
 **0f. Set budgets that can fire.** Current vs measured: `DANGLING 1518` vs 1432 (and 37 routed — 41× headroom, dead gate); `DRV_TRAN 30` vs 6; `DRV_CAP 15` vs 0-1. Proposed: `SETUP_FEP 110` ratcheting to 0 · `HOLD_FEP 80` · `DRV_TRAN 8` · `DRV_CAP 3` · `DANGLING 60` · `OPENS` leave at 350 and document · `EVP_MIN_RV_VIAS 8→14` · **new `EVR_BUDGET_UNTIMED_PINS 50`**. **Never override a budget without recording why** — `HOLD_FEP` was overridden 3→70→110 against measurements of 37 and 29, twice, after being fixed in the file.
 
 **0g. Add three constraint gates:**
-- **A** — `1b_synthesis_eval.tcl` after `write_sdc` (:683): assert 16/16 `D2D_(RX|TX)_WORD_CLK_` in `outputs/*_syn.sdc`. *Gate for the #1 open risk.*
+- **A** — `1b_synthesis_eval.tcl` after `write_sdc` (:683): assert **24/24** word clocks in `outputs/*_syn.sdc`, counting **declarations**:
+  `grep -c 'create_generated_clock.*D2D_\(RX_WORD\|RX_WORDN\|TX_WORD\)_CLK'` == 24.
+  *~~Gate for the #1 open risk.~~* **RISK RESOLVED 2026-08-10 — see the note below; this is now a regression gate.*
 - **B** — Genus `check_timing_intent` numeric assert: `untimed > 50` → fail.
 - **C** — `3b_pnr_cts_eval.tcl` before `ccopt_design`: require 25 clocks **and** each word clock owning ≥1 sink. `:912-919` today fails only on *zero* trees.
 
@@ -223,9 +225,36 @@ Now 238 s/experiment instead of 3.5 h. **One knob per run.**
 2. **Add the TX block.** No `D2D_TX_WORD_CLK` exists anywhere. The residual 1,979 untimed pins are *entirely* TX (lltx 154, txpstate 21, txrouter 5, sp2wl/tx_fifo 14, plus TX halves of four axi2wl FC-replay blocks). Anchor `-source [get_pins $WL/pad_clk_tx]`.
 3. **Extend the async groups.** `constraints.sdc:156-161` groups only `D2D_TX_CLK_0` and `D2D_RX_CLK_0`. Sixteen ungrouped clocks means every lane↔lane and word↔capture crossing through the deskew async FIFO gets timed, producing spurious violations. Required in the same change.
 
-**4b. Run synthesis and check gate A.** *Pass:* `grep -c 'D2D_\(RX\|TX\)_WORD_CLK' outputs/*_syn.sdc` == 16 **and** `check_timing_intent` untimed < 50 (from 16,653).
+**4b. Run synthesis and check gate A.** *Pass:*
+`grep -c 'create_generated_clock.*D2D_\(RX_WORD\|RX_WORDN\|TX_WORD\)_CLK' outputs/*_syn.sdc` == **24**
+**and** `check_timing_intent` untimed < 50.
 
-**The risk that makes this a phase:** `io_link_clk` is a hierarchical RTL pin that does not exist post-map. Genus must re-express 8+8 clocks onto merged pins through a bare `write_sdc`. **Never tried; the #1 open technical risk.** [U] Fallback: a post-`write_sdc` SDC appendix read as a second `-sdc_files` entry in `mmmc:186-188` — a design change, pre-design it now rather than improvising.
+> **The earlier form of this gate could not work, in both directions.** It was
+> `grep -c 'D2D_\(RX\|TX\)_WORD_CLK' outputs/*_syn.sdc` == 16. Measured against the
+> SDC the 08-10 P&R run actually consumed:
+>
+> * as written it scores **89** — it counts every *occurrence* line, including the two
+>   `set_clock_uncertainty` lines per clock — so it **fails on a correct design**;
+> * restricted to `create_generated_clock` lines it scores **16**, but there are **24**,
+>   because `D2D_RX_WORDN_CLK` does not match `_WORD_CLK` (after `WORD` comes `N`, not `_`).
+>   So it then **passes while blind to the eight inverted RX word clocks** — a third of
+>   the fix.
+>
+> Count declarations, expect 24.
+
+**The risk that made this a phase — RESOLVED 2026-08-10.** [V] `io_link_clk` is a
+hierarchical RTL pin that does not exist post-map, and Genus had to re-express the word
+clocks onto merged pins through a bare `write_sdc`. **It did.** Verified by reading the
+file P&R consumed —
+`runs/20260810T065131Z_honest-full-pnr2/work/..._cts/libs/mmmc/..._syn.sdc` (08-09 19:37):
+8 `D2D_RX_WORD_CLK_*` + 8 `D2D_RX_WORDN_CLK_*` + 8 `D2D_TX_WORD_CLK_*`, 29
+`create_generated_clock` and 4 `create_clock` in total. The fallback below was not needed.
+
+Consequence for everything above and elsewhere: **stop quoting 16,653 untimed / 27%.**
+That figure describes runs before this landed. Gate A is now a regression gate, not a
+gate on an unproven step.
+
+~~**Never tried; the #1 open technical risk.**~~ [U] Fallback: a post-`write_sdc` SDC appendix read as a second `-sdc_files` entry in `mmmc:186-188` — a design change, pre-design it now rather than improvising.
 
 **Expect FEP to go UP.** 16,653 flops become visible to timing for the first time. **The success metric is the `check_timing_intent` collapse, not the violation count.** Say this before the run, not after.
 

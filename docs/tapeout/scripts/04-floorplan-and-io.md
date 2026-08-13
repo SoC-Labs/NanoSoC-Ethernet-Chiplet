@@ -107,18 +107,15 @@ applies. This is the single most misread line in the flow and the manual settles
 
 ### 1.2 Rows, sites and flip
 
-`create_floorplan -site core` selects the row site. From the tech LEF
-(`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`):
+`create_floorplan -site core` selects the row site, which is declared `CLASS CORE` with `SYMMETRY Y`
+in the tech LEF (`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`).
 
-```lef
-SITE core
-    SIZE 0.200 BY 1.800 ;
-    SYMMETRY Y ;
-    CLASS CORE ;
-END core
-```
+> Vendor tech-LEF `SITE` geometry redacted — TSMC licence forbids reproduction. Source:
+> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`,
+> `SITE core`.
 
-So the placement grid is **0.2 µm horizontally, 1.8 µm vertically**. Consequences that are worth
+The placement grid that falls out of it is **0.2 µm horizontally, 1.8 µm vertically** — the two
+numbers every row-count and site-count in this flow is built on. Consequences that are worth
 having in your head:
 
 | Quantity | Value | Note |

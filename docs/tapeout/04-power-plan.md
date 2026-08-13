@@ -159,13 +159,8 @@ nets are `VDDIO`/`VSSIO`. Getting this wrong is silent — the net simply stays 
 ### 2.1 The LEF override that makes this work at all
 
 Correcting `-pin_base_name` is **necessary but not sufficient**. The TSMC IO supply pads declare their
-supply pins as plain signal pins:
-
-```lef
-PIN VDDPST / DIRECTION INOUT ;      (PVDD2DGZ_G, PVDD2POC_G)
-PIN VSSPST / DIRECTION INOUT ;      (PVSS2DGZ_G)
-```
-
+supply pins as plain signal pins — `VDDPST` on `PVDD2DGZ_G` and `PVDD2POC_G`, `VSSPST` on
+`PVSS2DGZ_G`, all declared `INOUT`
 with no `USE POWER ;` / `USE GROUND ;`. The liberty agrees — they are `pin()` groups, not `pg_pin()`.
 So `connect_global_net -type pg_pin` cannot match them and the rules fail with **`IMPDB-1221`**, even
 with the correct pin names, against a design loaded from the real DB.
@@ -217,7 +212,7 @@ not honour the `PAD70NU` `OBS`, so the clearance has to come from the floorplan 
 entire reason `CORE_TO_IO` is 70 rather than 50 — the full analysis lives in
 [03-floorplan §2](03-floorplan.md#2-why-the-margin-is-70-and-not-50-the-staggered-bond-ring).
 
-> **Do not widen the rings.** Both M8 and M9 are `MAXWIDTH 12` and the rings are exactly 12. Any
+> **Do not widen the rings.** Both M8's and M9's `MAXWIDTH` limit is exactly the 12 µm used here. Any
 > increase is illegal by construction. Any change to `-width`, `-spacing` or `-offset` also moves the
 > ring outer edge and must be re-checked against the `PAD70NU` inboard edge at 171 / 1429 / 171 / 1829.
 
@@ -241,19 +236,13 @@ add_stripes -nets {VDD VSS} -layer M8 -direction vertical \
     -start_from left -start_offset 39.5 ...
 ```
 
-**1.2 is legal here.** M8's `SPACINGTABLE` requires only **0.5 µm** at width 3.6:
+**1.2 is legal here.** M8 carries a width/parallel-run-length `SPACINGTABLE`, and a 3.6 µm wire
+falls in its middle width band, where the worst-case requirement is **comfortably below 1.2 µm**.
+**This is not a copy-paste that survived by luck — leave it at 1.2.**
 
-```lef
-LAYER M8
-    SPACINGTABLE
-    PARALLELRUNLENGTH  0.000  1.500  4.500
-      WIDTH  0.000  0.400  0.400  0.400
-      WIDTH  1.500  0.400  0.500  0.500
-      WIDTH  4.500  0.400  0.500  1.500 ;
-```
-
-A 3.6 µm wire falls in the `WIDTH 1.500` row, so the worst-case requirement is 0.5. 1.2 clears it
-comfortably. **This is not a copy-paste that survived by luck — leave it at 1.2.**
+> Vendor tech-LEF rule table redacted — TSMC licence forbids reproduction. Source:
+> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`,
+> `LAYER M8`. Re-read it there before changing any stripe width or spacing.
 
 ### 4.2 M9 — horizontal, spacing 3.05 (NOT 1.2)
 
@@ -263,16 +252,13 @@ add_stripes -nets {VDD VSS} -layer M9 -direction horizontal \
     -start_from left -start_offset 39.5 ...
 ```
 
-M9 has no spacing table — it has flat rules, and they are much stricter:
+M9 has no spacing table. It has flat `WIDTH` / `MAXWIDTH` / `SPACING` / `AREA` /
+`MINENCLOSEDAREA` rules instead, and they are much stricter than M8's — the min-enclosed-area rule
+in particular, which no width band softens.
 
-```lef
-LAYER M9
-    WIDTH 2 ;
-    MAXWIDTH 12 ;
-    SPACING 2 ;
-    AREA 9 ;
-    MINENCLOSEDAREA 9 ;
-```
+> Vendor tech-LEF rule values redacted — TSMC licence forbids reproduction. Source: same tech LEF,
+> `LAYER M9`. The numbers Innovus quotes back at you below are the tool's own output and are
+> reproduced as logged.
 
 A 1.2 µm gap between two 3.6 µm M9 stripes is therefore **illegal by construction**, and Innovus said
 so at the time — these warnings are in `baseline_2026-08-05/logs/pnr_stages.log:1513-1514`:
@@ -381,9 +367,11 @@ where a `PD_TOP` that lacks supply nets would misbehave (§1).
 
 **Verified this week against the PDK LEFs, the CPF, and the run logs:**
 
-- M9 `WIDTH 2 / SPACING 2 / MAXWIDTH 12 / AREA 9 / MINENCLOSEDAREA 9` — read from
-  `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`. A 1.2 µm gap at width 3.6 is definitively illegal.
-- M8 `SPACINGTABLE` maximum requirement **1.5**, and **0.5** at width 3.6 — same file. 1.2 is legal.
+- M9's flat `WIDTH` / `SPACING` / `MAXWIDTH` / `AREA` / `MINENCLOSEDAREA` rules were read directly
+  from `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`. A 1.2 µm gap at width 3.6 is definitively illegal
+  against them. (Rule values not reproduced here — TSMC licence.)
+- M8's `SPACINGTABLE` was read from the same file. Its requirement at a 3.6 µm wire is well under
+  1.2, so the M8 spacing is legal.
 - `IMPPP-136` and `IMPPP-193` appear in the 2026-08-03 log with exactly the quoted text, including the
   tool's own "increase the spacing to around 3.050000" recommendation.
 - `IMPSP-5110` + `For 0 new insts` in the 2026-08-03 log; **absent** from the 2026-08-05 log, which

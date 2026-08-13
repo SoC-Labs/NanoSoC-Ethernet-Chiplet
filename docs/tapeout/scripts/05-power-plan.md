@@ -152,30 +152,34 @@ Layer data below is read from the tech LEF named by `config.tcl:131`,
 `/tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`.
 
 ```
- layer  THICK   PITCH   dir   role in this power plan
+ layer  class        dir   role in this power plan
  ─────────────────────────────────────────────────────────────────────────
- AP     1.450   6.500    V    bond pad / RDL. Via-stack CEILING only — no
-                              ring or stripe is drawn on AP by this script.
-   ── RV (cut, SPACING 3) ──  VIAGEN9AP: M9 2..12 -> AP 3..35, cuts 6 x 6
- M9     3.400   4.000    H    CORE RING top+bottom  w 12
-                              STRIPES horizontal    w 3.6, gap 3.05, s2s 60
-   ── VIA8 ──                 VIAGEN89: M8 0.4..12 -> M9 2..12, cuts 0.9 x 0.9
- M8     0.900   0.800    V    CORE RING left+right  w 12
-                              STRIPES vertical      w 3.6, gap 1.20, s2s 60
-   ── VIA7 (SPACING 0.340) ──
- M7     0.220   0.200    H    signal
- M6     0.220   0.200    V    signal
- M5     0.220   0.200    H    MACRO-FEED STRIPES    w 1, gap 0.5, s2s 15
- M4     0.220   0.200    V    signal / macro PG pins (rf_16k et al.)
- M3     0.220   0.200    H    signal / IO-pad PG plate (22.0 x 4.0)
- M2     0.220   0.200    V    signal / core-pad PG fingers
- M1     0.180   0.200    H    STD-CELL RAILS — FOLLOWPIN, 0.330 µm tall
-                              on a 0.200 x 1.800 `core` site
+ AP     alu pad / RDL  V    bond pad / RDL. Via-stack CEILING only — no
+                            ring or stripe is drawn on AP by this script.
+   ── RV (cut) ──           VIAGEN9AP: M9 -> AP, very coarse cuts
+ M9     ULTRA-THICK    H    CORE RING top+bottom  w 12
+                            STRIPES horizontal    w 3.6, gap 3.05, s2s 60
+   ── VIA8 ──               VIAGEN89: M8 -> M9, coarse cuts
+ M8     THICK          V    CORE RING left+right  w 12
+                            STRIPES vertical      w 3.6, gap 1.20, s2s 60
+   ── VIA7 ──
+ M7     thin           H    signal
+ M6     thin           V    signal
+ M5     thin           H    MACRO-FEED STRIPES    w 1, gap 0.5, s2s 15
+ M4     thin           V    signal / macro PG pins (rf_16k et al.)
+ M3     thin           H    signal / IO-pad PG plate
+ M2     thin           V    signal / core-pad PG fingers
+ M1     bottom metal   H    STD-CELL RAILS — FOLLOWPIN, 0.330 µm tall,
+                            one `core` site wide
 ```
 
-The 0.330 µm rail height is not a guess: `MACRO DCAP4` in
-`tcbn65lp_9lmT2.lef` has `PIN VSS … RECT 0.465 -0.165 0.800 0.165`, and the whole riser population
-in [15-pg-opens-analysis §2.2](../15-pg-opens-analysis.md) is that number.
+> Per-layer `THICKNESS`, `PITCH`, via cut sizes and cut spacings redacted — TSMC licence
+> forbids reproduction. Read them from the tech LEF named above. The stripe widths, gaps and
+> set-to-set distances in the right-hand column are **this script's** arguments, not vendor data.
+
+The 0.330 µm rail height is not a guess: it is measured off the M1 `PIN VSS` abutment rail of
+`MACRO DCAP4` in `tcbn65lp_9lmT2.lef` (geometry not reproduced here — TSMC licence), and the whole
+riser population in [15-pg-opens-analysis §2.2](../15-pg-opens-analysis.md) is that number.
 
 ### 1.4 What connects to what
 
@@ -194,11 +198,12 @@ produce others (Stylus UG — Power Planning and Routing, `UGcom/Power_Planning_
 
 **The IO supplies are outside all of this, and the LEF explains why.** In
 `local_overrides/tphn65lpgv2od3_sl_9lm.lef`, `PVDD2DGZ_G` / `PVDD2POC_G` / `PVSS2DGZ_G` expose their
-supply pin as a single 22.0 × 4.0 µm plate on M3–M7 inside a 25 µm-wide cell, and every
+supply pin as a **single M3–M7 plate that is narrower than the cell it sits in**, and every
 `PFILLER*_G` spacer is `CLASS PAD SPACER` with **no pins at all** — only a full-cell M1–M7 `OBS`.
-So abutting pads leave a 3 µm gap in the pin geometry, and the LEF gives Innovus **no model of
-pad-ring continuity for VDDIO/VSSIO at all**. The real bus lives inside the pad cells in GDS and
-appears in the abstract only as obstruction.
+So abutting pads leave a **3 µm gap in the pin geometry** (the shortfall between plate width and
+cell width, per pad boundary), and the LEF gives Innovus **no model of pad-ring continuity for
+VDDIO/VSSIO at all**. The real bus lives inside the pad cells in GDS and appears in the abstract
+only as obstruction. (Pad plate and cell dimensions not reproduced — TSMC licence.)
 
 Consequence, and it is visible in the reports: the two `IMPVFC-98` "no routing" records that
 [15-pg-opens-analysis §7 H5](../15-pg-opens-analysis.md) counts alongside the 200 signal nets are
@@ -212,17 +217,20 @@ continuous is an **LVS** question, not an Innovus one. See §8.
 The string is a TSMC stack code: **9 metal layers**, then the thickness classes of the layers above
 M1. Decoding it against the measured `THICKNESS` values in the tech LEF:
 
-| Code | Layers | `THICKNESS` | Class |
-|---|---|---|---|
-| (M1) | M1 | 0.180 | bottom metal, always present, not counted in the code |
-| `6X` | M2 … M7 | 0.220 each | six **1×** (thin) layers |
-| `1Z` | M8 | 0.900 | one **Z**-class thick layer, ≈4× a 1× layer |
-| `1U` | M9 | 3.400 | one **U**-class *ultra-thick* layer, ≈15× a 1× layer |
-| `_RDL` | AP | 1.450 | aluminium pad / redistribution, above M9 through cut layer `RV` |
+| Code | Layers | Class |
+|---|---|---|
+| (M1) | M1 | bottom metal, always present, not counted in the code |
+| `6X` | M2 … M7 | six **1×** (thin) layers, all the same thickness |
+| `1Z` | M8 | one **Z**-class thick layer, ≈4× a 1× layer |
+| `1U` | M9 | one **U**-class *ultra-thick* layer, ≈15× a 1× layer |
+| `_RDL` | AP | aluminium pad / redistribution, above M9 through cut layer `RV` |
+
+> Absolute `THICKNESS` values redacted — TSMC licence forbids reproduction. The ratios above are
+> what the argument needs; the figures are in the tech LEF named in §1.3.
 
 *Labelled inference:* the LEF does not spell out what the letters mean. The mapping above is the
 conventional TSMC reading (X = 1×, Z = thick, U = ultra-thick) **checked against** the thicknesses,
-and the counts match exactly — six 0.220 layers, one 0.900, one 3.400.
+and the counts match exactly — six identically thin layers, one thick, one ultra-thick.
 
 The tech LEF's own rule-family comments partition the stack the same three ways, independently of
 the thicknesses:
@@ -238,25 +246,25 @@ stack code.
 
 **Why the top layers carry power.** Three independent reasons, all readable from the LEF:
 
-1. **Sheet resistance.** M9 is 3.400 µm thick against M1's 0.180 — roughly 19× the cross-section per
-   unit width, so ~19× less IR drop for the same geometry. M8 at 0.900 is ~5×. *This tech LEF
-   contains no `RESISTANCE` statements*, so the actual Ω/□ cannot be quoted from it; the argument
-   here is cross-sectional, not measured.
-2. **Allowed width.** M8 and M9 both carry `MAXWIDTH 12`, which is precisely the 12 µm ring width
-   used at L55. You cannot draw a 12 µm ring and stay legal on any of these layers *above* 12 —
-   the rings are at the ceiling.
-3. **Opportunity cost.** M8 `PITCH 0.800` and M9 `PITCH 4.000` against 0.200 for M1–M7. M9 offers a
+1. **Sheet resistance.** M9 is roughly **19× M1's cross-section** per unit width, so ~19× less IR
+   drop for the same geometry; M8 is ~5×. *This tech LEF contains no `RESISTANCE` statements*, so
+   the actual Ω/□ cannot be quoted from it; the argument here is cross-sectional, not measured.
+2. **Allowed width.** M8 and M9 both carry a `MAXWIDTH` limit, and it is **exactly the 12 µm ring
+   width used at L55**. You cannot draw a wider ring and stay legal on either layer — the rings are
+   at the ceiling.
+3. **Opportunity cost.** M8's routing pitch is 4× a thin layer's and M9's is **20×**. M9 offers a
    twentieth of the track density of a thin layer; spending it on signals would be wasteful, so
    dedicating M8/M9 to the power mesh costs almost no routing resource.
 
 The corollary constraints, both of which this script is shaped by:
 
-- M9 has **no `SPACINGTABLE`** — flat `WIDTH 2 ; SPACING 2 ; AREA 9 ; MINENCLOSEDAREA 9`. That is
-  what makes §3.7's `-spacing 3.05` mandatory.
-- M8 and M9 both carry `MINIMUMCUT 2 WIDTH 1.800` (M9's is `FROMBELOW`), so at the 3.6 µm stripe
-  width every stripe-to-stripe via must be at least a 2-cut array. `VIAGEN89` cuts are
-  0.900 × 0.900 and `VIAGEN9AP` cuts are 6 × 6 — very coarse, which is why the via-generation
-  attributes in §3.5 are not cosmetic.
+- M9 has **no `SPACINGTABLE`** — it carries flat `WIDTH` / `SPACING` / `AREA` /
+  `MINENCLOSEDAREA` rules instead, and the min-enclosed-area one is the binding constraint.
+  That is what makes §3.7's `-spacing 3.05` mandatory.
+- M8 and M9 both carry a `MINIMUMCUT` rule that the 3.6 µm stripe width trips (M9's is
+  `FROMBELOW`), so every stripe-to-stripe via must be at least a 2-cut array. The `VIAGEN89` and
+  `VIAGEN9AP` cuts are both very coarse, which is why the via-generation attributes in §3.5 are
+  not cosmetic.
 
 ---
 
@@ -321,8 +329,8 @@ metal layer in the design."
 
 The bottom setting (M1) restates the default. The **top setting does not**: the highest routing
 layer in this design is `AP`, so `M9` deliberately stops ring vias one layer below the pad metal.
-That is correct — nothing in the ring needs to reach AP, and the `VIAGEN9AP` rule has 6 × 6 µm cuts
-with `SPACING 6 BY 6`, so an unnecessary M9→AP stack under a 12 µm ring would be a large,
+That is correct — nothing in the ring needs to reach AP, and the `VIAGEN9AP` rule's cuts and cut
+spacing are both very coarse, so an unnecessary M9→AP stack under a 12 µm ring would be a large,
 pointless, and pad-blocking structure. Contrast §3.5, where the *stripe* stacked-via ceiling **is**
 set to AP.
 
@@ -341,7 +349,7 @@ floorplan."
 | `-follow core` | "Specifies whether core rings are placed along the core boundary or the I/O boundary." Default `core`. | follow the **core** box, so the ring position tracks `CORE_TO_IO`. Restates the default, but stating it is required by `-type core_rings` |
 | `-layer {top M9 bottom M9 left M8 right M8}` | per-side layer assignment (**required**) | matches LEF preferred directions: M9 is `DIRECTION HORIZONTAL` so it takes top/bottom; M8 is `DIRECTION VERTICAL` so it takes left/right. Getting this backwards produces legal-but-awful non-preferred-direction metal |
 | `-width {… 12 …}` | ring metal width (**required**) | **exactly `MAXWIDTH`** on both M8 and M9. This is a ceiling, not a choice — see §2 |
-| `-spacing {… 4 …}` | edge-to-edge gap between the two rings | 4 µm. Legal on both: M8's `SPACINGTABLE` tops out at 1.5, M9's flat `SPACING` is 2 |
+| `-spacing {… 4 …}` | edge-to-edge gap between the two rings | 4 µm. Legal on both — M8's `SPACINGTABLE` and M9's flat `SPACING` each ask for well under that at the ring's 12 µm width |
 | `-offset {… 2 …}` | distance from the reference boundary | 2 µm outside the core box. With `-center 0` this is the sole positional control |
 | `-center 0` | "whether to center the core rings between the I/O pads and core boundaries. If you do not specify this parameter with a value of 1, you must specify the parameter `-offset`" | offsets are explicit, so centring is off. The two options are a documented either/or |
 | `-threshold 0` | "the least amount of spacing allowed between ring segments of adjacent blocks before the rings are merged"; default 10 µm | 0 disables merging with anything nearby. There are no block rings here, so this is defensive |
@@ -370,7 +378,7 @@ command after creating power rings and power stripes." (Legacy-UI name: `sroute`
 |---|---|---|
 | `-connect {pad_pin pad_ring}` | "Connects the specified objects to rings and stripes." | two jobs: bring each supply pad's core-side pin in to the ring (`pad_pin`, → IOWIRE), and stitch pad to pad along the row (`pad_ring`, → PADRING) |
 | `-nets { VDD }` | "the names of the nets to connect… Default: … all power and ground nets in the design" | one net per pass, because `-pad_pin_width` differs per net — see below |
-| `-pad_pin_width 1.63` / `1.5` | "**Routes only pad pins that have the specified width.** If no width is specified, the software automatically calculates the width… It is usually not necessary to specify a pin width." | **these are the real LEF numbers.** `PVDD1DGZ_G` `PIN VDD` presents ten M1/M2 fingers of `1.630 × 1.840` µm; `PVSS1DGZ_G` `PIN VSS` presents seven of `1.500 × 1.560` µm. That is the *only* reason the two passes are split |
+| `-pad_pin_width 1.63` / `1.5` | "**Routes only pad pins that have the specified width.** If no width is specified, the software automatically calculates the width… It is usually not necessary to specify a pin width." | **these are the real LEF numbers** — each is the finger width of the corresponding pad's supply pin, read out of the IO LEF (`PVDD1DGZ_G` `PIN VDD` and `PVSS1DGZ_G` `PIN VSS` present different numbers of M1/M2 fingers at different widths; the geometry is not reproduced here, TSMC licence). The two widths differ, which is the *only* reason the two passes are split |
 | `-pad_pin_target nearest_target` | "Extends the pad pin to the nearest legal target." Default is already `nearest_target`. | the nearest legal target is the core ring 2 µm off the core edge |
 | `-pad_pin_port_connect {all_port all_geom}` | `all_port`: "Routes to all ports." `all_geom`: "Routes to only one port of a pad pin if multiple ports are defined in the LEF file." | the two supply pads have three ports each (M1 fingers, M2 fingers, M3–M7 plate). The manual's wording for these two enums is internally inconsistent — see §8 |
 | `-allow_layer_change 1` | "Allows connections to targets on different layers." | mandatory: the pad pin is M1/M2, the ring is M8/M9 |
@@ -422,8 +430,8 @@ Three observations that are not in [04-power-plan](../04-power-plan.md):
   "block-check off"; per this manual page it is block-check **on**. Neither reading changes the
   outcome while `break_at` is `none`. Flagged in §8.
 - **Lines 88 + 89 together forbid partial vias entirely.** Every stripe crossover must take a
-  full-size via array or none. On a stack where `VIAGEN89` cuts are 0.900 × 0.900 and both M8 and
-  M9 demand `MINIMUMCUT 2` at these widths, that is a real constraint, not a formality — it trades
+  full-size via array or none. On a stack where the `VIAGEN89` cuts are coarse and both M8 and
+  M9 demand a 2-cut minimum at these widths, that is a real constraint, not a formality — it trades
   via count for via quality.
 - **These two attributes change what `check_power_vias` measures.** Stylus TCR —
   `check_power_vias` (`TCRcom/check_power_vias.html`), under `-cut_area_ratio`: "By default, the
@@ -451,8 +459,8 @@ net. Otherwise, the stripes stop at the core row boundary."
 | `-nets {VDD VSS}` | "The number of net names determines the number of stripes within each set… The first net… corresponds to the left or bottom stripe of the set." (**required**) | two stripes per set; VDD is the left one |
 | `-layer M8` | "Stripes can be created on only one layer at a time." | one call per layer, hence three calls in this file |
 | `-direction vertical` | "Sets the stripe direction." Default `vertical`. | matches M8's LEF `DIRECTION VERTICAL` |
-| `-width 3.6` | stripe width (**required**) | 9× M8's minimum `WIDTH 0.400`, well under `MAXWIDTH 12` |
-| `-spacing 1.2` | "the **edge-to-edge** spacing between stripes in each set" | legal here. M8's `SPACINGTABLE` at `WIDTH 1.500` requires at most 0.5 µm. Do not "fix" this to match M9 |
+| `-width 3.6` | stripe width (**required**) | ~9× M8's minimum legal `WIDTH`, and well under its `MAXWIDTH` |
+| `-spacing 1.2` | "the **edge-to-edge** spacing between stripes in each set" | legal here. A 3.6 µm stripe falls in the middle width band of M8's `SPACINGTABLE`, whose requirement 1.2 clears comfortably. Do not "fix" this to match M9 |
 | `-set_to_set_distance 60` | "the distance (pitch) from the reference stripe of one set to the reference stripe of the next set" | 60 µm pitch. Mutually exclusive alternative is `-number_of_sets` |
 | `-extend_to all_domains` | "Stripes are created over all power domains for each power and ground net within each power domain. Stripes start and stop at each power domain boundary or ring around the power domain, **and ignore the values in the `-nets` parameter**." | the stripes follow **the domain's own** PG nets, not the `-nets` list. That is a second, less obvious dependency on `PD_TOP` carrying VDD/VSS — see §5 |
 | `-start_from left` | for vertical stripes, "`left` indicates that stripes should be generated from left to right, taking the left offset into account" | correct for a vertical set |
@@ -480,10 +488,10 @@ full account with log line numbers and the surviving-artefact caveats is
 
 Identical to L94 except `-layer M9`, `-direction horizontal`, `-spacing 3.05`.
 
-**`-spacing 3.05`, in one line:** M9 has no `SPACINGTABLE`, only flat `SPACING 2 ;` and
-`MINENCLOSEDAREA 9 ;`. A 1.2 µm gap between two 3.6 µm stripes violates both, and 3.05 ≈ √9 clears
-the enclosed-area rule as well as the spacing rule. At a 60 µm pitch the extra 1.85 µm is absorbed
-without dropping a set.
+**`-spacing 3.05`, in one line:** M9 has no `SPACINGTABLE`, only a flat `SPACING` rule and a
+`MINENCLOSEDAREA` rule. A 1.2 µm gap between two 3.6 µm stripes violates both; 3.05 is the square
+root of the enclosed-area limit Innovus quotes back in `IMPPP-193`, so it clears the area rule and
+the spacing rule together. At a 60 µm pitch the extra 1.85 µm is absorbed without dropping a set.
 
 **`-start_from left` on a horizontal set is not a documented combination.** The Stylus TCR is
 explicit: "For horizontal stripes: `bottom` indicates that stripes should be generated from bottom
@@ -547,9 +555,9 @@ The four deliberate reversals from the global sets:
 | `-merge_stripes_value 500` | "Merges a stripe with a nearby block ring if the threshold spacing between the stripe and ring is smaller than the value… set to −1 to prevent merging." Default 10. | 500 µm is effectively "always merge". Aggressive, but there are no block rings in this design, so it has nothing to act on. If block rings are ever added, revisit this number first |
 | `-start_from bottom` | correct for horizontal | contrast §3.7 |
 
-Geometry: `-width 1 -spacing 0.5 -set_to_set_distance 15` on M5, whose `WIDTH` minimum is 0.100 and
-whose `SPACINGTABLE` requires 0.120 at width 1.0 — comfortably legal. Horizontal on a horizontal
-layer, matching M5's LEF `DIRECTION HORIZONTAL`.
+Geometry: `-width 1 -spacing 0.5 -set_to_set_distance 15` on M5. Both the layer's minimum `WIDTH`
+and its `SPACINGTABLE` requirement at a 1 µm wire are an order of magnitude below what this asks
+for — comfortably legal. Horizontal on a horizontal layer, matching M5's LEF `DIRECTION HORIZONTAL`.
 
 > [15-pg-opens-analysis §6](../15-pg-opens-analysis.md) records that **0 of 560 risers align with
 > the M5 stripe band** and 100 % align with the 1.8 µm row-rail grid, so this M5 set is *not* the
@@ -583,7 +591,8 @@ same as a post-cap, in a two well process"). A `grep` for `start_row_cap` across
 Two further notes on this line:
 
 - **`DCAP4` is `CLASS CORE`, not `CLASS ENDCAP`.** In `tcbn65lp_9lmT2.lef`, `MACRO DCAP4` is
-  `CLASS CORE ; SIZE 0.800 BY 1.800 ; SITE core` — a decoupling-capacitor filler. The `add_endcaps`
+  declared `CLASS CORE`, on the `core` site, four sites wide and one row tall — a
+  decoupling-capacitor filler, nothing more. (Dimensions not reproduced — TSMC licence.) The `add_endcaps`
   page describes deriving caps from `MACRO CLASS ENDCAP …`; `tcbn65lp` has no such class, so using a
   decap as a row cap is a reasonable substitution, but it is a substitution.
 - **Ordering.** The manual: "`add_endcaps` is always called after floorplan is done and before
@@ -605,12 +614,13 @@ Whether the command inserted anything at all is testable in one line and has nev
 
 **L166 — second pad pass, both nets, `-pad_pin_width 6`.** Everything is as §3.4 except the width.
 Per the manual, `-pad_pin_width` "Routes only pad pins that have the specified width." **No PG pad
-pin in the IO LEF is 6 µm on any dimension.** Enumerating every `PIN VDD|VSS|VDDPST|VSSPST` `RECT`
-in `local_overrides/tphn65lpgv2od3_sl_9lm.lef` gives exactly these dimensions:
+pin in the IO LEF is 6 µm on any dimension.** Enumerate every `PIN VDD|VSS|VDDPST|VSSPST` `RECT`
+in `local_overrides/tphn65lpgv2od3_sl_9lm.lef` and collect the distinct widths and heights: there
+are thirteen of them, they run from well under 2 µm up to the tens of microns, and **6 is not one
+of them** — nor is any value that rounds to it.
 
-```
-1.500  1.560  1.630  1.840  2.505  3.000  3.700  3.725  3.750  4.000  4.500  22.000  53.000
-```
+> Vendor LEF pin dimensions redacted — TSMC licence forbids reproduction. Re-derive from the LEF
+> named above if you need to re-check this. What matters is the negative result, not the list.
 
 So the `pad_pin` half of this pass most likely selects nothing, and only the `pad_ring` half does
 work. The manual's own advice is "It is usually not necessary to specify a pin width." Flagged in
@@ -658,14 +668,8 @@ follows is the *mechanism*, at command level, with the message IDs looked up.
 ### 4.1 The defect
 
 `config.tcl:135-160` records it. The TSMC IO supply pads declare their supply pin as an ordinary
-signal pin:
-
-```lef
-PIN VDDPST / DIRECTION INOUT ;      (PVDD2DGZ_G, PVDD2POC_G)
-PIN VSSPST / DIRECTION INOUT ;      (PVSS2DGZ_G)
-```
-
-— with **no `USE POWER ;` / `USE GROUND ;`**, and the liberty agrees (they are `pin()` groups, not
+signal pin: `VDDPST` on `PVDD2DGZ_G` and `PVDD2POC_G`, and `VSSPST` on `PVSS2DGZ_G`, are all
+plain `INOUT` pins — with **no `USE POWER ;` / `USE GROUND ;`**, and the liberty agrees (they are `pin()` groups, not
 `pg_pin()`). Line 47 and line 49 of `power_plan.tcl` ask for `-type pg_pin`. Per the Stylus TCR,
 `-type pg_pin` "Specifies that the power and ground pins listed with the `-pin_base_name` parameter
 are to be connected" — the classification comes from the library, not from the option. A pin with no
@@ -949,10 +953,10 @@ but every link is a hard number:
 | What | Depends on | Breaks how |
 |---|---|---|
 | `-layer {top M9 bottom M9 left M8 right M8}` (L55) | M9 `DIRECTION HORIZONTAL`, M8 `DIRECTION VERTICAL` | on a stack with different top-layer directions, the rings land in non-preferred direction |
-| `-width … 12` (L55) | `MAXWIDTH 12` on **both** M8 and M9 | on a stack whose top metals allow more (or less), 12 is either wasteful or illegal. It is currently at the ceiling |
-| `-spacing 1.2` on M8 (L94) | M8 `SPACINGTABLE` requiring ≤0.5 at width 3.6 | a stack with a stricter table turns this into the M9 defect |
-| `-spacing 3.05` on M9 (L132) | M9 `SPACING 2` **and** `MINENCLOSEDAREA 9` (3.05 ≈ √9) | recompute from the new layer's `MINENCLOSEDAREA`; the tool will tell you the number in `IMPPP-193` |
-| `-width 3.6` (L94, L132) | `MINIMUMCUT 2 WIDTH 1.800` on M8/M9 | below 1.8 µm the 2-cut requirement lapses and the via arrays change character |
+| `-width … 12` (L55) | the `MAXWIDTH` limit on **both** M8 and M9, which is exactly 12 | on a stack whose top metals allow more (or less), 12 is either wasteful or illegal. It is currently at the ceiling |
+| `-spacing 1.2` on M8 (L94) | M8's `SPACINGTABLE` requirement at a 3.6 µm wire, which 1.2 clears | a stack with a stricter table turns this into the M9 defect |
+| `-spacing 3.05` on M9 (L132) | M9's flat `SPACING` **and** `MINENCLOSEDAREA` rules (3.05 is the square root of the latter) | recompute from the new layer's `MINENCLOSEDAREA`; the tool will tell you the number in `IMPPP-193` |
+| `-width 3.6` (L94, L132) | the `MINIMUMCUT` width threshold on M8/M9, which 3.6 is above | drop below that threshold and the 2-cut requirement lapses; the via arrays change character |
 | `-layer M5` (L159) | M5 `DIRECTION HORIZONTAL` and the macros' M4 PG pins | the macro-feed layer must be orthogonal to the macro pin layer, or you get the `IMPPP-532` class of failure that [15-pg-opens-analysis H4](../15-pg-opens-analysis.md) already sees between M8 and M4 |
 | `AP(10)`, `-*_layer_limit AP` | AP being routing layer **10** | a stack with a different layer count renumbers everything. Prefer the LEF names over `name(number)` |
 | `add_rings_stacked_via_top_layer M9` (L51) | AP existing above M9 | on a stack with no RDL, M9 *is* the top and this restates the default |

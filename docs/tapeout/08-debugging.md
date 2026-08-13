@@ -745,8 +745,8 @@ Looking at the actual geometry, rather than the counts, is what produced the dia
 `floorplan.tcl`:
 
 ```
-PAD70NU's OBS is solid over its whole footprint on M8 AND M9:
-    OBS LAYER M8 ; RECT 0 0 30 171 ;   LAYER M9 ; RECT 0 0 30 171 ;
+PAD70NU's OBS is solid over its whole footprint on M8 AND M9
+  (vendor LEF geometry not reproduced -- TSMC licence),
 which are exactly the core-ring layers (add_rings: left/right M8, top/bottom M9).
     margin 50 -> ring outer edge 155/1445/155/1845 vs PAD70NU at
                  171/1429/171/1829  = 16.00um OVERLAP every side

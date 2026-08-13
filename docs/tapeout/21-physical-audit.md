@@ -328,9 +328,10 @@ fragmentation is caused by the macro y-moves alone, and the lever is
   but only orthogonal via is allowed between layer M4 & M8 at (244.55, 1210.00) (244.90, 1495.25).
 ```
 
-The y-range `1210.00 … 1495.25` is precisely the tidelink `rf_16k` (placed at 230.6, 1210.0;
-`SIZE 311.8 BY 285.25` → top 1495.25). `1503.40 … 1788.68` is the net imem `rf_32k`
-(290.8, 1503.4; `SIZE 585.38 BY 285.28`). The x-values 244.55/246.30, 305.10/307.55,
+The y-range `1210.00 … 1495.25` is precisely the tidelink `rf_16k` — placed at 230.6, 1210.0,
+and its LEF height carries the top edge to 1495.25. `1503.40 … 1788.68` is the net imem
+`rf_32k`, placed at 290.8, 1503.4, the same way. (Macro dimensions not reproduced —
+vendor LEF, licence.) The x-values 244.55/246.30, 305.10/307.55,
 365.30/367.76, 425.55/426.55 sit on the 60 µm M8 set pitch (244.5, 304.5, 364.5, 424.5).
 So: **every M8 vertical stripe column that crosses a macro's M4 vertical PG pin.**
 
@@ -501,14 +502,11 @@ anything.
 Recorded so nobody chases it again.
 
 * **There are no tap cells, and there cannot be.** `grep -icE 'welltap|tapcell|well_tap|FILLTIE|latchup'`
-  over the log returns **0**, and the reason is the library:
-  ```
-  $ grep -oE '^MACRO (FILL[A-Z0-9]*|.*TAP.*|.*TIE.*|ANTENNA[A-Z0-9]*|DCAP[0-9]*)' tcbn65lp_9lmT2.lef | sort -u
-  MACRO ANTENNA  MACRO DCAP  MACRO DCAP16  MACRO DCAP32  MACRO DCAP4  MACRO DCAP64
-  MACRO DCAP8  MACRO FILL  MACRO FILL1  MACRO FILL16  MACRO FILL2  MACRO FILL32
-  MACRO FILL4  MACRO FILL64  MACRO FILL8  MACRO GTIEH  MACRO GTIEL  MACRO TIEH  MACRO TIEL
-  ```
-  `tcbn65lp` 9-track ships no tap/well-tie master. It is a self-tapping library. `TIEH`/`TIEL`
+  over the log returns **0**, and the reason is the library. Enumerate every filler-class
+  master in `tcbn65lp_9lmT2.lef` (`grep -oE '^MACRO (FILL[A-Z0-9]*|.*TAP.*|.*TIE.*|ANTENNA[A-Z0-9]*|DCAP[0-9]*)' … | sort -u`)
+  and you get exactly three families — the `FILL*` fillers, the `DCAP*` decaps, the one
+  `ANTENNA` diode — plus the `TIEH`/`TIEL`/`GTIEH`/`GTIEL` logic tie-offs. **No tap or
+  well-tie master of any name.** `tcbn65lp` 9-track is a self-tapping library. `TIEH`/`TIEL`
   are logic tie-offs (28 TIEL + 17 TIEH placed by `postplace.tcl`), not substrate ties.
 * **Placement is legal and rows are intact.** `*info: Placed = 188863 (Fixed = 4467) / Unplaced = 0`.
   The 4,446 endcaps plus 21 macros account for the fixed count. One placement-blockage
@@ -516,8 +514,9 @@ Recorded so nobody chases it again.
 * **`split_row` ran on all 21 macros** — `power_plan.tcl` now consumes `::PLACED_MACROS`
   and asserts `llength == 21`; no `IMPTCM-165` appears in this log.
 * **`IMPFP-3961` ×33** ("techSite `corner` / `pad` / `dcore` has no related standard cells")
-  is benign: those SITEs exist in the tech LEF (`SIZE 0.200 BY 7.200` etc.) and this design
-  uses only `core` (`SIZE 0.200 BY 1.800`).
+  is benign: those SITEs are all declared in the tech LEF, on their own dimensions, and this
+  design instantiates only `core`. Nothing is missing. (Site dimensions not reproduced —
+  vendor tech LEF, licence.)
 * Unexplained: the sroute reader says **`Read in 22 blockages`** in both runs, against
   21 `create_place_halo` halos. Cheap check: `get_db place_blockages` +
   `get_db route_blockages` on the post-floorplan DB. Predicts 21 place halos + 1 other; if
@@ -637,7 +636,7 @@ Recorded to stop them being re-investigated.
 
 | Area | Result | Evidence |
 |---|---|---|
-| Antenna | Genuinely clean | `No Violations Found`; 41,217 `ANTENNA` diodes inserted; `MACRO ANTENNA` carries `ANTENNADIFFAREA 0.1066` on pin `I`. The `IMPLF-200` warning about missing `ANTENNAGATEAREA` on that pin is benign — a diode has no gate. |
+| Antenna | Genuinely clean | `No Violations Found`; 41,217 `ANTENNA` diodes inserted; `MACRO ANTENNA` carries an `ANTENNADIFFAREA` value on pin `I` (figure not reproduced — vendor LEF). The `IMPLF-200` warning about missing `ANTENNAGATEAREA` on that pin is benign — a diode has no gate. |
 | Filler insertion | 102,760 cells, 0 gaps, 0 padded-cell violations at the pre-repair snapshot | `work/check_filler.log` |
 | Well taps / latch-up | Not applicable — library ships no tap cell | P12 |
 | Row legality | 188,863 placed, 0 unplaced, 1 blockage violation auto-repaired | log 22,138 / 24,397 |

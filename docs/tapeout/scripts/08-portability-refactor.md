@@ -166,8 +166,8 @@ Recorded so nobody "cleans these up" without knowing what they cost:
   the filler repair is handed a marker set dominated by pad-ring geometry it cannot touch —
   376 of 379 shorts in the 2026-08-05 baseline were that class.
 - **The OCV line's position.** Moving it once cost 96,545 fictional hold paths.
-- **M9's `-spacing 3.05` must not be unified with M8's `1.2`.** It encodes M9 `SPACING 2`
-  plus `MINENCLOSEDAREA 9`.
+- **M9's `-spacing 3.05` must not be unified with M8's `1.2`.** It encodes M9's flat `SPACING`
+  rule *and* its `MINENCLOSEDAREA` rule, which M8's width-banded table does not impose.
 - **IO filler cell order must stay largest-first.** `PFILLER1_G` exists solely because the
   left side's 42 µm gap decomposes as 20+20+1+1.
 - **The local IO-driver LEF override** (`USE POWER ;` / `USE GROUND ;` on three pins).
