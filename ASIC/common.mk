@@ -23,6 +23,15 @@
 # failed loudly.
 CHIPLET_HOME_DEFAULT := $(realpath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 export NANOSOC_ETH_CHIPLET_HOME ?= $(CHIPLET_HOME_DEFAULT)
+
+# THIS file, by absolute path, captured before any include{} of ours can move
+# $(lastword $(MAKEFILE_LIST)) off it. Recipes that re-enter this makefile must
+# use $(COMMON_MK), never $(lastword $(MAKEFILE_LIST)): that spelling is
+# evaluated when the RECIPE runs, by which time it names whatever file was
+# included LAST. Under ASIC/genus-innovus/Makefile that is already
+# drc_project.mk (Makefile:36), so `make -C genus-innovus tsmc_65_romlibs` used
+# to re-enter the wrong makefile and die claiming there was no such target.
+COMMON_MK := $(abspath $(lastword $(MAKEFILE_LIST)))
 export NANOSOC_MULTICORE_HOME   ?= $(NANOSOC_ETH_CHIPLET_HOME)/nanosoc-multicore-system
 
 # ── DESIGN_HOME: the design-agnostic spelling of "the repo root" ────────────
@@ -231,53 +240,61 @@ export FC_CORE_OFFSET ?= 10
 # ── Arm memory compiler (ROM/RF .lib/.lef/.db generators) ───────────────────
 # Overridable so a site/EDA-host export wins.
 #
-# THE OLD NOTE HERE WAS WRONG, and it sent people down a dead end. It claimed
-# the shared /research/AAA/phys_ip_library copy "has the binaries but is
-# VIEW-LESS". It is not: r0p0/views holds every generator + .info, and the tree
-# is a byte-for-byte identical file set to the arm_tsmc65_memcomp.tar.gz in the
-# per-user phys_ip (all 762 files — verified 2026-07-16). Copying or extracting
-# a different install therefore changes nothing.
+# The shared tree is COMPLETE and the compiler RUNS on this host. Two earlier
+# notes here were wrong and each sent people down a dead end; both are corrected
+# below, and the correction is measured, not argued.
 #
-# What actually happens (2026-07-16, srv03335): EVERY Arm compiler here — ROM
-# and RF alike — starts up and prints
-#     WARNING: Unable to read view info
-#     WARNING: Available generators are: .
-# so no generator can run and no .lib can be emitted. Traced: the GUI shells out
-# to the 32-bit bin/linux/lang driving the encrypted data/amci script and asks
-#     print readViewInfo('<base>/views', 0)
-# which returns 0 with size(views)==0 and viewinfo_errmsgs empty — it never
-# opens a single .info file. Reading the compiler *Options* over the same pipe
-# works, so the pipe/basedir/install are fine; the failure is inside the
-# vendor's encrypted AMCI script. Not NFS (a local-disk copy fails identically),
-# not the JRE (fails under the bundled 1.6 and system OpenJDK 8 alike), not the
-# install location.
+# WRONG #1: "the /research copy is view-less". It is not. r0p0/views holds every
+# generator and its .info, byte-for-byte identical to the copy inside the
+# per-user arm_tsmc65_memcomp.tar.gz (diff -rq: no differences).
 #
-# It DID work on this host: /research/precompiled_mems/TSMC65/rf_01k was
-# generated here on 27 Apr 2026 (spec 15:57, views 16:16, lc_shell .lib->.db
-# 16:18, dam1n19@srv03335). Between then and now the box went RHEL 8.8 ->
-# RHEL 8.10 (kernel rebuilt 19 Jun 2026). So this is an install/licence/OS
-# regression for the PIP admin — not something the project tree can fix, and
-# not something to work around by defeating the vendor's checks.
+# WRONG #2: "it fails everywhere, including on local disk, so this is an OS
+# regression for the PIP admin and cannot be fixed in the project tree." It is
+# not an OS regression, and it IS fixable here. Measured 2026-08-14, srv03335,
+# RHEL 8.10, same binaries, same bytes:
+#     compiler run straight out of /research  -> "Available generators are:" EMPTY
+#     same tree copied to local disk, re-run  -> 15 generators, no warnings
 #
-# Until it is fixed, tsmc_65_romlibs cannot run anywhere on this host. Point
-# MEM_COMPILER_DIR at a machine with a working install.
-MEM_COMPILER_DIR ?= /home/dwn1c21/SoC-Labs/phys_ip
+# The difference is the FILESYSTEM, not the install. /research is NFS (Isilon)
+# and hands out inode numbers around 1.8e10; local xfs here is about 2.4e9. The
+# compiler enumerates its own data directory from a 32-bit helper binary, whose
+# non-LFS readdir() cannot represent an inode >= 2^32 and fails the directory
+# scan outright (EOVERFLOW). The compiler sees zero views, therefore zero
+# generators, therefore emits nothing. It is the classic 32-bit-binary-on-a
+# -big-inode-filesystem failure and it has nothing to do with 8.8 -> 8.10, the
+# JRE, licensing, or missing packages (ksh, glibc.i686 and ld-linux.so.2 are all
+# present and every helper resolves cleanly under ldd).
+#
+# So: MEM_COMPILER_DIR names the AUTHORITATIVE shared install (read-only, never
+# written), and the flow MIRRORS it to local disk before invoking it. Do not
+# "fix" this by pointing at somebody's home directory: the previous default,
+# /home/dwn1c21/SoC-Labs/phys_ip, has no arm/tsmc/cln65lp/ subtree at all, so
+# $(ROM_COMPILER) resolved to a file that does not exist.
+MEM_COMPILER_DIR ?= $(PHYS_IP)
+
+# Local-disk mirror of the compiler. Required — see above. Must NOT be on
+# /research or any other NFS mount. Cheap to keep: ~90 MB, and rsync makes the
+# refresh a no-op once populated.
+ROM_COMPILER_LOCAL ?= $(if $(TMPDIR),$(TMPDIR),/tmp)/armmemcomp-$(USER)
+ROM_COMPILER_REL   := arm/tsmc/cln65lp/rom_via_hdd_rvt_rvt/r0p0
+ROM_COMPILER_SRC   := $(MEM_COMPILER_DIR)/$(ROM_COMPILER_REL)
 
 ROM_65nm_SPEC_FILE :=
 
 # ── ROM-lib generation, made turn-key for an EDA host ───────────────────────
-# One command on a host with a COMPLETE mem-compiler:
-#   make -C syn/asic -f common.mk tsmc_65_romlibs MEM_COMPILER_DIR=/path/to/phys_ip
-# It regenerates the eth code_file, preflight-checks everything (and refuses the
-# view-less /research copy with a clear message), then compiles both ROM libs
-# into syn/asic/romlibs/{eth_rom,cc_rom} — the project tree only, never /research.
-ROM_COMPILER  := $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rom_via_hdd_rvt_rvt/r0p0/bin/rom_via_hdd_rvt_rvt
+#   make -f ASIC/common.mk tsmc_65_romlibs
+# It mirrors the compiler to local disk, regenerates the eth code_file,
+# preflight-checks everything, compiles both ROM libs into ASIC/romlibs/, and
+# then verifies the compiled contents against the firmware before it will claim
+# success. The shared install is only ever READ.
+ROM_COMPILER  := $(ROM_COMPILER_LOCAL)/$(ROM_COMPILER_REL)/bin/rom_via_hdd_rvt_rvt
 FW_BUILD_DIR  ?= $(NANOSOC_MULTICORE_HOME)/build/cmake/gcc-m0plus-le
 BOOTROM_GEN   := $(SOCLABS_NANOSOC_ARCH_TECH_DIR)/firmware/testcodes/bootloader/bootrom_gen.py
 ETH_ROM_DIR   := $(FW_BUILD_DIR)/firmware/bootloader/stage0_bootrom
 CC_ROM_DIR    := $(FW_BUILD_DIR)/firmware/bootloader/stage0_bootrom_chip_core
 ETH_HEX       := $(ETH_ROM_DIR)/stage0_bootrom.hex
 ETH_BINTXT    := $(ETH_ROM_DIR)/eth_ss_bootrom.bintxt
+CC_HEX        := $(CC_ROM_DIR)/stage0_bootrom_chip_core.hex
 CC_BINTXT     := $(CC_ROM_DIR)/nanosoc_bootrom_chip_core.bintxt
 # Specs come from THIS repo's tech_wrappers (byte-identical to the SoC
 # submodule's copies today, but the chiplet owns its own pad/ROM collateral).
@@ -292,15 +309,44 @@ CC_ROM_SPEC   := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/nanosoc_r
 # failing with the same "Cannot open file 'rom_via_ss_...lib'".
 ROMLIBS_DIR   := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs
 
-# Regenerate the eth ROM code_file from the already-built hex (deterministic; no
-# cmake reconfigure). The chip_core bintxt IS built by the default firmware build;
-# the eth one is opt-in (see firmware/bootloader/stage0_bootrom/CMakeLists.txt).
-# Writes only into the build tree — NOT src/rtl/bootrom/eth_ss_bootrom.sv.
-.PHONY: eth-bintxt
+# Mirror the shared compiler onto local disk. NOT an optimisation — the compiler
+# cannot enumerate its own views from NFS (see the MEM_COMPILER_DIR note), so a
+# run straight out of $(MEM_COMPILER_DIR) silently produces nothing. rsync makes
+# this a no-op once populated. The shared tree is the source and is never
+# written; -L dereferences so the mirror is self-contained.
+.PHONY: rom-compiler-stage
+rom-compiler-stage:
+	@test -d "$(ROM_COMPILER_SRC)" || { echo "FAIL: no ROM compiler at $(ROM_COMPILER_SRC)"; exit 1; }
+	@mkdir -p $(ROM_COMPILER_LOCAL)/$(ROM_COMPILER_REL)
+	@rsync -rlptL --delete "$(ROM_COMPILER_SRC)/" "$(ROM_COMPILER_LOCAL)/$(ROM_COMPILER_REL)/"
+	@# The mirror is worthless if it landed somewhere with >=2^32 inodes, which is
+	@# the exact failure being worked around. Refuse rather than emit junk.
+	@bad=$$(find $(ROM_COMPILER_LOCAL)/$(ROM_COMPILER_REL)/views -maxdepth 1 -printf '%i\n' \
+	        | awk '$$1 >= 4294967296' | head -1); \
+	if [ -n "$$bad" ]; then \
+	    echo "FAIL: $(ROM_COMPILER_LOCAL) is on a filesystem with 64-bit inode numbers."; \
+	    echo "      The compiler's 32-bit helper cannot scan it and will report no generators."; \
+	    echo "      Set ROM_COMPILER_LOCAL to a path on local disk."; exit 1; \
+	fi
+	@echo "OK: compiler mirrored to $(ROM_COMPILER_LOCAL)"
+
+# Regenerate the ROM code_files from the already-built hex (deterministic; no
+# cmake reconfigure). BOTH are regenerated, not just the eth one: the chip-core
+# macro shipped stale precisely because nothing re-derived its code file, and a
+# code file that is merely PRESENT is not a code file that is CURRENT.
+# Writes only into the build tree — NOT src/rtl/bootrom/*.sv.
+.PHONY: eth-bintxt cc-bintxt rom-bintxt
 eth-bintxt:
 	@test -f "$(ETH_HEX)" || { echo "FAIL: $(ETH_HEX) not built — build firmware first (make firmware)."; exit 1; }
 	python3 $(BOOTROM_GEN) -i $(ETH_HEX) -a 9 -t gcc -v $(ETH_ROM_DIR)/eth_ss_bootrom.sv -b $(ETH_BINTXT) -m eth_ss_bootrom
 	@echo "OK: regenerated $(ETH_BINTXT) ($$(wc -l < $(ETH_BINTXT)) words)"
+
+cc-bintxt:
+	@test -f "$(CC_HEX)" || { echo "FAIL: $(CC_HEX) not built — build firmware first (make firmware)."; exit 1; }
+	python3 $(BOOTROM_GEN) -i $(CC_HEX) -a 9 -t gcc -v $(CC_ROM_DIR)/nanosoc_bootrom_chip_core.sv -b $(CC_BINTXT) -m nanosoc_bootrom_chip_core
+	@echo "OK: regenerated $(CC_BINTXT) ($$(wc -l < $(CC_BINTXT)) words)"
+
+rom-bintxt: eth-bintxt cc-bintxt
 
 .PHONY: romlibs-preflight
 romlibs-preflight:
@@ -314,13 +360,12 @@ romlibs-preflight:
 	if [ -z "$$(echo $$gens | tr -d ' .')" ]; then \
 	    echo "FAIL: $(ROM_COMPILER)"; \
 	    echo "      starts but lists NO generators ('Available generators are: $$gens')."; \
-	    echo "      It cannot emit a .lib, so the ROM libs cannot be built on this host."; \
-	    echo "      This is NOT fixed by using a different copy of the install: readViewInfo()"; \
-	    echo "      inside the vendor's encrypted AMCI script returns 0 views on every copy"; \
-	    echo "      (local disk and NFS, bundled JRE 1.6 and system JDK 8 alike)."; \
-	    echo "      The same install generated rf_01k on this host on 27 Apr 2026, before the"; \
-	    echo "      RHEL 8.8 -> 8.10 upgrade. Escalate to the Arm PIP / EDA admin, or set"; \
-	    echo "      MEM_COMPILER_DIR to a host with a working install."; \
+	    echo "      It cannot emit a .lib, and would otherwise leave stale/absent libs."; \
+	    echo "      This is almost always the filesystem, not the install: the compiler"; \
+	    echo "      scans its own views/ from a 32-bit helper whose readdir() cannot"; \
+	    echo "      represent an inode >= 2^32, so on NFS it sees no views and no"; \
+	    echo "      generators. Check that ROM_COMPILER_LOCAL ($(ROM_COMPILER_LOCAL))"; \
+	    echo "      is on LOCAL disk and re-run 'make rom-compiler-stage'."; \
 	    exit 1; \
 	fi; \
 	echo "OK: generators   = $$gens"
@@ -331,31 +376,73 @@ romlibs-preflight:
 	@echo "OK: compiler      = $(ROM_COMPILER)"
 	@echo "OK: eth code_file = $(ETH_BINTXT)"
 	@echo "OK: cc  code_file = $(CC_BINTXT)"
+	@# `test -f` above is not enough, and its insufficiency is the whole defect:
+	@# handed an EMPTY, SHORT or MALFORMED code file the Arm ROM compiler does
+	@# not fail — it substitutes contents and emits a well-formed macro that
+	@# nothing downstream questions. rom_gate.mk's static checks are what refuse
+	@# that, and they also refuse to rebuild from a spec whose depth disagrees
+	@# with the macro already placed in the floorplan.
+	@$(MAKE) -f $(COMMON_MK) --no-print-directory romlibs-verify-static
 
-# eth-bintxt first (produces the code_file), then preflight validates all inputs.
-tsmc_65_romlibs: eth-bintxt romlibs-preflight
-	mkdir -p $(ROMLIBS_DIR)/eth_rom
-	mkdir -p $(ROMLIBS_DIR)/cc_rom
+# ── WHY THIS RECIPE DOES NOT USE THE COMPILER'S `all` TARGET ────────────────
+#
+# `all` runs every generator, and one of them is `testcode`. `testcode` is the
+# SYNTHETIC-PATTERN generator: -code_file is its OUTPUT, not its input. Run it
+# and it overwrites the file you named with a pattern chosen by the spec's
+# `mode` key. Measured 2026-08-14, both macros: after `all`, the firmware
+# code_file in the build tree had been replaced (with zeros under mode=zeros;
+# it would be random noise under the mode=random these specs used to carry).
+#
+# Worse than the collateral damage: generators are sequenced WITHIN `all`, so
+# the ones that run after `testcode` read the clobbered file. That is the whole
+# explanation for the five content views splitting into two families that share
+# no data — masis/fastscan/logicvision/cdl/gds2 (before) hold the firmware,
+# verilog/tmax (after) hold the substituted pattern. The Verilog model is the
+# one every RTL simulation loads, so simulation and silicon ran different
+# programs and nothing complained.
+#
+# So: enumerate the generators explicitly and never invoke `testcode`. The real
+# code file is passed by its own path, not a copy — the macro records the name
+# it was compiled from, and that stamp is how romlibs-verify proves the macro
+# belongs to the firmware the spec names. A renamed copy defeats that check.
+# The integrity guard below is the belt to that braces: it snapshots the code
+# file, and fails the build if any generator wrote to it.
+ROM_GENERATORS ?= liberty lef-fp gds2 verilog masis tmax fastscan ctl lvs \
+                  bitmap apache_avm memorybist ascii postscript
+
+# $(1)=output dir  $(2)=spec  $(3)=code file
+define rom_compile
+	rm -rf $(1); mkdir -p $(1)
+	@cp $(3) $(1)/.code_file.expected
+	@for g in $(ROM_GENERATORS); do \
+	    echo "  [$(notdir $(1))] $$g"; \
+	    ( cd $(1) && $(ROM_COMPILER) $$g -spec $(2) -code_file $(3) < /dev/null \
+	        > $(1)/gen_$$g.log 2>&1 ) \
+	      || { echo "FAIL: generator $$g failed; see $(1)/gen_$$g.log"; exit 1; }; \
+	    cmp -s $(3) $(1)/.code_file.expected || { \
+	        echo "FAIL: generator '$$g' MODIFIED the code file $(3)."; \
+	        echo "      Restore it (make rom-bintxt) and remove '$$g' from ROM_GENERATORS."; \
+	        cp $(1)/.code_file.expected $(3); exit 1; }; \
+	done
+	@rm -f $(1)/.code_file.expected
+endef
+
+# Code files first (both regenerated from their hex), then preflight, then compile.
+tsmc_65_romlibs: rom-compiler-stage rom-bintxt romlibs-preflight
 	@echo "Generating Bootroms"
-	@echo "Gen Ethernet ROM"
-	cd $(ROMLIBS_DIR)/eth_rom; $(ROM_COMPILER) liberty -spec $(ETH_ROM_SPEC) -code_file $(ETH_BINTXT);
-	cd $(ROMLIBS_DIR)/eth_rom; $(ROM_COMPILER) all     -spec $(ETH_ROM_SPEC) -code_file $(ETH_BINTXT);
-	@echo "Gen CC ROM"
-	cd $(ROMLIBS_DIR)/cc_rom; $(ROM_COMPILER) liberty -spec $(CC_ROM_SPEC) -code_file $(CC_BINTXT)
-	cd $(ROMLIBS_DIR)/cc_rom; $(ROM_COMPILER) all     -spec $(CC_ROM_SPEC) -code_file $(CC_BINTXT)
+	$(call rom_compile,$(ROMLIBS_DIR)/eth_rom,$(ETH_ROM_SPEC),$(ETH_BINTXT))
+	$(call rom_compile,$(ROMLIBS_DIR)/cc_rom,$(CC_ROM_SPEC),$(CC_BINTXT))
 	@echo "Done: ROM libs in $(ROMLIBS_DIR)/{eth_rom,cc_rom}"
-	@$(MAKE) -f $(lastword $(MAKEFILE_LIST)) --no-print-directory romlibs-verify
+	@$(MAKE) -f $(COMMON_MK) --no-print-directory romlibs-verify
 
-# Genus reads exactly these four files. Fail here, loudly, rather than 40
-# minutes later inside set_db.
-.PHONY: romlibs-verify
-romlibs-verify:
-	@rc=0; for f in $(ROMLIBS_DIR)/cc_rom/rom_via_ss_1p08v_1p08v_125c.lib \
-	                $(ROMLIBS_DIR)/cc_rom/rom_via.lef \
-	                $(ROMLIBS_DIR)/eth_rom/eth_rom_via_ss_1p08v_1p08v_125c.lib \
-	                $(ROMLIBS_DIR)/eth_rom/eth_rom_via.lef; do \
-	    if [ -s "$$f" ]; then echo "OK:      $$f"; else echo "MISSING: $$f"; rc=1; fi; \
-	done; exit $$rc
+# ── romlibs-verify lives in ASIC/rom_gate.mk (included at the end of this file)
+# It used to be HERE, and it used to check only that four files existed and were
+# non-empty. It passed every day while both compiled ROMs held contents that are
+# not this firmware — eth_rom random, cc_rom a DIFFERENT PROGRAM (only ~135 of
+# its 512 words coincide with the image its spec names). The name stayed; the
+# body is now an exact, word-for-word comparison against the firmware code
+# files. See ASIC/rom_gate.mk for what it asserts and why each assertion is
+# there.
 
 
 gen_memories: bootrom
@@ -446,3 +533,15 @@ pad-lef:
 pad-lef-verify:
 	@python3 $(PAD_LEF_GEN) -o $(PAD_LEF) --check || exit 1
 	@python3 $(PAD_LEF_GEN) --print-delta
+
+# ── ROM content verification ───────────────────────────────────────────────
+# romlibs-verify / romlibs-verify-static / romlibs-verify-content /
+# romlibs-verify-gds / romlibs-selftest. Kept in its own fragment because it is
+# the one part of this file with real logic in it, and because it is the part
+# that STAYS project-side when the flow moves to the asic-toolkit (the toolkit
+# owns stage scripts; ROM generation and its verification do not move).
+#
+# LAST, deliberately: it reads ROMLIBS_DIR, ETH_BINTXT, CC_BINTXT and the two
+# spec paths defined above. Anything that re-enters this makefile from a recipe
+# must use $(COMMON_MK) — see the note beside its definition at the top.
+include $(dir $(COMMON_MK))rom_gate.mk

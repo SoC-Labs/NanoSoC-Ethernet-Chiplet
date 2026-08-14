@@ -17,7 +17,14 @@ instname = rom_via
 left_bus_delim = [
 libertyviewstyle = nldm
 libname = USERLIB
-mode = random
+# See eth_rom.spec for the full derivation. `mode` is the compiler's synthetic
+# testcode selector (Options[25], condition "testcode", tooltip "Type of code
+# file to generate"); its nine legal values are
+#   zeros ones addr iaddr raddr iraddr checkerboard random mixed
+# and none of them means "read code_file". It only takes effect when no usable
+# code_file is supplied, in which case the compiler fills the array rather than
+# failing. `zeros` makes that failure self-evident.
+mode = zeros
 mux = 8
 mvt = 
 name_case = upper
@@ -28,4 +35,6 @@ pwr_gnd_rename = vdde:VDDE,vsse:VSSE
 right_bus_delim = ]
 site_def = off
 top_layer = m5-m10
-words = 2048
+# 512 words x 32 bits = 2 KB, matching the placed macro (A[8:0]) and the
+# 512-line code file. See eth_rom.spec.
+words = 512

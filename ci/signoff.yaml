@@ -116,6 +116,141 @@ stages:
   # These stages VERIFY what that flow BUILT, so they need a completed
   # implementation run in ASIC/genus-innovus/work first. Run order:
   #     asic-signoff (rtl)  ->  asic-gds  ->  asic-signoff (physical)
+
+  # --- Boot ROM contents ------------------------------------------------------
+  # THERE WAS A `romlibs` CHECK IN THIS FLOW FOR MONTHS AND IT WAS NOT A CONTENT
+  # CHECK. `make romlibs-check` asserted that four files existed and were
+  # non-empty, and it passed every day while eth_rom held random data and cc_rom
+  # held a different program from the one its spec names. It never appeared in
+  # this manifest at all, so the signoff report did not even claim it.
+  # These two rows are what that check should always have been.
+  #
+  # Physical phase, srv03335: ASIC/romlibs is gitignored (fetched or built), and
+  # the code files come from the firmware build tree. Neither exists on a bare
+  # sim runner.
+  - id: rom-selftest
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    description: "Mutation-test the ROM gate itself — 22 cases, both directions"
+    # Runs BEFORE rom-content, deliberately, exactly as lec-selftest runs before
+    # lec. It feeds the gate a ROM that IS the firmware (must pass), one bit
+    # flipped in one word, a truncated code file, an empty ROM directory, a
+    # checker that exits 0 without writing anything, a checker whose JSON and
+    # exit status disagree, and a checker that crashed — and requires each to
+    # fail NAMING THE RIGHT CAUSE. ~3 s, no licence, no design data.
+    run: make -C ASIC -f common.mk romlibs-selftest
+    check: |
+      # The count is asserted, not just the exit status: a selftest that silently
+      # stops running cases still exits 0.
+      make -C ASIC -f common.mk --no-print-directory romlibs-selftest 2>&1 \
+        | grep -qE '^SELFTEST: 2[0-9] passed, 0 failed' \
+        || { echo "the ROM gate selftest did not run its full case list"; exit 1; }
+    artifacts:
+      - build/rom_verify/selftest/**
+
+  - id: rom-content
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    description: "Both boot ROM macros contain the boot firmware, word for word"
+    # The ROMs are MASK PROGRAMMED: wrong bits are a dead die and there is no
+    # metal fix. Nothing else in this pipeline reads ROM contents — LEC compares
+    # netlists, DRC compares geometry, and a ROM full of noise passes both.
+    #
+    # The gate (ASIC/rom_gate.mk, via ASIC/genus-innovus/Makefile:romlibs-check)
+    # asserts, per ROM: the .lib/.lef Genus opens exist; spec, RTL wrapper, built
+    # macro and code file agree on depth and address width; and every word of the
+    # compiled macro equals the corresponding word of the firmware code file
+    # (scripts/ci/rom_verify.py, checks: content_equivalence, physical_decode,
+    # code_file_sanity, geometry, provenance, image_plausibility, hex_chain).
+    # sim_divergence is a WARNING by design and is surfaced, not gated.
+    run: make -C ASIC/genus-innovus romlibs-check
+    # Re-read the evidence rather than trusting the stage's exit code. This is
+    # the same doctrine as the drc/lec rows: an artefact that does not exist, does
+    # not parse, names a different ROM, or reports zero words compared is a
+    # FAILURE. "No output" must never read as "no problems".
+    check: |
+      python3 - <<'EOF'
+      import json, os, subprocess, sys
+      rows = subprocess.run(["make", "-C", "ASIC", "-f", "common.mk",
+                             "--no-print-directory", "rom-vars"],
+                            capture_output=True, text=True).stdout.split()
+      if not rows:
+          print("cannot read the ROM table from ASIC/common.mk"); sys.exit(1)
+      bad = 0
+      for row in rows:
+          name, label, romdir, code, memlib, inst, js, bits = row.split("|")
+          problems = []
+          if not os.path.exists(js):
+              print(f"{label}: FAIL — no result at {js}, the gate did not run"); bad += 1; continue
+          d = json.load(open(js))
+          words = [v for r in d.get("roms", [])
+                   for k, v in r.get("code_file_sanity", {}).items() if k == "words"]
+          if str(d.get("verdict", "")).upper() != "PASS":
+              problems.append(f"verdict is {d.get('verdict')!r}")
+          blob = json.dumps({k: v for k, v in d.items() if k != "argv"})
+          if romdir not in blob or code not in blob:
+              problems.append(f"the result does not name {romdir} and {code}")
+          if not words or max(words) == 0:
+              problems.append("it reports no words compared, which is not a pass")
+          if problems:
+              print(f"{label}: FAIL — " + "; ".join(problems) + f"  ({js})"); bad += 1
+          else:
+              print(f"{label}: PASS — {max(words)} words match {os.path.basename(code)}")
+      sys.exit(1 if bad else 0)
+      EOF
+    artifacts:
+      - build/rom_verify/*.json
+      - build/rom_verify/*.log
+
+  - id: rom-gds
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    needs_implementation: true
+    # Content-correct at synthesis does NOT prove the bits reached the mask. The
+    # macro is merged into the stream by write_stream from a hand-maintained
+    # $gds_merge_list in scripts/config.tcl; a dropped or stale entry produces a
+    # GDS that opens cleanly, passes DRC, and boots nothing.
+    #
+    # This decodes the via programming out of the MERGED stream and compares it
+    # to the firmware code file. ~46 s for both ROMs on a 298 MB stream, no
+    # licence. With no extractor installed it reports UNVERIFIED and FAILS —
+    # never green for "could not check".
+    #
+    # NOT a hash or byte comparison against the standalone .gds2: Innovus
+    # re-encodes records on merge, so 0 of 126 structure hashes match on a
+    # CORRECT chip. Content extraction is the only sound test here.
+    description: "The ROM words inside the merged tapeout stream are the boot firmware"
+    run: make -C ASIC/genus-innovus romlibs-gds-check ROM_GDS=$PWD/ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds
+    check: |
+      python3 - <<'EOF'
+      import os, subprocess, sys
+      rows = subprocess.run(["make", "-C", "ASIC", "-f", "common.mk",
+                             "--no-print-directory", "rom-vars"],
+                            capture_output=True, text=True).stdout.split()
+      bad = 0
+      for row in rows:
+          name, label, romdir, code, memlib, inst, js, bits = row.split("|")
+          if not os.path.exists(bits):
+              print(f"{label}: nothing extracted at {bits} — the stream was not read"); bad += 1; continue
+          got = [l.strip() for l in open(bits) if l.strip()]
+          want = [l.strip() for l in open(code) if l.strip()]
+          depth = int([w for w in open(memlib) if "NumberOfWords" in w][0].split(":")[1].strip(" ;\n"))
+          if len(got) != depth:
+              print(f"{label}: {len(got)} of {depth} words extracted — partial, not a measurement"); bad += 1; continue
+          diff = [i for i in range(depth) if got[i] != want[i]]
+          if diff:
+              print(f"{label}: {len(diff)}/{depth} words in the stream differ, first at word {diff[0]}"); bad += 1
+          else:
+              print(f"{label}: PASS, all {depth} words in the stream match {os.path.basename(code)}")
+      sys.exit(1 if bad else 0)
+      EOF
+    artifacts:
+      - build/rom_verify/*_gds.bits
+      - build/rom_verify/*_gds.log
+
   - id: lec
     phase: physical
     gate: block
