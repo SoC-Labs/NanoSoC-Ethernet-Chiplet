@@ -82,6 +82,31 @@ BLOCK := nanosoc_eth_chiplet_pads
 # LEF, the cap tables, the layer names and the stream-out map.
 TECH  := tsmc65
 
+# THE TWO SITE VARIABLES THE PACK NEEDS, AND WHY THEY LIVE HERE AND NOT THERE.
+#
+# tech/tsmc65 declares exactly two `tech_env` variables and defaults NEITHER:
+#
+#     TSMC_65_HOME        the TSMC PDK mount            (../common.mk:94)
+#     ARM_CLN65LP_TECH    ARM's cln65lp arm_tech package -- the RC cap tables
+#                         under cadence_captable/. A SEPARATE deliverable from
+#                         the PDK, installed separately, in a shared read-only
+#                         IP tree. NEVER write into it (see CLAUDE.md).
+#
+# ARM_CLN65LP_TECH used to fall back to this lab's mount inside the pack. That
+# default was removed on 2026-08-13 when the toolkit was cleared for publication:
+# a public repository must not carry one site's filesystem layout, and a pack
+# that silently defaults to a path the reader does not have produces a run that
+# looks configured and is not. The pack now fails at load naming the variable.
+#
+# THAT CHANGE BROKE A RUN, WHICH IS THE POINT. `make route RUN_TAG=m5off6` died
+# at tech_load with "environment variable ARM_CLN65LP_TECH is not set" after
+# place and CTS had already completed -- loudly, at the first stage that needed
+# it, instead of quietly using someone else's cap tables. This block is the fix,
+# and the site fact now lives with the project instead of inside the toolkit.
+#
+# `?=`, so a shell export or ci/site.env still wins.
+export ARM_CLN65LP_TECH ?= /research/AAA/phys_ip_library/arm/tsmc/cln65lp/arm_tech/r2p0
+
 # WHERE THE TOOLKIT IS. Two answers, and which one is right changes on the day
 # the submodule swap lands - so this resolves rather than asserts.
 #
