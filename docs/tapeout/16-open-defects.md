@@ -615,3 +615,292 @@ The fix worked.
 **Do not lower `CORE_TO_IO` again to reclaim the 5.6% of core area** without first fixing
 item 1 — the extra utilisation it bought (89.45% → 92.17%) is what turned item 2 from 78
 violating nets into 153.
+
+---
+
+# ADDENDUM 2026-08-12 — item 1 is FIXED; the gate that guards it is not
+
+> Appended, not merged into the text above. Everything before this line is the
+> 2026-08-06 triage and stands as written. This section records what the same
+> defect number looks like six days later, because `make pnr_route_eval` is now
+> being blocked by a check that cites item 1 on a database where item 1 is
+> demonstrably absent.
+
+**Verdict: item 1 (the defect) is CLOSED. `evroute_srclat_skew`, the route-stage
+gate that detects it, is MISCALIBRATED and is now a hard false positive.**
+
+Static analysis only — no Innovus, Genus or Calibre session was opened. All
+numbers below are read out of files already on disk.
+
+## The failure being reported
+
+`make pnr_route_eval`, run `runs/20260812T121941Z_route-corrected-map`, aborted
+after 2m21s, before `route_design`, at
+[`scripts/4b_pnr_route_eval.tcl`](../../ASIC/genus-innovus/scripts/4b_pnr_route_eval.tcl)
+§3b:
+
+```
+EVROUTE-FAIL: clock source latency is asymmetric by 0.538 ns between the capture
+and launch sides of the worst hold path. That is docs/tapeout/16-open-defects.md #1
+and it makes every hold number in this run fiction. Fix CTS, not route.
+```
+
+## Item 1 is fixed, and three independent measurements say so
+
+The one-line fix proposed above — `set_db timing_analysis_type ocv` moved from
+`route_setup.tcl` into `cts_setup.tcl`, before `ccopt_design` — **was applied**.
+It is [`scripts/cts_setup.tcl:72`](../../ASIC/genus-innovus/scripts/cts_setup.tcl),
+under a 47-line comment reproducing the analysis above. `timing_analysis_cppr
+true` and the four derate arms were added alongside it.
+
+The CTS run that produced the database this route run consumed
+(`runs/20260811T131651Z_fill-verify-eval`) proves the fix holds:
+
+| Check | 08-06 (broken) | 08-11 (this DB) |
+|---|---|---|
+| `reports/eval/cts_latency_writeback.rep`, hold view | min 16 / **max 0** | **min 20 / max 20** |
+| `cts_manifest.txt` `wb_hold_min` / `wb_hold_max` | 16 / 0 | **20 / 20** |
+| `timing_analysis` at CTS | `default` | **`ocv`** |
+| post-CTS hold WNS / TNS / FEP | −1.167 / −66,212 / 96,545 | **−0.005 / −0.074 / 59** |
+
+The writeback is complete for all five clock roots in all three views. The route
+stage's own §3a check confirms `timing_analysis_type = ocv`
+(`runs/20260812T121941Z_route-corrected-map/logs/run.log:3713`), and the same
+run's first QoR line reads:
+
+```
+run.log:3689  QOR post-cts (as read) | setup wns 0.005 tns 0.000 fep 0
+                                     | hold wns -0.005 tns -0.074 fep 59
+```
+
+**Hold WNS −0.005 ns over 59 endpoints is the healthy signature.** Item 1's
+signature is −1.167 ns over 96,545. The gate is calling item 1 on a database
+whose hold view is four orders of magnitude cleaner in TNS than the defect it
+names.
+
+## Where the 0.538 ns actually comes from
+
+Evidence: `reports/eval/nanosoc_eth_chiplet_pads_eval_srclat_precheck.rep`
+(archived at
+`runs/20260812T121941Z_route-corrected-map/reports/eval/`). The worst hold path
+is **not a same-clock path**:
+
+```
+Path 1: VIOLATED (-0.005 ns) Hold Check          View: default_analysis_view_hold
+ Startpoint: .../phy_gpio/gpiorx_2/link_data_word_reg[3]/CP   Clock: D2D_RX_CLK_0
+   Endpoint: .../phy_gpio/gpiorx_2/link_data_reg_reg[3]/D     Clock: D2D_RX_WORDN_CLK_2
+
+                    Capture       Launch
+      Clock Edge:+   80.000       80.000
+      Drv Adjust:+    0.059        0.016
+     Src Latency:+   -0.269       -0.807     <-- the gate reads only this row
+     Net Latency:+    0.227 (P)    0.704 (P)
+         Arrival:=   80.017       79.913
+```
+
+Launch is the **master** clock `D2D_RX_CLK_0`, defined at the port `TL_CLK_RX`.
+Capture is a **generated** clock `D2D_RX_WORDN_CLK_2`, defined at
+`gpiorx_2/count_reg[3]/Q` — the /16 divider output, deep inside the die
+([`inputs/tidelink_constraints.sdc:196`](../../ASIC/genus-innovus/inputs/tidelink_constraints.sdc)).
+
+Source latency is measured from the clock's own definition point. The two
+definition points are different, so the two `Src Latency` numbers are measured
+from different places, and their difference is the **master-clock delay between
+those two points** — not skew. From the report's own expanded clock trace:
+
+```
+uPAD_TL_CLK_RX/C            PAD->C   PDDW16DGZ_G   delay 0.426
+gpiorx_2/count_reg[3]/Q     CP->Q    DFSNQD1       delay 0.112
+                                                   ----------
+                                                         0.538
+```
+
+**0.426 + 0.112 = 0.538, exactly the reported number, to the last digit.** The
+capture side books the input pad and the divider's clock-to-Q under *source*
+latency because they precede its definition point; the launch side books the
+same pad under *net* latency because they follow its definition point. Nothing
+is missing on either side — the writeback value is visible on both traces
+(`TL_CLK_RX` arrival −0.748 late / −0.791 early), which is precisely what item 1
+said would be absent.
+
+The quantity that actually enters the hold check is total insertion delay:
+
+| | drv | src | net | total |
+|---|---|---|---|---|
+| launch | +0.016 | −0.807 | +0.704 | **−0.087** |
+| capture | +0.059 | −0.269 | +0.227 | **+0.017** |
+
+Real skew **0.104 ns**, capture-late. With hold 0.021 + uncertainty 0.050 −
+CPPR 0.073, that yields the −0.005 ns the report shows. The arithmetic is
+self-consistent and there is no phantom term anywhere in it.
+
+## Why this is a miscalibration and not a tolerance to tune
+
+`EVR_SRCLAT_TOL` is 0.05 ns
+([`4b_pnr_route_eval.tcl:208`](../../ASIC/genus-innovus/scripts/4b_pnr_route_eval.tcl)).
+The irreducible part of the 0.538 is the `PDDW16DGZ_G` input-pad delay (~0.43 ns)
+plus one flop CP→Q (~0.11 ns). Neither is a routing or CTS quantity: the pad is
+vendor I/O and the divider is the clock's own generator.
+
+**No clock tree, no CTS setting and no `cts_setup.tcl` knob can bring this number
+below 0.05.** Any hold path that crosses from a master clock to a generated clock
+defined at an internal divider output will trip this gate, always, on any
+database, however good. That is a property of the predicate, not of the design.
+
+## Why it started failing today and not before
+
+The gate has passed on every prior route run. Its probe is
+`report_timing -early -max_paths 1`, i.e. *the single worst hold path in the
+design*, and until now that path always happened to have the same clock on both
+ends:
+
+| run | worst hold path clocks | Src Latency cap / lau | gate |
+|---|---|---|---|
+| 08-07 → 08-08 ×5 | `D2D_RX_CLK_0` → `D2D_RX_CLK_0` | −0.659 / −0.659 | pass |
+| `20260808T174047Z` | `clk` → `clk` | −1.125 / −1.125 | pass |
+| `20260808T223829Z` | `clk` → `clk` | −1.134 / −1.134 | pass |
+| **`20260812T121941Z`** | **`D2D_RX_CLK_0` → `D2D_RX_WORDN_CLK_2`** | **−0.269 / −0.807** | **FAIL** |
+
+`D2D_RX_WORDN_CLK_0..7` did not exist before 2026-08-09
+(`tidelink_constraints.sdc`, "RECOVERED D2D RX WORD CLOCK, NEGATIVE PHASE"). The
+last route-stage run, `20260808T223829Z_stage1b-route`, consumed a CTS database
+that predates them. **`20260812T121941Z` is the first route run to see a CTS
+database in which the RX word domain is constrained at all**, and the path it
+trips on is the one the SDC author explicitly called out as newly visible:
+
+> `link_data_word (D2D_RX_CLK_0, pad clock) -> link_data_reg   [a real check]`
+> — `tidelink_constraints.sdc:171`
+>
+> "EXPECT MORE TIMING PATHS/VIOLATIONS ON THE NEXT RUN, NOT FEWER. These 16,653
+> flops were previously invisible to timing; now they are timed. That is the fix
+> WORKING." — `tidelink_constraints.sdc:246`
+
+The gate is firing on the arrival of a fix it was never taught about.
+
+## Fix — a clock-aware predicate
+
+The check must not compare the `Src Latency` columns unless both ends are on the
+same clock. When they are not, fall back to item 1's actual signature: one side
+exactly `0.000` against a non-zero other side.
+
+**Not applied here — `4b_pnr_route_eval.tcl` is outside this page's write scope.**
+The change, in full:
+
+```tcl
+# --- new helper, next to evroute_srclat_skew (4b_pnr_route_eval.tcl:391) ------
+# Launch and capture clock names from a report_timing path header. The first
+# "Clock:" line follows Startpoint, the second follows Endpoint.
+proc evroute_srclat_clocks {path} {
+    if {![file exists $path]} { return [list "" ""] }
+    set fh [open $path r] ; set lau "" ; set cap "" ; set seen 0
+    while {[gets $fh line] >= 0} {
+        if {[regexp {^\s*Clock:\s+\([RF]\)\s+(\S+)} $line -> c]} {
+            if {$seen == 0} { set lau $c ; incr seen } else { set cap $c ; break }
+        }
+    }
+    close $fh
+    return [list $lau $cap]
+}
+
+# --- call site, replacing the `elseif {$skew > $EVR_SRCLAT_TOL}` arm (~:571) --
+lassign [evroute_srclat_clocks $srclat_rep] lau_clk cap_clk
+if {$lau_clk ne "" && $cap_clk ne "" && $lau_clk ne $cap_clk} {
+    # Cross-clock worst hold path. Source latency is measured from each clock's
+    # OWN definition point, so the delta is the master-clock delay between those
+    # two points, not skew. For a generated clock defined at an internal divider
+    # output it is structurally >= the input-pad delay and can never pass a
+    # 50 ps tolerance. See docs/tapeout/16-open-defects.md, ADDENDUM 2026-08-12.
+    say "worst hold path crosses clocks: $lau_clk -> $cap_clk"
+    say "  Src Latency columns are not comparable across definition points;"
+    say "  raw delta ${skew} ns is pad + divider CP->Q, not skew. Not gated."
+    say "  The item-1 mechanism is gated at CTS instead: 3b gate 2, wb_hold_max."
+    if {[evroute_srclat_zero $srclat_rep]} {
+        flow_fail "one side of Src Latency is exactly 0.000 against a non-zero" \
+                  "other side - that IS docs/tapeout/16-open-defects.md #1." \
+                  "Evidence: $srclat_rep"
+    }
+} elseif {$skew > $EVR_SRCLAT_TOL} {
+    ...unchanged...
+}
+```
+
+`evroute_srclat_zero` is the strict signature test — the same regex as
+`evroute_srclat_skew`, returning true when exactly one of the two captured
+values is `0.000`.
+
+**Do not simply raise `EVR_SRCLAT_TOL`.** It is env-overridable
+(`flow_utils.tcl:110`), so `EVR_SRCLAT_TOL=0.6 make pnr_route_eval` unblocks the
+run today — but it raises the floor for *every* clock pair including the
+same-clock ones the gate exists to police, and 0.538 ns of genuine same-clock
+asymmetry would then pass silently. Acceptable as a single supervised run with
+this section cited in the run notes; not acceptable as a default.
+
+**`3b_pnr_cts_eval.tcl` gate 3 (§13, ~line 1295) carries the identical blind
+spot** and passed on 08-11 only by luck — its probe landed on a same-clock
+`typical_analysis_view` path (`hold_src_capture −1.689`, `hold_src_launch
+−1.689`). The same clock-name guard belongs in `evcts_hold_path_probe`
+(3b:365). Not applied: the gate currently passes, no Innovus seat is available
+to prove a Tcl change against a real report, and a broken gate is worse than a
+latent one.
+
+## Proving the fix
+
+1. Patch `evroute_srclat_skew`'s call site as above.
+2. Re-run `make pnr_route_eval` against the same CTS database
+   (`work/nanosoc_eth_chiplet_pads_eval_cts`, also archived at
+   `runs/20260811T131651Z_fill-verify-eval/work/`). **No CTS re-run is needed** —
+   the input database is correct.
+3. §3b should now print
+   `worst hold path crosses clocks: D2D_RX_CLK_0 -> D2D_RX_WORDN_CLK_2` and
+   continue. Cost to reach that point: ~2.5 minutes, the same as the abort.
+4. Route then runs to completion: 30 min – 2.5 h.
+5. **The number that must change is the gate's verdict, not any timing number.**
+   Post-route hold WNS should land near the −0.005 / −0.074 / 59 it starts from,
+   *not* near −1.167 / −66,212 / 96,545. If post-route hold blows up to the
+   item-1 numbers, the gate was right and this section is wrong.
+
+## Found in passing — a genuine item-1-class defect on the TX word clocks
+
+`TA-1018` ×16 in this run, ×464 at CTS:
+
+```
+WARN (TA-1018): A source latency path to the generated clock D2D_TX_WORD_CLK_4
+through source pin .../u_wlink/pad_clk_tx to target pin
+.../phy_gpio/gpiotx_4/io_link_clk in view default_analysis_view_hold cannot be
+found. Timing analysis will use 0 ns source latency for the generated clock.
+```
+
+**This is not the cause of the 0.538 ns** — that path is RX-side and both its
+`Src Latency` values are non-zero. But "will use 0 ns source latency" *is* item
+1's mechanism, on a different clock, and it is real.
+
+The cause is a direction error in the SDC.
+[`tidelink_constraints.sdc:231-232`](../../ASIC/genus-innovus/inputs/tidelink_constraints.sdc):
+
+```tcl
+create_generated_clock -name "D2D_TX_WORD_CLK_$n" \
+    -source [get_pins $WL/pad_clk_tx] -divide_by 16 $_pin
+```
+
+with the stated rationale "the same pin `D2D_TX_CLK_0` already uses, so the two
+stay phase-coherent". But `pad_clk_tx` is *downstream* — it is the clock leaving
+`u_wlink` for the `TL_CLK_TX` pad (`WlinkGPIOPHY_v2.v:334`). `D2D_TX_CLK_0` is
+`-source pad_clk_tx` → `[get_ports TL_CLK_TX]`, which is a forward path and
+resolves. `D2D_TX_WORD_CLK_n` is `-source pad_clk_tx` → `gpiotx_n/io_link_clk`,
+which is *backwards*: `io_link_clk` is generated inside `gpiotx_n`, upstream of
+`pad_clk_tx`. No forward path exists, so none is found.
+
+The correct `-source` is the clock that drives the TX divider, exactly as the RX
+block does it. `cts_hold_path.rep` from the 08-11 CTS run names it: the TX
+counter is `gpiotx_0/count_reg[1]/CP`, `Clock: (R) clk`.
+
+Side effects already visible: `ccopt` reclassified `D2D_TX_WORD_CLK_0` as an I/O
+clock *root* and wrote a source latency back for it — it is the fifth row in
+`cts_latency_writeback.rep`, which is why that report totals 20 against a
+`Reference:` line still reading "4 clock roots". And `cts_manifest.txt`
+`clock_trees` lists `D2D_TX_WORD_CLK_0` only, against all eight of
+`D2D_RX_WORDN_CLK_0..7`.
+
+Out of scope to fix here (`inputs/tidelink_constraints.sdc` is not this page's
+write scope) and it needs a synthesis + CTS re-run to land. Filed so it is not
+lost, and so it is not confused with the gate false positive above.

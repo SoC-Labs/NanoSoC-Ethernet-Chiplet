@@ -51,6 +51,11 @@ self-documentation commands that make Innovus stop being opaque.
 | 21 | [Physical audit](21-physical-audit.md) | P1–P14: floorplan, PG, vias, rows, fill, pad ring |
 | 22 | [Synthesis flow notes](22-synthesis-flow-notes.md) | The *why* behind `1b_synthesis_eval.tcl` — measurements and tool traps |
 | 23 | [P&R flow notes](23-pnr-flow-notes.md) | The *why* behind the `2b`/`3b`/`4b` eval stages and `pnr_utils.tcl` |
+| 24 | [D2D link handover](24-d2d-link-physical-handover.md) | The D2D link's physical-implementation gaps, handed to the P&R side |
+| 25 | [What remains, explained](25-what-remains-explained.md) | The physical-verification picture, in prose |
+| 26 | [Plan to a submittable GDS](26-plan-to-submittable-gds.md) | The route from here to something a shuttle will accept |
+| 27 | [Broker questions](27-broker-questions-SEND-NOW.md) | The questions only the broker/fab can answer |
+| 28 | [DRC status and attribution](28-drc-status-and-attribution.md) | Every DRC/ANT/BND result, decomposed by who owns it |
 
 **Pages 22 and 23 are companions to the evaluation scripts.** Those scripts are written
 to be read by someone learning the flow, so their comments explain *what each stage
@@ -85,6 +90,36 @@ a routing/PG check, **not signoff DRC**, and LVS cannot run here at all. See
 **4. Experiments are cheap if you use the snapshots.** The flow writes `_placed` and
 `_cts` databases specifically so you can resume rather than re-run 5 hours from
 placement. Load one, change one thing, measure. See [02](02-innovus-basics.md).
+
+---
+
+## Before you trust any signoff number: the node-level traps
+
+The pages here describe **this design**. A separate page describes **the node** — the
+PDK, the stream-out map and the signoff tools — and it is where the traps live that
+will follow you to the next chip on TSMC 65:
+
+### → [`ASIC/tech_wrappers/tsmc65/README.md`](../../ASIC/tech_wrappers/tsmc65/README.md) — §1 is a seven-row traps index
+
+Referred to by name rather than by count, because counts drift and names do not:
+
+- **the PDK stream-out map** is a transform of a *layout-editor* map and was never a
+  signoff artefact;
+- **LEF obstruction streamed as metal** — it was 68.8% of all metal in our GDS and
+  caused every antenna result;
+- **bond-pad openings are declared `OBS`**, so the blanket fix for the previous trap
+  silently deletes them;
+- **`NAME <layer>/LEFPIN`** — without it, macro pins stream their shapes and not their
+  names, and boxed leaves extract with no pins at all;
+- **Calibre density `Result Count = 1`** can mean thousands of failing windows, and the
+  `.density` files are *failure lists*, not window maps;
+- **`PO.R.8` inside vendor memories** is an artefact of black-boxing, not a vendor
+  defect — and checking the macro standalone cannot tell you which;
+- **"the tool did not complain" is not verification** — census the stream.
+
+That page closes with the habit underneath all seven: *what would this look like if I
+were wrong?* Three of the conclusions it corrects were wrong in the direction of
+blaming somebody else.
 
 ---
 
