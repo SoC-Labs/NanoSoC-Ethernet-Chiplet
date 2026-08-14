@@ -54,20 +54,20 @@ and missing poly*. Two things go wrong.
 rate depends on the local pattern density: a sparse region dishes, a dense region
 stays proud. Dishing on one layer becomes a thickness error on every layer above
 it. The foundry defends against this with per-layer density windows, and this
-PDK's tech LEF states them explicitly for every routing layer — for example, M1
-(`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef` lines 119–132):
+PDK's tech LEF states them explicitly for every routing layer, through four
+keywords per `LAYER` block: `MINIMUMDENSITY`, `MAXIMUMDENSITY`,
+`DENSITYCHECKWINDOW` and `DENSITYCHECKSTEP`.
 
-```
-MINIMUMDENSITY      10 ;
-MAXIMUMDENSITY      100 ;
-DENSITYCHECKWINDOW  75 75 ;
-DENSITYCHECKSTEP    37.500 ;
-```
+> Vendor tech-LEF rule values redacted — TSMC licence forbids reproduction. Source:
+> `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`, the `LAYER` blocks for M1–M9 and AP. Read
+> the four density keywords there before planning any fill.
 
-i.e. every 75 × 75 µm window, stepped 37.5 µm, must be at least 10 % metal. M8
-raises the floor to 20; M9 caps at 70 in a 100 × 100 window; AP is 10–70. Those
-are foundry rules sitting on disk, and §5 covers the fact that nothing in this
-flow checks them.
+So each layer must reach a minimum metal fraction inside a sliding window, and must
+also stay under a cap. The floors, the caps and the window sizes are **not** uniform
+across the stack — the upper metals differ from the thin ones on all three — so a
+fill strategy tuned on one layer does not transfer to another. Those are foundry
+rules sitting on disk, and §5 covers the fact that nothing in this flow checks
+them.
 
 **Well and rail continuity.** The Stylus manual states the primary purpose of
 filler directly — Stylus TCR, `add_fillers` (`TCRcom/add_fillers.html`):
@@ -953,9 +953,10 @@ Confirmed in the shipped report — `grep -c BuPAD` on the 2026-08-06
 `_imp_drc.rep` returns **0**.
 
 The 4 µm clears both wide-metal rules — M8's `SPACINGTABLE` and M9's flat
-`SPACING`, at their worst bands, both ask for less than that. And both layers'
-`MAXWIDTH` limit is exactly the 12 µm the rings already use: legal, but on the
-limit. Do not widen them. (Rule values not reproduced — TSMC licence.)
+`SPACING`, at their worst bands, both ask for less than that. Both layers also
+carry a `MAXWIDTH` limit, and the 12 µm ring width was chosen against it — legal
+as it stands, with nothing left over. Do not widen them without re-reading that
+rule. (Rule values not reproduced — TSMC licence.)
 
 ### 4.6 Routing between pad and driver: there isn't any
 
@@ -1092,14 +1093,19 @@ cosmetic one; the UG's capacitance warning above is the reason
 `-timing_aware {on|off|sta}` exists.
 
 **One encouraging detail: the layer map is already ready for it.** The GDS-out map
-(`PRTF_EDI_N65_gdsout_6X1Z1U.24a.map`, lines 17–26) carries a full `FILL` row for
-every layer, on the same GDS layer number with datatype 1 (41 for M8, 61 for M9):
+(`PRTF_EDI_N65_gdsout_6X1Z1U.24a.map`) carries a full `FILL` row for every routing
+layer and for AP, in the form:
 
 ```
-M1     FILL            31    1
-...
-AP     FILL            74    1
+<layer>  FILL  <gds layer>  <datatype>
 ```
+
+Each `FILL` row targets the same GDS layer as that layer's real metal, on a separate
+fill datatype; the upper metals use different fill datatypes from the thin ones,
+matching their new-scheme numbering.
+
+> Vendor stream-map rows redacted — TSMC licence forbids reproduction. Source: the
+> GDS-out map named above; read its `FILL` rows directly.
 
 Those datatypes are unused today because nothing generates fill geometry.
 
@@ -1235,7 +1241,7 @@ So, precisely:
   17) shapes die-wide come entirely from the eight merged macro files — confirmed
   by the layer histogram above and consistent with `Makefile:356-358`.
 - **The true empties are the IO drivers.** `PDDWUWSWCDG_G` has 0 shape records,
-  because the local-override IO driver LEF supplies pins on layers the map does
+  because the patched IO driver LEF supplies pins on layers the map does
   carry but the tool found no geometry to write for it under `-output_macros`.
 
 **Consequence, stated the way a reviewer needs it:** this GDS is a routing-and-

@@ -120,8 +120,9 @@ the LEF, not merely inferred from reading the script.
   `-type power_intent`, not `-type power`. See [05](05-power-plan.md).
 - **Metal fill is absent entirely.** **[verified]** No fill or density command in
   `scripts/`, `asic-flows/` or the Makefile — while the tech LEF already carries
-  `MINIMUMDENSITY`/`DENSITYCHECKWINDOW` for every layer (M1–M7 ≥10 %, M8/M9 ≥20 %, AP
-  10–70 %). The in-tree nanoSoC 28-pin ancestor flow *does* run `add_metal_fill` for this
+  `MINIMUMDENSITY`/`DENSITYCHECKWINDOW` for every layer — with different floors, caps and
+  window sizes for the thin metals, the upper metals and AP (values not reproduced — TSMC
+  licence). The in-tree nanoSoC 28-pin ancestor flow *does* run `add_metal_fill` for this
   same PDK. See [07](07-filler-and-bondpads.md).
 - **`DFT 1` cannot work.** **[verified]** `1_synthesis.tcl:51` sources
   `../scripts/dft_setup.tcl` under `if {$DFT == 1}`, and that file exists nowhere in the

@@ -143,8 +143,9 @@ reach 36 µm further inboard.
 - `CORE_TO_IO` raised **50 → 70** in
   [`floorplan.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl), giving 4 µm clearance.
   4 µm clears both wide-metal rules — M8's `SPACINGTABLE` and M9's flat `SPACING` both ask
-  for less. Both layers' `MAXWIDTH` limit is exactly the 12 µm the rings already use: legal,
-  but on the limit. **Do not widen the rings.** (Rule values not reproduced — TSMC licence.)
+  for less. Both layers also carry a `MAXWIDTH` limit, and the 12 µm ring width was chosen
+  against it — legal as it stands. **Do not widen the rings** without re-reading that rule
+  in the tech LEF first. (Rule values not reproduced — TSMC licence.)
 - The cost was taken out of the core, which is fixed inside a fixed die: 1230 × 1630 →
   **1190 × 1590**, a 5.6 % area loss (112,800 µm²).
 - **17 of the 21 macros were re-placed.** Raising the margin moved the core box inward and
@@ -383,8 +384,10 @@ Four independent reasons, in descending order of strength:
    ships its 2.5 V IO liberty without `pg_pin()` groups — which is true, and is also why
    [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) carries a three-line LEF
    override adding `USE POWER ;` / `USE GROUND ;`. We cannot fix a vendor liberty, and
-   `/tsmc65pdk` is a read-only, lab-shared mount that must not be edited in place —
-   deviations go in `ASIC/tech_wrappers/tsmc65/local_overrides/`. 34 more say the memory
+   `/tsmc65pdk` is a read-only, lab-shared mount that must not be edited in place — the
+   deviation is applied to a copy the build generates from it
+   (`ASIC/tech_wrappers/tsmc65/generated/`, produced by `patch_pad_lef.py`; formerly a
+   committed copy under `local_overrides/`, changed in `bf619f1`). 34 more say the memory
    liberty models do not expose PG ports our UPF names.
 2. **The alternative is worse and was measured.** `check_cpf` raises `RCLP-203`, which
    **aborts the `-f` script**. Genus then drops to its interactive prompt and, with stdin

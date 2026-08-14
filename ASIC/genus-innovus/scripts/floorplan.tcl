@@ -24,9 +24,12 @@
 ##     margin 50 -> ring outer edge 155/1445/155/1845 vs PAD70NU at
 ##                  171/1429/171/1829  = 16.00um OVERLAP every side
 ##     margin 70 -> ring outer edge 175/1425/175/1825  =  4.00um clear
-## 4um clears both wide-metal rules: M8 SPACINGTABLE tops out at 1.5, M9 is a
-## flat SPACING 2. (Both layers are MAXWIDTH 12 and the rings are 12 wide —
-## legal, but on the limit; do not widen them.)
+## 4um clears both wide-metal rules: the worst-case M8 SPACINGTABLE entry and
+## M9's flat SPACING are each well under 4um. (Both layers also carry a MAXWIDTH
+## rule. The ring width was chosen against it and is legal — but do NOT widen the
+## rings without re-reading that rule in the LEF first.) Vendor tech-LEF rule
+## values redacted — TSMC licence forbids reproduction. Source: the tech LEF,
+## `LAYER M8` and `LAYER M9`.
 ##
 ## This was measured, not assumed. baseline_2026-08-05/reports/..._imp_drc.rep
 ## (the CORE_TO_IO 50 run) has 580 violations — its own trailer says

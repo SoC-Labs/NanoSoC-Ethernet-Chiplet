@@ -215,12 +215,13 @@ unset _rx_grp _tx_grp
 # correct instrument for a board-level source.
 #
 # UNITS AND THRESHOLDS -- READ BEFORE CHANGING ANY NUMBER.
-#   set_units above declares ns and pF, matching tphn65lpgv2od3_slwc.lib
-#   (time_unit "1ns", capacitive_load_unit (1,pf), nom_voltage 3, WCCOM).
-#   The IO liberty measures slew between 10% and 90%:
-#       slew_lower_threshold_pct_rise/fall : 10.00
-#       slew_upper_threshold_pct_rise/fall : 90.00
-#       slew_derate_from_library           : 1.00   (no derate)
+#   set_units above declares ns and pF, which match the units the IO liberty
+#   itself declares -- check them there before changing a number here, and note
+#   that the library applies no slew derate.
+#   The IO liberty measures slew between the 10% and 90% points.
+#   (Liberty header key/value pairs, including the nominal supply, are not
+#   reproduced -- vendor characterisation data, TSMC licence forbids it.
+#   Source: tphn65lpgv2od3_sl*.lib.)
 #   Datasheets almost always quote 20%-80%. EVERY datasheet number below is
 #   therefore scaled to the library's thresholds by the linear-ramp factor
 #       (90-10)/(80-20) = 80/60 = 4/3
@@ -228,16 +229,18 @@ unset _rx_grp _tx_grp
 #   under-state the real edge by 25%.
 #
 # WHAT THE PADS ARE ACTUALLY CHARACTERISED FOR (tphn65lpgv2od3_slwc.lib):
-#   input  (PAD->C, IO_SLEW2CORE_LOAD_5x6):  input_net_transition
-#                                            index_1 = 0.5 .. 5.0 ns
-#   output (I->PAD, CORE_SLEW2IO_LOAD_*_5x6): total_output_net_capacitance
-#                                            index_2 = 5 .. 100 pF
-#                                            (all of 04/08/12/16 mA; OSC pads
-#                                             are 5..30 pF)
-#   Note the OUTPUT floor: 5 pF. With set_load absent (= 0 pF) every output
-#   timing arc in this design was being EXTRAPOLATED off the bottom of its own
-#   NLDM table. The library's default_max_transition of 5.0 ns is the CEILING of
+#   input  (PAD->C):  input_net_transition, over a nanosecond-range slew axis
+#   output (I->PAD):  total_output_net_capacitance, over a picofarad-range load
+#                     axis with a NON-ZERO floor (all drive strengths; the OSC
+#                     pads use a shorter axis than the rest)
+#   Note that the OUTPUT axis has a floor at all. With set_load absent (= 0 pF)
+#   every output timing arc in this design was being EXTRAPOLATED off the bottom
+#   of its own NLDM table. The library's default_max_transition is the CEILING of
 #   the input table, not a target.
+#
+#   Liberty table names and axis endpoints redacted — vendor characterisation
+#   data, TSMC licence forbids reproduction. Read them in tphn65lpgv2od3_sl*.lib
+#   before changing any value in this section.
 #
 # CONFIDENCE CLASS is tagged on every value below and means exactly this:
 #   [DATASHEET]   a number read from a named document, with the parameter name.
@@ -298,10 +301,10 @@ set_input_transition -max 1.20 [get_ports CLK] ;# [DATASHEET] SCAS869F tSLEW-RAT
 # slew rate; there is NO specified maximum, so a fast part may produce an edge
 # far sharper than 1.00 ns and the datasheet does not forbid it. Using 1.00 ns
 # as a -min would assert a fast-edge guarantee the vendor never gave, and a
-# too-slow -min flatters hold. 0.50 ns is used instead: it is the FASTEST edge
-# the pad is characterised for (index_1 floor), so it is simultaneously the most
-# pessimistic hold assumption that remains on-table.
-set_input_transition -min 0.50 [get_ports CLK] ;# [PLACEHOLDER] no max-slew-rate spec exists in SCAS869F; 0.5ns = pad NLDM index_1 floor
+# too-slow -min flatters hold. 0.50 ns is used instead: it is the most
+# pessimistic hold assumption that still lands inside the pad's characterised
+# slew range rather than extrapolating below it.
+set_input_transition -min 0.50 [get_ports CLK] ;# [PLACEHOLDER] no max-slew-rate spec exists in SCAS869F; on-table pessimistic hold assumption
 
 ### --- SWDCK / SWDIO : ARM Serial Wire Debug probe ---------------------------
 #
@@ -321,11 +324,11 @@ set_input_transition -min 0.50 [get_ports CLK] ;# [PLACEHOLDER] no max-slew-rate
 #
 # THE LIBRARY CANNOT REPRESENT THE REAL EDGE. Converting the 10 pF row:
 #     6 ns (20-80%) * 4/3 = 8.0 ns (10-90%)
-# The pad's input table stops at 5.0 ns, which is also the library's
-# default_max_transition. Declaring 8.0 ns would extrapolate off the top of the
-# NLDM table AND create a permanent, unfixable max_transition violation on an
-# input port -- nothing inside the chip can sharpen an externally-driven edge.
-# So the value below is CLAMPED to 5.0 ns, the largest characterised slew.
+# That is past the top of the pad's input slew table, which is also where the
+# library's default_max_transition sits. Declaring 8.0 ns would extrapolate off
+# the top of the NLDM table AND create a permanent, unfixable max_transition
+# violation on an input port -- nothing inside the chip can sharpen an
+# externally-driven edge. So the value below is CLAMPED to 5.0 ns.
 #
 # BE CLEAR ABOUT THE DIRECTION OF THE RESULTING ERROR: 5.0 ns is FASTER than the
 # probe's real ~8 ns edge, so SWD input timing here is OPTIMISTIC BY
@@ -335,10 +338,10 @@ set_input_transition -min 0.50 [get_ports CLK] ;# [PLACEHOLDER] no max-slew-rate
 # protocol budgets half a clock period, and the SWDCLK <-> EXTCLK crossings
 # already carry the multicycle paths declared above. Do NOT reuse this clamping
 # argument on a performance-critical interface.
-set_input_transition -max 5.00 [get_ports SWDCK] ;# [PLACEHOLDER] clamp. Real: Lauterbach Trf 6ns@10pF,20-80% => 8.0ns@10-90%, exceeds lib ceiling 5.0
-set_input_transition -min 0.50 [get_ports SWDCK] ;# [PLACEHOLDER] pad NLDM index_1 floor; no fast-edge bound published for any probe
+set_input_transition -max 5.00 [get_ports SWDCK] ;# [PLACEHOLDER] clamp. Real: Lauterbach Trf 6ns@10pF,20-80% => 8.0ns@10-90%, past the library max-transition ceiling
+set_input_transition -min 0.50 [get_ports SWDCK] ;# [PLACEHOLDER] on-table pessimistic hold assumption; no fast-edge bound published for any probe
 set_input_transition -max 5.00 [get_ports SWDIO] ;# [PLACEHOLDER] as SWDCK -- probe drives SWDIO on the falling SWCLK edge
-set_input_transition -min 0.50 [get_ports SWDIO] ;# [PLACEHOLDER] pad NLDM index_1 floor
+set_input_transition -min 0.50 [get_ports SWDIO] ;# [PLACEHOLDER] on-table pessimistic hold assumption
 #
 # SWDCLK_PERIOD IS 4*EXTCLK_PERIOD (line 20) = 40.0 ns = 25 MHz, confirmed in
 # the elaborated SDC: create_clock -name "swdclk" -period 40.0 [get_ports SWDCK].
@@ -364,7 +367,7 @@ set_input_transition -min 0.50 [get_ports SWDIO] ;# [PLACEHOLDER] pad NLDM index
 # gates nothing. The value exists to stop the 0 ns assumption, not to time a
 # path. If NRST ever feeds combinational logic directly, this reasoning fails.
 set_input_transition -max 5.00 [get_ports NRST] ;# [PLACEHOLDER] clamp. Real edge is RC (open-drain + 10k pull-up) = microseconds, unrepresentable
-set_input_transition -min 0.50 [get_ports NRST] ;# [PLACEHOLDER] pad NLDM index_1 floor
+set_input_transition -min 0.50 [get_ports NRST] ;# [PLACEHOLDER] on-table pessimistic hold assumption
 
 ### --- TEST / SE / HOSTIO4_P1 : generic board-level 3.3 V CMOS ---------------
 #
@@ -373,7 +376,7 @@ set_input_transition -min 0.50 [get_ports NRST] ;# [PLACEHOLDER] pad NLDM index_
 # value below is the CONVENTIONAL figure for a 3.3 V LVCMOS driver into a short
 # PCB trace: 2.0 ns at 10%-90%, equivalent to 1.5 ns at 20%-80%, i.e. ~1.3 V/ns
 # on a 3.3 V rail. That is a typical FPGA/MCU LVCMOS33 output at moderate drive.
-# It is also exactly an index_1 point in the pad table, so no interpolation.
+# It also needs no interpolation in the pad's input slew table.
 #
 # TEST and SE are STATIC configuration pins -- strapped, and never toggling in
 # mission mode -- so their slew has no timing consequence whatsoever. They are
@@ -407,8 +410,9 @@ set_case_analysis 0 [get_ports TEST]
 #
 # set_load on these ports models everything BEYOND the pad: package parasitics,
 # the PCB trace, and the input capacitance of whatever receives the signal. The
-# pad cell's own PAD-pin capacitance (1.5297 pF on PDDW04DGZ_G, 1.5928 pF on
-# PDDW16DGZ_G) is already inside the liberty model and must NOT be added here.
+# pad cell's own PAD-pin capacitance (see `pin(PAD) capacitance` for PDDW04DGZ_G
+# and PDDW16DGZ_G in the IO liberty -- figures not reproduced here, TSMC licence)
+# is already inside the liberty model and must NOT be added here.
 #
 # BUDGET [CONVENTION] -- the components, so the total can be argued with:
 #     package (wire-bond + lead/ball)                    ~1 pF
@@ -416,19 +420,19 @@ set_case_analysis 0 [get_ports TEST]
 #     far-end 3.3 V CMOS receiver input capacitance      ~4-5 pF
 #                                                    --------------
 #                                                        ~8-10 pF
-# 10 pF is the round figure and is an exact index_2 point in the pad's output
+# 10 pF is the round figure and needs no interpolation in the pad's output
 # table. Two independent corroborations that this is the right order of
 # magnitude: SCAS869F characterises its own LVCMOS output into "CL = 5 pF", and
 # the Lauterbach table above quotes probe loads of 10/22/33 pF.
 #
-# ANYTHING IS BETTER THAN THE 0 pF THIS REPLACES: 0 pF is below the 5 pF floor
-# of every output NLDM table in the IO library, so it was extrapolation.
+# ANYTHING IS BETTER THAN THE 0 pF THIS REPLACES: 0 pF is below the non-zero
+# floor of every output NLDM table in the IO library, so it was extrapolation.
 set_load 10 [get_ports {HOSTIO4_P1[*]}] ;# [CONVENTION] package ~1pF + short trace ~2-4pF + CMOS receiver ~4-5pF
 #
 # SWDIO carries more: a debug connector, then a ribbon cable to the probe. The
 # Lauterbach table characterises Trf at 10/22/33 pF, which is a direct statement
 # of the load range that probe expects to see. 20 pF sits in that range and
-# between index_2 points 10 and 25 pF, so it interpolates cleanly.
+# between two characterised load points, so it interpolates cleanly.
 set_load 20 [get_ports SWDIO] ;# [CONVENTION] debug connector + ribbon cable to probe; Lauterbach characterises Trf over 10-33 pF
 
 #### DESIGN RULE CHECKS #######################################################
@@ -459,10 +463,11 @@ set_load 20 [get_ports SWDIO] ;# [CONVENTION] debug connector + ribbon cable to 
 # max_cap violations with NO set_load declared at all.
 #
 # WHAT REPLACES IT, AND WHY 100 pF IS NOT "GIVING UP".
-# 100 pF is not arbitrary and it is not slack: it is the largest
-# total_output_net_capacitance any IO driver in tphn65lpgv2od3 is CHARACTERISED
-# for (index_2 of CORE_SLEW2IO_LOAD_{04,08,12,16}_5x6 = 5, 10, 25, 40, 70, 100).
-# Beyond 100 pF the NLDM tables extrapolate and the reported delay stops meaning
+# 100 pF is not arbitrary and it is not slack: it is set at the top of the
+# total_output_net_capacitance range the IO drivers are CHARACTERISED for.
+# (Liberty table names and load-axis points redacted -- vendor characterisation
+# data, TSMC licence forbids reproduction; read them in tphn65lpgv2od3_sl*.lib.)
+# Beyond that range the NLDM tables extrapolate and the reported delay stops meaning
 # anything -- which is exactly the condition a design rule SHOULD trap. Note
 # also that the IO liberty declares NO max_capacitance on any pin (zero
 # occurrences in the file), so this SDC line is the ONLY capacitance guard on

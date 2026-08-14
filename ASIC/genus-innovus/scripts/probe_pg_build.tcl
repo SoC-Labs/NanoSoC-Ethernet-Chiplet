@@ -178,8 +178,10 @@ pgstep checks {
 }
 
 # Probe the geometry of the 0.155-gap M4 family specifically: which of the two
-# shapes is the >=0.400 one that puts the pair over the M4 SPACINGTABLE cliff
-# (WIDTH 0.400 row x PRL >=0.400 column -> 0.160 required).
+# shapes is the wider one that pushes the pair into a higher M4 SPACINGTABLE
+# band, where the required spacing exceeds the 0.155 gap we measured.
+# (Vendor SPACINGTABLE width/PRL/spacing values redacted — TSMC licence forbids
+# reproduction. Source: the tech LEF, `LAYER M4`.)
 proc probe155 {} {
     global R TAG
     set f $R/rb_${TAG}_drc.rep

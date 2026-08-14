@@ -356,8 +356,10 @@ ring outer edge  =  core_edge + 30
 clearance        =  PAD70NU_inboard_edge - ring_outer_edge
 ```
 
-with `PAD70NU` inboard at **171 / 1429 / 171 / 1829** (L/R/B/T). Require clearance **≥ 2 µm** (the M9
-`SPACING`, which is the binding rule; M8 needs only 1.5). At `CORE_TO_IO=70` this gives 4.00 µm.
+with `PAD70NU` inboard at **171 / 1429 / 171 / 1829** (L/R/B/T). Require the clearance to meet the
+M9 `SPACING` rule, which is the binding one here — M8's requirement is looser. Read the value from
+`LAYER M9` in the tech LEF; it is not reproduced here, TSMC licence forbids it. At `CORE_TO_IO=70`
+the clearance is 4.00 µm, which clears the rule with room to spare.
 If you ever change the ring width, offset or spacing, redo this — see
 [04-power-plan §3](04-power-plan.md#3-core-rings).
 

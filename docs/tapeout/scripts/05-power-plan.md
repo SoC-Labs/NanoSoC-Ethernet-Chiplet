@@ -197,7 +197,7 @@ produce others (Stylus UG — Power Planning and Routing, `UGcom/Power_Planning_
 | every crossover | VIAGEN engine, invoked *by* those three commands | special vias |
 
 **The IO supplies are outside all of this, and the LEF explains why.** In
-`local_overrides/tphn65lpgv2od3_sl_9lm.lef`, `PVDD2DGZ_G` / `PVDD2POC_G` / `PVSS2DGZ_G` expose their
+`generated/tphn65lpgv2od3_sl_9lm.patched.lef`, `PVDD2DGZ_G` / `PVDD2POC_G` / `PVSS2DGZ_G` expose their
 supply pin as a **single M3–M7 plate that is narrower than the cell it sits in**, and every
 `PFILLER*_G` spacer is `CLASS PAD SPACER` with **no pins at all** — only a full-cell M1–M7 `OBS`.
 So abutting pads leave a **3 µm gap in the pin geometry** (the shortfall between plate width and
@@ -378,7 +378,7 @@ command after creating power rings and power stripes." (Legacy-UI name: `sroute`
 |---|---|---|
 | `-connect {pad_pin pad_ring}` | "Connects the specified objects to rings and stripes." | two jobs: bring each supply pad's core-side pin in to the ring (`pad_pin`, → IOWIRE), and stitch pad to pad along the row (`pad_ring`, → PADRING) |
 | `-nets { VDD }` | "the names of the nets to connect… Default: … all power and ground nets in the design" | one net per pass, because `-pad_pin_width` differs per net — see below |
-| `-pad_pin_width 1.63` / `1.5` | "**Routes only pad pins that have the specified width.** If no width is specified, the software automatically calculates the width… It is usually not necessary to specify a pin width." | **these are the real LEF numbers** — each is the finger width of the corresponding pad's supply pin, read out of the IO LEF (`PVDD1DGZ_G` `PIN VDD` and `PVSS1DGZ_G` `PIN VSS` present different numbers of M1/M2 fingers at different widths; the geometry is not reproduced here, TSMC licence). The two widths differ, which is the *only* reason the two passes are split |
+| `-pad_pin_width 1.63` / `1.5` | "**Routes only pad pins that have the specified width.** If no width is specified, the software automatically calculates the width… It is usually not necessary to specify a pin width." | each value must match the finger width of the corresponding pad's supply pin — `PVDD1DGZ_G` `PIN VDD` and `PVSS1DGZ_G` `PIN VSS` present different numbers of M1/M2 fingers at different widths. Read both out of the IO LEF; the geometry is not reproduced here, TSMC licence forbids it. The two widths differ, which is the *only* reason the two passes are split |
 | `-pad_pin_target nearest_target` | "Extends the pad pin to the nearest legal target." Default is already `nearest_target`. | the nearest legal target is the core ring 2 µm off the core edge |
 | `-pad_pin_port_connect {all_port all_geom}` | `all_port`: "Routes to all ports." `all_geom`: "Routes to only one port of a pad pin if multiple ports are defined in the LEF file." | the two supply pads have three ports each (M1 fingers, M2 fingers, M3–M7 plate). The manual's wording for these two enums is internally inconsistent — see §8 |
 | `-allow_layer_change 1` | "Allows connections to targets on different layers." | mandatory: the pad pin is M1/M2, the ring is M8/M9 |
@@ -489,9 +489,10 @@ full account with log line numbers and the surviving-artefact caveats is
 Identical to L94 except `-layer M9`, `-direction horizontal`, `-spacing 3.05`.
 
 **`-spacing 3.05`, in one line:** M9 has no `SPACINGTABLE`, only a flat `SPACING` rule and a
-`MINENCLOSEDAREA` rule. A 1.2 µm gap between two 3.6 µm stripes violates both; 3.05 is the square
-root of the enclosed-area limit Innovus quotes back in `IMPPP-193`, so it clears the area rule and
-the spacing rule together. At a 60 µm pitch the extra 1.85 µm is absorbed without dropping a set.
+`MINENCLOSEDAREA` rule. A 1.2 µm gap between two 3.6 µm stripes violates both; 3.05 is the figure
+Innovus recommends in `IMPPP-193`, and it clears the area rule and the spacing rule together.
+(The rule values, and the formula the tool uses to derive its recommendation, are redacted — TSMC
+licence forbids reproduction.) At a 60 µm pitch the extra 1.85 µm is absorbed without dropping a set.
 
 **`-start_from left` on a horizontal set is not a documented combination.** The Stylus TCR is
 explicit: "For horizontal stripes: `bottom` indicates that stripes should be generated from bottom
@@ -615,7 +616,7 @@ Whether the command inserted anything at all is testable in one line and has nev
 **L166 — second pad pass, both nets, `-pad_pin_width 6`.** Everything is as §3.4 except the width.
 Per the manual, `-pad_pin_width` "Routes only pad pins that have the specified width." **No PG pad
 pin in the IO LEF is 6 µm on any dimension.** Enumerate every `PIN VDD|VSS|VDDPST|VSSPST` `RECT`
-in `local_overrides/tphn65lpgv2od3_sl_9lm.lef` and collect the distinct widths and heights: there
+in `generated/tphn65lpgv2od3_sl_9lm.patched.lef` and collect the distinct widths and heights: there
 are thirteen of them, they run from well under 2 µm up to the tens of microns, and **6 is not one
 of them** — nor is any value that rounds to it.
 
@@ -726,11 +727,20 @@ Note that NRDB-51's suggested remedies (`convertSNetToNet`, `ecoRoute` on select
 
 ### 4.3 The remedy, at command level
 
-The fix is not in `power_plan.tcl`. `config.tcl:160` points the LEF list at a local copy:
+The fix is not in `power_plan.tcl`. `config.tcl` points the LEF list at a patched copy:
 
 ```tcl
-set IO_PAD_DRIVER_LEF $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef
+set IO_PAD_DRIVER_LEF $::design_home/ASIC/tech_wrappers/tsmc65/generated/tphn65lpgv2od3_sl_9lm.patched.lef
 ```
+
+That copy is generated at build time from the read-only PDK by
+`ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py` (`make -C ASIC -f common.mk pad-lef`), not
+committed. It was formerly a committed copy under `ASIC/tech_wrappers/tsmc65/local_overrides/`,
+which is what older revisions of this document and the `config.tcl:160` line number above refer to;
+the change landed in `bf619f1`. The three-line delta itself is unchanged, and is scheduled to be
+retired in favour of reading the unmodified vendor LEF — see
+[29-private-tsmc-tech-repo](../29-private-tsmc-tech-repo.md) §2a for what is and is not yet in
+place.
 
 The override is **three added lines and nothing else** — verified by diffing it against the PDK
 original at
@@ -953,9 +963,9 @@ but every link is a hard number:
 | What | Depends on | Breaks how |
 |---|---|---|
 | `-layer {top M9 bottom M9 left M8 right M8}` (L55) | M9 `DIRECTION HORIZONTAL`, M8 `DIRECTION VERTICAL` | on a stack with different top-layer directions, the rings land in non-preferred direction |
-| `-width … 12` (L55) | the `MAXWIDTH` limit on **both** M8 and M9, which is exactly 12 | on a stack whose top metals allow more (or less), 12 is either wasteful or illegal. It is currently at the ceiling |
+| `-width … 12` (L55) | the `MAXWIDTH` limit on **both** M8 and M9 | on a stack whose top metals allow more (or less), 12 is either wasteful or illegal. Re-read `MAXWIDTH` for the new stack before changing it — the value is not reproduced here, TSMC licence |
 | `-spacing 1.2` on M8 (L94) | M8's `SPACINGTABLE` requirement at a 3.6 µm wire, which 1.2 clears | a stack with a stricter table turns this into the M9 defect |
-| `-spacing 3.05` on M9 (L132) | M9's flat `SPACING` **and** `MINENCLOSEDAREA` rules (3.05 is the square root of the latter) | recompute from the new layer's `MINENCLOSEDAREA`; the tool will tell you the number in `IMPPP-193` |
+| `-spacing 3.05` on M9 (L132) | M9's flat `SPACING` **and** `MINENCLOSEDAREA` rules | recompute for the new layer; the tool will tell you the number in `IMPPP-193` |
 | `-width 3.6` (L94, L132) | the `MINIMUMCUT` width threshold on M8/M9, which 3.6 is above | drop below that threshold and the 2-cut requirement lapses; the via arrays change character |
 | `-layer M5` (L159) | M5 `DIRECTION HORIZONTAL` and the macros' M4 PG pins | the macro-feed layer must be orthogonal to the macro pin layer, or you get the `IMPPP-532` class of failure that [15-pg-opens-analysis H4](../15-pg-opens-analysis.md) already sees between M8 and M4 |
 | `AP(10)`, `-*_layer_limit AP` | AP being routing layer **10** | a stack with a different layer count renumbers everything. Prefer the LEF names over `name(number)` |

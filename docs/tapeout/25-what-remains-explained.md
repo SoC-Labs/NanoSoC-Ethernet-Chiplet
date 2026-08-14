@@ -14,17 +14,22 @@ RTL, simulation and FPGA flows, and no Innovus physical-design jargon.
    conflated the *opens/dangling* counts (which ARE core VDD/VSS) with the
    *unrouted* count (which is the IO supplies).
 
-2. "Metal density 35,685 -> 0" is true but measured against a **1% minimum in a
-   20x20um window**, which is not the foundry's rule. The tech LEF gives each of
-   M1-M8 THREE density specs and Innovus used the last one parsed. For M4:
+2. "Metal density 35,685 -> 0" is true but measured against a **far weaker minimum,
+   in a much smaller window**, than the foundry's own rule. The tech LEF gives each
+   of M1-M8 THREE density specs, and Innovus used the LAST one parsed rather than
+   the foundry sign-off spec. For M4 the shape is:
 
-       MINIMUMDENSITY 10 ; MAXIMUMDENSITY 100 ; DENSITYCHECKWINDOW 75 75 ;  <- foundry
-       MINIMUMDENSITY  1 ; MAXIMUMDENSITY  80 ; DENSITYCHECKWINDOW 100 100 ;
-       MINIMUMDENSITY  1 ; MAXIMUMDENSITY  90 ; DENSITYCHECKWINDOW 20 20 ;  <- used
+       MINIMUMDENSITY <min> ; MAXIMUMDENSITY <max> ; DENSITYCHECKWINDOW <w> <w> ;  <- foundry
+       MINIMUMDENSITY <min> ; MAXIMUMDENSITY <max> ; DENSITYCHECKWINDOW <w> <w> ;
+       MINIMUMDENSITY <min> ; MAXIMUMDENSITY <max> ; DENSITYCHECKWINDOW <w> <w> ;  <- used
+
+   > Vendor tech-LEF density values redacted — TSMC licence forbids reproduction.
+   > Source: `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`, the `LAYER` blocks for M1–M8.
+   > The first spec in each block is the foundry one; read all three there.
 
    Fill genuinely worked (every layer now 33-44% mean, up from 12-33%), but the
    pass/fail claim is against the wrong threshold. Re-run `check_metal_density`
-   with 75x75 and the real minima before quoting it.
+   against the FIRST spec's window and minimum before quoting it.
 
 3. `route_gate.txt` prints "metal density fill (EVR_METAL_FILL, off)" even when
    fill DID run. That line is hardcoded at `4b_pnr_route_eval.tcl:1702`. Stale.

@@ -170,17 +170,29 @@ stayed empty, so the router treated the IO supplies as **ordinary signal nets** 
 around the periphery straight into the bond-pad M8/M9 blockages. Every `VDDIO`/`VSSIO` DRC record was
 a "Regular Wire"; `VDD`/`VSS` had none. **76 violations.**
 
-The fix is a **local override** of the IO driver LEF, wired up in
+The fix is a **patched copy** of the IO driver LEF, wired up in
 [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl):
 
 ```tcl
-set IO_PAD_DRIVER_LEF $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef
+set IO_PAD_DRIVER_LEF $::design_home/ASIC/tech_wrappers/tsmc65/generated/tphn65lpgv2od3_sl_9lm.patched.lef
 ```
 
-Copied from the PDK with `USE POWER ;` / `USE GROUND ;` inserted after `DIRECTION` on exactly those
-three pins — **three added lines, nothing else**. The shared PDK under `/tsmc65pdk` is read-only and is
-not modified; `diff` against the source shows only the three additions. Re-copy and re-apply if the PDK
-revs.
+`USE POWER ;` / `USE GROUND ;` are inserted after `DIRECTION` on exactly those three pins —
+**three added lines, nothing else**. The shared PDK under `/tsmc65pdk` is read-only and is not
+modified.
+
+The patched file is a **build product, not a committed file**: `patch_pad_lef.py` reads the vendor
+LEF from `$TSMC_65_HOME` and writes the path above, and `make -C ASIC -f common.mk pad-lef` produces
+it. This repository is public and the vendor LEF may not be reproduced in it, so what is committed is
+the transform rather than the result — a PDK rev is handled by re-running the target, not by
+re-copying. Earlier revisions of this document showed this line reading from a committed copy under
+`ASIC/tech_wrappers/tsmc65/local_overrides/`; that has not been the live path since `bf619f1`.
+
+> **This mechanism is scheduled to be retired.** The intended end state is that the flow reads the
+> **unmodified vendor LEF** and the pin classification is achieved without patching it. That
+> replacement is still being measured and **is not yet in place** — what is described above is what
+> the flow does today. See
+> [29-private-tsmc-tech-repo](29-private-tsmc-tech-repo.md) §2a.
 
 ---
 
@@ -212,8 +224,9 @@ not honour the `PAD70NU` `OBS`, so the clearance has to come from the floorplan 
 entire reason `CORE_TO_IO` is 70 rather than 50 — the full analysis lives in
 [03-floorplan §2](03-floorplan.md#2-why-the-margin-is-70-and-not-50-the-staggered-bond-ring).
 
-> **Do not widen the rings.** Both M8's and M9's `MAXWIDTH` limit is exactly the 12 µm used here. Any
-> increase is illegal by construction. Any change to `-width`, `-spacing` or `-offset` also moves the
+> **Do not widen the rings.** The 12 µm ring width was chosen against M8's and M9's `MAXWIDTH`
+> limit and there is no room above it — read that rule in the tech LEF before touching `-width`
+> (value not reproduced here, TSMC licence). Any change to `-width`, `-spacing` or `-offset` also moves the
 > ring outer edge and must be re-checked against the `PAD70NU` inboard edge at 171 / 1429 / 171 / 1829.
 
 Immediately after the rings, two `route_special -connect {pad_pin pad_ring}` passes bring `VDD` and
@@ -265,15 +278,17 @@ so at the time — these warnings are in `baseline_2026-08-05/logs/pnr_stages.lo
 
 ```
 **WARN: (IMPPP-136): The currently specified spacing 1.200000 in -spacing option is less than
-                     the required spacing 2.000000 for widths specified as 3.600000 and 3.600000.
+                     the required spacing <redacted> for widths specified as 3.600000 and 3.600000.
 **WARN: (IMPPP-193): ... might create min enclosed area violation. The required min enclosed area
-                     for layer M9 is 9.000000. If violation happens, increase the spacing to around
-                     3.050000. The recommended spacing is the square root of min enclosure area.
+                     for layer M9 is <redacted>. If violation happens, increase the spacing to around
+                     3.050000. <recommended-spacing formula redacted>
 ```
 
 The cost was **44 SPACING violations, each a full-core-width strip exactly 1.200 µm tall** — literally
-the specified gap, handed back as a DRC. `3.05` clears both the `SPACING 2` rule and the
-`MINENCLOSEDAREA 9` rule (3.05 ≈ √9, which is where the tool's own recommendation comes from).
+the specified gap, handed back as a DRC. `3.05` clears both M9's flat `SPACING` rule and its
+`MINENCLOSEDAREA` rule at once, and it is the figure Innovus itself recommends in `IMPPP-193`.
+Rule values and the tool's recommendation formula are redacted above — TSMC licence forbids
+reproduction; re-read `LAYER M9` in the tech LEF.
 
 Because `-set_to_set_distance` is 60 µm, the extra 1.85 µm is absorbed within the pitch and **no
 stripes are dropped**.

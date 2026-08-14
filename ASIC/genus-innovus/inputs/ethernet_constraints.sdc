@@ -87,7 +87,7 @@ set_output_delay -max  8.0 -clock [get_clocks rmii_ref_clk] [get_ports {RMII_TXD
 # SOURCES — every number below traces to one of these, cited inline:
 #   [DS]    Microchip LAN8720A/LAN8720Ai datasheet, DS00002165B (2016)
 #   [RMII]  RMII Consortium, "RMII Specification" Rev 1.2, 20-Mar-1998
-#   [LIB]   tphn65lpgv2od3_slwc.lib (TSMC 65LP staggered IO, WC, nom_voltage 3)
+#   [LIB]   tphn65lpgv2od3_slwc.lib (TSMC 65LP staggered IO, worst-case corner)
 #   [BOARD] docs/KR260_BOARD_WIRING.md sec 3 "LAN8720 RMII PHY (milestone M2)"
 # CONFIDENCE CLASS is marked on every value: (a) published datasheet/standard
 # number, (b) engineering estimate DERIVED from datasheet facts, (c) labelled
@@ -128,18 +128,23 @@ set_output_delay -max  8.0 -clock [get_clocks rmii_ref_clk] [get_ports {RMII_TXD
 #
 # THRESHOLD CONVERSION — mandatory; the two documents do not measure the same
 # thing and using [RMII]'s number raw would be wrong by 2x.
-#   [RMII] window = 2.0 - 0.8            = 1.2 V
-#   [LIB]  window = 10%-90% of 3.0 V     = 2.4 V
-#     (slew_lower_threshold_pct_rise 10.00 / slew_upper_threshold_pct_rise
-#      90.00 / nom_voltage 3 — all read out of the .lib header, not assumed)
-#   ratio 2.4/1.2 = 2.0x  =>  the RMII-legal 1-5 ns band is 2.0-10.0 ns in the
+#   [RMII] window = 2.0 - 0.8            = 1.2 V   (public RMII spec)
+#   [LIB]  window = the .lib header's own slew-threshold percentages applied to
+#          its nominal supply — read out of the header, not assumed, and wider
+#          than the [RMII] window by exactly 2.0x
+#     (threshold percentages and nom_voltage redacted — vendor .lib header,
+#      TSMC licence forbids reproduction. Read them in tphn65lpgv2od3_sl*.lib.)
+#   ratio 2.0x  =>  the RMII-legal 1-5 ns band is 2.0-10.0 ns in the
 #   units this SDC is written in.
 #
-# ...but [LIB] CANNOT EVALUATE the top of that band. The pad-input slew axis
-# (tphn65lpgv2od3_sl_CHAR_LIB_TABLE_IO_SLEW2CORE_LOAD_5x6) is
-# index_1 = 0.5, 1.0, 2.0, 3.0, 5.0 ns, and default_max_transition is 5.0. A
-# worst-case-legal RMII edge (10.0 ns here) sits 2x past the last characterised
-# point — pure extrapolation, i.e. a fabricated delay. The values below are
+# ...but [LIB] CANNOT EVALUATE the top of that band. The pad-input slew axis is
+# characterised over a handful of nanosecond-range points and the library
+# declares a default_max_transition at its top end; a worst-case-legal RMII edge
+# (10.0 ns here) sits past that last characterised point — pure extrapolation,
+# i.e. a fabricated delay.
+# (Liberty table name, slew-axis points and default_max_transition redacted —
+# vendor characterisation data, TSMC licence forbids reproduction. Source:
+# tphn65lpgv2od3_sl*.lib.) The values below are
 # therefore the REALISTIC-LOAD case, with the worst case recorded as a trigger.
 #
 # Realistic case, derived from [DS] numbers (class (b), derivation shown so it
@@ -152,12 +157,12 @@ set_output_delay -max  8.0 -clock [get_clocks rmii_ref_clk] [get_ports {RMII_TXD
 # next to the 10.0 ns [RMII] ceiling — two independent documents agreeing is why
 # 25 pF is the standard's design load. This uses the GUARANTEED DC current, so
 # it is the slow bound; real transient drive is 2-3x higher and the true edge
-# correspondingly faster. 3.0 ns is also an exact [LIB] index point.
+# correspondingly faster. 3.0 ns also needs no interpolation in [LIB].
 set_input_transition -max 3.0 [get_ports {RMII_REF_CLK RMII_RXD[*] RMII_CRS_DV}] ; # (b) VO8 @8mA into 10pF, 10-90% @3.0V; = 1.5ns in [RMII] 0.8-2.0V terms, inside the 1-5ns band
 # Hold direction: a FASTER input edge crosses the 50% input threshold sooner and
 # so arrives earlier — the pessimistic direction for hold. 1.0 ns is 2x faster
 # than any RMII-legal driver ([RMII] floor of 1 ns converts to 2.0 ns here), and
-# is a [LIB] index point. Deliberate pessimism: the header note above records
+# needs no [LIB] interpolation. Deliberate pessimism: the header note above records
 # that when the `clk` hold source-latency bug was fixed, the design's worst hold
 # path RELOCATED INTO rmii_ref_clk. That domain should not be flattered.
 set_input_transition -min 1.0 [get_ports {RMII_REF_CLK RMII_RXD[*] RMII_CRS_DV}] ; # (b) faster than RMII-legal on purpose = pessimistic for hold
@@ -185,18 +190,19 @@ set_input_transition -min 1.0 [get_ports {RMII_REF_CLK RMII_RXD[*] RMII_CRS_DV}]
 # [DS] independently adopts the same figure for its own output specs: sec 5.5.1
 # EQUIVALENT TEST LOAD, "Output timing specifications assume a 25pF equivalent
 # test load" (Figure 5-1). So 25 pF is the DESIGN LOAD OF THE STANDARD, not a
-# round number someone liked — and it is an exact [LIB] output-load index point
-# (index_2 = 5, 10, 25, 40, 70, 100 pF on
-# tphn65lpgv2od3_sl_CHAR_LIB_TABLE_*_SLEW2IO_LOAD_*), so no extrapolation.
+# round number someone liked — and it also lands on a characterised point of
+# [LIB]'s output-load axis, so no extrapolation. (Liberty table names and
+# load-axis points redacted — vendor characterisation data, TSMC licence forbids
+# reproduction. Read them in tphn65lpgv2od3_sl*.lib.)
 # Decomposition for the record: 2 pF PHY VIS CIN (a) + ~1 pF package/bondwire
 # (b — no package model exists in this repo yet) + the balance as the
 # [RMII]-mandated trace headroom.
 # These four pins are driven by PDDW16DGZ_G (16 mA) in
 # ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v — already the strongest
 # driver in the ring. 25 pF is the load that choice was presumably made for.
-set_load -max 25.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (a) [RMII] 7.4.1 AC Load = 25pF; == [DS] 5.5.1 test load; exact [LIB] index point
+set_load -max 25.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (a) [RMII] 7.4.1 AC Load = 25pF; == [DS] 5.5.1 test load; needs no [LIB] interpolation
 # Hold uses the LIGHT load: least output delay, earliest arrival, worst hold at
-# the PHY. 5 pF = 2 pF CIN (a) + package + a short trace (b); bottom [LIB] point.
+# the PHY. 5 pF = 2 pF CIN (a) + package + a short trace (b); low end of [LIB].
 set_load -min  5.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (b) light-load case for hold; 2pF CIN + package + short trace
 
 # --- RMII_MDIO is bidirectional, and its INPUT edge is RC-LIMITED ------------
@@ -208,7 +214,7 @@ set_load -min  5.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (
 # external pull-up resistor, so it is an RC ramp, not a buffer edge —
 #     t(10-90%) ~ 2.2*R*C :  1.5 kohm into 25 pF ~  82 ns
 #                            10  kohm into 25 pF ~ 550 ns
-# one to two ORDERS OF MAGNITUDE outside [LIB]'s 5.0 ns ceiling. There is no
+# one to two ORDERS OF MAGNITUDE outside [LIB]'s max-transition ceiling. There is no
 # honest set_input_transition for this pin. The value below is a CLAMP at the
 # library maximum and is class (c) PLACEHOLDER — it is NOT the real edge and
 # must not be quoted as one. It is stated only because it is strictly less wrong
@@ -216,7 +222,7 @@ set_load -min  5.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (
 # declare the SMI boundary asynchronous; this file does not currently do that.
 # (docs/PIN_MAP.md sec 5d already notes mdio "Typically needs external pull-up" —
 # no pull-up value is fixed anywhere in this repo, hence the range above.)
-set_input_transition -max 5.0 [get_ports RMII_MDIO] ; # (c) PLACEHOLDER clamped at [LIB] default_max_transition 5.0; true rising edge is RC, ~82-550ns
+set_input_transition -max 5.0 [get_ports RMII_MDIO] ; # (c) PLACEHOLDER clamped at the library max-transition ceiling; true rising edge is RC, ~82-550ns
 set_input_transition -min 1.0 [get_ports RMII_MDIO] ; # (b) the FALLING edge really is buffer-driven (VOD8 sinks 8mA); pessimistic-for-hold
 
 # --- CONSISTENCY CHECK of the EXISTING input/output delays (FLAGGED, NOT ------

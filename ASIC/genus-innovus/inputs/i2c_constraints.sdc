@@ -67,9 +67,10 @@
 #   ~/SoCLabs/NanoSoC-Compute-Chiplet/ASIC/chiplet-pads/tech_wrappers/tsmc65/
 #   nanosoc_compute_chiplet_pads.v:327-330
 #     PDUW08DGZ_G uPAD_SCL0 / uPAD_SDA0 / uPAD_SCL1 / uPAD_SDA1   (8 mA)
-# so the far-end pin capacitance is a vendor number rather than an estimate:
-# 1.5509 pF [SPEC, PDUW08DGZ_G pin(PAD) capacitance]. Ours is 1.5928 pF
-# [SPEC, PDUW16DGZ_G]. No board I2C peripheral is documented anywhere — see
+# so the far-end pin capacitance is a vendor number rather than an estimate --
+# read `pin(PAD) capacitance` for PDUW08DGZ_G (theirs) and PDUW16DGZ_G (ours) out
+# of the IO liberty; the two are within a few percent of each other. The figures
+# are not reproduced here -- TSMC licence forbids it. No board I2C peripheral is documented anywhere — see
 # WARNING 4 for the pull-up resistors, which nobody has specified.
 #
 # BUS SPEED: STANDARD-MODE, 100 kHz. Not assumed — computed from the RTL:
@@ -86,10 +87,10 @@
 # therefore the mode to constrain against, and every [SPEC] number below is
 # taken from the Standard-mode column of UM10204 Table 10.
 #
-# IO RAIL: 3.0 V. [SPEC] tphn65lpgv2od3_slwc.lib:44,57 — power_rail
-# (IO_VOLTAGE, 3), operating_conditions "WCCOM" voltage 3. (The library lives
-# under an .../IO2.5V/... path; the path is not the rail. The .lib is
-# authoritative and says 3.)
+# IO RAIL: 3.0 V. Confirmed against the IO liberty's own `power_rail` and
+# worst-case `operating_conditions` entries -- read them there rather than
+# trusting the path, because the library lives under an .../IO2.5V/... directory
+# and the path is NOT the rail. The .lib is authoritative.
 
 
 #=============================================================================
@@ -121,10 +122,11 @@
 #   tHIGH min (Standard-mode)             = 4.0 us  [SPEC, Table 10]
 #   tSU;DAT min (Standard-mode)           = 250 ns  [SPEC, Table 10]
 # Against that, the whole pad round trip is single-digit nanoseconds: the
-# PDUW16DGZ_G I->PAD arc is 2.5-5.8 ns across its entire characterised load
-# range [SPEC, .lib cell_rise/cell_fall tables]. The tightest published
-# requirement on this bus, tSU;DAT at 250 ns, has ~50x margin to that; tLOW has
-# ~1000x. There is no physical implementation of this pad path that fails a
+# PDUW16DGZ_G I->PAD arc stays in the single-digit nanoseconds across its ENTIRE
+# characterised load range (delay figures not reproduced -- vendor .lib
+# cell_rise/cell_fall tables, TSMC licence forbids it). The tightest published
+# requirement on this bus, tSU;DAT at 250 ns, has orders of magnitude of margin
+# to that; tLOW has more still. There is no physical implementation of this pad path that fails a
 # 100 kHz I2C timing requirement, and no placement or routing decision that a
 # timing constraint could usefully steer.
 #
@@ -154,11 +156,14 @@
 # THE VALUE CONSTRAINED IS 100 pF, AND THAT IS A DELIBERATE COMPROMISE BETWEEN
 # TWO CEILINGS THAT ARE NOT THE SPEC. Both are hard limits of our own flow:
 #
-#   (a) THE LIBRARY. The PDUW16DGZ_G output tables run to 100 pF
-#       (.lib CHAR_LIB_TABLE_CORE_SLEW2IO_LOAD_16_5x6, index_2 max 100.0000).
-#       At 400 pF the tool extrapolates 4x off the end of the NLDM table; at
-#       100 pF it reads an exact characterised index point, no interpolation
-#       and no extrapolation.
+#   (a) THE LIBRARY. The PDUW16DGZ_G output tables are characterised over a
+#       load range whose top end is far below the 400 pF spec limit, and 100 pF
+#       lands on a characterised index point near that top end. At 400 pF the
+#       tool extrapolates well off the end of the NLDM table; at 100 pF it does
+#       no interpolation and no extrapolation at all.
+#       (Liberty table name and load-axis endpoints redacted — vendor
+#       characterisation data, TSMC licence forbids reproduction. Source:
+#       tphn65lpgv2od3_sl*.lib.)
 #
 #   (b) THE DESIGN-WIDE DRV RULE. constraints.sdc declares
 #       `set_max_capacitance 100 [all_outputs]` AFTER the source lines, and
@@ -181,9 +186,10 @@
 # about whether this pin works — it only stops the flow reporting a violation
 # against its own extrapolated arithmetic. See WARNING 8.
 #
-# For scale, the load actually built is far below either number: our pad
-# (1.5928 pF) + the compute chiplet's pad (1.5509 pF) + a few pF of substrate
-# routing = well under 10 pF [DERIVED / BUDGET]. 100 pF remains ~10x
+# For scale, the load actually built is far below either number: our pad's PAD
+# capacitance + the compute chiplet's pad + a few pF of substrate routing = well
+# under 10 pF [DERIVED / BUDGET] (the two pad figures are vendor .lib values and
+# are not reproduced here -- TSMC licence). 100 pF remains ~10x
 # pessimistic against the real chiplet-to-chiplet interposer.
 set_load 100 [get_ports I2C_SCL]
 set_load 100 [get_ports I2C_SDA]
@@ -196,9 +202,9 @@ set_load 100 [get_ports I2C_SDA]
 # [SPEC, UM10204 Table 10, symbol tf].
 #
 # THIS LINE EXISTS TO PREVENT A FALSE DRV FAILURE, AND IT IS STILL NEEDED AFTER
-# THE LOAD WAS REDUCED TO 100 pF. The library's default_max_transition is 5.0 ns
-# (.lib:424). At the 100 pF load set above the pad's fall_transition is 6.2 ns
-# [SPEC, .lib] — already over that default, so without this line signoff would
+# THE LOAD WAS REDUCED TO 100 pF. At the 100 pF load set above, the pad's
+# characterised fall_transition already EXCEEDS the library's own
+# default_max_transition, so without this line signoff would
 # report a max_transition violation. It would be a violation nobody can fix, a
 # pad cell cannot be upsized, and it is not real: I2C permits 300 ns.
 # Constraining the port to the actual protocol requirement replaces an
@@ -248,20 +254,20 @@ set_max_transition 300 [get_ports I2C_SDA]
 # and the spec's own ceiling is tr max = 1000 ns for Standard-mode
 # [SPEC, UM10204 Table 10, symbol tr].
 #
-# NOW THE LIBRARY. The input_net_transition axis of tphn65lpgv2od3_slwc.lib
-# ends at 5.0 ns:
-#     index_1( "0.5000, 1.0000, 2.0000, 3.0000, 5.0000" )    [SPEC, .lib]
-# A conforming Standard-mode rising edge is up to 1000 ns. That is 200x beyond
-# the last characterised point, and a real 10 kohm/400 pF edge at 3.39 us is
-# ~680x beyond it — two to three ORDERS OF MAGNITUDE outside anything this
-# .lib can represent. There is no value of set_input_transition that
+# NOW THE LIBRARY. The input_net_transition axis of tphn65lpgv2od3_slwc.lib is
+# characterised over a handful of points, all in the nanosecond range:
+#     index_1( <characterised points redacted — vendor .lib, TSMC licence
+#               forbids reproduction; read them in the library> )
+# A conforming Standard-mode rising edge is up to 1000 ns, and a real
+# 10 kohm/400 pF edge reaches 3.39 us — two to three ORDERS OF MAGNITUDE beyond
+# the last characterised point, i.e. outside anything this .lib can represent. There is no value of set_input_transition that
 # characterises an I2C rising edge, because the NLDM model has no room for one.
 # Anything past 5.0 ns is pure extrapolation of a table into a region where its
 # curve fit means nothing.
 #
-# SO THE VALUE BELOW IS A CLAMP, NOT A MEASUREMENT. 5.0 ns is chosen because it
-# is exactly the library's last characterised index point — the slowest edge the
-# model can describe without inventing data. It is knowingly ~200x optimistic
+# SO THE VALUE BELOW IS A CLAMP, NOT A MEASUREMENT. It is set at the top of the
+# library's characterised slew range — the slowest edge the model can describe
+# without inventing data. It is knowingly two-plus orders of magnitude optimistic
 # against the spec's tr. It is NOT presented as the real edge rate.
 #
 # WHY A CLAMP IS STILL BETTER THAN THE ZERO THAT WAS HERE:
@@ -289,8 +295,8 @@ set_max_transition 300 [get_ports I2C_SDA]
 # not split with -rise/-fall: doing so would add syntax without adding
 # information.
 #
-# The -min figure is the library's FIRST index point, 0.5 ns [CLAMP], for the
-# same on-table reason. No I2C edge is ever this fast; it is a floor for the
+# The -min figure sits at the bottom of the library's characterised slew range
+# [CLAMP], for the same on-table reason. No I2C edge is ever this fast; it is a floor for the
 # fast-corner hold calculation, and it too is nullified by the false paths.
 set_input_transition -max 5.0 [get_ports I2C_SCL]
 set_input_transition -max 5.0 [get_ports I2C_SDA]
@@ -334,10 +340,12 @@ set_false_path -to   [get_ports I2C_SDA]
 #    IMPORTANT LINE IN THIS FILE.
 #
 #    PDUW16DGZ_G is a 16 mA CMOS tristate bidirectional pad with a weak
-#    pull-up keeper. From tphn65lpgv2od3_slwc.lib:4546+, pin(PAD):
-#        function : "I" ;  three_state : "OEN" ;  drive_current : 16 ;
-#        output_voltage : cmos ;  pull_up_function : "!REN" ;
-#    When OEN=0 it actively drives BOTH levels. It has no open-drain mode.
+#    pull-up keeper. Its liberty `pin(PAD)` group declares a `function`, a
+#    `three_state` enable, a CMOS `output_voltage` and a `pull_up_function` --
+#    read the group itself in tphn65lpgv2od3_sl*.lib; the attribute values are
+#    vendor characterisation data and are not reproduced here, TSMC licence.
+#    What matters: when OEN=0 it actively drives BOTH levels. It has no
+#    open-drain mode.
 #
 #    Nor could it: the entire tphn65lpgv2od3_sl library contains no open-drain
 #    digital pad. Every PDDW*/PDUW* cell is a DGZ tristate variant. The

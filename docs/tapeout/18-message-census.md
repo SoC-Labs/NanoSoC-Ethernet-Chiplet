@@ -309,7 +309,7 @@ True counts from the post-CTS summary tables (`core70:27674`, `pnr_all:32304`,
 | `IMPDBTCL-321` | WARN | 4 | 4 | 4 | `The attribute 'route_design_exp_deterministic_multi_thread' still works but will be obsolete in a future major release.` | Deprecation. | BENIGN. |
 | `IMPTCM-77` | WARN | 1 | 1 | 1 | `Option "-routeExpDeterministicMultiThread" for command setNanoRouteMode is obsolete and will be removed in a future release.` | Deprecation. | BENIGN. |
 | `IMPCTE-337` | WARN | 1 | 1 | 1 | `An unsupported Liberty attribute: max_clock_tree_path - was found on pin CLK of cell: rf_01k in library: RF_LIB_01K_ss_1p08v_1p08v_125c. This attribute is not supported by timing analysis and will be ignored.` | A memory `.lib` attribute is ignored. | BENIGN (already triaged). |
-| `NRDB-2106` | WARN | 2 | 2 | 1 | `#WARNING (NRDB-2106) Ignoring layer M9 MINIMUMCUT rule with WIDTH (1.800000) <= the layer's MINWIDTH (2.000000).` | A DRC rule in the tech LEF is self-inconsistent and is dropped. | **UNTRIAGED (low-medium)** — a *foundry* rule is being ignored on M9. It cannot be checked here (this flow's Calibre run is invalid), so it must be checked by whoever runs real signoff DRC. |
+| `NRDB-2106` | WARN | 2 | 2 | 1 | `#WARNING (NRDB-2106) Ignoring layer M9 MINIMUMCUT rule with WIDTH (<redacted>) <= the layer's MINWIDTH (<redacted>).` (rule values elided — TSMC licence) | A DRC rule in the tech LEF is self-inconsistent and is dropped. | **UNTRIAGED (low-medium)** — a *foundry* rule is being ignored on M9. It cannot be checked here (this flow's Calibre run is invalid), so it must be checked by whoever runs real signoff DRC. |
 
 ---
 
@@ -368,6 +368,15 @@ The brief expected floorplan-driven movement. There is some — but the dominant
    `INOUT` signal pins.
 
 Change 2 explains almost every class delta.
+
+> **Path note (2026-08-14).** The two paths in this section are recorded as they stood on
+> 2026-08-06 and are correct for that run. The three-line delta is unchanged, but the file
+> is no longer a committed copy under `local_overrides/` — since `bf619f1` it is generated
+> from the read-only PDK into `ASIC/tech_wrappers/tsmc65/generated/`, and the
+> `scripts/config.tcl:144` line reference above has moved. Retiring the patch altogether is
+> planned and not yet done. See
+> [29-private-tsmc-tech-repo](29-private-tsmc-tech-repo.md) §2a. **Nothing in the 08-05 vs
+> 08-06 comparison changes** — it is a record of two runs that happened.
 
 ### 5a. Classes that DISAPPEARED (all caused by change 2 — genuine fixes)
 

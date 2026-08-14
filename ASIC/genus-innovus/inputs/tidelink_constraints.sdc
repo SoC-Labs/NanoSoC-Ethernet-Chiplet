@@ -288,7 +288,7 @@ if {$_tx_bound != 8} {
 # (ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v:460-584); the compute
 # die uses PDDW16 to transmit but PDDW04 to receive. So the cell that loads our
 # TX is NOT a mirror of our own RX pad. It barely matters for capacitance (the
-# PAD pin cap varies only 1.53-1.59pF across the 4/8/12/16mA family) but the
+# PAD pin cap varies very little across the 4/8/12/16mA family) but the
 # right cell is named below regardless.
 
 # --- Constants -------------------------------------------------------------
@@ -298,8 +298,8 @@ if {$_tx_bound != 8} {
 #     pin(PAD) { capacitance : ... } of PDDW04DGZ_G, the compute die's receiver.
 #     Units are pF (capacitive_load_unit (1,pf)) and constraints.sdc:18 has
 #     already done `set_units -capacitance pF`, so these need no scaling.
-set TL_FAR_RX_PAD_CAP_MAX 1.53 ;# PDDW04DGZ_G PAD, wc lib (1.5297) -> setup
-set TL_FAR_RX_PAD_CAP_MIN 1.38 ;# PDDW04DGZ_G PAD, bc lib (1.3822) -> hold
+set TL_FAR_RX_PAD_CAP_MAX 1.53 ;# PDDW04DGZ_G PAD, wc lib -> setup
+set TL_FAR_RX_PAD_CAP_MIN 1.38 ;# PDDW04DGZ_G PAD, bc lib -> hold
 
 # (b) ASSUMPTION — the die-to-die interconnect. THIS IS THE ONLY NUMBER HERE
 #     THAT IS NOT MEASURED, and it is the one to challenge first.
@@ -335,10 +335,12 @@ set TL_D2D_CHANNEL_CAP_MIN 0.5
 
 # (c) ASSUMPTION, low impact — the slew the compute die's core logic presents
 #     to the I pin of its TX pad. 0.2ns sits inside the arc's characterised
-#     range (index_1 = 0.1 .. 1.0ns). Sensitivity is tiny: across that WHOLE
-#     range the pad's output transition moves <0.1% (0.6692 -> 0.6691ns at
-#     5pF) and its delay moves 0.256ns (2.516 -> 2.772ns), which is anyway
-#     common-mode between the forwarded clock and its data.
+#     slew range. Sensitivity is tiny: across that WHOLE range the pad's output
+#     transition moves <0.1% and its delay moves by roughly a quarter of a
+#     nanosecond, which is anyway common-mode between the forwarded clock and
+#     its data. (Characterised axis endpoints, and the delay/transition figures
+#     read off them, are vendor .lib data — TSMC licence forbids reproduction.
+#     Source: tphn65lpgv2od3_sl*.lib.)
 set TL_FAR_CORE_SLEW 0.2
 
 # --- Inputs: TL_CLK_RX, TL_RX[7:0] -----------------------------------------
@@ -354,13 +356,17 @@ set TL_FAR_CORE_SLEW 0.2
 # 41, 56) and the cell must resolve per analysis view.
 #
 # Fallback values are the same arc's rise/fall_transition read at the load
-# below. The table floors at 5pF ("total_output_net_capacitance" index_2 =
-# 5,10,25,40,70,100) so both are linear extrapolations under the floor:
-#   rise: 0.6681 - (0.9452-0.6681)/5 * (5.0-3.6) = 0.59ns
-#   fall: 0.6168 - (0.9091-0.6168)/5 * (5.0-3.6) = 0.53ns
-# Sanity check on that result: the RECEIVING pad's PAD->C arc is characterised
-# for input slews of 0.5 .. 5.0ns, so ~0.55ns lands just inside the bottom of
-# the range it was characterised for. The two ends agree.
+# below. Our 3.6pF load sits UNDER the table's non-zero capacitance floor, so
+# both are linear extrapolations below that floor, taken through the two lowest
+# characterised load points:
+#   rise -> 0.59ns
+#   fall -> 0.53ns
+# (The characterised transition values, and the load-axis points the
+# extrapolation was taken through, are vendor .lib data — TSMC licence forbids
+# reproduction. Re-derive from tphn65lpgv2od3_sl*.lib before changing these.)
+# Sanity check on that result: ~0.55ns lands just inside the bottom of the input
+# slew range the RECEIVING pad's PAD->C arc is characterised for. The two ends
+# agree.
 if {[catch {
     set_driving_cell -lib_cell PDDW16DGZ_G -pin PAD -from_pin I \
         -input_transition_rise $TL_FAR_CORE_SLEW \
@@ -378,10 +384,13 @@ if {[catch {
 }
 
 # Interconnect only. Our own receiving pad's PAD pin capacitance (PDDW16DGZ_G,
-# 1.5928pF wc) is already in the netlist -- Innovus reports exactly that number
-# on this net (pnr_m7.log:81472, "Achieved capacitance of 1.593pF"), which is
-# also independent confirmation that the liberty figures used here are the ones
-# the tool is actually applying. Adding it again would double count.
+# worst-case lib) is already in the netlist -- Innovus reports exactly that
+# figure back on this net (pnr_m7.log:81472, "Achieved capacitance of ..."),
+# which is also independent confirmation that the liberty figures used here are
+# the ones the tool is actually applying. Adding it again would double count.
+# (Liberty pin capacitances redacted -- vendor characterisation data, TSMC
+# licence forbids reproduction. Source: the tphn65lpgv2od3_sl*.lib files named
+# in the constants block above.)
 set_load -max $TL_D2D_CHANNEL_CAP_MAX [get_ports TL_CLK_RX]
 set_load -min $TL_D2D_CHANNEL_CAP_MIN [get_ports TL_CLK_RX]
 set_load -max $TL_D2D_CHANNEL_CAP_MAX [get_ports {TL_RX[*]}]
