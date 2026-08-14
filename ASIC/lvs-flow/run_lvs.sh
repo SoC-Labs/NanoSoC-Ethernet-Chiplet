@@ -14,6 +14,10 @@
 #                               NO tool. Reports exactly what is missing.
 #   run_lvs.sh --source-only    steps 1-5 (netlist + deck + box list), stop
 #                               before Calibre. Also NO licence.
+#   run_lvs.sh --pg-check       re-run step 6b's power/ground-text guard over
+#                               an EXISTING run directory and nothing else.
+#                               Reads files only -- no licence, no tool, and
+#                               no input needed beyond LVS_RUNDIR.
 #   run_lvs.sh --help
 #
 # EXIT CODES. The verdict comes from the LVS *report*, never from Calibre's
@@ -28,6 +32,13 @@
 #                           dangerous case: the classic '"Source could not be
 #                           read" / "Cell X is referenced but not defined"'
 #                           abort, which an exit-status check calls a pass.
+#   6  NOT MEANINGFUL       a compare ran and produced a verdict, but the
+#                           layout had NO power and NO ground net, so that
+#                           verdict is about the wrong thing (step 6b). Ranked
+#                           above INCORRECT deliberately: an INCORRECT you can
+#                           go and debug, this one you must first re-stream.
+#                           5 still wins over 6 -- no compare at all is the
+#                           earlier and more basic failure.
 #
 # GLOSSARY (first use only, then we move on):
 #   SVRF        Calibre's rule-deck language. Foundry decks are SVRF with an
@@ -52,6 +63,7 @@
 set -u -o pipefail
 
 RC_OK=0; RC_INCORRECT=1; RC_USAGE=2; RC_PREFLIGHT=3; RC_PREP=4; RC_NOVERDICT=5
+RC_NOPG=6
 
 die()  { local rc=$1; shift; printf 'FAIL: %s\n' "$*" >&2; exit "$rc"; }
 info() { printf 'INFO: [lvs] %s\n' "$*"; }
@@ -66,9 +78,10 @@ MODE=run
 case "${1-}" in
     --check|-c)        MODE=check ;;
     --source-only|-s)  MODE=source ;;
+    --pg-check)        MODE=pgcheck ;;
     --help|-h)         usage; exit "$RC_OK" ;;
     "")                ;;
-    *) printf 'usage: %s [--check | --source-only | --help]\n' "$0" >&2
+    *) printf 'usage: %s [--check | --source-only | --pg-check | --help]\n' "$0" >&2
        exit "$RC_USAGE" ;;
 esac
 
@@ -92,6 +105,14 @@ MACRO_CDLS="${MACRO_CDLS-}"      # real transistor CDLs for hard macros (SRAM/RO
 LVS_SOURCE_ADDED="${LVS_SOURCE_ADDED-}"   # foundry primitive stubs -> v2lvs -lsp
 LVS_POWER="${LVS_POWER:-VDD}"
 LVS_GROUND="${LVS_GROUND:-VSS}"
+# The .GLOBAL list step 3 emits into the assembled source -- its OWN knob, and
+# not simply "the supplies", because the two answer different questions.
+# LVS_POWER/LVS_GROUND tell Calibre which nets to TREAT as supplies; .GLOBAL
+# tells the SPICE reader to merge every net of that NAME in every scope of the
+# source into one. A name can be right for the first and wrong for the second:
+# see the collision scan below. Default = the supplies, so a project that never
+# sets this sees byte-identical behaviour. EMPTY = emit no .GLOBAL at all.
+LVS_GLOBAL_NETS="${LVS_GLOBAL_NETS-$LVS_POWER $LVS_GROUND}"
 BONDPAD_CELLS="${BONDPAD_CELLS-}"         # pin-less bump/pad cells needing empty stubs
 LVS_BOX_LEAF="${LVS_BOX_LEAF:-1}"
 # Physical-only cells: inserted by P&R and streamed into the GDS, but absent
@@ -106,6 +127,449 @@ V2LVS="${V2LVS:-v2lvs}"
 CALIBRE="${CALIBRE:-calibre}"
 
 [ "$MODE" = source ] && LVS_SOURCE_ONLY=1
+
+#-----------------------------------------------------------------------------
+# POWER/GROUND-TEXT GUARD (used by step 6b, and standalone via --pg-check)
+#
+# THE FAILURE THIS CATCHES. A GDS carries geometry, not connectivity: a net
+# name only reaches the layout side of LVS as GDS *text*, and whether the
+# power/ground grid gets any is decided by one thing -- whether the P&R
+# GDS-out map has `NAME <layer>/SPNET` rows. Foundry-supplied maps routinely
+# have `NAME <layer>/PIN` and no SPNET, so the special-route (PG) grid streams
+# out UNNAMED and Calibre ends up with no POWER net and no GROUND net at all.
+#
+# WHY IT NEEDS A GUARD RATHER THAN A FOOTNOTE. The run still completes and the
+# report still looks like a report, so it reads as an ordinary INCORRECT that
+# somebody then spends days debugging. It is not one: with the supplies
+# unidentifiable, device recognition that keys off them stops working. Measured
+# on one chiplet, the SRAM bitcell injection template fired on the SOURCE side
+# only and left 4,084,884 unmatched layout objects -- a comparison about
+# nothing. There is no verdict worth reading until the layout is re-streamed.
+#
+# WHY THIS IS NOT A PREFLIGHT. Two reasons, both learned the hard way.
+#   * Cost. Deciding it from the GDS means a structure-aware parse of a
+#     300 MB stream. A flat `strings | grep VDD` is worse than useless: on a
+#     design with merged memory macros it finds thousands of the VENDORS' own
+#     internal pin labels (12,823 on one chiplet) and reports success while the
+#     top-level supply grid is anonymous. Only text in the TOP structure counts.
+#   * Sufficiency. Even a perfect "is there PG text" check answers the wrong
+#     question. Text can be present and still name nothing -- it has to attach
+#     to metal, and the net it attaches to has to be distinct. On the run this
+#     guard was built against, both supply labels were written AND attached, and
+#     VSS still came back with no data because the two supplies were shorted
+#     together by fabricated pad-ring geometry. Only Calibre can see that.
+# So: the emitting side reports what it labelled (that is lvs_pg_emit.tcl's
+# job, and it is free there), and this guard reports what actually RESOLVED.
+# Neither substitutes for the other.
+#-----------------------------------------------------------------------------
+PG_HITS=()     # evidence lines for a hard failure, printed by pg_banner
+PG_PARTIAL=()  # supplies with no layout data when OTHERS did resolve
+PG_SIDES=()    # which of POWER / GROUND came back empty
+
+# pg_scan <rundir> -> 0 = supplies named, 1 = NOT named, 2 = cannot tell.
+# Two independent signals; either one is conclusive on its own.
+pg_scan() {
+    local rundir=$1 deck="" erc="" d line n
+    local -a files=() names_missing=()
+    PG_HITS=(); PG_PARTIAL=(); PG_SIDES=()
+
+    # The ERC summary's filename is the DECK's choice, so read it out of the
+    # deck instead of hardcoding it -- a foundry deck that renames it must not
+    # silently disable the guard.
+    deck="$rundir/${LVS_TOP}_calibre_lvs.deck"
+    if [ ! -r "$deck" ]; then
+        deck=""
+        for d in "$rundir"/*.deck; do [ -r "$d" ] && { deck=$d; break; }; done
+    fi
+    if [ -n "$deck" ]; then
+        erc=$(sed -n 's/^[[:space:]]*ERC SUMMARY REPORT[[:space:]]*"\([^"]*\)".*/\1/p' \
+              "$deck" | head -1)
+    fi
+    [ -z "$erc" ] && erc="calibre_erc.sum"
+    case "$erc" in /*) ;; *) erc="$rundir/$erc" ;; esac
+
+    [ -s "$erc" ] && files+=("$erc")
+    [ -s "$rundir/calibre_lvs.log" ] && files+=("$rundir/calibre_lvs.log")
+    [ "${#files[@]}" -eq 0 ] && return 2
+
+    # Signal 1: the deck's own ERC PATHCHK statements refuse to run. Calibre
+    # says so in as many words, and it cannot mean anything else.
+    # The same sentence appears in both files, bare in the summary and behind a
+    # "WARNING: " prefix in the log -- strip it before sort -u so the evidence
+    # list is four lines of distinct fact, not eight of two.
+    while IFS= read -r line; do
+        [ -n "$line" ] && PG_HITS+=("$line")
+    done < <(grep -hE 'no (POWER|GROUND) nets present' "${files[@]}" 2>/dev/null \
+             | sed -e 's/^[[:space:]]*//' -e 's/^\(WARNING\|ERROR\)[: ]*//' | sort -u)
+
+    # WHICH side is empty decides what the failure MEANS, so record it. Both
+    # sides empty is a stream that carried no supply text at all. One side empty
+    # is a stream that carried it and lost one name during extraction -- a
+    # different problem with a different fix.
+    while IFS= read -r line; do
+        [ -n "$line" ] && PG_SIDES+=("$line")
+    done < <(grep -hoE 'no (POWER|GROUND) nets present' "${files[@]}" 2>/dev/null \
+             | awk '{print $2}' | sort -u)
+
+    # Signal 2: which of the supply names this run asked for have no layout
+    # data. ALL of them missing is conclusive and fires the guard. SOME of them
+    # missing is not -- an IO supply a design never routes as a special net has
+    # nothing to name, which is normal -- but it is worth saying out loud, so it
+    # is collected separately and reported as a warning by the caller.
+    local nnames=0
+    for n in $LVS_POWER $LVS_GROUND; do
+        nnames=$((nnames + 1))
+        grep -qF "There is no data for layout net name ${n}." "${files[@]}" 2>/dev/null \
+            && names_missing+=("$n")
+    done
+    if [ "$nnames" -gt 0 ] && [ "${#names_missing[@]}" -eq "$nnames" ]; then
+        for n in "${names_missing[@]}"; do PG_HITS+=("no layout geometry is named $n"); done
+    elif [ "${#names_missing[@]}" -gt 0 ]; then
+        PG_PARTIAL=("${names_missing[@]}")
+    fi
+
+    [ "${#PG_HITS[@]}" -gt 0 ] && return 1
+    return 0
+}
+
+# Non-fatal. A supply that resolved and one that did not is a real, reportable
+# state -- not necessarily an error, and never silently fine.
+pg_partial_warn() {
+    [ "${#PG_PARTIAL[@]}" -eq 0 ] && return 0
+    echo "WARNING: these supplies have NO layout data: ${PG_PARTIAL[*]}"
+    echo "         Others in [$LVS_POWER] / [$LVS_GROUND] did resolve, so the layout"
+    echo "         is not unlabelled -- these specific names are simply not on any"
+    echo "         geometry. Two ordinary causes, and one that is not ordinary:"
+    echo "           - the net is never routed as a SPECIAL net (nothing to name);"
+    echo "           - the name is wrong for this design;"
+    echo "           - the net IS named but SHORTED to another supply, in which case"
+    echo "             Calibre keeps one name and drops the other. Check the report's"
+    echo "             shorts file for a supply-to-supply entry before assuming the"
+    echo "             benign reading."
+    return 0
+}
+
+pg_banner() {
+    local h
+    if [ "${#PG_SIDES[@]}" -eq 1 ]; then
+        printf '\n%s\n' "*******************************************************************************"
+        printf '**  LVS RESULT IS NOT MEANINGFUL: THE LAYOUT HAS NO %s NET%*s**\n' \
+            "${PG_SIDES[0]}" $((21 - ${#PG_SIDES[0]})) ''
+        printf '%s\n' "*******************************************************************************"
+    else
+        cat <<'EOF'
+
+*******************************************************************************
+**  LVS RESULT IS NOT MEANINGFUL: THE LAYOUT HAS NO POWER AND NO GROUND NET  **
+*******************************************************************************
+EOF
+    fi
+    echo "  Evidence, from this run's ERC summary / Calibre log:"
+    for h in "${PG_HITS[@]}"; do printf '      %s\n' "$h"; done
+
+    if [ "${#PG_SIDES[@]}" -eq 1 ]; then
+        cat <<EOF
+
+  READ THIS BEFORE RE-STREAMING: the OTHER side resolved, so this layout is NOT
+  missing its supply text and re-streaming it will change nothing. One supply
+  name survived extraction and this one did not. In order of likelihood:
+
+    1. The two supplies are SHORTED. Calibre keeps one name for the merged net
+       and drops the other, which looks exactly like this. Check the report's
+       shorts file for a supply-to-supply entry FIRST -- it names both texts and
+       prints the shorting path.
+    2. This supply is never routed as a special net, so it has no geometry to
+       carry a name. Then it is not an error, and the name does not belong in
+       LVS_POWER / LVS_GROUND.
+
+  On a Front-End-only PDK, a frequent cause of (1) is LEF OBSTRUCTION streamed
+  as if it were metal. Foundry GDS-out maps put LEFOBS on the same GDS layer as
+  real metal, and with macro output enabled every routing blockage becomes a
+  polygon. Pad spacers, which are nothing BUT obstruction, then tile into a
+  continuous sheet that shorts every net reaching a pad -- supplies included.
+  That is a stream-out artifact, not a design defect: fix it in the GDS-out map,
+  not in the design, and never by suppressing the check.
+EOF
+        # The banner already gives the full reasoning; here just name names.
+        [ "${#PG_PARTIAL[@]}" -gt 0 ] && \
+            echo "  No layout data for, specifically: ${PG_PARTIAL[*]}"
+        return 0
+    fi
+
+    cat <<EOF
+
+  LIKELY CAUSE. The layout was streamed WITHOUT power/ground text: the P&R
+  GDS-out map has \`NAME <layer>/PIN\` rows but no \`NAME <layer>/SPNET\` rows, so
+  the special-route (power) grid went out unnamed. Nothing in the deck or the
+  netlist can recover a name that is not in the stream.
+
+  WHY THIS IS NOT AN ORDINARY 'INCORRECT'. With no supplies identified, ERC is
+  vacuous and supply-dependent device recognition stops working -- on one
+  chiplet that turned a sound compare into 4,084,884 unmatched layout objects.
+  Do not debug the discrepancy list above; it is describing the wrong problem.
+
+  FIX. Re-stream the SAME routed database with an extended GDS-out map:
+
+      make lvs_pg_gds            # ASIC/lvs-flow/lvs_pg_emit.tcl
+      make lvs_batch LVS_PG=1    # then compare against that stream
+
+  It is read-only on the database (no write_db) and produces a new filename, so
+  the signoff GDS and the tapeout database are untouched. Background:
+  CONTRACT.md section 6, and the header of lvs_pg_emit.tcl.
+
+  A GDS with no PG text is a broken INPUT, not a design defect -- and it is
+  never fixed by \`LVS IGNORE PORTS\` or by suppressing the bulk checks.
+EOF
+    # Which supplies specifically, when only some of them failed to resolve --
+    # that distinction is what points at a short rather than a missing label.
+    pg_partial_warn
+}
+
+# One line, accurate for whichever failure it was; callers add their own context.
+pg_result_line() {
+    if [ "${#PG_SIDES[@]}" -eq 1 ]; then
+        printf 'RESULT: LVS NOT MEANINGFUL -- the layout has no %s net.\n' "${PG_SIDES[0]}"
+    else
+        printf 'RESULT: LVS NOT MEANINGFUL -- the layout carries no power/ground text.\n'
+    fi
+}
+
+if [ "$MODE" = pgcheck ]; then
+    [ -n "$LVS_RUNDIR" ] || die "$RC_USAGE" \
+        "--pg-check needs LVS_RUNDIR: it inspects an existing run directory."
+    [ -d "$LVS_RUNDIR" ] || die "$RC_PREFLIGHT" "no run directory at $LVS_RUNDIR"
+    pg_scan "$LVS_RUNDIR"; pg_state=$?
+    case "$pg_state" in
+        0) echo "PG CHECK: OK -- the layout in $LVS_RUNDIR named its supplies."
+           echo "          (checked for [$LVS_POWER] / [$LVS_GROUND])"
+           pg_partial_warn
+           exit "$RC_OK" ;;
+        2) die "$RC_PREFLIGHT" \
+               "nothing to check in $LVS_RUNDIR: no ERC summary and no Calibre log.
+      --pg-check reads a COMPLETED run's artefacts; run the LVS first." ;;
+        *) pg_banner
+           pg_result_line
+           exit "$RC_NOPG" ;;
+    esac
+fi
+
+#-----------------------------------------------------------------------------
+# .GLOBAL COLLISION SCAN
+#
+# THE FAILURE THIS CATCHES, in one sentence: `.GLOBAL VSS` is right for cells
+# and wrong for a hard macro that uses the name VSS for something that is not
+# chip ground.
+#
+# WHY .GLOBAL IS THERE AT ALL. A post-P&R Verilog netlist that wires .VDD/.VSS
+# on every instance needs no help; one that does not, needs the supplies
+# declared global so each leaf's power pin ties to them by name. That is the
+# case step 3 was written for, and it is the common one.
+#
+# WHAT IT COSTS. `.GLOBAL <name>` is not scoped: it merges EVERY net called
+# <name>, in EVERY .SUBCKT of the source, into one net. Hard-macro CDLs are
+# vendor output with a vendor's naming, and a macro is free to use `VSS` (or
+# `VDD`, or any supply name) for an INTERNAL node while bringing its real
+# supplies out under different pin names -- `VSSE`/`VDDE` is a common pair.
+# Power-gated macros do exactly this: the internal `VSS` is the SWITCHED
+# (virtual) ground, sitting on the other side of the power-gate footers from
+# the real one. `.GLOBAL VSS` then ties the two together, which fabricates a
+# short across the switch -- IN THE SOURCE ONLY. The layout keeps them apart,
+# because in silicon there is a transistor between them.
+#
+# WHY IT NEEDS A DETECTOR RATHER THAN A NOTE. Nothing in the run says
+# "collision". Calibre reports no SHORT, ERC stays clean, and the damage is
+# confined to the macro's interior, so every symptom points at the macro:
+# unmatched instances inside it, unmatched nets inside it, W/L property errors
+# on the devices either side of the switch -- and one supply net whose SOURCE
+# connection count exceeds the layout's by roughly the number of internal taps.
+# That last number is the fingerprint; nobody looks for it unaided. Measured on
+# a 323,124-instance chiplet with two power-gated ROMs: 34 unmatched instances,
+# 44 unmatched nets, 70 property errors, 436 net discrepancies -- all of it, and
+# a source-side `Net VSS` +1,980 connections. The layout was the correct side.
+#
+# THE TEST. For each name in the emitted .GLOBAL list, and each macro CDL: is
+# the name USED inside the macro while NOT being a port of that macro's top
+# .SUBCKT? Used-and-a-port is the safe case: an SRAM whose top reads
+# `.SUBCKT <macro> VDD VSS ...` brings the supply out as a real pin, so the
+# merge is a no-op -- which is why compiled SRAM is normally immune.
+# Used-and-NOT-a-port means some scope inside the macro creates a local net of
+# that name, and .GLOBAL will capture it. The top .SUBCKT is found structurally
+# -- the one no other .SUBCKT in the file instantiates -- so this needs no
+# naming convention, no cell list and no per-PDK knowledge.
+#
+# A macro that declares the name .GLOBAL ITSELF is deliberate, and exempt.
+#-----------------------------------------------------------------------------
+GLOBAL_COLLISIONS=0
+
+# Emits one tab-separated record per finding on stdout, for the shell to format:
+#   HIT   <top subckts> <net> <use count> <scopes that create it locally>
+#   NOTOP <subckt>                 -- no un-instantiated .SUBCKT; assumed the top
+#   SCAN  <#subckt> <#top> <tops>  -- always, one per file
+# shellcheck disable=SC2016   # this is an awk program, not shell: $0 is awk's
+GLOBAL_SCAN_AWK='
+BEGIN { nw = split(NAMES, want_i); for (i = 1; i <= nw; i++) want[want_i[i]] = 1 }
+function flush(   n, t, i, p, tk, ref, refpos) {
+    if (buf == "") return
+    n = split(buf, t); buf = ""
+    if (n == 0) return
+    p = tolower(t[1])
+    if (p == ".subckt") {                      # definition: name then ports
+        scope = t[2]; defined[scope] = 1; order[++nsub] = scope
+        for (i = 3; i <= n; i++)
+            if (t[i] != "" && index(t[i], "=") == 0 && (t[i] in want)) portof[scope, t[i]] = 1
+        return
+    }
+    if (substr(p, 1, 5) == ".ends")  { scope = ""; return }
+    if (substr(p, 1, 7) == ".global") {        # the macro asked for it itself
+        for (i = 2; i <= n; i++) if (t[i] in want) selfglobal[t[i]] = 1
+        return
+    }
+    if (substr(t[1], 1, 1) == "*" || substr(t[1], 1, 1) == ".") return
+    if (scope == "") return
+    refpos = 0
+    if (toupper(substr(t[1], 1, 1)) == "X") {  # subckt call: which subckt?
+        for (i = 2; i <= n; i++) {
+            if (toupper(t[i]) == "$PINS") { refpos = i - 1; break }
+            if (t[i] == "/")              { refpos = i + 1; break }
+        }
+        if (refpos == 0)
+            for (i = n; i >= 2; i--) if (index(t[i], "=") == 0) { refpos = i; break }
+        ref = (refpos > 1 && refpos <= n) ? t[refpos] : ""
+        if (ref != "") refd[ref] = 1
+    }
+    for (i = 2; i <= n; i++) {                 # everything else on the line is a net
+        if (i == refpos) continue
+        tk = t[i]
+        if (index(tk, "=") > 0) sub(/^.*=/, "", tk)   # $PINS pin=net, and W=/L=
+        if (tk == "" || !(tk in want)) continue
+        total[tk]++
+        if (!((scope, tk) in portof) && !((scope, tk) in seenorph)) {
+            seenorph[scope, tk] = 1
+            born[tk] = born[tk] (born[tk] == "" ? "" : ",") scope
+        }
+    }
+}
+{ line = $0; sub(/\r$/, "", line)
+  if (line ~ /^[ \t]*\+/) { sub(/^[ \t]*\+/, " ", line); buf = buf line; next }
+  flush(); buf = line }
+END {
+    flush()
+    ntop = 0
+    for (s in defined) if (!(s in refd)) { istop[s] = 1; ntop++ }
+    if (ntop == 0 && nsub > 0) { istop[order[nsub]] = 1; ntop = 1; print "NOTOP\t" order[nsub] }
+    tl = ""
+    for (i = 1; i <= nsub; i++) if (order[i] in istop) tl = tl (tl == "" ? "" : ",") order[i]
+    for (i = 1; i <= nw; i++) {
+        g = want_i[i]
+        if (total[g] == 0 || (g in selfglobal)) continue    # unused, or deliberate
+        safe = 0
+        for (s in istop) if ((s, g) in portof) { safe = 1; break }   # a real pin
+        if (!safe) print "HIT\t" tl "\t" g "\t" total[g] "\t" born[g]
+    }
+    print "SCAN\t" nsub "\t" ntop "\t" tl
+}'
+
+# global_collision_scan -- prints its own section; never fatal, always loud.
+# Sets GLOBAL_COLLISIONS. Runs in every mode including --check, so the answer
+# arrives before a licence is spent rather than after a report is misread.
+global_collision_scan() {
+    local f kind a b c d nfile=0 nsubckt=0
+    GLOBAL_COLLISIONS=0
+
+    if [ -z "${LVS_GLOBAL_NETS// /}" ]; then
+        printf '  (none)  %-14s LVS_GLOBAL_NETS is empty -- no .GLOBAL emitted, nothing can collide\n' "globals"
+        return 0
+    fi
+    if [ -z "${MACRO_CDLS// /}" ]; then
+        printf '  (none)  %-14s [%s] -- no macro CDLs to check\n' "globals" "$LVS_GLOBAL_NETS"
+        return 0
+    fi
+
+    # shellcheck disable=SC2086   # MACRO_CDLS is a space-separated list
+    for f in $MACRO_CDLS; do
+        [ -r "$f" ] && [ -s "$f" ] || continue
+        nfile=$((nfile + 1))
+        while IFS=$'\t' read -r kind a b c d; do
+            case "$kind" in
+            HIT)   # a=top(s)  b=net  c=use count  d=scopes that create it locally
+                GLOBAL_COLLISIONS=$((GLOBAL_COLLISIONS + 1))
+                [ "$GLOBAL_COLLISIONS" = 1 ] && printf '  %s\n  %s\n  %s\n' \
+                    '****************************************************************************' \
+                    '**  A .GLOBAL NAME IS AN INTERNAL NET OF A HARD MACRO                     **' \
+                    '****************************************************************************'
+                printf '    macro CDL   : %s\n' "$f"
+                printf '    top .SUBCKT : %s\n' "$a"
+                printf '    net         : %s -- used %s time(s) inside the macro, and NOT a port of %s\n' \
+                    "$b" "$c" "$a"
+                [ -n "$d" ] && printf '    created in  : %s\n' "$(printf '%s' "$d" | tr ',' ' ')"
+                printf '                  (the scope(s) that use %s without declaring it -- where the\n' "$b"
+                printf '                   local net is born, and what .GLOBAL would capture)\n'
+                ;;
+            NOTOP) # a=the .SUBCKT assumed to be the top
+                printf '  WARN    %-14s %s: every .SUBCKT is instantiated by another; assuming top = %s\n' \
+                    "globals" "$(basename -- "$f")" "$a"
+                ;;
+            SCAN)  # a=#subckt  b=#top  c=top names
+                nsubckt=$((nsubckt + a))
+                ;;
+            esac
+        done < <(awk -v NAMES="$LVS_GLOBAL_NETS" "$GLOBAL_SCAN_AWK" "$f")
+    done
+
+    if [ "$GLOBAL_COLLISIONS" -eq 0 ]; then
+        printf '  OK      %-14s [%s] vs %d macro CDL(s), %d .SUBCKT(s): no name is a macro internal\n' \
+            "globals" "$LVS_GLOBAL_NETS" "$nfile" "$nsubckt"
+        return 0
+    fi
+
+    cat <<EOF
+
+  WHAT THIS DOES. \`.GLOBAL <name>\` is not scoped: every net of that name, in
+  every .SUBCKT of the source, becomes ONE net. The macro above uses the name
+  for an internal node -- a power-gated virtual ground, a second supply domain,
+  an internal rail -- and brings its real supplies out under different pin
+  names. Merging the two fabricates a connection that does not exist in
+  silicon, typically a SHORT ACROSS A POWER-GATE SWITCH, and it exists only on
+  the SOURCE side. The layout is the correct side.
+
+  HOW IT WILL SHOW UP, so it is recognisable in a report you already have:
+    * unmatched instances and unmatched nets CONFINED to that macro's interior,
+      on both sides, in equal-ish numbers -- a cell-type substitution, not a
+      missing device (Calibre's injected pseudo-cells change type when a
+      device's bulk net stops differing from its source net);
+    * device property (W/L) errors inside the macro, from parallel reduction
+      grouping different numbers of fingers on the two sides;
+    * one supply net whose SOURCE connection count exceeds the LAYOUT's by
+      roughly the number of internal taps -- the fingerprint;
+    * no SHORT record, and clean ERC. It does not look like a short.
+
+  REMEDY -- cheapest first, and neither one touches the design or the layout:
+    1. Take the name out of LVS_GLOBAL_NETS (it defaults to
+       "\$LVS_POWER \$LVS_GROUND"; set it to the subset that is genuinely
+       global, or to nothing). SAFE WHEN the post-P&R netlist wires the
+       supplies explicitly -- check that cell instances carry .VDD/.VSS and
+       that this macro's own supply pins are connected to the chip supplies.
+       Then the global was doing no work and only this damage.
+    2. If some cells DO rely on the global, keep it and point MACRO_CDLS at a
+       PROJECT-LOCAL COPY of this CDL with the internal net renamed (e.g.
+       VSS -> VSS_<macro>_INT), leaving the real supply pins alone. Vendor and
+       PDK collateral is read-only: copy it into the project tree, never edit
+       it in place.
+  Suppressing the resulting discrepancies is not a third option.
+
+EOF
+    return 0
+}
+
+# Printed after preflight, so the finding is the LAST thing on screen rather
+# than something scrolled away by the OK block.
+global_collision_reminder() {
+    [ "$GLOBAL_COLLISIONS" -eq 0 ] && return 0
+    echo "WARNING: $GLOBAL_COLLISIONS .GLOBAL/macro-internal collision(s) -- see the banner above."
+    echo "         The comparison will run, and its macro-interior discrepancies will be"
+    echo "         an artifact of the source, not a defect. Fix LVS_GLOBAL_NETS first."
+    return 0
+}
 
 #-----------------------------------------------------------------------------
 # PREFLIGHT -- validates every input. Takes no licence and launches no tool
@@ -162,6 +626,12 @@ preflight() {
     chk_list "io vlog"      "$IO_VLOG"
     chk_list "macro cdl"    "$MACRO_CDLS"
 
+    # A macro CDL that uses a .GLOBAL name for an internal net is a valid input
+    # that produces an invalid source. It is an input inconsistency, so it is
+    # reported here -- before a licence is spent, not after a report is misread.
+    echo "  -- .GLOBAL vs macro internals --"
+    global_collision_scan
+
     echo "  -- run directory --"
     # Do not create anything in check mode: walk up to the nearest existing
     # ancestor and test that it is writable.
@@ -208,17 +678,29 @@ preflight() {
 == LVS preflight OK ==
    NOTE on scope, so nobody re-derives it wrongly: this flow does NOT require
    foundry Back-End packages (transistor CDL + cell GDS) for the standard cells,
-   IO or pads. Front-End simulation Verilog is sufficient -- those leaves are
-   compared as black boxes on port connectivity, which catches missing
-   instances, mis-wired pins, shorts and opens in the routing. Hard macros that
-   ship a real CDL still compare all the way down to transistors.
-   It is NOT full signoff LVS: cell interiors are unverified by construction.
-   Say "clean modulo black boxes", never "signoff clean".
+   IO or pads. Front-End simulation Verilog is sufficient.
+
+   WHAT A PASS PROVES. Every cell present, of the right type and count, and the
+   routed nets between them reconciled against the netlist. Hard macros that
+   ship a real CDL compare all the way down to transistors.
+
+   WHAT IT DOES NOT PROVE, all three by construction:
+     * cell interiors -- boxed leaves are black boxes;
+     * pin-level wiring ON those boxed leaves -- with no cell GDS their layout
+       frames carry no pins Calibre recognises, so it can match the instance and
+       still report "non-floating extra pins" against the source stub;
+     * the pad ring -- its cells are LEF-only and their obstruction geometry is
+       deliberately stripped from the LVS stream because it fabricates shorts.
+
+   Say "clean modulo black boxes and modulo the pad ring". Never "signoff
+   clean", and never "every port wired as the netlist says".
+   Detail: CONTRACT.md sections 5, 6c.
 EOF
     return "$RC_OK"
 }
 
 preflight; pf=$?
+global_collision_reminder
 [ "$pf" -ne 0 ] && exit "$pf"
 [ "$MODE" = check ] && exit "$RC_OK"
 
@@ -269,6 +751,7 @@ cat <<EOF
   deck      : $LVS_DECK
   rundir    : $LVS_RUNDIR
   supplies  : power [$LVS_POWER]  ground [$LVS_GROUND]
+  globals   : [$LVS_GLOBAL_NETS]
   box leaves: $LVS_BOX_LEAF (exclude /$LVS_BOX_EXCLUDE_RE/)
 EOF
 
@@ -317,9 +800,13 @@ trap 'rm -f "$INC_PAT"' EXIT
 for c in "${MACRO_ARR[@]}"; do printf '.INCLUDE "%s"\n' "$c" >> "$INC_PAT"; done
 
 {
-    # write_netlist emits no explicit power/ground, so the supplies must be
-    # declared global for every leaf power pin to tie to them by name.
-    echo ".GLOBAL $LVS_POWER $LVS_GROUND"
+    # A netlist that emits no explicit power/ground needs the supplies declared
+    # global, so every leaf power pin ties to them BY NAME. LVS_GLOBAL_NETS
+    # defaults to exactly that and is emitted verbatim. Empty = no .GLOBAL line
+    # at all, which is the right answer when the netlist wires the supplies
+    # itself AND a macro uses one of the names internally (see the collision
+    # scan above -- .GLOBAL would fabricate a short inside that macro).
+    [ -n "${LVS_GLOBAL_NETS// /}" ] && echo ".GLOBAL $LVS_GLOBAL_NETS"
 
     # shellcheck disable=SC2086   # BONDPAD_CELLS is a space-separated list
     # Bond pads / bumps are placed straight into the layout and are LEF-only:
@@ -475,6 +962,11 @@ calibre_rc=${PIPESTATUS[0]}
 echo
 echo "== calibre exit status: $calibre_rc (informational -- the verdict is in the report) =="
 
+# ---- 6b. did the layout actually carry its supplies? ------------------------
+# Run the scan now, report it below. The verdict extract is still printed
+# first: seeing it is what makes "and none of that meant anything" land.
+pg_scan "$LVS_RUNDIR"; pg_state=$?
+
 # "Did not reach a compare" is its own outcome and must never look like a pass:
 # an aborted run leaves no OVERALL COMPARISON RESULTS section at all.
 if [ ! -s "$LVS_REP" ] || ! grep -q 'OVERALL COMPARISON RESULTS' "$LVS_REP" 2>/dev/null; then
@@ -484,6 +976,9 @@ if [ ! -s "$LVS_REP" ] || ! grep -q 'OVERALL COMPARISON RESULTS' "$LVS_REP" 2>/d
     echo "        first errors in the log:"
     grep -nE 'ERROR|Cannot|could not be read|referenced but not defined|No matching|SPC[0-9]|INP[0-9]|TVF[0-9]' \
         "$LOG" 2>/dev/null | head -15 | sed 's/^/          /'
+    # No compare at all is the earlier failure, so it keeps the exit code -- but
+    # say the PG part too, or the next run repeats it.
+    [ "$pg_state" = 1 ] && pg_banner
     exit "$RC_NOVERDICT"
 fi
 
@@ -495,6 +990,22 @@ verdict=$(awk '/OVERALL COMPARISON RESULTS/{f=1}
                f {print; if (++n > 24) exit}' "$LVS_REP")
 printf '%s\n' "$verdict" | grep -vE '^\s*$' | head -20
 sed -n '/CELL  SUMMARY/,+8p' "$LVS_REP" | head -12
+
+# The PG verdict OVERRIDES CORRECT and INCORRECT alike. A CORRECT reached
+# without supplies would be the more alarming of the two, not the safer one.
+if [ "$pg_state" = 1 ]; then
+    pg_banner
+    pg_result_line
+    echo "        The report above is not evidence -- fix this first, then re-run."
+    echo "        report : $LVS_REP"
+    exit "$RC_NOPG"
+fi
+if [ "$pg_state" = 2 ]; then
+    echo "NOTE: the power/ground-text guard could not run -- no ERC summary and no"
+    echo "      Calibre log in $LVS_RUNDIR. Confirm by hand that the layout names"
+    echo "      [$LVS_POWER] / [$LVS_GROUND]; see CONTRACT.md section 6."
+fi
+pg_partial_warn
 
 if printf '%s\n' "$verdict" | grep -qw 'INCORRECT'; then
     echo "RESULT: LVS INCORRECT -- layout and source differ. See $LVS_REP"
@@ -558,20 +1069,102 @@ exit "$RC_NOVERDICT"
 #    library twice, or by two paths to the same file, doubles every subckt in
 #    it -- hence the resolve-then-dedupe on all three lists.
 #
+# [FIXED] I. A .GLOBAL NAME THAT IS A MACRO'S INTERNAL NET. `.GLOBAL VDD VSS`
+#    is correct for cells and wrong for a hard macro that uses one of those
+#    NAMES for something other than the chip supply. `.GLOBAL` is unscoped: it
+#    merges every net of that name in every .SUBCKT of the source into one.
+#    Vendor macros routinely bring their real supplies out as `VDDE`/`VSSE` and
+#    keep `VDD`/`VSS` for internal nodes; a POWER-GATED macro's internal `VSS`
+#    is the SWITCHED (virtual) ground, on the far side of the power-gate footers
+#    from the real one. Merging them fabricates a short across the switch, in
+#    the SOURCE ONLY -- the layout keeps them apart, because in silicon there is
+#    a transistor between them.
+#
+#    MEASURED, on a 323,124-instance chiplet with two power-gated via-ROMs
+#    (2026-08-10): 34 unmatched instances, 44 unmatched nets, 70 device property
+#    errors and 436 net discrepancies, ALL of them inside the two ROMs, plus a
+#    source-side `Net VSS` carrying +1,980 connections over the layout's (~990
+#    internal taps per ROM). The design and the layout were both correct. The
+#    SRAMs on the same die were untouched because their top .SUBCKT declares VDD
+#    and VSS as real ports, which makes the merge a no-op.
+#
+#    WHY IT IS SO EXPENSIVE TO FIND: Calibre reports no SHORT, ERC stays clean,
+#    and every symptom is inside the macro -- so it reads as "the vendor's GDS
+#    and CDL disagree", which is a different and much worse conclusion.
+#
+#    Fix: $LVS_GLOBAL_NETS is now its own knob (default `$LVS_POWER
+#    $LVS_GROUND`, so nothing changed for existing projects; empty emits no
+#    .GLOBAL at all), and preflight runs a structural scan of every $MACRO_CDLS
+#    file -- for each name in the list, is it USED inside the macro while NOT a
+#    port of that macro's top .SUBCKT? The top is found structurally (the
+#    .SUBCKT no other .SUBCKT instantiates), so the check needs no naming
+#    convention and no per-PDK list, and a macro that declares the name .GLOBAL
+#    itself is exempt. Dropping a name is only safe if the netlist wires that
+#    supply explicitly; otherwise rename the internal net in a PROJECT-LOCAL
+#    COPY of the CDL and point MACRO_CDLS at the copy.
+#
 # [FIXED] G. TOOL DROPPINGS IN THE INVOKER'S DIRECTORY. Both v2lvs and Calibre
 #    write into the CURRENT directory (v2lvs a multi-MB v2lvs.log, the deck its
 #    relative svdb/ and ERC outputs). Run from a source tree, they litter it.
 #    Fix: resolve every input path, then cd into $LVS_RUNDIR before step 1, so
 #    everything a run produces is inside the run directory.
 #
-# [OPEN -- FIXABLE ONLY IN P&R, NOT HERE] F. POWER/GROUND NET NAMING. If
-#    write_netlist ran without -include_pwr_gnd and the stream carries no PG
-#    text, the layout supply grid is unnamed and cannot equate to the source's
-#    global supplies. It surfaces as ~2 unmatched nets per side, 2 "missing"
-#    layout ports, and bulk-pin flags on macro transistors whose bodies tie to
-#    the supplies. It is a LABELLING artifact, not a connectivity error, and on
-#    an otherwise clean run it is the sole reason the verdict reads INCORRECT.
-#    The fix is `write_netlist -include_pwr_gnd -phys` (and dropping the .GLOBAL
-#    in step 3), on the P&R side. Do NOT paper over it with `LVS IGNORE PORTS`
-#    or bulk-check suppression -- that manufactures a CORRECT that means nothing.
+# [GUARDED HERE, FIXED IN P&R] F. POWER/GROUND NET NAMING. A P&R signoff stream
+#    typically carries NO PG text: the foundry GDS-out map has
+#    `NAME <layer>/PIN` and no `NAME <layer>/SPNET`, so the special-route supply
+#    grid streams out unnamed and cannot equate to anything on the source side.
+#    First seen as the mild version -- ~2 unmatched nets per side, 2 "missing"
+#    layout ports, bulk-pin flags on macro transistors -- which is what made it
+#    look like a footnote. It is not. On a memory-heavy design the same missing
+#    text stopped supply-dependent device recognition working and produced
+#    4,084,884 unmatched layout objects (measured, 2026-08-10): ~2M loose SRAM
+#    pass-gates plus ~2M inverters, from an otherwise sound comparison.
+#    THE FIX IS UPSTREAM: re-stream the same routed database with an extended
+#    GDS-out map -- ASIC/lvs-flow/lvs_pg_emit.tcl, `make lvs_pg_gds`, then
+#    `make lvs_batch LVS_PG=1`. Read-only on the database, new filename, so the
+#    tapeout deliverables are untouched. (A PG-explicit source netlist,
+#    `write_netlist -include_pwr_gnd -phys` plus dropping step 3's .GLOBAL, is
+#    the matching change on the other side; change one side at a time.)
+#    WHAT THIS FILE ADDS is step 6b: the run now refuses to present a verdict it
+#    knows is meaningless, and exits 6 instead of 1. Do NOT paper over it with
+#    `LVS IGNORE PORTS` or bulk-check suppression -- that manufactures a CORRECT
+#    that means nothing.
+#
+# [FIXED IN THE GDS-OUT MAP] H. LEF OBSTRUCTION STREAMED AS METAL. The general
+#    hazard of a Front-End-only PDK, and the one that wastes the most time,
+#    because every symptom points somewhere else.
+#
+#    SYMPTOMS, in the order you will meet them:
+#      - millions of unmatched layout objects, dwarfing anything the design
+#        could plausibly contain;
+#      - almost no top-level layout ports resolved (1 of 52, in the case this
+#        was found on) while the source has all of them;
+#      - ONE supply resolves and the other does not, so ERC reports POWER fine
+#        and GROUND missing, or the reverse;
+#      - a single net with an absurd connection count (6,147,666, measured).
+#
+#    CHECK THIS FIRST, before any of it: the report's `.shorts` file, for a
+#    SUPPLY-TO-SUPPLY entry (`SHORT n. VDD - VSS`). It names both texts, gives
+#    their coordinates, and prints the shorting path as polygons. If it is
+#    there, everything above is one downstream consequence and there is no
+#    point debugging any of it. Two supplies merged into one net also stops
+#    SRAM bitcell recognition dead -- a 6T cell whose supply and ground are the
+#    same node is not a 6T cell -- which is where the millions of unmatched
+#    objects come from.
+#
+#    CAUSE. `write_stream -output_macros` streams LEF abstracts for cells with
+#    no Back-End GDS, and foundry GDS-out maps put `LEFOBS` on the SAME GDS
+#    layer as real metal. A LEF OBS is a routing BLOCKAGE, not a manufactured
+#    shape, and an abstract flattens the real cell into one covering rectangle
+#    per layer. Pad spacers, which are obstruction and nothing else, then tile
+#    into a continuous sheet around the die that shorts every net reaching a
+#    pad. The shells lack devices AND fabricate connectivity; `LVS BOX` handles
+#    the first problem and is silent about the second.
+#
+#    FIX: `lvs_pg_emit.tcl` moves LEFOBS to a scratch GDS layer the deck never
+#    reads (LVS_PG_STRIP_OBS=1, on by default), keeping LEFPIN. It is a map
+#    change; the design is not touched. WHAT IT COSTS: the pad ring then has no
+#    geometry at all in an FE-only stream, so pad-ring power connectivity is
+#    NOT verified by LVS and cannot be without Back-End IO cell GDS. A clean
+#    run after this fix does not cover the pad ring. Say so when quoting it.
 #-----------------------------------------------------------------------------

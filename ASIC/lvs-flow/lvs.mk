@@ -22,6 +22,8 @@
 #
 # Targets (see CONTRACT.md for the pipeline they drive):
 #   lvs-preflight   resolve inputs, then delegate to run_lvs.sh --check
+#   lvs-pg-preflight  resolve the PG re-stream's inputs (no licence)
+#   lvs_pg_gds      re-stream a PG-LABELLED GDS from the routed database
 #   lvs_source      v2lvs + SPICE source assembly only  (LVS_SOURCE_ONLY=1)
 #   lvs_batch       the full headless run               (alias: lvs)
 #   lvs-report      where the artefacts are + the verdict out of the report
@@ -90,8 +92,14 @@ LVS_RUN      ?=
 LVS_RUNS_DIR ?= $(DESIGN_DIR)/runs
 LVS_IN_DIR   ?= $(if $(LVS_RUN),$(if $(filter /%,$(LVS_RUN)),$(LVS_RUN),$(LVS_RUNS_DIR)/$(LVS_RUN))/outputs,$(OUT_DIR))
 
-## The layout: streamed GDSII.
-LVS_GDS ?= $(LVS_IN_DIR)/$(LVS_TOP).gds
+## 1 = compare against the PG-LABELLED re-stream from `make lvs_pg_gds` rather
+## than the plain signoff GDS. Default 0, so nothing existing changes; but read
+## the power/ground section below before assuming 0 is the right answer — a
+## signoff stream usually carries no supply names at all, and a comparison
+## without them is not a comparison.
+LVS_PG ?= 0
+## The layout: streamed GDSII. Follows LVS_PG; still overridable outright.
+LVS_GDS ?= $(if $(filter 1,$(LVS_PG)),$(LVS_PG_GDS_OUT),$(LVS_IN_DIR)/$(LVS_TOP).gds)
 ## The schematic: the POST-P&R netlist (write_netlist), not the synthesis
 ## netlist — only the post-P&R one shares a database with the GDS.
 LVS_SRC_V ?= $(LVS_IN_DIR)/$(LVS_TOP)_pnr.v
@@ -118,6 +126,19 @@ LVS_SOURCE_ADDED ?=
 ## Supply net names, substituted for the deck's POWER_NAME/GROUND_NAME literals.
 LVS_POWER  ?= VDD
 LVS_GROUND ?= VSS
+## The `.GLOBAL` list emitted into the assembled SPICE source. Defaults to the
+## supplies — which is what a netlist with no explicit power/ground needs, so
+## nothing changes for a project that never sets this — but it is a SEPARATE
+## knob because the two answer different questions. LVS_POWER/LVS_GROUND say
+## which nets Calibre should treat as supplies; `.GLOBAL` merges every net of
+## that NAME in every .SUBCKT of the source into one. A hard macro that uses a
+## supply name for an INTERNAL node (a power-gated virtual ground, a second
+## domain) then has that node shorted to the chip supply — in the source only,
+## so the layout is the correct side and every symptom appears inside the macro.
+## `run_lvs.sh` preflight scans MACRO_CDLS for exactly that and names the macro.
+## EMPTY = emit no `.GLOBAL` at all, which is right when the post-P&R netlist
+## wires .VDD/.VSS on every instance and on the macros themselves.
+LVS_GLOBAL_NETS ?= $(LVS_POWER) $(LVS_GROUND)
 ## Pin-less bump/pad cells: LEF-only, no model at all, so they need an empty
 ## .SUBCKT or the SPICE source will not even read.
 BONDPAD_CELLS ?=
@@ -142,6 +163,119 @@ LVS_NOWAIT ?= 0
 ## Tool binaries — override for a site install that is not on PATH.
 V2LVS   ?= v2lvs
 CALIBRE ?= calibre
+
+#-----------------------------------------------------------------------------
+# POWER/GROUND-LABELLED RE-STREAM (lvs_pg_gds)
+#
+# A GDS carries geometry, not connectivity: a net name reaches the layout side
+# of LVS only as GDS *text*, and whether the supply grid gets any is decided
+# entirely by the P&R GDS-out map. Foundry maps commonly have
+# `NAME <layer>/PIN` rows and NO `NAME <layer>/SPNET` rows, so the special-route
+# (power) grid streams out UNNAMED — Calibre then has no POWER net and no
+# GROUND net, ERC goes vacuous, and supply-dependent device recognition stops
+# working. That is a broken input, not a design defect, and it is why
+# run_lvs.sh exits 6 rather than 1 when it sees it.
+#
+# The fix is NOT to re-route. `make lvs_pg_gds` re-opens the SAME routed
+# database read-only and streams a SECOND GDS, under a new name, through a
+# locally extended copy of the foundry map. No write_db, no edit to the foundry
+# map, no change to the tapeout deliverables — the two streams differ only by
+# the added text. Then: `make lvs_batch LVS_PG=1`.
+#
+# All paths are project-supplied, as everywhere else here. LVS_PG_LAYERS is
+# normally left EMPTY: the script derives the metal stack from the map itself,
+# which is what makes it survive a move to a different PDK or metal option.
+#-----------------------------------------------------------------------------
+## The re-stream script. Sibling of this file; its header is its spec.
+LVS_PG_SCRIPT ?= $(LVS_FLOW_MK_DIR)/lvs_pg_emit.tcl
+## P&R tool launch. `-stylus` selects the Common UI the script is written in;
+## `-files` (not `-f`, which is legacy-UI only) sources a script and exits.
+LVS_PG_CMD ?= innovus -stylus -files
+## Where the routed database lives. Parallels LVS_IN_DIR — same LVS_RUN
+## selection — but a database is a DIRECTORY under work/, not a file in outputs/.
+LVS_PG_WORK_DIR ?= $(if $(LVS_RUN),$(if $(filter /%,$(LVS_RUN)),$(LVS_RUN),$(LVS_RUNS_DIR)/$(LVS_RUN))/work,$(WORK_DIR))
+## The routed database itself. READ-ONLY input: the script never writes it back.
+LVS_PG_DB ?= $(LVS_PG_WORK_DIR)/$(LVS_TOP)
+## The foundry GDS-out map. Read-only lab collateral — copied, never edited.
+LVS_PG_MAP_IN ?=
+## The PG-labelled stream. A NEW name beside the signoff GDS, never over it.
+LVS_PG_GDS_OUT ?= $(LVS_IN_DIR)/$(LVS_TOP)_lvs.gds
+## The generated map, kept beside the stream it produced so the two are
+## auditable together ("which map made this GDS?").
+LVS_PG_MAP_OUT ?= $(basename $(LVS_PG_GDS_OUT))_pg_text.map
+## Layers to add SPNET text on. EMPTY = derive from the map (recommended).
+LVS_PG_LAYERS ?=
+## Map purpose whose text layer/datatype is reused for the PG names.
+LVS_PG_TEXT_PURPOSE ?= PIN
+## Hard-macro GDS to merge in. Must match what the SIGNOFF stream merged, or
+## the macros arrive as empty frames and cannot compare to their CDLs.
+LVS_PG_MERGE_GDS ?=
+## Stream-out settings. Match the signoff stream so the ONLY difference between
+## the two files is the added text.
+LVS_PG_UNIT ?= 1000
+LVS_PG_LIB_NAME ?= DesignLib
+LVS_PG_MODE ?= all
+## Optional stream-out inventory report — per-layer shape counts, which is how
+## you prove the re-stream added text and changed nothing else.
+LVS_PG_REPORT ?=
+## Optional PG-explicit netlist (`write_netlist -include_pwr_gnd -phys`), the
+## mirror-image change on the SOURCE side. Left empty on purpose: changing both
+## sides at once makes a residual failure hard to attribute.
+LVS_PG_NETLIST_OUT ?=
+## Supplies you expect to come out LABELLED. Each one that will not be gets a
+## loud warning before the stream is written -- minutes earlier, and one licence
+## cheaper, than finding out from the LVS report. Defaults to the supplies the
+## project already declares for Calibre, because expecting those exact names to
+## be labelled is what makes the two halves of the flow agree. This only ever
+## warns; it never changes what is streamed.
+LVS_PG_EXPECT_NETS ?= $(LVS_POWER) $(LVS_GROUND)
+
+## LEF OBSTRUCTION HANDLING. A LEF `OBS` is a routing blockage, not
+## manufactured metal, but foundry GDS-out maps put it on the SAME GDS layer as
+## real metal. With macro output enabled, a Front-End-only library's abstracts
+## then FABRICATE connectivity: pad spacers that are nothing but obstruction
+## tile into a continuous sheet and short every net reaching a pad. 1 = move it
+## to a scratch layer the LVS deck never reads. Set 0 only to reproduce the bug.
+LVS_PG_STRIP_OBS ?= 1
+## Obstruction is remapped to <gds layer> + this, so it is preserved and still
+## inspectable rather than dropped. Collision with a real layer is asserted.
+LVS_PG_OBS_LAYER_BASE ?= 9000
+## The map purpose meaning "routing blockage".
+LVS_PG_OBS_PURPOSE ?= LEFOBS
+
+## LEF MACRO PIN NAMING — the knob that decides what LVS actually CHECKS.
+## A black-boxed Front-End-only leaf has no devices and no text inside it, and
+## Calibre netlists a box cell's unnamed pins only when it has one or the
+## other. So its pins are ALL DROPPED: layout `.SUBCKT INVD1` with zero pins
+## against a source `.SUBCKT INVD1 I ZN VDD VSS`, and the cell then matches on
+## NAME AND COUNT ONLY — the routing between standard cells is not verified.
+## 1 = also stream each LEF macro pin's NAME as text, onto the same text layer
+## the PG names use, so the pins become named and the fabric is really
+## compared. This ADDS verification; it is not a suppression. Off by default
+## because it changes what a run measures and needs a deliberate re-stream.
+LVS_PG_PIN_TEXT ?= 0
+## The map purpose meaning "LEF macro pin". Must differ from LVS_PG_OBS_PURPOSE.
+LVS_PG_PIN_PURPOSE ?= LEFPIN
+
+## Where the P&R tool runs, and so where its own log/cmd files land.
+LVS_PG_RUNDIR ?= $(LVS_RUNDIR)
+
+# The environment contract handed to lvs_pg_emit.tcl — one definition, so the
+# preflight and the run cannot report different values than they use.
+LVS_PG_ENV = \
+	LVS_PG_DB='$(LVS_PG_DB)' LVS_PG_MAP_IN='$(LVS_PG_MAP_IN)' \
+	LVS_PG_GDS_OUT='$(LVS_PG_GDS_OUT)' LVS_PG_MAP_OUT='$(LVS_PG_MAP_OUT)' \
+	LVS_PG_LAYERS='$(LVS_PG_LAYERS)' LVS_PG_TEXT_PURPOSE='$(LVS_PG_TEXT_PURPOSE)' \
+	LVS_PG_MERGE_GDS='$(LVS_PG_MERGE_GDS)' \
+	LVS_PG_UNIT='$(LVS_PG_UNIT)' LVS_PG_LIB_NAME='$(LVS_PG_LIB_NAME)' \
+	LVS_PG_MODE='$(LVS_PG_MODE)' LVS_PG_REPORT='$(LVS_PG_REPORT)' \
+	LVS_PG_NETLIST_OUT='$(LVS_PG_NETLIST_OUT)' \
+	LVS_PG_EXPECT_NETS='$(LVS_PG_EXPECT_NETS)' \
+	LVS_PG_STRIP_OBS='$(LVS_PG_STRIP_OBS)' \
+	LVS_PG_OBS_LAYER_BASE='$(LVS_PG_OBS_LAYER_BASE)' \
+	LVS_PG_OBS_PURPOSE='$(LVS_PG_OBS_PURPOSE)' \
+	LVS_PG_PIN_TEXT='$(LVS_PG_PIN_TEXT)' \
+	LVS_PG_PIN_PURPOSE='$(LVS_PG_PIN_PURPOSE)'
 
 ## The runner. Sibling of this file by default; CONTRACT.md is its spec.
 LVS_RUNNER ?= $(LVS_FLOW_MK_DIR)/run_lvs.sh
@@ -183,6 +317,7 @@ LVS_ENV = \
 	LVS_RUNDIR='$(LVS_RUNDIR)' \
 	STDCELL_VLOG='$(STDCELL_VLOG)' IO_VLOG='$(IO_VLOG)' MACRO_CDLS='$(MACRO_CDLS)' \
 	LVS_POWER='$(LVS_POWER)' LVS_GROUND='$(LVS_GROUND)' \
+	LVS_GLOBAL_NETS='$(LVS_GLOBAL_NETS)' \
 	BONDPAD_CELLS='$(BONDPAD_CELLS)' \
 	LVS_BOX_LEAF='$(LVS_BOX_LEAF)' LVS_BOX_EXCLUDE_RE='$(LVS_BOX_EXCLUDE_RE)' \
 	LVS_TURBO='$(LVS_TURBO)' LVS_SOURCE_ONLY='$(LVS_SOURCE_ONLY)' \
@@ -193,6 +328,7 @@ LVS_ENV = \
 lvs_need_top = test -n '$(LVS_TOP)' || { echo "FAIL: LVS_TOP is empty — set BLOCK (or LVS_TOP) BEFORE including lvs.mk. Every LVS artefact is named after the top cell."; exit 1; }
 
 .PHONY: lvs-preflight lvs_source lvs lvs_batch lvs-report lvs-rve lvs-clean lvs-help
+.PHONY: lvs-pg-preflight lvs_pg_gds
 
 #-----------------------------------------------------------------------------
 # Preflight
@@ -267,6 +403,68 @@ lvs-preflight:
 	    exit $$rc; \
 	fi; \
 	echo "LVS PREFLIGHT: OK — both layers clean ($(LVS_TOP))"
+
+#-----------------------------------------------------------------------------
+# PG re-stream
+#-----------------------------------------------------------------------------
+## lvs-pg-preflight: layer 1 for the re-stream — the same split as
+## lvs-preflight. Make resolves and attributes (which variable produced which
+## path); lvs_pg_emit.tcl validates and derives (does the map actually describe
+## a routable stack?), because only the script can read the map. Neither takes a
+## P&R licence. Layer 2 is not delegable here without launching the tool, so
+## make checks a little more of it than it does for Calibre: the script's own
+## checks still run, and they are the backstop.
+lvs-pg-preflight:
+	@$(lvs_need_top)
+	@echo "== PG re-stream preflight — $(LVS_TOP)  (no licence taken, no tool launched) =="
+	@printf '  %-5s %-18s %s\n' 'sel' 'LVS_RUN' '$(if $(LVS_RUN),$(LVS_RUN),(empty — using WORK_DIR))'
+	@rc=0; \
+	if [ -r '$(LVS_PG_SCRIPT)' ]; then printf '  %-5s %-18s %s\n' 'OK' 'LVS_PG_SCRIPT' '$(LVS_PG_SCRIPT)'; \
+	else printf '  %-5s %-18s %s\n' 'MISS' 'LVS_PG_SCRIPT' '$(LVS_PG_SCRIPT)'; rc=1; fi; \
+	if [ -d '$(LVS_PG_DB)' ]; then printf '  %-5s %-18s %s\n' 'OK' 'LVS_PG_DB' '$(LVS_PG_DB)'; \
+	else printf '  %-5s %-18s %s\n' 'MISS' 'LVS_PG_DB' '$(LVS_PG_DB) (a database is a DIRECTORY)'; rc=1; fi; \
+	if [ -z '$(LVS_PG_MAP_IN)' ]; then \
+	    printf '  %-5s %-18s %s\n' 'MISS' 'LVS_PG_MAP_IN' '(not set — REQUIRED: the foundry GDS-out map)'; rc=1; \
+	elif [ -r '$(LVS_PG_MAP_IN)' ]; then printf '  %-5s %-18s %s\n' 'OK' 'LVS_PG_MAP_IN' '$(LVS_PG_MAP_IN)'; \
+	else printf '  %-5s %-18s %s\n' 'MISS' 'LVS_PG_MAP_IN' '$(LVS_PG_MAP_IN)'; rc=1; fi; \
+	if command -v $(firstword $(LVS_PG_CMD)) >/dev/null 2>&1; then \
+	    printf '  %-5s %-18s %s\n' 'OK' 'LVS_PG_CMD' "$$(command -v $(firstword $(LVS_PG_CMD))) $(wordlist 2,99,$(LVS_PG_CMD))"; \
+	else printf '  %-5s %-18s %s\n' 'MISS' 'LVS_PG_CMD' '$(firstword $(LVS_PG_CMD)) not on PATH'; rc=1; fi; \
+	if [ -z '$(LVS_PG_MERGE_GDS)' ]; then \
+	    printf '  %-5s %-18s %s\n' 'warn' 'LVS_PG_MERGE_GDS' '(empty — hard macros will stream as EMPTY frames)'; \
+	else for f in $(LVS_PG_MERGE_GDS); do \
+	    if [ -s "$$f" ]; then printf '  %-5s %-18s %s\n' 'OK' 'LVS_PG_MERGE_GDS' "$$f"; \
+	    else printf '  %-5s %-18s %s\n' 'MISS' 'LVS_PG_MERGE_GDS' "$$f"; rc=1; fi; done; fi; \
+	printf '  %-5s %-18s %s\n' '->' 'LVS_PG_GDS_OUT' '$(LVS_PG_GDS_OUT)'; \
+	printf '  %-5s %-18s %s\n' '->' 'LVS_PG_MAP_OUT' '$(LVS_PG_MAP_OUT)'; \
+	printf '  %-5s %-18s %s\n' '--' 'LVS_PG_LAYERS' '$(if $(LVS_PG_LAYERS),$(LVS_PG_LAYERS),(empty — derived from the map))'; \
+	printf '  %-5s %-18s %s\n' '--' 'LVS_PG_PIN_TEXT' '$(if $(filter 1,$(LVS_PG_PIN_TEXT)),1 — LEF macro pin names streamed; boxed leaves get NAMED pins,0 — boxed leaves extract with NO pins: matched on name and count only)'; \
+	if [ '$(LVS_PG_PIN_TEXT)' = '1' ] && [ '$(LVS_PG_PIN_PURPOSE)' = '$(LVS_PG_OBS_PURPOSE)' ]; then \
+	    printf '  %-5s %-18s %s\n' 'MISS' 'LVS_PG_PIN_PURPOSE' 'same as LVS_PG_OBS_PURPOSE ($(LVS_PG_OBS_PURPOSE)) — pin names would land on stripped geometry'; rc=1; fi; \
+	if [ $$rc -ne 0 ]; then \
+	    echo ''; \
+	    echo "PG PREFLIGHT: FAIL — fix the MISSING entries above."; \
+	    echo "  The database is P&R output: it is the directory write_db left in work/,"; \
+	    echo "  named after the top cell. LVS_PG_MAP_IN is the same GDS-out map the"; \
+	    echo "  signoff stream_out used — read-only, and copied rather than edited."; \
+	    exit 1; fi; \
+	echo "PG PREFLIGHT: OK ($(LVS_TOP))"
+
+## lvs_pg_gds: re-stream a PG-labelled GDS from the routed database. Takes a
+## P&R licence, minutes not hours (no place/route/opt). READ-ONLY on the
+## database — the script issues read_db + write_stream and no write_db — so it
+## is safe to run against a signoff database that is already archived.
+lvs_pg_gds: lvs-pg-preflight
+	@mkdir -p $(dir $(LVS_PG_GDS_OUT)) $(LVS_PG_RUNDIR)
+	cd $(LVS_PG_RUNDIR) && $(LVS_PG_ENV) $(LVS_PG_CMD) $(LVS_PG_SCRIPT)
+	@test -s '$(LVS_PG_GDS_OUT)' || { \
+	    echo "FAIL: no PG-labelled GDS at $(LVS_PG_GDS_OUT)."; \
+	    echo "      The P&R tool can exit 0 on a failed script — find the real error in"; \
+	    echo "      the tool log under $(LVS_PG_RUNDIR)."; \
+	    exit 1; }
+	@echo "OK: PG-labelled GDS $(LVS_PG_GDS_OUT) ($$(du -h '$(LVS_PG_GDS_OUT)' | cut -f1))"
+	@echo "    map used  : $(LVS_PG_MAP_OUT)"
+	@echo "    compare it: make lvs_batch LVS_PG=1"
 
 #-----------------------------------------------------------------------------
 # The runs
@@ -362,6 +560,8 @@ lvs-help:
 	@echo "Calibre nmLVS — ASIC/lvs-flow (contract: CONTRACT.md)"
 	@echo ''
 	@echo "  make lvs-preflight   resolve inputs, then run_lvs.sh --check (no licence)"
+	@echo "  make lvs-pg-preflight  resolve the PG re-stream's inputs   (no licence)"
+	@echo "  make lvs_pg_gds      re-stream a PG-LABELLED GDS from the routed DB"
 	@echo "  make lvs_source      v2lvs + SPICE source assembly only (no licence)"
 	@echo "  make lvs_batch       full headless LVS            (alias: make lvs)"
 	@echo "  make lvs-report      artefact paths + the verdict from the report"
@@ -376,6 +576,27 @@ lvs-help:
 	@echo "    LVS_RUNDIR      $(LVS_RUNDIR)"
 	@echo "    pick a run      make lvs_batch LVS_RUN=<dir under $(LVS_RUNS_DIR)>"
 	@echo ''
+	@echo "  Power/ground-labelled re-stream (a signoff GDS usually has NO supply"
+	@echo "  names in it; without them the comparison is not meaningful — exit 6):"
+	@echo "    LVS_PG          $(LVS_PG)   (1 = point LVS_GDS at LVS_PG_GDS_OUT)"
+	@echo "    LVS_PG_SCRIPT   $(LVS_PG_SCRIPT)"
+	@echo "    LVS_PG_CMD      $(LVS_PG_CMD)"
+	@echo "    LVS_PG_DB       $(LVS_PG_DB)   (read-only; no write_db)"
+	@echo "    LVS_PG_MAP_IN   $(LVS_PG_MAP_IN)"
+	@echo "    LVS_PG_GDS_OUT  $(LVS_PG_GDS_OUT)"
+	@echo "    LVS_PG_MAP_OUT  $(LVS_PG_MAP_OUT)"
+	@echo "    LVS_PG_LAYERS   $(if $(LVS_PG_LAYERS),$(LVS_PG_LAYERS),(empty — derived from the map))"
+	@echo "    LVS_PG_TEXT_PURPOSE $(LVS_PG_TEXT_PURPOSE)"
+	@echo "    LVS_PG_MERGE_GDS $(if $(LVS_PG_MERGE_GDS),$(LVS_PG_MERGE_GDS),(empty))"
+	@echo "    LVS_PG_UNIT     $(LVS_PG_UNIT)   LVS_PG_LIB_NAME $(LVS_PG_LIB_NAME)   LVS_PG_MODE $(LVS_PG_MODE)"
+	@echo "    LVS_PG_REPORT   $(if $(LVS_PG_REPORT),$(LVS_PG_REPORT),(empty — no stream-out inventory))"
+	@echo "    LVS_PG_NETLIST_OUT $(if $(LVS_PG_NETLIST_OUT),$(LVS_PG_NETLIST_OUT),(empty — source side unchanged))"
+	@echo "    LVS_PG_EXPECT_NETS $(if $(LVS_PG_EXPECT_NETS),$(LVS_PG_EXPECT_NETS),(empty — no expectation checked))"
+	@echo "    LVS_PG_STRIP_OBS $(LVS_PG_STRIP_OBS)   (1 = LEF obstruction off the metal layers -> +$(LVS_PG_OBS_LAYER_BASE))"
+	@echo "    LVS_PG_PIN_TEXT $(LVS_PG_PIN_TEXT)   (1 = stream LEF macro pin NAMES as $(LVS_PG_PIN_PURPOSE) text; 0 = boxed leaves have NO pins)"
+	@echo "    LVS_PG_WORK_DIR $(LVS_PG_WORK_DIR)"
+	@echo "    LVS_PG_RUNDIR   $(LVS_PG_RUNDIR)"
+	@echo ''
 	@echo "  PDK:"
 	@echo "    LVS_DECK        $(LVS_DECK)"
 	@echo "    LVS_SOURCE_ADDED $(LVS_SOURCE_ADDED)"
@@ -386,6 +607,11 @@ lvs-help:
 	@echo "  Comparison:"
 	@echo "    LVS_POWER       $(LVS_POWER)"
 	@echo "    LVS_GROUND      $(LVS_GROUND)"
+	@echo "    LVS_GLOBAL_NETS $(if $(strip $(LVS_GLOBAL_NETS)),$(LVS_GLOBAL_NETS),(empty — no .GLOBAL line emitted))"
+	@echo "                    (the .GLOBAL list in the SPICE source. Drop a name here when a"
+	@echo "                     hard macro uses it as an INTERNAL net — .GLOBAL would merge that"
+	@echo "                     node with the chip supply and fabricate a short, source-side"
+	@echo "                     only. 'make lvs-preflight' scans MACRO_CDLS and names the macro.)"
 	@echo "    BONDPAD_CELLS   $(BONDPAD_CELLS)"
 	@echo "    LVS_BOX_LEAF    $(LVS_BOX_LEAF)   (0 = raw compare, diagnostic only)"
 	@echo "    LVS_BOX_EXCLUDE_RE $(LVS_BOX_EXCLUDE_RE)"

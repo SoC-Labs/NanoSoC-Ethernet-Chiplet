@@ -39,6 +39,7 @@ A project supplies these from its own Makefile; nothing else is needed.
 | `LVS_SOURCE_ADDED` | *(empty)* | Foundry `source.added` primitive stubs, passed to `v2lvs -lsp`. |
 | `LVS_POWER` | `VDD` | Power net name(s), substituted for the deck's `POWER_NAME` placeholder. |
 | `LVS_GROUND` | `VSS` | Ground net name(s), substituted for `GROUND_NAME`. |
+| `LVS_GLOBAL_NETS` | `$LVS_POWER $LVS_GROUND` | Names emitted as the source's `.GLOBAL` line. Deliberately **not** the same knob as the two above: those tell Calibre which nets to *treat as supplies*; this tells the SPICE reader to *merge every net of that name in every `.SUBCKT`*. A name can be right for the first and wrong for the second — see §6d. Empty emits no `.GLOBAL` at all. |
 | `BONDPAD_CELLS` | *(empty)* | Pin-less bump/pad cells needing an empty `.SUBCKT` stub. |
 | `LVS_BOX_LEAF` | `1` | `1` = black-box FE-only leaves. `0` = raw compare (diagnostic only). |
 | `LVS_BOX_EXCLUDE_RE` | `^(ANTENNA\|DCAP\|GDCAP\|GFILL\|OD25DCAP)` | Physical-only cells to leave **unboxed** so they flatten away. |
@@ -154,6 +155,11 @@ OBJECTS section is that single class, on boxed leaves. So **pin-level**
 connectivity on boxed leaves is weakly checked at best; do not advertise "every
 port wired as the netlist says".
 
+A boxed run on an FE-only PDK also says nothing about the pad ring: its cells are
+LEF-only and their obstruction geometry is deliberately removed from the LVS
+stream because it fabricates shorts (§6c). Say "clean modulo black boxes and
+modulo the pad ring", never "clean".
+
 It does **not** prove cell interiors — those are black boxes by construction.
 Full signoff LVS needs the foundry Back-End packages (transistor CDL + cell GDS).
 Never claim a boxed run as signoff, and never suppress a discrepancy with
@@ -172,14 +178,85 @@ pins as extra. This is the class that actually drives the archived
 compute-chiplet verdict — its INCORRECT OBJECTS section contains this and
 nothing else. Counts there are capped by `LVS REPORT MAXIMUM 1000`.
 
-**b. PG net naming — only if your P&R emitted no PG.** `write_netlist` without
-`-include_pwr_gnd`, plus a stream carrying no PG text, leaves the layout supply
-grid unnamed so it cannot equate to the source's global supplies. Fix on the P&R
-side and re-emit; out of scope here.
+**c. Fabricated connectivity from LEF obstruction.** On a Front-End-only PDK,
+`write_stream -output_macros` streams LEF abstracts for cells with no Back-End
+GDS, and foundry GDS-out maps place `LEFOBS` on the same GDS layer as real
+metal. A LEF `OBS` is a routing blockage, not a manufactured shape, and an
+abstract collapses the real cell into one covering rectangle per layer. Cells
+that are obstruction and nothing else — pad spacers, bond pads — then stream as
+solid slabs; tiled around a pad ring they short every net that reaches a pad.
+Measured on `nanosoc_eth_chiplet_pads`: 34 shorts, 33 signal-pad pairs plus
+`VDD - VSS`, 1 of 52 layout ports resolvable, and a single net with 6,147,666
+connections. Fix in the GDS-out map (`lvs_pg_emit.tcl`, `LVS_PG_STRIP_OBS=1`),
+never in the design and never by suppression.
 
-Check (b) applies before citing it: in the archived compute-chiplet report
-`VDD`/`VSS` are correspondence points and PG is *not* the discrepancy driver,
-despite that script's footer claiming it is.
+> **State this whenever a result is quoted.** With obstruction removed, an
+> FE-only stream has no pad-ring geometry at all, so pad-ring power connectivity
+> is unverified by LVS and cannot be verified without Back-End IO cell GDS.
+> The bond pads then appear as unmatched *source* instances — on the ethernet
+> chiplet, 42 `PAD70GU` + 40 `PAD70NU` = 82 of 116. That is the expected cost of
+> the fix, not a new defect.
+
+Check before citing PG naming as a residual: in the archived compute-chiplet
+report `VDD`/`VSS` are correspondence points and PG is *not* the discrepancy
+driver, despite that script's footer claiming it is. PG is not a residual — it
+is a precondition. See §6a.
+
+## 6a. PRECONDITION: the layout must carry PG net text
+
+**Not an "open item" to note in a caveat — a blocking input requirement. Check
+it before believing any verdict.**
+
+A P&R signoff GDS usually has none. The foundry GDS-out map declares
+`NAME <layer>/PIN` but no `NAME <layer>/SPNET`, so the special-route supply grid
+streams unnamed. Consequences, measured on the ethernet chiplet:
+
+- Calibre has no POWER and no GROUND net; ERC checks abort
+  (`Invalid PATHCHK request "! POWER": no POWER nets present`).
+- Its SRAM-bitcell injection template fires on the **source side only**, so
+  bitcells stay folded in the source and exploded in the layout.
+- Result: **4,084,884 unmatched layout objects** — ~2M loose `MN(NCHPG_HVTSR)`
+  plus ~2M `_invv` — swamping a compare that was otherwise sound.
+
+The fix is a separate PG-labelled stream for LVS: copy the foundry map, append
+`NAME <layer>/SPNET`, then `read_db` + `write_stream` — read-only on the
+database, no `write_db`. The signoff GDS is untouched and stays the tapeout
+artefact; LVS consumes the labelled one. The working reference does exactly
+this and LVS's `<top>_lvs.gds`, never its signoff stream.
+
+Symptom if you skip it: millions of unmatched layout devices concentrated in
+SRAM interiors, and one layout net with an absurd connection count (6,147,666
+on ours) because a stray label became the only correspondence point.
+
+## 6d. PRECONDITION: no `.GLOBAL` name may be a hard macro's internal net
+
+`.GLOBAL` is unscoped: it merges every net of that name, in every `.SUBCKT` of
+the source, into one. Correct for cells; wrong for a hard macro that uses a
+supply name for something else. Vendor macros routinely bring their real
+supplies out as `VDDE`/`VSSE` and keep `VDD`/`VSS` for internal nodes; in a
+**power-gated** macro the internal `VSS` is the *switched* (virtual) ground, on
+the far side of the power-gate footers from the real one. `.GLOBAL VSS` ties the
+two together and fabricates a short across the switch — **in the source only**.
+The layout is the correct side.
+
+Measured on `nanosoc_eth_chiplet_pads` (2026-08-10), two ARM via-ROMs: 34
+non-pad unmatched instances, 44 unmatched nets, 70 device property errors and
+all 436 net discrepancies, every one inside the two ROM interiors, plus a
+source-side `Net VSS` carrying +1,980 connections over the layout's. The SRAMs
+on the same die were untouched — their top `.SUBCKT` declares `VDD VSS` as real
+ports, so the merge is a no-op.
+
+It does not look like a short. No `SHORT` record, clean ERC, and every symptom
+inside the macro — which invites the much worse conclusion that the vendor's GDS
+and CDL disagree. **The fingerprint is the supply net whose SOURCE connection
+count exceeds the LAYOUT's.**
+
+`run_lvs.sh` preflight scans every `MACRO_CDLS` file for it and names the macro,
+the net and the scope that creates it. Fix by narrowing `LVS_GLOBAL_NETS` — safe
+when the post-P&R netlist wires the supplies explicitly on every instance and on
+the macro itself — or by pointing `MACRO_CDLS` at a **project-local copy** of the
+CDL with the internal net renamed. Never edit vendor or PDK collateral in place,
+and never suppress the resulting discrepancies.
 
 ## 6b. Cell Verilog must match the netlist's PG convention
 

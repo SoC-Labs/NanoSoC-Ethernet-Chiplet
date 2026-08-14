@@ -559,11 +559,49 @@ were excluded; after excluding, 598,334 / 598,334 instances with zero unmatched.
 ports; macro transistors flagged on their bulk (`b:`) pin while gate, source and drain
 match.
 
-**Cause.** [`CONTRACT.md`](./CONTRACT.md) §6 — the layout supply grid has no name to match
-against.
+**Cause.** [`CONTRACT.md`](./CONTRACT.md) §6a — the layout supply grid has no name to match
+against, because a signoff stream carries no PG text.
 
-**Fix.** P&R side, and out of scope for this flow: re-emit with
-`write_netlist -include_pwr_gnd -phys` and drop the `.GLOBAL`. Document it; do not mask it.
+**Fix, and it is in this flow, not in P&R.** Re-stream the same routed database with an
+extended GDS-out map that adds `NAME <layer>/SPNET`:
+
+```sh
+make lvs_pg_gds          # ASIC/lvs-flow/lvs_pg_emit.tcl — read-only on the database
+make lvs_batch LVS_PG=1
+```
+
+The runner treats a layout with no supplies as **exit 6, `NOT MEANINGFUL`** rather than an
+ordinary `INCORRECT`, because with no supplies identified the supply-dependent device
+recognition stops and the discrepancy list describes the wrong problem entirely. Never mask
+it with `LVS IGNORE PORTS` or by suppressing bulk checks.
+
+If **one** supply resolves and the other does not, do not re-stream — the stream is fine.
+Go to the next entry.
+
+### One supply resolves, the other reports "no data" → check `.shorts` FIRST
+
+**Symptom.** Millions of unmatched layout objects; almost no top-level ports resolved (1 of
+52 in the verified case); one supply resolves while the other reports `There is no data for
+layout net name <X>`; a net with an implausible connection count (6,147,666).
+
+**Look here first.** `${LVS_TOP}.lvs.rep.shorts`, for a supply-to-supply entry such as
+`SHORT n. VDD - VSS`. If it is there, every other symptom is downstream of it: two supplies
+merged into one net also stops SRAM bitcell recognition dead, and that is where the
+unmatched millions come from. Debugging the discrepancy list before clearing the short is
+wasted effort.
+
+**Cause.** [`CONTRACT.md`](./CONTRACT.md) §6c — LEF obstruction streamed as real metal.
+Cells that are obstruction and nothing else (pad spacers, bond pads) become solid slabs
+that tile the pad ring and short every net reaching a pad.
+
+**Fix.** `LVS_PG_STRIP_OBS=1` (the default) moves `LEFOBS` off the real metal layers in the
+derived map, then re-stream. Verified: 34 shorts → 0, layout ports 1/52 → 50/50, unmatched
+layout instances 4,084,884 → 38.
+
+**The cost, which must be quoted alongside any result.** The bond pads then appear as
+unmatched *source* instances (42 + 40 = 82 of 116 in the verified case) because their only
+geometry has been removed. Pad-ring power connectivity is therefore **not verified by LVS
+and cannot be** without Back-End IO cell GDS.
 
 ### `LVS BOX cell "<name>" not located or not allowed`
 
