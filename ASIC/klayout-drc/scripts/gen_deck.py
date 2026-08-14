@@ -275,8 +275,10 @@ HEADER = '''# ==================================================================
 $in     || raise("gen_deck: -rd in=<gds> is required")
 report_file = $report || "klayout_drc.lyrdb"
 
-# Unbuffered, or a full-die run shows nothing at all for its whole runtime and
-# there is no way to tell a slow check from a hung one.
+# Unbuffered, and `puts` rather than KLayout's `info`. info() goes through the
+# C++ logger, which block-buffers through a pipe -- measured: nothing at all
+# appears until the process exits, so a two-hour run is indistinguishable from a
+# hung one. puts honours this sync flag and streams.
 $stdout.sync = true
 
 source($in)
@@ -299,7 +301,7 @@ if $clip
   c = $clip.split(",").collect {{ |v| v.to_f }}
   c.size == 4 || raise("gen_deck: -rd clip needs x1,y1,x2,y2 in um")
   source.inplace_clip(RBA::DBox::new(c[0], c[1], c[2], c[3]))
-  info("clip: #{{c.inspect}} um")
+  puts("clip: #{{c.inspect}} um")
 
   # Clipping CUTS wires, and a cut wire has a raw end: it is narrow, it is
   # small in area, and the via that used to sit under a metal that continued
@@ -317,7 +319,7 @@ if $clip
   gw = ($guardwidth || "2.0").to_f
   if gw > 0
     $guard = extent - extent.sized(-gw)
-    info("clip guard: #{{gw}} um frame -- markers touching it are dropped")
+    puts("clip guard: #{{gw}} um frame -- markers touching it are dropped")
   end
 end
 
@@ -350,24 +352,24 @@ def check(name, desc, layer)
   n = layer.count
   $counts << [name, n]
   layer.output(name, desc)
-  info("  %-22s %8d   %s" % [name, n, desc])
+  puts("  %-22s %8d   %s" % [name, n, desc])
 end
 
 t_start = Time.now
-info("=== KLayout rough DRC: {top} ===")
+puts("=== KLayout rough DRC: {top} ===")
 
 '''
 
 FOOTER = '''
-info("")
-info("=== totals ===")
+puts("")
+puts("=== totals ===")
 total = $counts.inject(0) {{ |s, c| s + c[1] }}
 nz = $counts.select {{ |c| c[1] > 0 }}.sort {{ |a, b| b[1] <=> a[1] }}
-nz.each {{ |c| info("  %-22s %8d" % c) }}
-info("  %-22s %8d" % ["CHECKS RUN", $counts.size])
-info("  %-22s %8d" % ["CHECKS WITH RESULTS", nz.size])
-info("  %-22s %8d" % ["TOTAL RESULTS", total])
-info("elapsed: %.1f s" % (Time.now - t_start))
+nz.each {{ |c| puts("  %-22s %8d" % c) }}
+puts("  %-22s %8d" % ["CHECKS RUN", $counts.size])
+puts("  %-22s %8d" % ["CHECKS WITH RESULTS", nz.size])
+puts("  %-22s %8d" % ["TOTAL RESULTS", total])
+puts("elapsed: %.1f s" % (Time.now - t_start))
 
 # Machine-readable sidecar. The .lyrdb is for the Marker Browser; this is what
 # compare_calibre.py reads, because parsing counts back out of XML is silly.
@@ -382,7 +384,7 @@ if $counts_out
     f.puts("# rule\\tcount")
     $counts.each {{ |c| f.puts("%s\\t%d" % c) }}
   end
-  info("counts: #{{$counts_out}}")
+  puts("counts: #{{$counts_out}}")
 end
 '''
 
@@ -413,7 +415,7 @@ def emit(layers, vias, grid, gmap, top, tlef, gmap_path, wide_default=True):
     o.append("  $cache[name] ||= begin")
     o.append('    t = Time.now')
     o.append('    r = $defs[name].call')
-    o.append('    info("  load %-5s %8d polygons  %.1f s" % [name, r.count, Time.now - t])')
+    o.append('    puts("  load %-5s %8d polygons  %.1f s" % [name, r.count, Time.now - t])')
     o.append("    r")
     o.append("  end")
     o.append("end")
@@ -428,7 +430,7 @@ def emit(layers, vias, grid, gmap, top, tlef, gmap_path, wide_default=True):
                  % (n, l.direction or "?", l.width, l.min_space()))
         o.append("# ---------------------------------------------------------------------------")
         o.append('if want?("%s")' % n)
-        o.append('  info("%s")' % n)
+        o.append('  puts("%s")' % n)
 
         if l.width:
             o.append('  check("%s.W.1", "min width %s um", %s.width(%s).polygons)'
@@ -532,7 +534,7 @@ def emit(layers, vias, grid, gmap, top, tlef, gmap_path, wide_default=True):
         o.append("# %s  (cut, min space %s)" % (n, l.spacing))
         o.append("# ---------------------------------------------------------------------------")
         o.append('if want?("%s")' % n)
-        o.append('  info("%s")' % n)
+        o.append('  puts("%s")' % n)
         if l.spacing:
             o.append('  check("%s.S.1", "cut space %s um", %s.space(%s).polygons)'
                      % (n, l.spacing, v, l.spacing))

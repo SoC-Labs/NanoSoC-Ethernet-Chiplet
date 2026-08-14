@@ -17,14 +17,26 @@ DESIGN_DIR := $(FLOW_DIR)/../genus-innovus
 BLOCK      := nanosoc_eth_chiplet_pads
 
 DECK   ?= $(FLOW_DIR)/decks/tsmc65_rough.drc
-GDS    ?= $(DESIGN_DIR)/outputs/$(BLOCK).gds
+
+## THE SIGNOFF STREAM IS NOT IN outputs/. `make logo` made outputs/ the home of
+## the *submission* artefact (logo-merged) so that "a DRC count can never be
+## quoted against the wrong file" (../genus-innovus/Makefile:429). The un-logoed
+## signoff stream lives under runs/<stamp>/outputs/, which is also what every
+## Calibre run in calibre_runs/ was pointed at. So default to the newest run's
+## stream, not to outputs/ — and say so rather than resolving to a missing path.
+RUN_GDS := $(firstword $(shell ls -t $(DESIGN_DIR)/runs/*/outputs/$(BLOCK).gds 2>/dev/null))
+GDS    ?= $(RUN_GDS)
 TAG     = $(notdir $(basename $(GDS)))
 RUNDIR ?= $(FLOW_DIR)/work/$(TAG)
 COUNTS  = $(RUNDIR)/$(TAG).counts
 
-## Calibre's summary for the SAME GDS. Override when comparing a different run:
+## Calibre's summary for the SAME GDS. Newest run under calibre_runs/ by
+## default — the Calibre deck is under active development (the switch set moved
+## from the INCLUDE wrapper to a project deck header, see
+## ../genus-innovus/scripts/calibre/make_project_deck.sh), and each generation
+## produces different counts, so pinning one tag here would rot. Override with:
 ##   make compare CAL_SUMMARY=<path>/…drc.summary
-CAL_SUMMARY ?= $(DESIGN_DIR)/work/drc_run/$(BLOCK).drc.summary
+CAL_SUMMARY ?= $(firstword $(shell ls -t $(DESIGN_DIR)/calibre_runs/*/$(BLOCK).drc.summary 2>/dev/null))
 
 ## Window for `make clip` and for `make drc CLIP=…`, in um.
 BOX     ?= 600,250,750,400
@@ -44,6 +56,9 @@ deck:
 
 ## The rough check. Not signoff -- see README.md.
 drc:
+	@test -n "$(GDS)" || { echo "FAIL: no GDS. outputs/ holds only logo-merged"; \
+	    echo "      streams now; the signoff stream is runs/<stamp>/outputs/$(BLOCK).gds"; \
+	    echo "      and none was found. Pass one: make drc GDS=<path>"; exit 1; }
 	KL_DECK=$(DECK) KL_RUNDIR=$(RUNDIR) KL_THREADS=$(THREADS) \
 	    $(if $(CLIP),KL_CLIP=$(CLIP),) $(if $(ONLY),KL_ONLY=$(ONLY),) \
 	    $(FLOW_DIR)/scripts/run_drc.sh $(GDS)

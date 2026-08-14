@@ -37,15 +37,49 @@ from collections import defaultdict
 CLASS_ORDER = ["W", "S", "A", "G", "R", "GRID", "ANGLE", "DN", "other"]
 
 
+LAYER_RE = re.compile(r"^(M\d+|VIA\d+|AP|RV|PO|OD|CO|NW|PW)$")
+
+
+def _norm_layer(tok):
+    """'M4i' -> 'M4';  'M7_real' -> 'M7';  'M8_NEW' -> 'M8'."""
+    tok = re.sub(r"(_real|_NEW|_DECAP)$", "", tok.strip())
+    tok = re.sub(r"i$", "", tok) if re.match(r"^(M\d+|VIA\d+|AP|RV|PO|OD|CO|NW)i$", tok) else tok
+    return tok
+
+
 def rule_family(name):
-    """'M4.S.2.1' -> ('M4', 'S');  'VIA3.R.2:M4' -> ('VIA3', 'R')."""
-    name = name.split(":")[0].split("__")[0].strip()
-    parts = name.split(".")
-    if len(parts) < 2:
-        return (name, "other")
-    layer, cls = parts[0], parts[1]
+    """Which (layer, rule class) a check belongs to, in either tool's naming.
+
+    Calibre writes the layer on EITHER side of the colon and the two mean
+    different things:
+
+        M4.S.2.1          layer first          -> (M4,   S)
+        M1.S.1:SRM_SRAMDMY  layer first, qualified -> (M1, S)
+        VIA3.R.4:M4       layer first          -> (VIA3, R)
+        G.4:M4i           layer LAST           -> (M4,   G)
+        CSR.R.1:M7i       layer LAST           -> (M7,   CSR)
+
+    Getting this wrong is not cosmetic: bucketing `G.4:M4i` under a layer
+    called "G" hides every minstep check Calibre ran and makes this deck's
+    `M4.G.4` look like it found something Calibre did not. It did exactly that
+    until 2026-08-10.
+    """
+    name = name.split("__")[0].strip()
+    head, _, tail = name.partition(":")
+    parts = head.split(".")
+
+    if LAYER_RE.match(parts[0]):
+        layer = parts[0]
+        cls = parts[1] if len(parts) > 1 else "other"
+    elif tail and LAYER_RE.match(_norm_layer(tail)):
+        # rule first, layer after the colon
+        layer = _norm_layer(tail)
+        cls = parts[0]
+    else:
+        return (head, "other")
+
     cls = cls.rstrip("~")
-    if cls not in ("W", "S", "A", "G", "R", "GRID", "ANGLE", "DN"):
+    if cls not in ("W", "S", "A", "G", "R", "GRID", "ANGLE", "DN", "CSR", "EN"):
         cls = "other"
     return (layer, cls)
 

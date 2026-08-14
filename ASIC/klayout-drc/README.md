@@ -11,8 +11,37 @@ check](#what-it-does-not-check) before quoting a number from it.
 
 > Verified on `srv03335`, KLayout 0.30.10, against
 > `runs/20260810T065131Z_honest-full-pnr2/outputs/nanosoc_eth_chiplet_pads.gds`
-> (298 MB, 2,459 cells) — the same stream `calibre_runs/drc_track2` ran on, so the two
+> (298 MB, 2,459 cells) — the stream every `calibre_runs/*` run has used, so the two
 > results are directly comparable.
+
+### The Calibre side is moving — check which generation you are comparing against
+
+This deck was correlated against `calibre_runs/drc_track2`. The Calibre reference has
+advanced twice since, on the **same stream**:
+
+| run | deck | checks | results |
+|---|---|---:|---:|
+| `drc_track2` | `INCLUDE` wrapper (this deck's correlation baseline) | 1,955 | 2,509 |
+| `drc_minisic` | wrapper + `DEFINE_PAD_BY_TEXT` — **reverted**, 6 checks capped | 1,955 | 8,509 |
+| `drc_hdr_minisic` | project deck header (`make_project_deck.sh`) | 1,926 | 2,508 |
+
+The switch set has moved out of the wrapper and into a **project copy of the deck
+header** — `scripts/calibre/make_project_deck.sh` + `tsmc65_minisic_header.svrf` — because
+`WLCSP_SEALRING` and the `xLB/yLB/xRT/yRT` chip window cannot be set from a wrapper at
+all (SVRF has no `#UNDEFINE`, and redefining a `VARIABLE` is `VAR3` even under
+`DRC ICSTATION YES`). That is the fix `docs/tapeout/12-calibre-drc.md` said would be
+needed, and it has landed.
+
+**None of it changes this deck.** Every switch involved governs chip-boundary, seal-ring,
+latch-up and floating-gate checks — all of which are in
+[What it does not check](#what-it-does-not-check). But `make compare` now defaults to the
+**newest** summary under `calibre_runs/`, not a pinned one, and the correlation numbers
+quoted below are still against `drc_track2`. Re-correlate before treating them as
+current.
+
+Two Calibre-side flows this deck has **no counterpart for**:
+`scripts/calibre/nanosoc_eth_chiplet_pads.ant.rules` (antenna) and `.bnd.rules`
+(boundary). Antenna needs connectivity, which this deck does not build.
 
 ---
 
@@ -105,8 +134,10 @@ them to decide where to look.**
 Three of these are worth explaining, because the obvious implementation of each is
 wrong.
 
-**Via enclosure is one-sided.** The LEF says `ENCLOSURE 0.040 0` — the overhang is
-required on **one pair of opposite sides only**. A plain all-round enclosure check flags
+**Via enclosure is one-sided.** The LEF's `VIARULE ... ENCLOSURE` gives two operands,
+one of them zero — so the overhang is required on **one pair of opposite sides only**.
+(Operand values redacted — TSMC licence forbids reproduction; read them in the tech
+LEF. The generator substitutes them at build time.) A plain all-round enclosure check flags
 every legal via on a minimum-width wire. The deck shrinks the metal anisotropically and
 asks for containment in the x-shrunk layer *or* the y-shrunk layer, which is exactly the
 rule.
@@ -138,6 +169,49 @@ local to that edge pair. **Unresolved.** The check earned its keep — it is wha
 the M4 spacing family — but the number it prints is not a violation count.
 
 ---
+
+## Correlation against Calibre — measured
+
+Die-wide, `M3,VIA3` through `M9,AP,RV` (M1/M2 did not finish, see below), against
+`calibre_runs/drc_hdr_minisic` on the same stream. `make compare` groups by rule family.
+
+**Min step — the one check confirmed against real violations.** Calibre's `G.4` is
+non-zero on exactly four layers, and this deck flags the same ones, at roughly half the
+marker count:
+
+| layer | this deck `G.4` | Calibre `G.4:M<n>i` |
+|---|---:|---:|
+| M2 | *(timed out)* | 8 |
+| M3 | 0 | 0 |
+| M4 | 139 | 275 |
+| M5 | 6 | 12 |
+| M6 | 0 | 0 |
+| M7 | 4 | 10 |
+
+Same layers, same order of magnitude, and no layer where Calibre flags and this deck
+does not. The ~2× is expected from the implementations: Calibre reports the step's
+edges, `merged(2)` reports one marker per step corner. **This is the first check here
+proven against known-real violations rather than agreeing at zero.**
+
+**`<L>.ANGLE` is not an over-report — Calibre files it as a warning.** `M8.ANGLE` and
+`M9.ANGLE` return 328 each against Calibre's `0`, because Calibre reports acute angles as
+24 *runtime warnings* rather than rulechecks:
+
+```
+ACUTE angle on layer M8_NEW at location (-12,103.5) in cell PAD70NU.
+```
+
+Its 24 are per cell *definition* (`PAD70NU`, `PAD70GU` × M8/M9/AP × 4 corners); this
+deck's 328 are per *instance* across the die. Same geometry, counted differently, and a
+marker you can click beats a warning buried in a 900k-line log.
+
+**`<L>.W` families look wildly divergent and mostly are not.** Calibre's `M4.W` = 110 is
+almost entirely `M4.W.3` (`MAXWIDTH`/slotting), which this deck does not model. Where the
+families are comparable the numbers are close — `M8.W` 2 vs 3, `M9.W` 5 vs 7. Family
+grouping is coarse by design; drop to the per-rule counts before drawing conclusions.
+
+**`<L>.S` confirms the `~` label.** `M3.S` = 31,613 against Calibre's 5. The
+width-dependent spacing checks are a search tool, not a count.
 
 ## What it does not check
 
@@ -193,12 +267,26 @@ Measured on `srv03335` (16 cores), against the 298 MB stream:
 | Scope | Threads | Wall clock | Peak RSS |
 |---|---|---|---|
 | 150 µm window, `ONLY=M4,VIA3` | 8 | **14 s** | small |
-| 50 µm window, all layers | 4 | **58 s** | small |
-| whole die, all layers | 8 | **hours** — see below | **> 7 GB** |
+| 50 µm window, all layers | 4 | **44 s** | small |
+| whole die, all layers | 8 | **abandoned at 1 h 48 m** | **9.0 GB** |
 
-**Work windows, not whole dies.** The full-die run is a server job: it was still going
-past 50 minutes at over 7 GB resident. A laptop can do it in principle and should not
-try. Two ways to stay in the seconds-to-a-minute range, and they compose:
+**Work windows, not whole dies — the lower metals do not finish at all.** An
+all-layers full-die run was abandoned at 1 h 48 m / 9.0 GB. Splitting it per layer
+(`ONLY=Mn,VIAn`, 8 threads, 90-minute cap each) shows why:
+
+| group | wall clock | markers |
+|---|---|---:|
+| `M1,VIA1` | **timed out at 90 min** | — |
+| `M2,VIA2` | **timed out at 90 min** | — |
+| `M3,VIA3` | 76 min | 31,632 |
+| `M4,VIA4` | 8 min | 7,861 |
+| `M5,VIA5` | 5 min | 1,335 |
+
+M2 alone is 1.4 M shapes. The cost is not linear in layer count — it is concentrated
+almost entirely in M1–M3, and **no full-die number exists for M1 or M2**. Windows are
+not a convenience here, they are the only way to look at the lower metals.
+
+Two ways to stay in the seconds-to-a-minute range, and they compose:
 
 ```sh
 make drc CLIP=650,300,700,350          # one window
@@ -284,18 +372,22 @@ nothing KLayout finds is invisible to Calibre without an explanation.
 
 Honesty section, in the spirit of `docs/tapeout/`.
 
-- **No full-die KLayout run has completed.** Everything measured above is windows. The
-  one full-die attempt was still running past 50 minutes at 7.3 GB. Until one finishes,
-  `make compare` has only been exercised on scoped runs, and the die-wide correlation
-  between the two tools is **unknown**.
+- **No full-die KLayout run has completed, and M1/M2 look out of reach.** Everything
+  measured above is windows or single layers. `M1,VIA1` and `M2,VIA2` both hit a
+  90-minute cap with nothing to show. So `make compare` has only been exercised on
+  scoped runs, and the die-wide correlation between the two tools is **unknown** — for
+  the two busiest layers it may stay that way without either tiling the die or
+  narrowing the check set.
+- **The correlation baseline is one Calibre deck generation old.** The numbers quoted
+  here are against `drc_track2`; the current reference is `drc_hdr_minisic`. Same stream,
+  similar totals (2,509 vs 2,508), but 29 fewer checks and a different switch set.
 - **Two check families over-report and are unresolved**, both marked `~`:
-  `<L>.S.2~…` (width-dependent spacing — 82 against Calibre's 0 die-wide, see above) and
+  `<L>.S.2~…` (width-dependent spacing — `M3.S` 31,613 against Calibre's 5 die-wide) and
   `<L>.S.EOL~` (end-of-line — `WITHIN`/`PARALLELEDGE` not modelled, factor unmeasured).
-  Everything not marked `~` agreed with Calibre on the one window checked, but agreeing
-  at zero is weak evidence.
-- **No check has been confirmed against a known-real violation.** The exact checks read
-  zero where Calibre reads zero. None of them has yet caught something Calibre also
-  caught, which is the test that would actually prove them.
+- **Only `G.4` is confirmed against known-real violations.** It matches Calibre layer for
+  layer (above). Every other exact check agrees with Calibre *at zero*, which is weak
+  evidence: it cannot distinguish "correct" from "never fires". `W.1`, `A.1`, `A.2`,
+  `GRID` and the via checks are all still in that category.
 - **`deep` versus `flat` has not been diffed.** On a clipped window they take the same
   time, so there was no reason to; on the full die neither has finished. A surprising
   deep result deserves a `make drc-flat` before you act on it.
