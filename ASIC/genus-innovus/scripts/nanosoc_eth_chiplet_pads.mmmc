@@ -8,8 +8,21 @@ set rf_08k_path /research/precompiled_mems/TSMC65/rf_08k/
 set rf_01k_path /research/precompiled_mems/TSMC65/rf_01k/
 set flash_cache_data_path /research/precompiled_mems/TSMC65/flash_cache_data/
 set flash_cache_tag_path /research/precompiled_mems/TSMC65/flash_cache_tag/
-set bootrom_path $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs/cc_rom
-set eth_rom_path $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs/eth_rom
+# DESIGN_HOME, with the historical name as fallback -- see config.tcl.
+#
+# THIS FILE REPEATS THE FALLBACK INSTEAD OF USING config.tcl's $::design_home,
+# and that is deliberate. It is loaded by `read_mmmc`, not by `source`, so
+# whether config.tcl's globals are in scope here is a property of the Cadence
+# command rather than of this repo -- and getting it wrong aborts every P&R
+# stage at setup. $::env is visible in every Tcl context there is, so this form
+# is safe under either answer. Collapse it onto $::design_home only after
+# watching a real `make pnr_place` read this file.
+set design_home [expr {[info exists ::env(DESIGN_HOME)]
+                       ? $::env(DESIGN_HOME)
+                       : $::env(NANOSOC_ETH_CHIPLET_HOME)}]
+
+set bootrom_path ${design_home}/ASIC/romlibs/cc_rom
+set eth_rom_path ${design_home}/ASIC/romlibs/eth_rom
 set IO_driver_path $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/
 
 create_library_set -name default_libset_max\

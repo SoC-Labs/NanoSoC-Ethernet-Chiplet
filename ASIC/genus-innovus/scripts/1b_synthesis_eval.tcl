@@ -889,7 +889,7 @@ try_step "manifest" {
     mf $fh block         $block_name
     mf $fh clk_period_ns [expr {[info exists ::env(CLK_PERIOD)] ? $::env(CLK_PERIOD) : "UNSET"}]
     catch {
-        set repo $::env(NANOSOC_ETH_CHIPLET_HOME)
+        set repo $::design_home
         mf $fh rtl_git_sha   [string trim [exec git -C $repo rev-parse --short HEAD]]
         mf $fh rtl_git_dirty [expr {[string length [exec git -C $repo status --porcelain]] ? "yes" : "no"}]
     }

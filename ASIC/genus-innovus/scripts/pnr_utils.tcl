@@ -707,9 +707,14 @@ proc pnr_end_reports {name} {
     # unmeasured cost added to every stage boundary is how a 5-hour run becomes
     # a 7-hour one. R9 recommends it; turn it on deliberately.
     #   pnr_config analysis_coverage 1
+    # NO -verbose. Innovus's -verbose here takes a VALUE (met|violated|untested),
+    # it is not a boolean, so `-verbose >` hands the redirect in as the value and
+    # the command dies with TCLCMD-1056 before writing anything. Bare
+    # report_analysis_coverage is the summary over all categories, which is what
+    # a single .rep capture wants; ask for a category explicitly if you want one.
     if {$::pnr(analysis_coverage)} {
         try_step "analysis coverage $name" {
-            report_analysis_coverage -verbose > $REPORT_DIR/coverage_${name}.rep
+            report_analysis_coverage > $REPORT_DIR/coverage_${name}.rep
         }
     }
     return
@@ -958,8 +963,12 @@ proc pnr_manifest_common {fh} {
     # Which source tree this was built from, and whether it was clean. A dirty
     # tree means the sha does not describe the run - say so rather than imply
     # reproducibility that is not there.
-    if {[info exists ::env(NANOSOC_ETH_CHIPLET_HOME)]} {
-        set repo $::env(NANOSOC_ETH_CHIPLET_HOME)
+    # $::design_home is resolved once by config.tcl (DESIGN_HOME, falling back to
+    # NANOSOC_ETH_CHIPLET_HOME). Still guarded rather than assumed: this proc is
+    # reachable from a hand-driven session that never sourced config.tcl, and a
+    # missing git sha must degrade to an absent manifest line, not an error.
+    if {[info exists ::design_home]} {
+        set repo $::design_home
         foreach {sha dirty} [pnr_git $repo] break
         mf $fh git_sha   $sha
         mf $fh git_dirty $dirty

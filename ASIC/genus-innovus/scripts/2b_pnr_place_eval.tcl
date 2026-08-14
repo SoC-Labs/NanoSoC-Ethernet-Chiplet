@@ -248,15 +248,23 @@ proc evp_floorplan_patterns {fp} {
 # Special-net geometry counts, for the power-grid audit in §12. Neither has been
 # run on a live seat, so both are called under try_step: a failure to evaluate is
 # reported as "not measured", never as a pass.
+# FIXED 2026-08-11 (was IMPDBTCL-276, blocked every eval placement run).
+# `get_db nets $net .special_wires` parses as root(nets) + PATTERN(VDD) +
+# chain(.special_wires), and get_db requires the attribute chain BEFORE any
+# pattern -- hence "Pattern '.special_wires' should be after chain 'VDD'".
+# The net object has to be resolved first, then the chain applied to it:
+#   doc/TCRcom/get_db.html:467  get_db [get_db hinsts i1/i2] .insts *_buf
+# The ATTRIBUTE CHAINS below were always correct; only the nesting was wrong.
 proc evp_special_wires_on {net layer} {
-    return [llength [get_db [get_db nets $net .special_wires] -if ".layer.name == $layer"]]
+    return [llength [get_db [get_db [get_db nets $net] .special_wires] \
+                            -if ".layer.name == $layer"]]
 }
 # cut_layer, NOT bottom_layer. RV is a cut layer, and bottom_layer means the
 # bottom ROUTING layer - M9 here, never RV - so the obvious spelling matches
 # nothing and reads as catastrophic power delivery rather than as a typo. The
 # same wrong query is written into 21-physical-audit P2. (Note 9.)
 proc evp_special_vias_from {net cutlayer} {
-    return [llength [get_db [get_db nets $net .special_vias] \
+    return [llength [get_db [get_db [get_db nets $net] .special_vias] \
                             -if ".via_def.cut_layer.name == $cutlayer"]]
 }
 
@@ -667,7 +675,7 @@ if {$EVP_CHECKS && $EVP_TIMING_CHECKS} {
     step "constraint coverage"
     reports {
         place_check_timing.rep      {check_timing -verbose}
-        place_coverage.rep          {report_analysis_coverage -verbose}
+        place_coverage.rep          {report_analysis_coverage}
         place_coverage_untested.rep {report_analysis_coverage -verbose untested}
         place_clocks.rep            {report_clocks}
         place_analysis_views.rep    {report_analysis_views}
@@ -833,13 +841,20 @@ if {$EVP_CHECKS && $EVP_PG_AUDIT} {
     # The audit and the gate sit OUTSIDE try_step. Inside it, a query that raises
     # records nothing and tests nothing, and the run still reports OK - which is
     # the "not measured reads as a pass" failure this section claims not to have.
+    # FIXED 2026-08-11: the sentinel below used to be overwritten by `set rv 0`
+    # INSIDE try_step, i.e. before the first query ran. When the query raised,
+    # $rv was already the integer 0, so the "NOT MEASURED" branch was dead code
+    # and the run failed with "only 0 RV vias" -- a measurement claim, about a
+    # measurement that never happened. Accumulate into locals and publish only
+    # on success, so a raised query genuinely leaves the sentinel in place.
     set rv "not measured" ; set ap "not measured"
     try_step "RV/AP via count" {
-        set rv 0 ; set ap 0
+        set _rv 0 ; set _ap 0
         foreach n {VDD VSS} {
-            incr rv [evp_special_vias_from $n RV]
-            incr ap [evp_special_wires_on  $n AP]
+            incr _rv [evp_special_vias_from $n RV]
+            incr _ap [evp_special_wires_on  $n AP]
         }
+        set rv $_rv ; set ap $_ap
     }
     evp_audit rv_vias_to_AP $rv
     evp_audit ap_shapes     $ap
@@ -859,10 +874,12 @@ if {$EVP_CHECKS && $EVP_PG_AUDIT} {
     # own way up. 1,044 fragments on the 08-05 floorplan; 1,407 on 08-06, which
     # is +34.8% on a core that got 2.5% SMALLER. Each fragment now has 1.51
     # connections upward instead of 2.01, and 347 of them carry a dangling end.
+    # Same sentinel-clobbering fix as the RV/AP block above.
     set m5 "not measured"
     try_step "M5 fragmentation" {
-        set m5 0
-        foreach n {VDD VSS} { incr m5 [evp_special_wires_on $n M5] }
+        set _m5 0
+        foreach n {VDD VSS} { incr _m5 [evp_special_wires_on $n M5] }
+        set m5 $_m5
     }
     evp_audit m5_fragments $m5
     if {![string is integer -strict $m5]} {

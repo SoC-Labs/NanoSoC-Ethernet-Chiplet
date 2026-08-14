@@ -252,7 +252,29 @@ opt EVC_SDC             ""
 #                still message-capped at that point). 16-open-defects records 60.
 #   IMPMSMV-3501 CPF defines no power_mode/power_state. 11-known-issues (d),
 #                audit R14 - single power domain, DFT off, nothing to bind.
-opt EVC_ERROR_ALLOWLIST {IMPLF-223 IMPMSMV-3501}
+#
+#   PERMANENT - the tool correctly reporting a choice this design made:
+#   CHKCTS-18    "Buffer cells are not specified for these clock_tree(s)".
+#   CHKCTS-19    "Inverter cells are not specified ...". Both follow directly
+#                from cts_setup.tcl:20,22, where the cell lists are commented
+#                out ON PURPOSE so CCOpt may pick general-purpose buffers a
+#                cts_buffer_cells list would exclude. EVC_CTS_BUF_CELLS /
+#                EVC_CTS_INV_CELLS are the knobs that reverse that, and doing so
+#                changes the tree and the hold profile (see section 11's warn).
+#   CHKCTS-20    "Clock gating cells are not specified ...". Set by neither
+#                cts_setup.tcl nor this script - see the note above section 11,
+#                "recorded, not changed".
+#
+#   TEMPORARY - a real gap, allowlisted only so the stage can complete:
+#   CHKCTS-1/-2  "CTS maximum transition target must be set to a numeric value"
+#                for each clock_tree x delay_corner (42 of each here). The design
+#                sets no target anywhere, so CTS takes the automatic one; the UG
+#                recommends setting it. EVC_CTS_TARGET_TRAN is the knob that
+#                CLOSES this, and it is deliberately not bundled here because it
+#                changes the tree - run it as its own experiment and compare the
+#                cell census, per the warn in section 11. REMOVE THESE TWO from
+#                the allowlist once a target is set.
+opt EVC_ERROR_ALLOWLIST {IMPLF-223 IMPMSMV-3501 CHKCTS-18 CHKCTS-19 CHKCTS-20 CHKCTS-1 CHKCTS-2}
 
 # --- Where output goes ---------------------------------------------------------
 opt EVC_LOG_DIR         ../logs/eval
@@ -725,7 +747,7 @@ if {$EVC_CHECKS} {
     # first run, in seconds". Advisory reports, so try_step is correct here.
     if {$EVC_TIMING_INTENT} {
         try_step "check_timing"    { check_timing -verbose > $REPORT_DIR/cts_check_timing.rep }
-        try_step "coverage"        { report_analysis_coverage -verbose > $REPORT_DIR/cts_coverage.rep }
+        try_step "coverage"        { report_analysis_coverage > $REPORT_DIR/cts_coverage.rep }
         try_step "clocks"          { report_clocks > $REPORT_DIR/cts_clocks.rep }
     }
 }
@@ -890,10 +912,24 @@ if {!$EVC_UPDATE_IO_LAT} {
 # trees (from CLK, SWDCK, RMII_REF_CLK and TL_CLK_RX) and 14 skew groups; the
 # five generated clocks get a skew group but no tree of their own.
 #
-# The FILE it writes is never read back - but the COMMAND still matters, because
-# it applies the specification to the database either way. What -out_file buys is
-# the tool's own record of WHY it chose each CTS constraint, which exists nowhere
-# else. (Note 12.)
+# WRONG UNTIL 2026-08-11. This block used to read: "The FILE it writes is never
+# read back - but the COMMAND still matters, because it applies the specification
+# to the database either way." It does not. Innovus 21.11, create_clock_tree_spec:
+#     -out_file filename
+#       Writes this clock tree specification script file in Stylus Common UI
+#       format. ... The file is not executed. To execute the file, run:
+#           create_clock_tree_spec -out_file spec.tcl
+#           source spec.tcl
+# With -out_file the spec goes to the file INSTEAD of the database, so `get_db
+# clock_trees` came back empty and EVC_SPEC_FILE=1 (the default) could never
+# produce a clock tree. Measured 2026-08-11: the guard below fired with "defined
+# NO clock trees" on the first eval CTS run anyone has taken to this point, which
+# is why this was never caught -- and that guard is the only reason it did not
+# silently route a clockless design. Fixed by following the documented pattern:
+# write the file for the record, then source it to apply it.
+#
+# What -out_file buys is the tool's own record of WHY it chose each CTS
+# constraint, which exists nowhere else. (Note 12.)
 #
 # Changed from production: the file goes to reports/eval with the other
 # inspection artefacts, so an eval run cannot overwrite the production one.
@@ -902,7 +938,20 @@ if {!$EVC_UPDATE_IO_LAT} {
 step "clock tree spec"
 
 if {$EVC_SPEC_FILE} {
-    create_clock_tree_spec -out_file $REPORT_DIR/cts_clock_tree.spec
+    set _spec $REPORT_DIR/cts_clock_tree.spec
+    create_clock_tree_spec -out_file $_spec
+    # -out_file writes INSTEAD of applying, so the file must be sourced or the
+    # database gets no clock trees at all. Asserted rather than assumed: a spec
+    # that is missing or empty means CTS would build nothing.
+    if {![file exists $_spec] || [file size $_spec] == 0} {
+        flow_fail "create_clock_tree_spec -out_file wrote no usable spec at\
+                   $_spec, so there is nothing to apply and CTS would build\
+                   nothing."
+    } else {
+        source $_spec
+        say "applied clock tree spec from $_spec ([file size $_spec] bytes)"
+    }
+    unset _spec
 } else {
     create_clock_tree_spec
 }
