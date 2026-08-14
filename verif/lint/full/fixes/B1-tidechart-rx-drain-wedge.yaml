@@ -1,0 +1,87 @@
+id:    B1-tidechart-rx-drain-wedge
+title: A claim arriving at a non-listening election FSM wedges the die's whole cross-die RX path
+area:  tidechart
+risk:  behaviour-changing
+files:
+  - tidechart/src/rtl/tidechart_election_fsm.sv
+  - tidelink/cocotb/tidechart_tidelink_pair/tb_tc_pair.sv
+  - tidelink/cocotb/tidechart_tidelink_pair/test_tc_pair_late_claim.py
+
+defect: |
+  tidechart_election_fsm asserts claim_rx_accept in exactly ONE place (ST_LISTEN,
+  :370). In ST_IDLE and ST_SETTLED it is held low forever. tidechart_crossbar:215
+  drives tc_axis_rx_tready from that accept whenever the wire subtype is ELECTION
+  -- `is_elect` is the FIRST arm of the priority mux and the ONLY arm with no
+  state qualification (is_puf_rsp, is_bcast and enum are all gated). Nothing
+  buffers it: tidechart_shim is purely combinational. The stall reaches
+  tidelink_fc_adapter, whose RX FSM then never leaves RX_ADDR_PHASE (:666), so
+  tl_fc_l2a_accept (:622-624) is deasserted permanently -- and tl_fc_l2a is
+  SHARED (:612-619) by the D2D RX data FIFO, TideChart, and the FC sideband APB
+  config path. One undrainable beat takes out the die's whole inbound cross-die
+  path, including the sideband path recovery would need.
+
+  Produced NO lint line -- it is not a width, driver or structural error. It was
+  found by adversarial review while triaging an unrelated (benign) HAL *E,TERMST
+  on the same FSM.
+
+  REACHABLE WITHOUT A FAULT. The G1 data-mode gate (tl_data_mode_o, landed both
+  sides) gates election RELEASE, not ARMING. election_start is an independent
+  per-die software write, and on the shipping chiplet nothing arms it at all
+  (tidechart/src/sw/tidechart.h has zero includers), so arming is debugger- or
+  host-driven per die. Un-armed (ST_IDLE) is the shipping die's PERMANENT state.
+
+change: |
+  Drain, do not consume: assert claim_rx_accept for any port presenting a beat
+  while the FSM is in ST_IDLE / ST_WAIT_LINKS / ST_SETTLED. One-cycle pulse per
+  beat, matching the ST_LISTEN accept and the enum FSM's documented idiom
+  (tidechart_enum_fsm.sv:72, :1334).
+
+  ST_LISTEN is excluded because it consumes. ST_CLAIM_TX is excluded on purpose:
+  its stall is BOUNDED (ends at flood_complete) and draining there would discard
+  a real peer claim that ST_LISTEN evaluates one state later.
+
+  This fixes the WEDGE. It does NOT close the underlying protocol gap -- what a
+  non-listening node should DO about a late claim (ignore / re-elect / NACK) is
+  undecided, and draining deliberately does not depend on that answer. The
+  consequence is a benign, pre-existing dual-root instead of a hard wedge.
+
+  Also wires device_strap on both tidechart_shim instances in tb_tc_pair.sv.
+  tidechart's I6 dual-root hardening (3005d11) added that port and the bench
+  never connected it, so it floated: own_random_r = {device_strap, lfsr[7:0]}
+  was X, the claim TX word was X-poisoned, and the X propagated into the Wlink
+  FCSM state register -- which is why PairTB.fcsm_state() read -1 and
+  test_tc_pair_election_datamode FAILED before this change.
+
+expect:
+  lec: non-equivalent            # claim_rx_accept asserts in 3 more states
+  lint_delta: {}                 # no new findings expected either tool
+  netlist_delta: expected
+
+gates:
+  unit:        ["MODULE=test_tc_pair_late_claim make -C tidelink/cocotb/tidechart_tidelink_pair"]
+  integration: ["MODULE=test_tc_pair_smoke make", "MODULE=test_tc_pair_election_datamode make"]
+  fpga:        none
+new_test:  required
+test_spec: |
+  tidelink/cocotb/tidechart_tidelink_pair/test_tc_pair_late_claim.py.
+  Brings the pair to data mode with NEITHER election armed, then:
+    PHASE 1 arms die A only -> its CLAIM lands on die B in ST_IDLE
+    PHASE 2 arms die B      -> its CLAIM lands on die A in ST_SETTLED
+  Asserts, per victim: an ELECTION beat was PRESENTED (vacuity guard -- without
+  the trigger every other assertion passes for the wrong reason), that it was
+  HANDSHAKEN, and that the fc_adapter RX FSM still returns to RX_IDLE.
+
+  MEASURED, both directions:
+                       | unfixed                        | fixed
+    die_b @ ST_IDLE    | 6937 presented, 0 xfer,        | 2 presented, 1 xfer,
+                       | rx_idle 126/7063               | rx_idle 7061/7063
+    die_a @ ST_SETTLED | 21939 presented, 0 xfer,       | 2 presented, 1 xfer,
+                       | rx_idle 125/22064              | rx_idle 22062/22064
+    verdict            | FAIL (WEDGE)                   | PASS
+
+  Sibling regression with the fix in place: test_tc_pair_smoke PASS,
+  test_tc_pair_election_datamode PASS (the latter was failing before the
+  device_strap wiring).
+
+  NOT covered: the shipping NUM_PORTS=1 configuration (this bench is
+  NUM_PORTS=2), and the corrupted-beat trigger.

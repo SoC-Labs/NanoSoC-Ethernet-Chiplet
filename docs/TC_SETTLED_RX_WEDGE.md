@@ -95,26 +95,36 @@ The lesson was learned on TX and never applied to RX.
 
 ## 2. Trigger — no fault required
 
-`ELECTION_TIMEOUT_DEFAULT = 16'd4096` cycles
-(`tidechart_election_fsm.sv:43`), ≈20 µs at 200 MHz, runtime-overridable via
-`TC_TIMEOUT`.
+**First, what the G1 data-mode gate already fixed.** `tl_data_mode_o` is landed
+on both sides — `tidelink_top.sv` exports it and the chiplet consumes it
+(`nanosoc_eth_chiplet.sv:398` `wire tc_data_mode`, `:897` `.tl_data_mode_o`,
+`:985` `.link_active(tc_data_mode)`). `tidelink/docs/TIDECHART_G1_SEQUENCING_CONTRACT.md`
+§3.2 still says "NOT APPLIED — different repo/owner"; **that is stale, it has
+landed.** So the naive "20 µs of boot skew" trigger is *not* available: release is
+gated on a bilateral link milestone and the two dies release ~320 ns apart.
 
-1. Link reaches data mode (FCSM ≥ 4).
-2. Die A's software writes `TC_CTRL[0]`; A runs `ST_IDLE → ST_WAIT_LINKS →
-   ST_CLAIM_TX` and floods its claim.
-3. **There is no cross-die synchronisation of election start.** Die B has not
-   written `TC_CTRL[0]` yet.
-4. A's quiescence timeout expires → **A enters `ST_SETTLED`**. A is now root,
+**What it does not fix: the strobe gates RELEASE, not ARMING.**
+`ELECTION_TIMEOUT_DEFAULT = 16'd4096` cycles (`tidechart_election_fsm.sv:43`),
+≈20 µs at 200 MHz, runtime-overridable via `TC_TIMEOUT`.
+
+1. Die A's software arms `TC_CTRL[0]`. Data mode arrives; A is released, runs
+   `ST_WAIT_LINKS → ST_CLAIM_TX`, floods its claim.
+2. A's quiescence timeout expires → **A enters `ST_SETTLED`**. A is now root,
    silent, and deaf.
-5. Die B's software writes `TC_CTRL[0]` more than 20 µs later → B reaches
-   `ST_CLAIM_TX` and unconditionally floods its claim to A.
-6. That beat lands on A in `ST_SETTLED` → §1 → **die A's entire FC receive
+3. Die B's software arms `TC_CTRL[0]` **any time more than ~20 µs later**. Data
+   mode is long since high and the strobe is monotonic by construction, so B is
+   released at once, reaches `ST_CLAIM_TX`, and floods its claim to A.
+4. That beat lands on A in `ST_SETTLED` → §1 → **die A's entire FC receive
    channel is permanently wedged.**
 
-Other paths to the same place: the peer restarting its election (i.e. **the
-prescribed dual-root recovery action wedges the peer's link**), a peer-side
-reset or watchdog, or a corrupted FC beat whose `[45:32]` decodes as the
-election subtype — on a link with documented framing history.
+On the shipping die arming is **not** synchronised and cannot be — no firmware
+arms it at all, so it is debugger- or host-driven per die. A >20 µs skew between
+two independently-driven arms is the normal case, not the corner.
+
+Two paths survive the G1 gate entirely: the peer **restarting** its election
+(i.e. **the prescribed dual-root recovery action wedges the peer's link**), and a
+corrupted FC beat whose `[45:32]` decodes as the election subtype — on a link
+with documented framing history.
 
 ---
 
@@ -150,15 +160,21 @@ Two further traps found while tracing this:
 - **Lint cannot see it.** It is not a width, driver, or structural error. HAL's
   `TERMST` pointed at the same state for an unrelated reason and was benign.
 - **No test exercises it.** Every TideChart testbench runs `NUM_PORTS=2`; the
-  chiplet ships `NUM_PORTS=1` (`src/rtl/nanosoc_eth_chiplet.sv:967`). The only
-  `NUM_PORTS=1` environment, `verif/g2_soc_pair`, never injects an election beat
-  into a settled FSM. There is no link-down-after-settle test, no
-  re-election-on-link-loss test, and no corrupted-claim test.
+  chiplet ships `NUM_PORTS=1` (`src/rtl/nanosoc_eth_chiplet.sv:967`). There is no
+  link-down-after-settle test, no re-election-on-link-loss test, and no
+  corrupted-claim test.
+- **The one test that gets closest deliberately avoids it.**
+  `tidelink/cocotb/tidechart_tidelink_pair/test_tc_pair_election_datamode.py`
+  PASSES and proves `PKT_EXT` CLAIMs cross the real link in **both** directions
+  (README G2 CLOSED) — so the trigger packet demonstrably exists and demonstrably
+  arrives. But it arms **both** dies pre-data-mode, so both sit in `ST_LISTEN`
+  when the claims land. A claim arriving at a peer already in `ST_SETTLED` is
+  precisely the case no test creates.
+  *(An earlier revision of this doc said no `PKT_EXT` had ever crossed the link.
+  That was read off the README's superseded G2 section; G1/G2 were closed on
+  2026-07-19. The correction matters in the direction of MORE confidence, not
+  less — the transport works, so the beat does arrive.)*
 - **No assertions.** `tidechart/` contains zero `assert`/`cover property`.
-- **It has never crossed the wire.** `tidelink/cocotb/tidechart_tidelink_pair/README.md`
-  records that no TideChart `PKT_EXT` has ever been observed traversing the real
-  link — so the exact packet that triggers this has never been exchanged in
-  simulation or on silicon.
 
 ---
 
@@ -181,16 +197,49 @@ has no defined response to a late claim.
 
 ---
 
-## 6. The test that settles it
+## 6. DEMONSTRATED IN SIMULATION — 2026-08-10
 
-At the shipping `NUM_PORTS=1`: settle the election, inject one election-subtype
-beat, then watch `tl_fc_l2a_accept` and the D2D RX data FIFO. If the mechanism is
-as described, `tl_fc_l2a_accept` goes low and stays low, and a subsequent
-cross-die write never lands.
+**The structural argument in §1–§2 is confirmed.** Test:
+`tidelink/cocotb/tidechart_tidelink_pair/test_tc_pair_late_claim.py`, on the
+existing two-die pair bench (real TideLink pair, real `tl_data_mode_o` gate).
 
-That is a short cocotb test in `verif/g2_soc_pair`, and it is the single
-highest-value missing test in the tree — it exercises the shipping
-configuration, the shared channel, and the cross-die path in one go.
+It brings the pair to data mode with **neither** election armed, then:
+* **Phase 1** arms die A only → A's CLAIM lands on **die B in `ST_IDLE`**;
+* **Phase 2** arms die B → B's CLAIM lands on **die A in `ST_SETTLED`**.
+
+| victim | UNFIXED | FIXED |
+|---|---|---|
+| die_b @ `ST_IDLE` | 6937 beat-cycles presented, **0 handshaken**, `rx_idle` 126/7063 | 2 presented, **1 handshaken**, `rx_idle` 7061/7063 |
+| die_a @ `ST_SETTLED` | 21939 presented, **0 handshaken**, `rx_idle` 125/22064 | 2 presented, **1 handshaken**, `rx_idle` 22062/22064 |
+| verdict | **FAIL (WEDGE)** | **PASS** |
+
+Two things the experiment changed about the write-up above:
+
+* **`ST_IDLE` is the more important case, and it was not in the original
+  analysis.** An *un-armed* die wedges on a peer's claim just as a settled one
+  does — and un-armed is the shipping die's **permanent** state, because no
+  firmware arms TideChart. This is the likelier field failure.
+* **The two are not equally recoverable.** The `ST_IDLE` wedge **self-clears** if
+  that die is later armed (it enters `ST_LISTEN` and drains the stuck beat —
+  visible in phase 2, where die_b shows `xfer=1`). The `ST_SETTLED` wedge does
+  not: nothing leaves `ST_SETTLED` except `restart`, which also wipes the route
+  table.
+
+The test carries a **vacuity guard** that fails loudly if no ELECTION beat was
+presented to the victim. That guard fired twice during development and prevented
+two false greens — once when `device_strap` was floating (below), once before the
+health metric was corrected.
+
+**A bench defect had to be fixed first.** `tb_tc_pair.sv` never connected
+`tidechart_shim.device_strap`, added by tidechart's I6 dual-root hardening
+(`3005d11`). It floated, so `own_random_r = {device_strap, lfsr[7:0]}` was X, the
+claim TX word was X-poisoned, and the X propagated into the **Wlink FCSM state
+register** — which is why `PairTB.fcsm_state()` returned −1 and
+`test_tc_pair_election_datamode` failed. With the strap wired (master `8'h00`,
+slave `8'h01`) both sibling tests pass again.
+
+**Still not covered:** the shipping `NUM_PORTS=1` configuration (this bench is
+`NUM_PORTS=2`) and the corrupted-beat trigger.
 
 ---
 
@@ -202,6 +251,24 @@ is fixed separately (`state_next = restart ? ST_IDLE : ST_SETTLED;`, LEC
 equivalent 242/242).
 
 Everything in §1 and §3 was confirmed by direct inspection. The trigger sequence
-in §2 is a structural argument from that code, **not yet demonstrated in
-simulation** — §6 is the experiment that would demonstrate it, and it should be
-run before this is treated as certain.
+in §2 was a structural argument from that code; **§6 has since demonstrated it in
+simulation, in both directions, with a before/after mutation.** It is no longer a
+hypothesis.
+
+**FIX APPLIED** — `tidechart/src/rtl/tidechart_election_fsm.sv`: drain (accept and
+discard) a presented claim in `ST_IDLE`, `ST_WAIT_LINKS` and `ST_SETTLED`.
+`ST_LISTEN` consumes; `ST_CLAIM_TX` is excluded because its stall is bounded by
+`flood_complete` and draining there would discard a real claim. Change unit:
+`verif/lint/full/fixes/B1-tidechart-rx-drain-wedge.yaml`. Lint delta measured at
+**zero** on both the fixed and unfixed file. LEC is expected **non-equivalent** —
+`claim_rx_accept` now asserts in three more states, which is the point.
+
+**What the fix does NOT do:** it does not close the protocol gap. A drained claim
+is discarded, so the outcome is a benign dual-root instead of a hard wedge.
+Deciding what a non-listening node *should* do about a late claim (ignore /
+re-elect / NACK) remains open, and is TideChart's to make.
+
+**Still open on the TideLink side:** there is no RX stall watchdog in
+`tidelink_fc_adapter` (there is a TX one, added for a proven silicon wedge). The
+drain fixes this instance; the watchdog would bound the class. Raised with the
+TideLink owner in `docs/DEV_MESSAGE_TIDELINK_RX_STALL_2026_08_10.md`.
