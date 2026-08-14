@@ -344,23 +344,25 @@ stages:
     run: make asic-drc
     # Calibre exits 0 whether or not it found violations, and the Makefile does
     # not parse the result. Count them here or this stage means nothing.
+    #
+    # Delegated to scripts/ci/drc_census.py — see its docstring for the three
+    # faults this replaces (wrong summary filename, so the gate could only ever
+    # take its exit-1 arm while its success branch printed the literal string
+    # "DRC clean"; a regex that double-counted the BY CELL section; and total
+    # blindness to density, where Calibre reports one merged result per check and
+    # writes the real per-window detail to <check>.density).
+    #
+    # It gates on three things and reports the rest:
+    #   * design-owned results       (DRC_DESIGN_BUDGET, default 0)
+    #   * CORE-ONLY failing density windows (DRC_DENSITY_BUDGET, default 0)
+    #   * any saturated check — a capped check has an unknown true count, so the
+    #     run is not a measurement and cannot be signed off either way
+    # io-pad-abstract and vendor-memory results are reported, not gated: no
+    # std-cell/IO/pad layout exists on this site (every TSMC delivery is a
+    # front-end kit), so they are not fixable here and clear at eptsmc's IO
+    # import. That exemption is stated in the script and printed on every run.
     check: |
-      R=ASIC/genus-innovus/work/drc_run/DRC.rep
-      test -s "$R" || { echo "no DRC summary at $R — Calibre produced no result"; exit 1; }
-      python3 - "$R" <<'EOF'
-      import re, sys
-      txt = open(sys.argv[1], errors="replace").read()
-      # Calibre summary lines: "RULECHECK <name> ... TOTAL Result Count = N"
-      bad = [(n, int(c)) for n, c in
-             re.findall(r'RULECHECK\s+(\S+).*?TOTAL Result Count\s*=\s*(\d+)', txt, re.S)
-             if int(c) > 0]
-      if bad:
-          print(f"DRC violations in {len(bad)} rulechecks:")
-          for n, c in bad[:20]:
-              print(f"  {n}: {c}")
-          sys.exit(1)
-      print("DRC clean — no rulecheck reported a non-zero result count")
-      EOF
+      python3 scripts/ci/drc_census.py ASIC/genus-innovus/work/drc_run
     artifacts:
       - ASIC/genus-innovus/work/drc_run/**
       - ASIC/genus-innovus/work/calibre_drc.runset
