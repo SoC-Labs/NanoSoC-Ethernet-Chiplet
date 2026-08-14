@@ -83,6 +83,71 @@ metal fill fill nothing and report success.
 
 ---
 
+## 2a. Where the pad LEF stands today — the canonical answer
+
+*Added 2026-08-14. §2 above is dated 2026-08-13 and is left as written; this section is
+what is true now, and is the place other documents should point at rather than each
+restating it.*
+
+**Commit hashes moved.** `fix/tag-ram-gwen` was rebased after §2 was written. The LEF
+removal is now `bf619f1` (`e424af6` is the pre-rebase duplicate and is no longer an
+ancestor of `HEAD`); the commit that first tracked the copy is now `c2f94a8` (was
+`95f5e4a`). Both old hashes still resolve, so §2's citations are recoverable rather than
+broken — but `git log` from `HEAD` will show the new ones.
+
+**Three paths, three different jobs.** They get conflated constantly:
+
+| Path | What it is | Committed? |
+|---|---|---|
+| `$TSMC_65_HOME/.../tphn65lpgv2od3_sl_9lm.lef` | the vendor original, in the read-only PDK | n/a — never touched |
+| `ASIC/tech_wrappers/tsmc65/generated/tphn65lpgv2od3_sl_9lm.patched.lef` | **what the flow actually reads.** Built from the vendor file by `make -C ASIC -f common.mk pad-lef` | no — gitignored build product |
+| `ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef` | a **compatibility symlink** to the row above, at the file's old committed path | no — gitignored |
+
+`ASIC/genus-innovus/scripts/config.tcl` sets `IO_PAD_DRIVER_LEF` from the **`generated/`**
+path directly. It has not gone through `local_overrides/` since `bf619f1`. Any document
+that prints a `local_overrides/…lef` path as the live `config.tcl` setting is describing a
+state that no longer exists.
+
+**`local_overrides/` is not vestigial — the symlink is load-bearing.** A saved Innovus
+database populates its own `work/<design>/libs/lef/` with **absolute** symlinks into the
+project tree. Measured 2026-08-14: **78** archived databases under
+`ASIC/genus-innovus/runs/` and `ASIC/eth-chiplet/build/` point at the `local_overrides/`
+path. Delete it and every one of them fails to open with
+
+```
+ERROR (IMPIMEX-7023): The file .../libs/lef/tphn65lpgv2od3_sl_9lm.lef
+inside the saved design directory was deleted.
+```
+
+— no re-stream, no ECO, no re-check of anything already run. Same class as the dangling
+`_syn.sdc` symlink trap in [26-plan-to-submittable-gds](26-plan-to-submittable-gds.md) §5.
+The `pad-lef` target restores the link on every invocation for exactly this reason
+(`ASIC/common.mk`, `PAD_LEF_COMPAT`). Newer runs symlink into `generated/` and are
+unaffected; the 78 are the historical ones.
+
+**§4 item 3 is already done.** `local_overrides/` no longer holds a `.map` — the
+hand-edited stream-out map was deleted in favour of `gdsmap_derive.py`, as recorded in
+[28-drc-status-and-attribution](28-drc-status-and-attribution.md) Appendix A. The
+directory's entire remaining contents is the one symlink above.
+
+### The intended end state — **not yet in place**
+
+The plan of record is to retire the three-line patch altogether: point the flow at the
+**vendor LEF in the read-only PDK**, drop `patch_pad_lef.py` and the `generated/` product,
+and remove `local_overrides/` from this repo. The replacement for what the patch achieves
+— getting Innovus to treat those IO supply pins as power/ground rather than signal — is
+**being measured separately and has not landed**. Until it does:
+
+- the patched LEF remains the mechanism, and
+- every description elsewhere in `docs/tapeout` of a "local override LEF" is still an
+  accurate account of *why* the patch exists, even where its **path** is stale.
+
+Whoever executes the removal owns two things this section exists to flag: the 78 archived
+databases above (re-point them, or accept and record the loss), and the `.gitignore` rules
+at `:144-170`, which become dead once neither directory exists.
+
+---
+
 ## 3. What the design was — and what replaced it
 
 **The original ask:** a private repo holding TSMC65 collateral, `git submodule
@@ -118,7 +183,10 @@ artefacts. Nothing in the current pack needs one.
 2. **Land the `pad-lef` make hook** once `ASIC/genus-innovus/Makefile` is free,
    so `config.tcl` stops failing with an instruction.
 3. **Commit `gdsmap_derive.py`** and point the flow at it; retire the last
-   `local_overrides/*.map`.
+   `local_overrides/*.map`. **Half done as of 2026-08-14:** the `.map` is gone
+   from `local_overrides/` (§2a), but `gdsmap_derive.py` is **still untracked** —
+   so the transform that replaced it is not committed either, and the repo
+   currently has neither the result nor the recipe.
 4. **Record the decision.** One short ADR: "private tech submodule — considered,
    superseded by runtime PDK reads". Without it this question gets re-asked.
 5. **Run `check_no_vendor_collateral.sh` in the toolkit too.** The policy is

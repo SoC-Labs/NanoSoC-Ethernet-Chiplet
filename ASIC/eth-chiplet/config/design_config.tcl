@@ -109,18 +109,26 @@ set flash_cache_tag_dir  /research/precompiled_mems/TSMC65/flash_cache_tag
 # Deliberately NOT `set design_home`: any global matching design_* is read by
 # the engine as collateral (flow_utils.tcl:675-689) and an unrecognised one is a
 # hard error. The name below cannot be mistaken for collateral.
-if {[info exists ::env(DESIGN_HOME)]} {
-    set romlib_root $::env(DESIGN_HOME)
+# ROMLIBS_DIR, when set, names THIS RUN'S ROM directory and wins outright.
+# ASIC/rom_build.mk compiles both macros per run into $(RUN_DIR)/romlibs and
+# pins the run to that build, so the .lib synthesis reads, the .lef P&R reads
+# and the .gds2 stream-out merges are one artefact rather than three reads of a
+# shared directory that anything may have replaced in between. These ROMs are
+# mask programmed and the shared drop has already shipped wrong bits once.
+if {[info exists ::env(ROMLIBS_DIR)]} {
+    set romlib_dir $::env(ROMLIBS_DIR)
+} elseif {[info exists ::env(DESIGN_HOME)]} {
+    set romlib_dir $::env(DESIGN_HOME)/ASIC/romlibs
 } elseif {[info exists ::env(NANOSOC_ETH_CHIPLET_HOME)]} {
-    set romlib_root $::env(NANOSOC_ETH_CHIPLET_HOME)
+    set romlib_dir $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs
 } else {
-    error "design_config: neither DESIGN_HOME nor NANOSOC_ETH_CHIPLET_HOME is set.\
-         \n  Both are exported by ASIC/common.mk, which ASIC/eth-chiplet/design.mk\
-         \n  includes. A stage started outside make needs one of them in the\
-         \n  environment."
+    error "design_config: none of ROMLIBS_DIR, DESIGN_HOME or\
+         \n  NANOSOC_ETH_CHIPLET_HOME is set. All three are exported by\
+         \n  ASIC/common.mk, which ASIC/eth-chiplet/design.mk includes. A stage\
+         \n  started outside make needs one of them in the environment."
 }
-set bootrom_dir $romlib_root/ASIC/romlibs/cc_rom
-set eth_rom_dir $romlib_root/ASIC/romlibs/eth_rom
+set bootrom_dir $romlib_dir/cc_rom
+set eth_rom_dir $romlib_dir/eth_rom
 
 # ── ONE LOOP, SO THE FIVE LISTS CANNOT DRIFT APART ─────────────────────────
 #

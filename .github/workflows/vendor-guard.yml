@@ -1,0 +1,336 @@
+#-----------------------------------------------------------------------------
+# vendor-guard.yml — keep licensed foundry collateral out of a PUBLIC repository
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# THE GAP THIS CLOSES. `scripts/ci/check_no_vendor_collateral.sh` has existed and
+# worked for months. It ran in NO automated check. `make vendor-check` invoked it,
+# and `make check` depended on it, so nightly.yml reached it transitively -- but
+# nightly checks out `ref: main` on a schedule, which is to say it looks at the
+# collateral AFTER it is published, on a runner that may not be attached, in a
+# step whose name does not mention vendor collateral at all. Nothing looked at a
+# pull request. github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet is PUBLIC and the
+# TSMC licence does not permit reproducing their collateral; the tree already
+# carried a 414 kB verbatim vendor LEF for months once.
+#
+# So this workflow is the only one in this repository that runs on
+# `pull_request`, and it is deliberately the cheapest: no EDA licence, no PDK, no
+# submodules, no lab mounts. It should be the first thing that reports and it
+# must never queue behind a five-hour Innovus job -- hence its own concurrency
+# groups rather than the `eda-gates` group the implementation flows share.
+#
+# TWO JOBS, BECAUSE THE CHECK HAS TWO HALVES AND THEY NEED DIFFERENT HOSTS:
+#
+#   vendor-collateral-gate      hosted. Runs check 1 (tracked *.lef by content
+#                               hash and by size) at FULL strength, on every push
+#                               and every pull request, always, unconditionally.
+#                               Check 2 cannot run here -- no PDK exists on a
+#                               hosted runner -- and the job says so in its
+#                               summary in as many words rather than banking the
+#                               green tick. THIS IS THE ONE TO MAKE REQUIRED.
+#                               It ALSO runs the toolkit's content scanner; see
+#                               the next block, which is why.
+#
+#   vendor-collateral-gate-pdk  self-hosted, `soclabs-pdk`. Runs BOTH halves,
+#                               including the verbatim-vendor-text scan that
+#                               needs a readable PDK at $TSMC_65_HOME. Fails if
+#                               the PDK is absent or unreadable, because a job
+#                               whose whole purpose is check 2 must not report
+#                               green when check 2 did not run.
+#
+# WHY THE HOSTED JOB RUNS A SECOND SCANNER, AND WHY THAT ONE IS NOT OPTIONAL.
+#
+# The first revision of this workflow ran only scripts/ci/check_no_vendor_
+# collateral.sh on the hosted job, and that script's two halves do not split the
+# way the paragraph above implies. Check 1 iterates `git ls-files -- '*.lef'`.
+# That pathspec does not match .tlef, and it never looks at .lib, .captable,
+# .map, .gds, .cdl or .spef at all. Check 2 is the one that ignores extensions
+# -- and check 2 needs a readable PDK, so on a hosted runner it prints its NOTE,
+# skips, and the script exits 0.
+#
+# So what the required PR check actually enforced was: "no tracked *.lef that
+# either matches one of two known SHAs or exceeds 64 kB". MEASURED, on a scratch
+# repository holding three ~244 kB INVENTED vendor-shaped files tracked as
+# .tlef, .lib and .captable: the script exits 0. It exits 0 on the PDK host too,
+# because those bytes are invented and check 2 only ever catches text that is
+# byte-identical to a file installed HERE.
+#
+# ASIC/asic-toolkit ships ci/check-vendor-collateral.sh, which closes exactly
+# that hole: an extension rule over ~20 collateral suffixes, a size rule, the
+# same two content SHAs, and seven text rules for values, GDS layer/datatype
+# pairs, revision-coded release names, absolute site paths and captured licence
+# output. It needs no PDK, no licence and no tool, and it operates on `git
+# ls-files` in whatever repository it is invoked from -- so it works here by
+# design rather than by adaptation. On the same three-file tree it exits 1.
+# Both scanners run, because neither is a superset of the other: the toolkit's
+# is the only one that sees a .tlef, and check 2 is the only control in the
+# estate that catches VERBATIM copying without anybody having to guess in
+# advance which values are the secret ones.
+#
+# THE SUBMODULE IS PRIVATE, AND THAT COSTS THIS JOB ITS SECRETLESSNESS.
+# ASIC/asic-toolkit is SoC-Labs/nanoSoC-ASIC-Toolkit, a private repository
+# declared over git@github.com, so the hosted runner needs SUBMODULE_TOKEN and
+# the same insteadOf rewrite ci-ladder.yml, asic-gds.yml and asic-signoff.yml
+# already use. If that checkout does not happen THE JOB FAILS. It does not fall
+# back to the *.lef-only check, because a gate that quietly degrades to the
+# weaker of its two scanners is precisely the defect this block exists to
+# correct, and the degraded state must not be able to wear a green tick.
+#
+# THE PRICE, STATED PLAINLY: a pull request FROM A FORK gets no secrets from
+# GitHub, so SUBMODULE_TOKEN is empty there and this job goes red naming that as
+# the cause. That is deliberate. The alternative -- passing a fork PR on the
+# scanner that cannot see a .tlef -- is the bypass above, wearing a tick.
+#
+# WHY THE PDK JOB DOES NOT RUN ON `pull_request`. This repository is public, and
+# running a self-hosted runner against a pull request means executing a
+# contributor's branch on a lab host that has the PDK, the IP trees and the
+# licence servers mounted. That is the documented way to lose a self-hosted
+# runner. The PDK job therefore runs on `push` (a ref only a collaborator can
+# create), on demand, and nightly -- so a branch IS scanned at full strength
+# before it is merged, just not by the fork-reachable event.
+#
+# NO `paths:` FILTER, ANYWHERE, ON PURPOSE. A vendor file can arrive with any
+# name, in any directory, under any extension -- the 2026-08-14 finding was a DRC
+# deck header in scripts/calibre/ that every extension-based scanner had missed.
+# A paths filter is a list of places we already thought of, and this gate exists
+# because of the places nobody thought of. Likewise there is no job-level `if:`
+# on the hosted job: it runs for every event this workflow accepts.
+#-----------------------------------------------------------------------------
+name: vendor-guard
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+  schedule:
+    # 01:30 UTC, half an hour ahead of nightly.yml. The PDK job needs no licence
+    # seat, so it cannot collide with the EDA gates; running it daily means the
+    # verbatim half sees `main` even in a week when nobody pushed a branch.
+    - cron: '30 1 * * *'
+
+# Read-only. This gate inspects a checkout and reports; it has no business
+# holding a token that can write to a public repository.
+permissions:
+  contents: read
+
+jobs:
+  # --- the required check ----------------------------------------------------
+  # Hosted, so it is always available and always reports. It answers for THIS
+  # repository's tracked content, which is what this repository publishes -- so
+  # ONE submodule is checked out, and it is checked out to be RUN rather than to
+  # be scanned: ASIC/asic-toolkit carries the content scanner. Nothing else is
+  # fetched. Both scanners read `git ls-files`, and a gitlink is not a file, so
+  # populating the toolkit does not enlarge the corpus either scanner measures.
+  tracked:
+    name: vendor-collateral-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # NOT the `eda-gates` group. A required PR check that can be blocked behind a
+    # multi-hour Innovus run is a required check nobody will keep.
+    concurrency:
+      group: vendor-guard-hosted-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # submodules:false here and an explicit `git submodule update` below,
+          # rather than `submodules: true`. Two reasons, and the second is the
+          # load-bearing one: this repository has 42 submodules 8 levels deep and
+          # a PR check must not fetch them, and `submodules: true` failing on a
+          # private repository fails INSIDE the action with a 404 that names no
+          # repository -- which is the shape of failure the ladder workflows were
+          # already rewritten to avoid.
+          submodules: false
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Exactly the mechanism ci-ladder.yml, asic-gds.yml and asic-signoff.yml
+      # use, for exactly the same repository: ASIC/asic-toolkit is
+      # SoC-Labs/nanoSoC-ASIC-Toolkit, PRIVATE, and declared over git@github.com
+      # in .gitmodules. Anonymous HTTPS cannot clone it.
+      #
+      # NO `continue-on-error`, NO `|| true`, and no branch that carries on
+      # without the toolkit. See the header: falling back to the *.lef-only
+      # scanner is the defect, not the mitigation.
+      - name: Authenticate for the PRIVATE toolkit submodule
+        id: creds
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            echo "SUBMODULE_TOKEN present — using authenticated HTTPS"
+            B="https://x-access-token:${SUBMODULE_TOKEN}@github.com/"
+            # `--add` ON BOTH. url.<base>.insteadOf is a multi-valued key, and
+            # `git config` WITHOUT --add replaces the single existing value
+            # rather than appending to it -- so writing the second line plain,
+            # which is what the three older workflows here do, silently drops
+            # the https:// rewrite and keeps only the git@ one. It happens not
+            # to matter for ASIC/asic-toolkit, whose .gitmodules URL is git@,
+            # and it would matter for any nested submodule declared over
+            # https://github.com/. Verified by reading $HOME/.gitconfig back:
+            # one line without --add, two with.
+            git config --global --add url."${B}".insteadOf "https://github.com/"
+            git config --global --add url."${B}".insteadOf "git@github.com:"
+          else
+            echo "::error::SUBMODULE_TOKEN is not set, and ASIC/asic-toolkit"
+            echo "::error::(SoC-Labs/nanoSoC-ASIC-Toolkit) is a PRIVATE repository."
+            echo "::error::It carries ci/check-vendor-collateral.sh, which is the"
+            echo "::error::only scanner in this job that can see a tracked .tlef,"
+            echo "::error::.lib, .captable, .map or .gds. Without it this gate would"
+            echo "::error::enforce nothing but 'no tracked *.lef', so it FAILS here"
+            echo "::error::rather than reporting a pass it did not earn."
+            echo "::error::"
+            echo "::error::If this is a pull request FROM A FORK, GitHub withholds"
+            echo "::error::secrets by design and no setting on the PR can change"
+            echo "::error::that. A maintainer must push the branch to this"
+            echo "::error::repository, where this job and the PDK job both run."
+            echo "::error::Otherwise: set the SUBMODULE_TOKEN repo secret to a PAT"
+            echo "::error::with read access to SoC-Labs/nanoSoC-ASIC-Toolkit."
+            exit 1
+          fi
+
+      # ONE submodule, by path. `git submodule update --init -- <path>` touches
+      # nothing else, so this stays a sub-minute job.
+      #
+      # NOT `--depth 1`. A shallow submodule fetch asks the server for an
+      # unadvertised object whenever the pin is not the branch tip, and the
+      # failure mode is an error about the transport rather than about the pin --
+      # which on this gate would be indistinguishable from the private-repo case
+      # this step exists to name.
+      - name: Fetch the content scanner (ASIC/asic-toolkit)
+        id: toolkit
+        run: |
+          set -e
+          git submodule sync -- ASIC/asic-toolkit
+          git submodule update --init -- ASIC/asic-toolkit
+          # The pin may predate the scanner, or the checkout may have produced an
+          # empty directory without erroring. Either way the gate has no content
+          # scanner, and a missing detector must fail rather than pass -- the same
+          # rule scripts/ci/vendor_guard_report.sh applies to its own script.
+          for f in ASIC/asic-toolkit/ci/check-vendor-collateral.sh \
+                   ASIC/asic-toolkit/ci/lib.sh; do
+            if [ ! -r "$f" ]; then
+              echo "::error::$f is missing after the submodule checkout."
+              echo "::error::The toolkit pin recorded in this repository predates"
+              echo "::error::the content scanner, or the checkout produced an empty"
+              echo "::error::directory. This gate cannot run at full strength, so"
+              echo "::error::it fails. Roll the ASIC/asic-toolkit pin forward to a"
+              echo "::error::commit that carries ci/check-vendor-collateral.sh."
+              exit 1
+            fi
+          done
+          chmod +x ASIC/asic-toolkit/ci/check-vendor-collateral.sh
+          echo "toolkit pin: $(git -C ASIC/asic-toolkit rev-parse --short HEAD)"
+
+      # BEFORE either scanner runs, and `always()` so it happens on every path
+      # out of the steps above. The runner is ephemeral, but the token has done
+      # its whole job by this point and the two scanners walk the working tree
+      # and print paths out of it -- there is no reason for a credential to still
+      # be on disk while that happens.
+      - name: Scrub credentials
+        if: always()
+        run: |
+          rm -f "$HOME/.gitconfig"
+          # actions/checkout also put `safe.directory` in that file, and both
+          # scanners run git AFTER this step. On ubuntu-latest the workspace and
+          # the step share a uid so git never asks, which is why the three older
+          # workflows get away with the bare `rm`. Restated rather than assumed,
+          # because the failure it prevents -- "detected dubious ownership" out
+          # of `git ls-files` -- would reach the log as a corpus the scanner
+          # could not read, and this gate must never be unable to tell that
+          # apart from a clean tree.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+
+      # SCANNER 1 of 2. The wrapper runs scripts/ci/check_no_vendor_collateral.sh,
+      # redacts the site PDK path out of its output, classifies which half ran and
+      # writes the verdict to the job summary. VENDOR_GUARD_REQUIRE_PDK is NOT set
+      # here: a hosted runner has no PDK by construction, so demanding one would
+      # fail every run for a reason no contributor could fix. The summary states
+      # that the gate ran at half strength -- and now also that a second scanner
+      # covers the half of check 1's corpus that its pathspec cannot reach.
+      - name: 'scanner 1/2 — chiplet gate (check 1 full; check 2 needs a PDK host)'
+        id: chiplet_scan
+        run: scripts/ci/vendor_guard_report.sh
+
+      # SCANNER 2 of 2. Extension, size, content-SHA and the seven text rules.
+      #
+      # `!cancelled() && steps.toolkit.outcome == 'success'` rather than
+      # `always()`: a contributor who has tripped scanner 1 should get BOTH
+      # reports from one run instead of fixing one finding and discovering the
+      # next on the next push -- but if the toolkit checkout failed there is
+      # nothing here to run, and a step that execs a missing file reports a shell
+      # error where this job needs to report the cause the step above already
+      # named.
+      #
+      # WHAT IT PRINTS: rule ids, repository paths and line numbers. The scanner
+      # never emits the matched text -- that is a documented property of its
+      # reporter, and it is the property that makes it safe to run in a public
+      # Actions log, which is itself a copy. It reads no PDK, so there is nothing
+      # of this site's for the wrapper's redaction to have to catch.
+      - name: 'scanner 2/2 — toolkit content scan (extension, size, values)'
+        if: ${{ !cancelled() && steps.toolkit.outcome == 'success' }}
+        run: ASIC/asic-toolkit/ci/check-vendor-collateral.sh
+
+  # --- the deep half ---------------------------------------------------------
+  # Everything the hosted job cannot do. `soclabs-pdk` is derived, not
+  # hand-assigned -- scripts/ci/preflight.sh grants it only to a host that can
+  # actually read the PDK, the memory macros and the Arm physical IP -- so a
+  # drifted host drops the label rather than lying about it.
+  verbatim:
+    name: vendor-collateral-gate-pdk
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux, soclabs-pdk]
+    timeout-minutes: 30
+
+    concurrency:
+      group: vendor-guard-pdk-${{ github.ref }}
+      cancel-in-progress: true
+
+    defaults:
+      run:
+        # LOGIN shell: TSMC_65_HOME and the PDK group membership come from the
+        # host profile, which a non-login shell never sources. Without it the
+        # check falls back to its compiled-in default path and, if that is not
+        # bound, reports "no PDK" on a host that has one.
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+          persist-credentials: false
+          # clean:false, matching every other self-hosted job here: the shared
+          # workspace holds populated submodules and, for the ASIC flows, an
+          # Innovus DB. `git clean -ffdx` would delete both.
+          clean: false
+
+      # ADVISORY, not the gate -- and that is the deliberate difference from
+      # asic-gds.yml, which gates on this same line. preflight grants
+      # `soclabs-pdk` only to a host that ALSO satisfies `soclabs-sim`, so a box
+      # that can read the PDK perfectly well is denied the label for want of
+      # verilator 4.028 -- which this job does not use and does not care about.
+      # Gating here would red this job for a reason unrelated to vendor
+      # collateral. The authority is the next step: it measures the corpus it
+      # actually read out of the PDK and fails if that corpus is not real. That
+      # is exact where the label is a proxy, so the proxy reports and the
+      # measurement decides. This cannot produce a false pass -- the step below
+      # runs regardless and enforces the real requirement.
+      - name: Preflight (advisory — the gate is the corpus measurement below)
+        run: |
+          scripts/ci/preflight.sh --require soclabs-pdk \
+            || echo "::warning::preflight withheld soclabs-pdk — the next step decides"
+
+      # REQUIRE_PDK=1: if the verbatim half did not really run, this job fails.
+      # It also fails when a PDK path is present but the corpus read from it is
+      # too small to be real -- the state in which check 2 would otherwise
+      # compare the tree against nothing and report clean.
+      - name: vendor-collateral gate (both halves, PDK required)
+        env:
+          VENDOR_GUARD_REQUIRE_PDK: '1'
+        run: scripts/ci/vendor_guard_report.sh

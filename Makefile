@@ -37,9 +37,10 @@ export CHIPLET_TL_ASIC_FLIST := $(CHIPLET_HOME)/build/chip/flist/tidelink_asic.f
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
 ASIC_DIR     := $(CHIPLET_HOME)/ASIC/genus-innovus
+TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
-.PHONY: vendor-check
+.PHONY: vendor-check hooks
 .PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc
 
 # Bare `make` used to run `bootstrap` — a 42-submodule fetch — because it was
@@ -52,6 +53,7 @@ help:
 	@echo ""
 	@echo "  Setup:"
 	@echo "    make bootstrap     fetch all 42 submodules (see scripts/bootstrap.sh)"
+	@echo "    make hooks         install the pre-commit / pre-push vendor guards"
 	@echo ""
 	@echo "  Gates (what CI runs nightly — .github/workflows/nightly.yml):"
 	@echo "    make check         vendor-check + chip-boundary + Verilator lint. No EDA licence."
@@ -64,7 +66,8 @@ help:
 	@echo "    make chip-boundary every RTL port classified exactly once"
 	@echo "    make chip-wrapper  ...and emit build/chip/rtl/nanosoc_eth_chiplet_chip.v"
 	@echo "    make lint          Verilator structural lint"
-	@echo "    make vendor-check  no TSMC collateral tracked in this PUBLIC repo"
+	@echo "    make vendor-check  no TSMC collateral tracked in this PUBLIC repo."
+	@echo "                       Both scanners, the same two the PR gate runs."
 	@echo ""
 	@echo "  ASIC implementation (delegates to ASIC/genus-innovus):"
 	@echo "    make asic-status   which flow stages have run"
@@ -108,10 +111,140 @@ lint:
 ## vendor-check: no TSMC foundry collateral is TRACKED. This repository is
 ## PUBLIC and the PDK licence does not permit reproducing vendor files; the tree
 ## carried a 414 kB copy of TSMC's IO-driver LEF for months. Costs nothing and
-## needs no tool, so it runs first in `check`. See the script for the full
+## needs no tool, so it runs first in `check`. See the scripts for the full
 ## argument and for the "ship the transform, not the result" pattern.
+##
+## TWO SCANNERS, THE SAME TWO THE PR GATE RUNS, IN THE SAME ORDER. That is the
+## whole reason this target changed shape:
+##
+##   check_no_vendor_collateral.sh    tracked *.lef by content SHA and by size,
+##   (scripts/ci/)                    plus — only where a PDK is readable — runs
+##                                    of VERBATIM vendor text in a file of any
+##                                    type. The verbatim half is the only control
+##                                    anywhere here that catches copying without
+##                                    somebody first guessing which values are
+##                                    the secret ones.
+##
+##   check-vendor-collateral.sh       extension (~20 collateral suffixes), size,
+##   (ASIC/asic-toolkit/ci/)          content SHA, and seven text rules for
+##                                    values, GDS layer/datatype pairs,
+##                                    revision-coded release names, absolute site
+##                                    paths and captured licence output. No PDK,
+##                                    no licence, no tool.
+##
+## Neither is a superset of the other. The first cannot see a tracked .tlef at
+## all — its corpus is the pathspec `*.lef`, which does not match .tlef and never
+## looks at .lib, .captable, .map or .gds. Measured on a scratch tree of three
+## ~244 kB invented vendor-shaped files under those suffixes: the first exits 0,
+## the second exits 1.
+##
+## AND THIS TARGET RUNS BOTH BECAUSE CI DOES. A local gate that is greener than
+## the PR check is worse than no local gate: it sends people to a red PR having
+## already been told they were clean, and the second time that happens they stop
+## running the local one. If the two ever need to differ, change CI first.
 vendor-check:
-	"$(CHIPLET_HOME)/scripts/ci/check_no_vendor_collateral.sh"
+	@set -uo pipefail
+	rc=0
+	echo "== scanner 1/2: scripts/ci/check_no_vendor_collateral.sh =="
+	"$(CHIPLET_HOME)/scripts/ci/check_no_vendor_collateral.sh" || rc=1
+	echo
+	echo "== scanner 2/2: ASIC/asic-toolkit/ci/check-vendor-collateral.sh =="
+	tk="$(TOOLKIT_DIR)/ci/check-vendor-collateral.sh"
+	if [ ! -r "$$tk" ]; then
+	    echo "make vendor-check: the toolkit content scanner is not present." >&2
+	    echo >&2
+	    if [ ! -d "$(TOOLKIT_DIR)/.git" ] && [ ! -f "$(TOOLKIT_DIR)/.git" ]; then
+	        echo "  ASIC/asic-toolkit is not checked out. Run: make bootstrap" >&2
+	    else
+	        echo "  ASIC/asic-toolkit is checked out but has no" >&2
+	        echo "  ci/check-vendor-collateral.sh — the submodule pin predates it." >&2
+	        echo "  Roll the pin forward: git -C ASIC/asic-toolkit log --oneline -5" >&2
+	    fi
+	    echo >&2
+	    echo "  THIS IS A FAILURE, NOT A SKIP. Scanner 1 above cannot see a" >&2
+	    echo "  tracked .tlef, .lib, .captable, .map or .gds, so a green run" >&2
+	    echo "  without scanner 2 would mean less than it looks like — which is" >&2
+	    echo "  exactly what the PR gate was doing before both were wired in." >&2
+	    exit 1
+	fi
+	# Run from CHIPLET_HOME: the scanner takes its corpus from `git ls-files` in
+	# whatever repository it is invoked FROM, not from where the script lives.
+	# Invoked from inside the submodule it would faithfully scan the toolkit.
+	cd "$(CHIPLET_HOME)"
+	bash "$$tk" < /dev/null || rc=1
+	if [ $$rc -ne 0 ]; then
+	    echo >&2
+	    echo "== vendor-check FAILED — see the findings above ==" >&2
+	    exit 1
+	fi
+	echo
+	echo "== vendor-check OK: both scanners clean =="
+
+## hooks: install the toolkit's pre-commit / pre-push guards into THIS clone.
+## CI catches vendor collateral after it is pushed; a hook catches it before it
+## leaves the machine, which for licensed foundry data is the difference that
+## matters. The hooks and their installer are the TOOLKIT's — ASIC/asic-toolkit
+## is a submodule, so they are reachable from here — and this target only calls
+## the installer. It deliberately does NOT reimplement it: two copies of an
+## install routine drift, and the one in this repo would be the stale one.
+## Override the path with `make hooks HOOK_INSTALLER=/path/to/installer`.
+HOOK_INSTALLER ?=
+HOOK_ARGS      ?=
+hooks:
+	@set -uo pipefail
+	inst="$(HOOK_INSTALLER)"
+	if [ -z "$$inst" ]; then
+	    # Candidate paths, in the order the toolkit is most likely to use.
+	    # First hit wins; if the toolkit lands the installer somewhere else,
+	    # add it here rather than copying its logic into this file.
+	    for c in "$(TOOLKIT_DIR)/hooks/install.sh" \
+	             "$(TOOLKIT_DIR)/hooks/install-hooks.sh" \
+	             "$(TOOLKIT_DIR)/scripts/asic-flow-install-hooks" \
+	             "$(TOOLKIT_DIR)/ci/install-hooks.sh"; do
+	        if [ -x "$$c" ]; then inst="$$c"; break; fi
+	    done
+	fi
+	if [ -z "$$inst" ]; then
+	    echo "make hooks: no hook installer found in the toolkit." >&2
+	    echo >&2
+	    if [ ! -d "$(TOOLKIT_DIR)/.git" ] && [ ! -f "$(TOOLKIT_DIR)/.git" ]; then
+	        echo "  ASIC/asic-toolkit is not checked out. Run: make bootstrap" >&2
+	    else
+	        echo "  ASIC/asic-toolkit is checked out, but none of these exist" >&2
+	        echo "  and are executable:" >&2
+	        echo "      ASIC/asic-toolkit/hooks/install.sh" >&2
+	        echo "      ASIC/asic-toolkit/hooks/install-hooks.sh" >&2
+	        echo "      ASIC/asic-toolkit/scripts/asic-flow-install-hooks" >&2
+	        echo "      ASIC/asic-toolkit/ci/install-hooks.sh" >&2
+	        echo >&2
+	        echo "  The hooks may not have landed upstream yet, or the submodule" >&2
+	        echo "  pin predates them: git -C ASIC/asic-toolkit log --oneline -5" >&2
+	        echo "  Point this target at it directly with:" >&2
+	        echo "      make hooks HOOK_INSTALLER=<path>" >&2
+	    fi
+	    echo >&2
+	    echo "  UNTIL THEN THERE IS NO LOCAL GUARD. Run \`make vendor-check\`" >&2
+	    echo "  by hand before every commit that adds a file; CI's vendor-guard" >&2
+	    echo "  workflow is the backstop, and it only fires after you push." >&2
+	    exit 1
+	fi
+	echo "== installing git hooks via $$inst =="
+	cd "$(CHIPLET_HOME)"
+	"$$inst" $(HOOK_ARGS) || exit $$?
+	# Report what actually landed. This is confirmation, not installation --
+	# the installer above owns where the hooks go and what they contain.
+	hookdir=$$(git rev-parse --git-path hooks)
+	echo
+	echo "hooks now present in $$hookdir:"
+	found=0
+	for h in pre-commit pre-push; do
+	    if [ -x "$$hookdir/$$h" ]; then echo "  $$h"; found=1; fi
+	done
+	if [ $$found -eq 0 ]; then
+	    echo "  (none) — the installer exited 0 but installed no pre-commit or" >&2
+	    echo "  pre-push hook. Treat this as a failure, not a clean run." >&2
+	    exit 1
+	fi
 
 ## check: the fast, EDA-license-free gates a fresh clone can run — licence
 ## hygiene, boundary coverage, structural lint. `make elab` and the verif/ envs

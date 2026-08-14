@@ -20,7 +20,8 @@ git clone https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet.git
 cd NanoSoC-Ethernet-Chiplet
 ./scripts/bootstrap.sh      # 42 submodules, 8 levels deep — NOT `git clone --recursive`
 source set_env.sh
-make check                  # chip-boundary + lint — no EDA license needed
+make hooks                  # install the pre-commit / pre-push vendor guards — do this once
+make check                  # vendor-check + chip-boundary + lint — no EDA license needed
 make elab                   # full structural elaboration — needs VCS
 make regress                # every data-plane sim proof, one table — needs VCS
 ```
@@ -38,6 +39,154 @@ arrived). `docs/ELAB_STRICT_FINDINGS.md`.
 `scripts/bootstrap.sh` rather than `git clone --recursive` because one submodule
 *inside* TideLink is still declared over SSH; the script rewrites it to HTTPS for
 the fetch. See the README.
+
+## The one gate that runs on every pull request
+
+**This repository is public. The TSMC PDK licence does not permit reproducing
+their collateral.** Everything else in CI is dispatched or nightly; the vendor
+gate is the only thing that runs automatically on a pull request, because it is
+the only failure here that cannot be undone by a follow-up commit.
+
+### CI is DETECTION, not prevention. Read this before relying on it.
+
+**Every job below starts after the push.** By the time a runner is allocated the
+objects are already on GitHub and already fetchable by SHA, by anyone, whether or
+not any ref points at them — and a fork or a mirror taken in that window keeps
+them regardless of what you do next. A red tick buys you a redaction commit; it
+does not unpublish anything, and `git rm` moves a blob out of the tip and out of
+nothing else. For a licence breach that ordering is the whole story: what CI
+gives you is **incident timing** — you learn today rather than at the next audit.
+
+The only layer that prevents rather than detects is the **pre-push hook**, which
+runs before the bytes move. `make hooks` installs it; do it once per clone. That
+is not a nicety, it is the difference between a mistake and a disclosure.
+
+**As of the currently pinned `ASIC/asic-toolkit` commit that hook does not exist
+yet** — the submodule carries no `hooks/` directory at the pin, so `make hooks`
+fails with the message that says so. Until the toolkit lands them and this
+repository rolls the pin forward, **there is no preventive layer at all**, only
+the detection below. Run `make vendor-check` by hand before any commit that adds
+a file.
+
+### Which check enforces what
+
+`.github/workflows/vendor-guard.yml`, two jobs, both blocking. Two *scanners*,
+which is not the same list — the hosted job runs both of them:
+
+| Check name | Runs on | Trigger | Scanners it runs |
+|---|---|---|---|
+| `vendor-collateral-gate` | GitHub-hosted `ubuntu-latest` | **every push and every PR** | chiplet scanner (check 1 only) **+ toolkit content scanner** |
+| `vendor-collateral-gate-pdk` | self-hosted `soclabs-pdk` | push, dispatch, 01:30 nightly | chiplet scanner, **both halves** — adds the verbatim-vendor-text scan |
+
+| Scanner | Where | Corpus / rules | Needs |
+|---|---|---|---|
+| `scripts/ci/check_no_vendor_collateral.sh` **check 1** | this repo | tracked `*.lef` only, by content SHA and by size (>64 kB) | nothing |
+| `scripts/ci/check_no_vendor_collateral.sh` **check 2** | this repo | any file of any type, matched against runs of **verbatim** text from the installed PDK | a readable PDK at `$TSMC_65_HOME` |
+| `ASIC/asic-toolkit/ci/check-vendor-collateral.sh` | submodule | **extension** (~20 collateral suffixes incl. `.tlef .lib .captable .map .gds .cdl .spef`), **size**, content SHA, and seven text rules — transcribed LEF/Liberty values, GDS layer/datatype pairs, revision-coded release names, absolute site paths, captured licence output | nothing |
+
+**Read the first row again: check 1's pathspec is `*.lef`, and that does not match
+`.tlef`.** Until the toolkit scanner was added, the hosted job — the one that is
+about to become a required status check — enforced *only* that first row.
+Measured on a scratch tree holding three ~244 kB invented vendor-shaped files
+tracked as `.tlef`, `.lib` and `.captable`: the chiplet scanner exits 0, on a PDK
+host as well as a hosted one, because check 2 catches copying and those bytes
+were invented. The toolkit scanner exits 1 on the same tree. Neither scanner is
+a superset of the other, which is why both run.
+
+The chiplet scanner is driven through `scripts/ci/vendor_guard_report.sh`, which
+classifies which of its halves actually ran and says so in the job summary. **A
+green `vendor-collateral-gate` still does not mean the tree is clean of verbatim
+vendor text** — check 2 needs a PDK and a hosted runner has none, so there it is
+skipped and the summary says so in as many words. `vendor-collateral-gate-pdk` is
+the job that looks for that; it fails rather than passing if the PDK is missing,
+and also if the PDK is present but unreadable (which would otherwise let the scan
+compare your tree against an empty corpus and report clean).
+
+The PDK job is deliberately absent from the `pull_request` event: this repo is
+public, and running a fork's branch on a lab host that has the PDK, the IP trees
+and the licence servers mounted is how a self-hosted runner is lost. Pushing the
+branch is what scans it at full strength.
+
+**`ASIC/asic-toolkit` is a private repository, so the hosted job needs the
+`SUBMODULE_TOKEN` secret** and fetches that one submodule by path. If it cannot,
+**the job fails** — it does not carry on with the `*.lef`-only scanner, because a
+gate that quietly degrades to the weaker of its two scanners is the defect, not
+the mitigation. One consequence, stated plainly: GitHub withholds secrets from a
+pull request opened **from a fork**, so this job goes red there naming that as
+the cause, and a maintainer has to push the branch to this repository to get it
+scanned. `make vendor-check` runs the same two scanners locally, in the same
+order, for the same reason — a local gate that is greener than the PR check is
+worse than no local gate.
+
+### The toolkit scanner is RED on this repository today
+
+Not as a threat and not as a projection — measured, at the currently pinned
+toolkit commit, on the tree as it stands. Recorded here rather than tuned away,
+because tuning a scanner until it agrees with the repository is how the `*.lef`
+gate came to mean nothing:
+
+| Rule | Findings at HEAD | What it is, on inspection |
+|---|---|---|
+| `file.ext` | 3 | the three tracked `ASIC/genus-innovus/logos/*.gds` — **this project's own logo artwork**, caught because `.gds` is collateral by extension. A false positive here, and the clearest candidate for a waiver. |
+| `value.lef` | 35 | LEF/Liberty keywords beside decimals, mostly in `ASIC/genus-innovus/scripts/{floorplan,power_plan}.tcl` |
+| `value.lefwin` | 7 | table keywords within two lines of a multi-significant-figure number |
+| `value.map` | 1 | a GDS layer/datatype pair |
+| `value.libtag` | 5 | `[LIB]`-style provenance annotations carrying numbers |
+| `ident` | 257 | revision-coded release names — concentrated in `ASIC/common.mk` and the four `inputs/*.sdc` |
+| `path` | 266 | absolute site paths (`/tsmc65pdk`, `/research/AAA`, `/research/precompiled_mems`, `/eda`) — in `ASIC/common.mk`, the config and eval Tcl, and four of the five workflow files |
+
+**574 findings, 7 failing gates, exit 1.** The `path` and `ident` rows are the
+consequential ones and they are *not* noise: `VENDOR_COLLATERAL.md` names
+absolute paths to this site's PDK mounts as not-for-publication, and
+`scripts/ci/vendor_guard_report.sh` redacts `$TSMC_65_HOME` out of the CI log for
+exactly that reason — while the tree itself carries the same class of path in 266
+places. That is a real, pre-existing debt this scanner surfaced; it is not a
+reason to soften the rule.
+
+**Consequence for making `vendor-collateral-gate` a required status check:** it
+will block every PR until this list is triaged. Triage is the repo owner's call
+and it is one of three things per row — redact it, waive it with a reason, or
+accept the block. Do not make it a fourth thing by narrowing a rule.
+
+**The `vendor.allowlist.stale` warning is correct and is left alone.** All five
+of the toolkit scanner's allowlist entries name toolkit paths (`ci/…`,
+`test/stage/…`) that do not exist here, so run against this repository every one
+of them reports as suppressing nothing. That warning is the feature working:
+stale-waiver detection is exactly what it says. It is a `warn`, not a `fail`, so
+it does not affect the verdict, and there is deliberately no chiplet-specific
+allowlist — the scanner's table is a hardcoded shell variable with no environment
+override, so pointing it at one would mean either editing the submodule (whose
+allowlist is *its* repository's) or forking the script into this one, and two
+copies of a pattern table drift until they disagree about the same file. Accept
+the warning; do not silence it.
+
+**When it fires.** It prints the offending paths and never their contents. Two
+things are certainly wrong, and neither is the check:
+
+- **Do not delete or narrow the check, and do not add an allowlist.** There used
+  to be one, and removing it is what armed this gate. A tracked vendor file is a
+  licence breach, not a CI failure.
+- **Ship the transform, not the result.** If a build needs a vendor file,
+  generate it: read the PDK at build time and write into a gitignored directory,
+  the way `ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py` and
+  `ASIC/genus-innovus/scripts/gdsmap_derive.py` already do. `make -C ASIC -f
+  common.mk pad-lef` produces the patched IO-driver LEF this way.
+- Already committed it? `git rm --cached <path>` — and remember the blob is in
+  the history, so say so rather than assuming the untrack is the end of it.
+
+**The legitimate bypass** is narrow and it is by design: a vendor file sitting
+**untracked** in your work directory is a WARNING, not a failure — a scratch copy
+is not a publication. So keep it out of the index rather than looking for a flag.
+For the local hooks, `git commit --no-verify` skips them, which is fine for a
+work-in-progress commit on a branch you will rebase; it buys you nothing at the
+PR, where `vendor-collateral-gate` has no bypass at all. If a file genuinely must
+be published, that is a licensing decision for the repo owner, not a CI setting.
+
+**Install the local hooks once per clone: `make hooks`.** CI catches collateral
+after it is pushed; the hooks catch it before it leaves the machine, which for
+licensed foundry data is the difference that matters. The hooks and their
+installer live in `ASIC/asic-toolkit` (a submodule, so `make bootstrap` first);
+`make hooks` only calls the installer and reports which hooks landed.
 
 ## What is proven
 

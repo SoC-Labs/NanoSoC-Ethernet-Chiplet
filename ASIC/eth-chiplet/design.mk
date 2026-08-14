@@ -445,7 +445,29 @@ include $(ASIC_FLOW_DIR)/mk/flow.mk
 # would be worse.
 #-----------------------------------------------------------------------------
 
-.PHONY: legacy-paths asic-flist romlibs-check cpf-patch
+# ── THIS RUN'S BOOT ROM DIRECTORY ──────────────────────────────────────────
+# The macros are compiled per run into $(RUN_DIR)/romlibs and the run is pinned
+# to that build (../rom_build.mk), so a finished run under build/<RUN_TAG>/
+# carries the exact .lib/.lef/.gds2 it was made from.
+#
+# `=`, NOT `:=` AND NOT `?=`, and both halves of that matter:
+#   * `?=` would be a no-op. ../common.mk is included above and reaches
+#     ../rom_build.mk, which has already defaulted ROM_RUN_DIR to the shared
+#     drop. A conditional assignment here would never fire and every run would
+#     quietly keep using ASIC/romlibs.
+#   * `:=` would expand RUN_DIR NOW, and RUN_DIR does not exist yet: the
+#     toolkit's mk/flow.mk defines it, and Makefile includes this file FIRST.
+#     ROM_RUN_DIR would become the literal "/romlibs".
+# Deferred expansion resolves it when a recipe runs, by which time flow.mk has
+# set RUN_DIR. A command-line ROM_RUN_DIR= still wins over both.
+ROM_RUN_DIR         = $(RUN_DIR)/romlibs
+
+# Exported because config/design_config.tcl reads it to locate this run's ROMs;
+# see the ROMLIBS_DIR block there. That one export is what makes synthesis, P&R
+# and stream-out open one build rather than three reads of a shared directory.
+export ROMLIBS_DIR  = $(ROM_RUN_DIR)
+
+.PHONY: legacy-paths asic-flist romlibs-check rom-ensure cpf-patch
 
 # STAGES RUN IN ORDER, ALWAYS. `all: syn place cts route` has no ordering
 # barrier, so `make -j all` is free to start place while syn is still elaborating
@@ -518,19 +540,48 @@ legacy-paths:
 asic-flist:
 	$(MAKE) -C $(NANOSOC_ETH_CHIPLET_HOME) --no-print-directory asic-flist
 
+## ── THE BOOT ROMs, BUILT FOR THIS RUN ──────────────────────────────────────
 ## Genus reads the two ROM .libs through the library search path; without them
 ## `syn` dies inside set_db with "Cannot open file rom_via_*.lib", ten minutes in.
-## They cannot be rebuilt on this host - the Arm compiler has listed zero
-## generators since the RHEL 8.10 upgrade (../common.mk explains it at length) -
-## so this is a check, not a build.
-## Source: ../genus-innovus/Makefile:69-76
+##
+## THIS IS NOW A BUILD, NOT ONLY A CHECK. The comment here used to say the ROMs
+## "cannot be rebuilt on this host - the Arm compiler has listed zero generators
+## since the RHEL 8.10 upgrade". That was never true of the compiler: the check
+## that reported it read the generator names off the wrong line of the
+## compiler's own help output. Corrected in ../common.mk on 2026-08-14; the
+## install lists fifteen generators and compiles each ROM in under three
+## minutes.
+##
+## So `rom-run` compiles both macros into THIS run's directory
+## ($(ROM_RUN_DIR) = $(RUN_DIR)/romlibs) from a content-addressed cache, pins
+## the run to that build, and then runs the full word-for-word gate against
+## what it just built. The macros are mask programmed and the shared drop this
+## target used to verify had already shipped the wrong bits twice.
+##
+## ROM_RUN_DIR goes on the SUB-MAKE COMMAND LINE: ../common.mk assigns
+## ROMLIBS_DIR with `:=`, and a makefile assignment beats an exported
+## environment variable, so an export alone would have the sub-make build and
+## verify the shared drop while the tools read the run.
 romlibs-check:
-	@$(MAKE) -C $(NANOSOC_ETH_CHIPLET_HOME)/ASIC -f common.mk --no-print-directory romlibs-verify || { \
+	@$(MAKE) -C $(NANOSOC_ETH_CHIPLET_HOME)/ASIC -f common.mk --no-print-directory \
+	    rom-run ROM_RUN_DIR=$(ROM_RUN_DIR) || { \
 	    echo ""; \
-	    echo "The ROM libraries are not built. On a host with a working Arm mem"; \
-	    echo "compiler:  make -C ASIC -f common.mk tsmc_65_romlibs"; \
-	    echo "Otherwise: make -C ASIC/genus-innovus romlibs-fetch"; \
+	    echo "The boot ROMs for this run did not build or did not verify (above)."; \
+	    echo "  needs: a LOCAL-DISK compiler mirror and the bootloader firmware built"; \
+	    echo "     make -C ASIC -f common.mk rom-compiler-stage"; \
+	    echo "  no compiler on this host? adopt a prebuilt tree, recorded as imported:"; \
+	    echo "     make -C ASIC -f common.mk rom-run ROM_RUN_DIR=$(ROM_RUN_DIR) \\"; \
+	    echo "          ROM_IMPORT_FROM=<a tree holding cc_rom/ and eth_rom/>"; \
+	    echo "  a PIN CONFLICT is the gate working: this run is already pinned to a"; \
+	    echo "  different ROM build. Start a new RUN_TAG rather than re-pinning."; \
 	    exit 1; }
+
+## The cheap per-stage guard - see ../rom_build.mk. Placement reads the ROM LEF
+## and stream-out merges its GDS, hours after synthesis read the .lib; this is
+## what makes those three one build. A no-op when the run is already staged.
+rom-ensure:
+	@$(MAKE) -C $(NANOSOC_ETH_CHIPLET_HOME)/ASIC -f common.mk --no-print-directory \
+	    rom-run-ensure ROM_RUN_DIR=$(ROM_RUN_DIR)
 
 # ── THE CPF PATCH, AND WHY IT IS HERE RATHER THAN IN hooks/ ─────────────────
 #
@@ -603,7 +654,7 @@ cpf-patch:
 #   syn            the generated sub-flists and the ROM libraries, the two
 #                  project-side gates the toolkit's worked example only assumes
 #   place          the CPF patch, between the two tools
-syn place cts route: legacy-paths pad-lef
+syn place cts route: legacy-paths pad-lef rom-ensure
 syn:   asic-flist romlibs-check
 place: cpf-patch
 
