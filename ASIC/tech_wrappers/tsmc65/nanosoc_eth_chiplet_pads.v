@@ -138,494 +138,528 @@ wire tiehi = 1'b1;
 // both onto its own sys_fclk port (`.rtc_clk (sys_fclk)  // tied`), per the
 // ALIASED CLOCKS block in the boundary spec. All three therefore share uPAD_CLK_I.
 nanosoc_eth_chiplet_chip u_nanosoc_eth_chiplet_chip (
-    .sys_fclk(soc_sys_fclk),
-    .sys_sysresetn(soc_sys_sysresetn),
-    .rmii_ref_clk(soc_rmii_ref_clk),
+  .sys_fclk         (soc_sys_fclk),
+  .sys_sysresetn    (soc_sys_sysresetn),
+  .rmii_ref_clk     (soc_rmii_ref_clk),
 
-    .pad_clk_tx(soc_pad_clk_tx),
-    .pad_tx(soc_pad_tx),
-    .pad_clk_rx(soc_pad_clk_rx),
-    .pad_rx(soc_pad_rx),
+  .pad_clk_tx       (soc_pad_clk_tx),
+  .pad_tx           (soc_pad_tx),
+  .pad_clk_rx       (soc_pad_clk_rx),
+  .pad_rx           (soc_pad_rx),
 
-    .i2c_scl_i(soc_i2c_scl_i),
-    .i2c_scl_o(soc_i2c_scl_o),
-    .i2c_scl_t(soc_i2c_scl_t),
-    .i2c_sda_i(soc_i2c_sda_i),
-    .i2c_sda_o(soc_i2c_sda_o),
-    .i2c_sda_t(soc_i2c_sda_t),
+  .i2c_scl_i        (soc_i2c_scl_i),
+  .i2c_scl_o        (soc_i2c_scl_o),
+  .i2c_scl_t        (soc_i2c_scl_t),
+  .i2c_sda_i        (soc_i2c_sda_i),
+  .i2c_sda_o        (soc_i2c_sda_o),
+  .i2c_sda_t        (soc_i2c_sda_t),
 
-    .dap_swclktck(soc_dap_swclktck),
-    .dap_swditms(soc_dap_swditms),
-    .dap_swdo(soc_dap_swdo),
-    .dap_swdoen(soc_dap_swdoen),
+  .dap_swclktck     (soc_dap_swclktck),
+  .dap_swditms      (soc_dap_swditms),
+  .dap_swdo         (soc_dap_swdo),
+  .dap_swdoen       (soc_dap_swdoen),
 
-    .sys_scanenable(soc_sys_scanenable),
-    .sys_testmode(soc_sys_testmode),
+  .sys_scanenable   (soc_sys_scanenable),
+  .sys_testmode     (soc_sys_testmode),
 
-    .rmii_txd(soc_rmii_txd),
-    .rmii_tx_en(soc_rmii_tx_en),
-    .rmii_rxd(soc_rmii_rxd),
-    .rmii_crs_dv(soc_rmii_crs_dv),
+  .rmii_txd         (soc_rmii_txd),
+  .rmii_tx_en       (soc_rmii_tx_en),
+  .rmii_rxd         (soc_rmii_rxd),
+  .rmii_crs_dv      (soc_rmii_crs_dv),
 
-    .mdc_pad_o(soc_mdc_pad_o),
-    .md_pad_i(soc_md_pad_i),
-    .md_pad_o(soc_md_pad_o),
-    .md_padoe_o(soc_md_padoe_o),
+  .mdc_pad_o        (soc_mdc_pad_o),
+  .md_pad_i         (soc_md_pad_i),
+  .md_pad_o         (soc_md_pad_o),
+  .md_padoe_o       (soc_md_padoe_o),
 
-    .qspi_sclk(soc_qspi_sclk),
-    .qspi_csn(soc_qspi_csn),
-    .qspi_io_i(soc_qspi_io_i),
-    .qspi_io_o(soc_qspi_io_o),
-    .qspi_io_e(soc_qspi_io_e),
+  .qspi_sclk        (soc_qspi_sclk),
+  .qspi_csn         (soc_qspi_csn),
+  .qspi_io_i        (soc_qspi_io_i),
+  .qspi_io_o        (soc_qspi_io_o),
+  .qspi_io_e        (soc_qspi_io_e),
 
-    .hostio4_p1_in(soc_hostio4_p1_in),
-    .hostio4_p1_out(soc_hostio4_p1_out),
-    .hostio4_p1_outen(soc_hostio4_p1_outen)
+  .hostio4_p1_in    (soc_hostio4_p1_in),
+  .hostio4_p1_out   (soc_hostio4_p1_out),
+  .hostio4_p1_outen (soc_hostio4_p1_outen)
 );
 
- // --------------------------------------------------------------------------------
- // IO pad (TSMC 65nm specific Library mapping)
- // --------------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+// IO pads (TSMC 65nm library mapping)
+//-----------------------------------------------------------------------------
 
 // Power Pads
+//
+// The four supply rails are declared as internal wires, not module ports:
+// the UPF owns the supply boundary (upf:7-21 create_supply_port/net for
+// these exact names; Genus emits matching `input`/`wire` VDD/VDDIO/VSS/VSSIO
+// in <block>_gate_power.v, read by Innovus at 2b_pnr_place_eval.tcl:531).
+// Ports here would double-own that boundary; wires just mirror it.
+//
+// NAMES ARE LOAD-BEARING: UPF binds nets to pads by instance pattern
+// (`connect_supply_net VDDIO -ports {uPAD_VDDIO_*/VDDPST}`, upf:92-95), so
+// renaming a net/instance here silently unbinds it.
+//
+// Cell-to-pin mapping (verified against tphn65lpgv2od3_sl.v):
+//   PVDD2POC_G, PVDD2DGZ_G -> .VDDPST  IO supply (POC's only port)
+//   PVSS2DGZ_G             -> .VSSPST  IO ground
+//   PVDD1DGZ_G             -> .VDD     core supply
+//   PVSS1DGZ_G             -> .VSS     core ground
+// Each is a lone `inout` with a self-connected `tran` (sim no-op); wiring
+// them just states ring connectivity in the source for LVS.
+wire VDDIO;   // IO   supply -- 12 pads
+wire VSSIO;   // IO   ground -- 12 pads
+wire VDD;     // core supply --  6 pads
+wire VSS;     // core ground --  4 pads
+
 // Top
-PVDD2POC_G uPAD_VDDIO_T_0();
-PVDD2DGZ_G uPAD_VDDIO_T_1();
-PVDD2DGZ_G uPAD_VDDIO_T_2();
-PVSS2DGZ_G uPAD_VSSIO_T_0();
-PVSS2DGZ_G uPAD_VSSIO_T_1();
-PVSS2DGZ_G uPAD_VSSIO_T_2();
-PVDD1DGZ_G uPAD_VDD_T_0();
-PVDD1DGZ_G uPAD_VDD_T_1();
-PVDD1DGZ_G uPAD_VDD_T_2();
-PVSS1DGZ_G uPAD_VSS_T_0();
-PVSS1DGZ_G uPAD_VSS_T_1();
+PVDD2POC_G uPAD_VDDIO_T_0 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_T_1 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_T_2 (.VDDPST (VDDIO));
+PVSS2DGZ_G uPAD_VSSIO_T_0 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_T_1 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_T_2 (.VSSPST (VSSIO));
+PVDD1DGZ_G uPAD_VDD_T_0   (.VDD    (VDD));
+PVDD1DGZ_G uPAD_VDD_T_1   (.VDD    (VDD));
+PVDD1DGZ_G uPAD_VDD_T_2   (.VDD    (VDD));
+PVSS1DGZ_G uPAD_VSS_T_0   (.VSS    (VSS));
+PVSS1DGZ_G uPAD_VSS_T_1   (.VSS    (VSS));
 
 // Bottom
-PVDD2POC_G uPAD_VDDIO_B_0();
-PVDD2DGZ_G uPAD_VDDIO_B_1();
-PVDD2DGZ_G uPAD_VDDIO_B_2();
-PVSS2DGZ_G uPAD_VSSIO_B_0();
-PVSS2DGZ_G uPAD_VSSIO_B_1();
-PVSS2DGZ_G uPAD_VSSIO_B_2();
-PVDD1DGZ_G uPAD_VDD_B_0();
-PVDD1DGZ_G uPAD_VDD_B_1();
-PVDD1DGZ_G uPAD_VDD_B_2();
-PVSS1DGZ_G uPAD_VSS_B_0();
-PVSS1DGZ_G uPAD_VSS_B_1();
+PVDD2POC_G uPAD_VDDIO_B_0 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_B_1 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_B_2 (.VDDPST (VDDIO));
+PVSS2DGZ_G uPAD_VSSIO_B_0 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_B_1 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_B_2 (.VSSPST (VSSIO));
+PVDD1DGZ_G uPAD_VDD_B_0   (.VDD    (VDD));
+PVDD1DGZ_G uPAD_VDD_B_1   (.VDD    (VDD));
+PVDD1DGZ_G uPAD_VDD_B_2   (.VDD    (VDD));
+PVSS1DGZ_G uPAD_VSS_B_0   (.VSS    (VSS));
+PVSS1DGZ_G uPAD_VSS_B_1   (.VSS    (VSS));
 
 // Left
-PVDD2POC_G uPAD_VDDIO_L_0();
-PVDD2DGZ_G uPAD_VDDIO_L_1();
-PVDD2DGZ_G uPAD_VDDIO_L_2();
-PVSS2DGZ_G uPAD_VSSIO_L_0();
-PVSS2DGZ_G uPAD_VSSIO_L_1();
-PVSS2DGZ_G uPAD_VSSIO_L_2();
+PVDD2POC_G uPAD_VDDIO_L_0 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_L_1 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_L_2 (.VDDPST (VDDIO));
+PVSS2DGZ_G uPAD_VSSIO_L_0 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_L_1 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_L_2 (.VSSPST (VSSIO));
 
 // Right
-PVDD2POC_G uPAD_VDDIO_R_0();
-PVDD2DGZ_G uPAD_VDDIO_R_1();
-PVDD2DGZ_G uPAD_VDDIO_R_2();
-PVSS2DGZ_G uPAD_VSSIO_R_0();
-PVSS2DGZ_G uPAD_VSSIO_R_1();
-PVSS2DGZ_G uPAD_VSSIO_R_2();
+PVDD2POC_G uPAD_VDDIO_R_0 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_R_1 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_R_2 (.VDDPST (VDDIO));
+PVSS2DGZ_G uPAD_VSSIO_R_0 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_R_1 (.VSSPST (VSSIO));
+PVSS2DGZ_G uPAD_VSSIO_R_2 (.VSSPST (VSSIO));
 
 
 // Clock, Reset and Serial Wire Debug ports
-
-PDDW04DGZ_G  uPAD_SE_I (
-    .C(soc_sys_scanenable),
-    .REN(tielo),
-    .I(tielo),
-    .OEN(tiehi),
-    .PAD(SE)
-   );
+PDDW04DGZ_G uPAD_SE_I (
+  .C   (soc_sys_scanenable),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (SE)
+);
 
 // Also feeds the wrapper's rtc_clk and user_ref_clk (aliased in the spec).
-PDDW04DGZ_G  uPAD_CLK_I (
-    .C(soc_sys_fclk),
-    .REN(tiehi),
-    .I(tielo),
-    .OEN(tiehi),
-    .PAD(CLK)
-   );
+PDDW04DGZ_G uPAD_CLK_I (
+  .C   (soc_sys_fclk),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (CLK)
+);
 
-PDDW04DGZ_G  uPAD_TEST_I (
-    .C(soc_sys_testmode),
-    .REN(tielo),
-    .I(tielo),
-    .OEN(tiehi),
-    .PAD(TEST)
-   );
+PDDW04DGZ_G uPAD_TEST_I (
+  .C   (soc_sys_testmode),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TEST)
+);
 
-PDDW04DGZ_G  uPAD_NRST_I (
-    .C(soc_sys_sysresetn),
-    .REN(tiehi),
-    .I(tielo),
-    .OEN(tiehi),
-    .PAD(NRST)
-   );
+PDDW04DGZ_G uPAD_NRST_I (
+  .C   (soc_sys_sysresetn),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (NRST)
+);
 
 // dap_swdoen is oe_polarity: active_high -> OEN = ~oe
-PDUW08DGZ_G  uPAD_SWDIO_IO (
-    .C(soc_dap_swditms),
-    .REN(tielo),
-    .I(soc_dap_swdo),
-    .OEN(~soc_dap_swdoen),
-    .PAD(SWDIO)
-   );
+PDUW08DGZ_G uPAD_SWDIO_IO (
+  .C   (soc_dap_swditms),
+  .REN (tielo),
+  .I   (soc_dap_swdo),
+  .OEN (~soc_dap_swdoen),
+  .PAD (SWDIO)
+);
 
-PDDW04DGZ_G  uPAD_SWDCK_I (
-    .C(soc_dap_swclktck),
-    .REN(tielo),
-    .I(tielo),
-    .OEN(tiehi),
-    .PAD(SWDCK)
-   );
+PDDW04DGZ_G uPAD_SWDCK_I (
+  .C   (soc_dap_swclktck),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (SWDCK)
+);
 
 // QSPI Pads
 PDDW16DGZ_G uPAD_QSPI_SCLK (
-  .C(),
-  .REN(tiehi),
-  .I(soc_qspi_sclk),
-  .OEN(tielo),
-  .PAD(QSPI_SCLK)
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_qspi_sclk),
+  .OEN (tielo),
+  .PAD (QSPI_SCLK)
 );
+
 PDDW16DGZ_G uPAD_QSPI_nCS (
-  .C(),
-  .REN(tiehi),
-  .I(soc_qspi_csn),
-  .OEN(tielo),
-  .PAD(QSPI_nCS)
-);
-PDDW16DGZ_G uPAD_QSPI_IO_0(
-  .C(soc_qspi_io_i[0]),
-  .REN(tiehi),
-  .I(soc_qspi_io_o[0]),
-  .OEN(~soc_qspi_io_e[0]),
-  .PAD(QSPI_IO[0])
-);
-PDDW16DGZ_G uPAD_QSPI_IO_1(
-  .C(soc_qspi_io_i[1]),
-  .REN(tiehi),
-  .I(soc_qspi_io_o[1]),
-  .OEN(~soc_qspi_io_e[1]),
-  .PAD(QSPI_IO[1])
-);
-PDDW16DGZ_G uPAD_QSPI_IO_2(
-  .C(soc_qspi_io_i[2]),
-  .REN(tiehi),
-  .I(soc_qspi_io_o[2]),
-  .OEN(~soc_qspi_io_e[2]),
-  .PAD(QSPI_IO[2])
-);
-PDDW16DGZ_G uPAD_QSPI_IO_3(
-  .C(soc_qspi_io_i[3]),
-  .REN(tiehi),
-  .I(soc_qspi_io_o[3]),
-  .OEN(~soc_qspi_io_e[3]),
-  .PAD(QSPI_IO[3])
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_qspi_csn),
+  .OEN (tielo),
+  .PAD (QSPI_nCS)
 );
 
-PDDW16DGZ_G uPAD_HOST_IO_0(
-  .C(soc_hostio4_p1_in[0]),
-  .REN(tiehi),
-  .I(soc_hostio4_p1_out[0]),
-  .OEN(~soc_hostio4_p1_outen[0]),
-  .PAD(HOSTIO4_P1[0])
+// qspi_io_e is oe_polarity: active_high -> OEN = ~oe
+PDDW16DGZ_G uPAD_QSPI_IO_0 (
+  .C   (soc_qspi_io_i[0]),
+  .REN (tiehi),
+  .I   (soc_qspi_io_o[0]),
+  .OEN (~soc_qspi_io_e[0]),
+  .PAD (QSPI_IO[0])
 );
 
-PDDW16DGZ_G uPAD_HOST_IO_1(
-  .C(soc_hostio4_p1_in[1]),
-  .REN(tiehi),
-  .I(soc_hostio4_p1_out[1]),
-  .OEN(~soc_hostio4_p1_outen[1]),
-  .PAD(HOSTIO4_P1[1])
+PDDW16DGZ_G uPAD_QSPI_IO_1 (
+  .C   (soc_qspi_io_i[1]),
+  .REN (tiehi),
+  .I   (soc_qspi_io_o[1]),
+  .OEN (~soc_qspi_io_e[1]),
+  .PAD (QSPI_IO[1])
 );
 
-PDDW16DGZ_G uPAD_HOST_IO_2(
-  .C(soc_hostio4_p1_in[2]),
-  .REN(tiehi),
-  .I(soc_hostio4_p1_out[2]),
-  .OEN(~soc_hostio4_p1_outen[2]),
-  .PAD(HOSTIO4_P1[2])
+PDDW16DGZ_G uPAD_QSPI_IO_2 (
+  .C   (soc_qspi_io_i[2]),
+  .REN (tiehi),
+  .I   (soc_qspi_io_o[2]),
+  .OEN (~soc_qspi_io_e[2]),
+  .PAD (QSPI_IO[2])
 );
 
-PDDW16DGZ_G uPAD_HOST_IO_3(
-  .C(soc_hostio4_p1_in[3]),
-  .REN(tiehi),
-  .I(soc_hostio4_p1_out[3]),
-  .OEN(~soc_hostio4_p1_outen[3]),
-  .PAD(HOSTIO4_P1[3])
+PDDW16DGZ_G uPAD_QSPI_IO_3 (
+  .C   (soc_qspi_io_i[3]),
+  .REN (tiehi),
+  .I   (soc_qspi_io_o[3]),
+  .OEN (~soc_qspi_io_e[3]),
+  .PAD (QSPI_IO[3])
 );
 
-PDDW16DGZ_G uPAD_HOST_IO_4(
-  .C(soc_hostio4_p1_in[4]),
-  .REN(tiehi),
-  .I(soc_hostio4_p1_out[4]),
-  .OEN(~soc_hostio4_p1_outen[4]),
-  .PAD(HOSTIO4_P1[4])
+// Host IO Pads (hostio4_p1_outen is oe_polarity: active_high -> OEN = ~oe)
+PDDW16DGZ_G uPAD_HOST_IO_0 (
+  .C   (soc_hostio4_p1_in[0]),
+  .REN (tiehi),
+  .I   (soc_hostio4_p1_out[0]),
+  .OEN (~soc_hostio4_p1_outen[0]),
+  .PAD (HOSTIO4_P1[0])
 );
 
-PDDW16DGZ_G uPAD_HOST_IO_5(
-  .C(soc_hostio4_p1_in[5]),
-  .REN(tiehi),
-  .I(soc_hostio4_p1_out[5]),
-  .OEN(~soc_hostio4_p1_outen[5]),
-  .PAD(HOSTIO4_P1[5])
+PDDW16DGZ_G uPAD_HOST_IO_1 (
+  .C   (soc_hostio4_p1_in[1]),
+  .REN (tiehi),
+  .I   (soc_hostio4_p1_out[1]),
+  .OEN (~soc_hostio4_p1_outen[1]),
+  .PAD (HOSTIO4_P1[1])
 );
 
-PDDW16DGZ_G uPAD_HOST_IO_6(
-  .C(soc_hostio4_p1_in[6]),
-  .REN(tiehi),
-  .I(soc_hostio4_p1_out[6]),
-  .OEN(~soc_hostio4_p1_outen[6]),
-  .PAD(HOSTIO4_P1[6])
+PDDW16DGZ_G uPAD_HOST_IO_2 (
+  .C   (soc_hostio4_p1_in[2]),
+  .REN (tiehi),
+  .I   (soc_hostio4_p1_out[2]),
+  .OEN (~soc_hostio4_p1_outen[2]),
+  .PAD (HOSTIO4_P1[2])
 );
 
-PDDW04DGZ_G uPAD_RMII_REF_CLK(
-  .C(soc_rmii_ref_clk),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(RMII_REF_CLK)
+PDDW16DGZ_G uPAD_HOST_IO_3 (
+  .C   (soc_hostio4_p1_in[3]),
+  .REN (tiehi),
+  .I   (soc_hostio4_p1_out[3]),
+  .OEN (~soc_hostio4_p1_outen[3]),
+  .PAD (HOSTIO4_P1[3])
 );
 
-PDDW16DGZ_G uPAD_RMII_TXD0(
-  .C(),
-  .REN(tiehi),
-  .I(soc_rmii_txd[0]),
-  .OEN(tielo),
-  .PAD(RMII_TXD[0])
+PDDW16DGZ_G uPAD_HOST_IO_4 (
+  .C   (soc_hostio4_p1_in[4]),
+  .REN (tiehi),
+  .I   (soc_hostio4_p1_out[4]),
+  .OEN (~soc_hostio4_p1_outen[4]),
+  .PAD (HOSTIO4_P1[4])
 );
 
-PDDW16DGZ_G uPAD_RMII_TXD1(
-  .C(),
-  .REN(tiehi),
-  .I(soc_rmii_txd[1]),
-  .OEN(tielo),
-  .PAD(RMII_TXD[1])
+PDDW16DGZ_G uPAD_HOST_IO_5 (
+  .C   (soc_hostio4_p1_in[5]),
+  .REN (tiehi),
+  .I   (soc_hostio4_p1_out[5]),
+  .OEN (~soc_hostio4_p1_outen[5]),
+  .PAD (HOSTIO4_P1[5])
 );
 
-PDDW16DGZ_G uPAD_RMII_TX_EN(
-  .C(),
-  .REN(tiehi),
-  .I(soc_rmii_tx_en),
-  .OEN(tielo),
-  .PAD(RMII_TX_EN)
+PDDW16DGZ_G uPAD_HOST_IO_6 (
+  .C   (soc_hostio4_p1_in[6]),
+  .REN (tiehi),
+  .I   (soc_hostio4_p1_out[6]),
+  .OEN (~soc_hostio4_p1_outen[6]),
+  .PAD (HOSTIO4_P1[6])
 );
 
-PDDW04DGZ_G uPAD_RMII_RXD0(
-  .C(soc_rmii_rxd[0]),
-  .REN(tielo),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(RMII_RXD[0])
+// RMII Pads
+PDDW04DGZ_G uPAD_RMII_REF_CLK (
+  .C   (soc_rmii_ref_clk),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (RMII_REF_CLK)
 );
 
-PDDW04DGZ_G uPAD_RMII_RXD1(
-  .C(soc_rmii_rxd[1]),
-  .REN(tielo),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(RMII_RXD[1])
+PDDW16DGZ_G uPAD_RMII_TXD0 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_rmii_txd[0]),
+  .OEN (tielo),
+  .PAD (RMII_TXD[0])
 );
 
-PDDW04DGZ_G uPAD_RMII_CRS_DV(
-  .C(soc_rmii_crs_dv),
-  .REN(tielo),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(RMII_CRS_DV)
+PDDW16DGZ_G uPAD_RMII_TXD1 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_rmii_txd[1]),
+  .OEN (tielo),
+  .PAD (RMII_TXD[1])
+);
+
+PDDW16DGZ_G uPAD_RMII_TX_EN (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_rmii_tx_en),
+  .OEN (tielo),
+  .PAD (RMII_TX_EN)
+);
+
+PDDW04DGZ_G uPAD_RMII_RXD0 (
+  .C   (soc_rmii_rxd[0]),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (RMII_RXD[0])
+);
+
+PDDW04DGZ_G uPAD_RMII_RXD1 (
+  .C   (soc_rmii_rxd[1]),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (RMII_RXD[1])
+);
+
+PDDW04DGZ_G uPAD_RMII_CRS_DV (
+  .C   (soc_rmii_crs_dv),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (RMII_CRS_DV)
 );
 
 // md_padoe_o is oe_polarity: active_high -> OEN = ~oe
-PDDW16DGZ_G uPAD_RMII_MDIO(
-  .C(soc_md_pad_i),
-  .REN(tiehi),
-  .I(soc_md_pad_o),
-  .OEN(~soc_md_padoe_o),
-  .PAD(RMII_MDIO)
+PDDW16DGZ_G uPAD_RMII_MDIO (
+  .C   (soc_md_pad_i),
+  .REN (tiehi),
+  .I   (soc_md_pad_o),
+  .OEN (~soc_md_padoe_o),
+  .PAD (RMII_MDIO)
 );
 
-PDDW16DGZ_G uPAD_RMII_MDC(
-  .C(),
-  .REN(tiehi),
-  .I(soc_mdc_pad_o),
-  .OEN(tielo),
-  .PAD(RMII_MDC)
+PDDW16DGZ_G uPAD_RMII_MDC (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_mdc_pad_o),
+  .OEN (tielo),
+  .PAD (RMII_MDC)
 );
 
-// Tidelink Pads
-PDDW16DGZ_G uPAD_TL_CLK_TX(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_clk_tx),
-  .OEN(tielo),
-  .PAD(TL_CLK_TX)
-);
-PDDW16DGZ_G uPAD_TL_TX_0(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[0]),
-  .OEN(tielo),
-  .PAD(TL_TX[0])
-);
-PDDW16DGZ_G uPAD_TL_TX_1(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[1]),
-  .OEN(tielo),
-  .PAD(TL_TX[1])
-);
-PDDW16DGZ_G uPAD_TL_TX_2(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[2]),
-  .OEN(tielo),
-  .PAD(TL_TX[2])
-);
-PDDW16DGZ_G uPAD_TL_TX_3(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[3]),
-  .OEN(tielo),
-  .PAD(TL_TX[3])
-);
-PDDW16DGZ_G uPAD_TL_TX_4(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[4]),
-  .OEN(tielo),
-  .PAD(TL_TX[4])
-);
-PDDW16DGZ_G uPAD_TL_TX_5(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[5]),
-  .OEN(tielo),
-  .PAD(TL_TX[5])
-);
-PDDW16DGZ_G uPAD_TL_TX_6(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[6]),
-  .OEN(tielo),
-  .PAD(TL_TX[6])
-);
-PDDW16DGZ_G uPAD_TL_TX_7(
-  .C(),
-  .REN(tiehi),
-  .I(soc_pad_tx[7]),
-  .OEN(tielo),
-  .PAD(TL_TX[7])
-);
-PDDW16DGZ_G uPAD_TL_CLK_RX(
-  .C(soc_pad_clk_rx),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_CLK_RX)
-);
-PDDW16DGZ_G uPAD_TL_RX_0(
-  .C(soc_pad_rx[0]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[0])
-);
-PDDW16DGZ_G uPAD_TL_RX_1(
-  .C(soc_pad_rx[1]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[1])
-);
-PDDW16DGZ_G uPAD_TL_RX_2(
-  .C(soc_pad_rx[2]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[2])
-);
-PDDW16DGZ_G uPAD_TL_RX_3(
-  .C(soc_pad_rx[3]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[3])
-);
-PDDW16DGZ_G uPAD_TL_RX_4(
-  .C(soc_pad_rx[4]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[4])
-);
-PDDW16DGZ_G uPAD_TL_RX_5(
-  .C(soc_pad_rx[5]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[5])
-);
-PDDW16DGZ_G uPAD_TL_RX_6(
-  .C(soc_pad_rx[6]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[6])
-);
-PDDW16DGZ_G uPAD_TL_RX_7(
-  .C(soc_pad_rx[7]),
-  .REN(tiehi),
-  .I(tielo),
-  .OEN(tiehi),
-  .PAD(TL_RX[7])
+// Tidelink Pads (TX = outputs, RX = inputs)
+PDDW16DGZ_G uPAD_TL_CLK_TX (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_clk_tx),
+  .OEN (tielo),
+  .PAD (TL_CLK_TX)
 );
 
-// TideLink I2C sideband -- OPEN DRAIN.
-// PDUW* for the on-die pull-up keeper (the bus still wants its board pull-ups).
-// i2c_*_t is oe_polarity: active_low -- "1 = float" -- and OEN is an active-low
-// output enable, so OEN maps to _t DIRECTLY. Do NOT invert: `.OEN(~t)` drives
-// the bus exactly when TideLink is releasing it, which breaks wired-AND
-// arbitration and slave clock-stretching (axi_chiplet_controller.sv:3072).
-// I2C IS A WIRED-AND BUS. THESE PADS MUST NEVER DRIVE HIGH.
-//
-// PDUW16DGZ_G is a push-pull tristate cell (liberty: function "I",
-// three_state "OEN", output_voltage cmos, drive_current 16) -- when OEN=0 it
-// actively drives BOTH levels. The whole tphn65lpgv2od3_sl library contains no
-// open-drain digital pad (grep open_drain -> 0 hits), so open-drain has to be
-// built here.
-//
-// .I IS TIED LOW ON PURPOSE. The data goes to OEN instead:
-//     send 1 -> OEN=1 -> pad tristates -> external pull-up makes the high
-//     send 0 -> OEN=0 -> pad drives .I, which is a hard 0 -> low
-// Behaviourally identical to the previous wiring, which relied on the i2c
-// cores tying *_o and *_t to the same register. The difference is that this is
-// STRUCTURAL: there is no logic path to the pad's data input at all, so no RTL
-// edit, ECO or scan insertion can make it drive high. Previously that was an
-// RTL invariant nobody checked, and breaking it would have put a 16mA push-pull
-// driver on a wired-AND bus -- a cross-die short, with no tool warning.
-//
-// REN IS ACTIVE LOW (verilog model: `not (RE, REN)`), so tielo ENABLES the
-// pad's internal pull-up. Keep it. It is a weak bus-keeper (~tens of kOhm), NOT
-// an I2C pull-up: at 100kHz it only meets the 1us rise-time limit on a very
-// small bus. The real ~2.2k pull-ups belong on the PCB. Do not "tidy" REN to
-// tiehi.
-PDUW16DGZ_G uPAD_I2C_SCL(
-  .C(soc_i2c_scl_i),
-  .REN(tielo),
-  .I(tielo),
-  .OEN(soc_i2c_scl_o),
-  .PAD(I2C_SCL)
+PDDW16DGZ_G uPAD_TL_TX_0 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[0]),
+  .OEN (tielo),
+  .PAD (TL_TX[0])
 );
-PDUW16DGZ_G uPAD_I2C_SDA(
-  .C(soc_i2c_sda_i),
-  .REN(tielo),
-  .I(tielo),
-  .OEN(soc_i2c_sda_o),
-  .PAD(I2C_SDA)
+
+PDDW16DGZ_G uPAD_TL_TX_1 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[1]),
+  .OEN (tielo),
+  .PAD (TL_TX[1])
+);
+
+PDDW16DGZ_G uPAD_TL_TX_2 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[2]),
+  .OEN (tielo),
+  .PAD (TL_TX[2])
+);
+
+PDDW16DGZ_G uPAD_TL_TX_3 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[3]),
+  .OEN (tielo),
+  .PAD (TL_TX[3])
+);
+
+PDDW16DGZ_G uPAD_TL_TX_4 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[4]),
+  .OEN (tielo),
+  .PAD (TL_TX[4])
+);
+
+PDDW16DGZ_G uPAD_TL_TX_5 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[5]),
+  .OEN (tielo),
+  .PAD (TL_TX[5])
+);
+
+PDDW16DGZ_G uPAD_TL_TX_6 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[6]),
+  .OEN (tielo),
+  .PAD (TL_TX[6])
+);
+
+PDDW16DGZ_G uPAD_TL_TX_7 (
+  .C   (),
+  .REN (tiehi),
+  .I   (soc_pad_tx[7]),
+  .OEN (tielo),
+  .PAD (TL_TX[7])
+);
+
+PDDW16DGZ_G uPAD_TL_CLK_RX (
+  .C   (soc_pad_clk_rx),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_CLK_RX)
+);
+
+PDDW16DGZ_G uPAD_TL_RX_0 (
+  .C   (soc_pad_rx[0]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[0])
+);
+
+PDDW16DGZ_G uPAD_TL_RX_1 (
+  .C   (soc_pad_rx[1]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[1])
+);
+
+PDDW16DGZ_G uPAD_TL_RX_2 (
+  .C   (soc_pad_rx[2]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[2])
+);
+
+PDDW16DGZ_G uPAD_TL_RX_3 (
+  .C   (soc_pad_rx[3]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[3])
+);
+
+PDDW16DGZ_G uPAD_TL_RX_4 (
+  .C   (soc_pad_rx[4]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[4])
+);
+
+PDDW16DGZ_G uPAD_TL_RX_5 (
+  .C   (soc_pad_rx[5]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[5])
+);
+
+PDDW16DGZ_G uPAD_TL_RX_6 (
+  .C   (soc_pad_rx[6]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[6])
+);
+
+PDDW16DGZ_G uPAD_TL_RX_7 (
+  .C   (soc_pad_rx[7]),
+  .REN (tiehi),
+  .I   (tielo),
+  .OEN (tiehi),
+  .PAD (TL_RX[7])
+);
+
+// TideLink I2C sideband -- OPEN DRAIN, built structurally since the library
+// has no open-drain pad cell (tphn65lpgv2od3_sl has 0 open_drain hits). Key
+// points:
+//   - I2C is wired-AND: these pads must NEVER drive high.
+//   - i2c_*_t is oe_polarity active_low ("1 = float"), and OEN is an
+//     active-low output enable, so OEN maps to _t DIRECTLY. Do NOT invert to
+//     ~t: that would drive the bus exactly when TideLink means to release it,
+//     breaking wired-AND arbitration and slave clock-stretching.
+//   - .I is tied low on purpose: send 1 -> OEN=1 -> tristate -> external
+//     pull-up gives the high; send 0 -> OEN=0 -> pad drives .I (hard 0) ->
+//     low. This makes "never drive high" structural rather than an RTL
+//     invariant that scan/ECO could break.
+//   - REN is active-low (`not (RE, REN)`), so tielo ARMS the pad's internal
+//     weak pull-up keeper. Keep it as a bus-keeper only -- the real ~2.2k
+//     pull-ups belong on the PCB, do not "tidy" REN to tiehi.
+PDUW16DGZ_G uPAD_I2C_SCL (
+  .C   (soc_i2c_scl_i),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (soc_i2c_scl_o),
+  .PAD (I2C_SCL)
+);
+
+PDUW16DGZ_G uPAD_I2C_SDA (
+  .C   (soc_i2c_sda_i),
+  .REN (tielo),
+  .I   (tielo),
+  .OEN (soc_i2c_sda_o),
+  .PAD (I2C_SDA)
 );
 
 endmodule
