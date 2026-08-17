@@ -160,11 +160,39 @@ def main():
     print("\n" + "=" * W)
     print("DESIGN FINDINGS  (by tier / rule)")
     print("=" * W)
+    # ROW CAPS ARE ORDERED SO A GATING ROW CAN NEVER BE THE ONE DROPPED, AND AN
+    # OMISSION IS ALWAYS DECLARED.
+    #
+    # This table was `sorted(..., key=(zone, -count))[:40]` — cut silently, and
+    # sorted by ZONE NAME first, so whether a NEVER_WAIVE row survived the cut
+    # depended on the alphabetical position of its zone. Measured on the
+    # completed run of 2026-08-17: 5 of the 45 third-party rows were dropped and
+    # the report said nothing at all about them. A reader has no way to tell a
+    # table that ended from a table that was cut off.
+    #
+    # Gating rules now sort first, so the cap can only ever eat non-gating rows,
+    # and the count of what was omitted is printed with the artefact that holds
+    # it all.
+    def _rows(tab, cap, label):
+        rows = sorted(tab.items(),
+                      key=lambda kv: (kv[0][-1].split(",", 1)[1] not in NEVER_WAIVE,
+                                      kv[0][0], -kv[1]))
+        for key, n in rows[:cap]:
+            yield key, n
+        rest = rows[cap:]
+        if rest:
+            assert not [k for k, _ in rest if k[-1].split(",", 1)[1] in NEVER_WAIVE], \
+                "a never-waive row fell off the cap — the sort is wrong"
+            print(f"  ... and {len(rest)} further {label} row(s) NOT SHOWN "
+                  f"({sum(n for _, n in rest)} finding(s)). No never-waive rule is "
+                  f"among them\n      (they sort first). Every row is in "
+                  f"hal_findings.json.")
+
     for t in ("authored", "third-party"):
         sub = [f for f in design if f["tier"] == t]
         print(f"\n--- {t}: {len(sub)}")
         tab = collections.Counter((f["zone"], f["sev"] + "," + f["rule"]) for f in sub)
-        for (z, c), n in sorted(tab.items(), key=lambda kv: (kv[0][0], -kv[1]))[:40]:
+        for (z, c), n in _rows(tab, 40, "(zone, rule)"):
             flag = "GATE" if c.split(",", 1)[1] in NEVER_WAIVE else "    "
             print(f"  {flag} {n:6d}  {z:<14} {c}")
 
@@ -172,10 +200,16 @@ def main():
     print("\n" + "=" * W)
     print("RESET / CLOCK-DOMAIN STRUCTURE  (owned by `make cdc`, not by lint)")
     print("=" * W)
-    for (t, c), n in sorted(collections.Counter(
-            (f["tier"], f["sev"] + "," + f["rule"]) for f in cdc).items(),
-            key=lambda kv: -kv[1])[:12]:
-        print(f"  {n:6d}  {t:<12} {c}")
+    # WAS `[:12]`, AND THIS ONE WAS THE BAD ONE. Measured on the completed run
+    # of 2026-08-17: 35 rows exist, 12 were printed, 23 were dropped without a
+    # word — including 12 rows in AUTHORED RTL and one carrying N,RSTSCB, a rule
+    # in the never-waive set. The section is headed "RESET / CLOCK-DOMAIN
+    # STRUCTURE" and read as a survey of it; it was showing a third of one.
+    cdc_tab = collections.Counter(
+        (f["tier"], f["sev"] + "," + f["rule"]) for f in cdc)
+    for (t, c), n in _rows(cdc_tab, 40, "(tier, rule)"):
+        flag = "GATE" if c.split(",", 1)[1] in NEVER_WAIVE else "    "
+        print(f"  {flag} {n:6d}  {t:<12} {c}")
 
     print("\n" + "=" * W)
     print("SUPPRESSED (FLOW / style)")
