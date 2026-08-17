@@ -1,0 +1,568 @@
+# Cadence HAL site waivers -- full-design lint, top nanosoc_eth_chiplet_chip
+#
+# Consumed by verif/lint/full/waivers/apply_waivers.py. Same contract as
+# verilator.yaml: every entry declares how many findings it covers and is held
+# to it, and every authored DESIGN finding must be either waived with an
+# argument or recorded open.
+#
+# Measured against the HAL run of 2026-08-17 23:15 (xrun -hal, 597 files,
+# hal_rules.tcl at 73 rules): 43824 rule findings, FLOW 11326 / CDC 29368 /
+# DESIGN 3130, of which 261 authored.
+#
+# WHY THE BULK OF THIS FILE IS URDWIR. `hal_lint.sh` skips `-design_info`
+# because HAL 22.03 rejects the SoC ruleset's `{pattern=...}` clause, and the
+# blanket `-nocheck URDWIR` was deliberately removed after
+# LINT_REMEDIATION_PLAN.md 4 showed that a rule-name waiver recorded as covering
+# "intentional dead-end sinks routed to named *_nc wires" was in fact covering
+# everything -- which is how dmac_0_err_w, a DMA error indication that reaches
+# no interrupt controller, stayed invisible. URDWIR therefore reports
+# unnarrowed: 252 authored findings, of which 206 really are the recorded
+# pattern and 46 are not. Waiving the 206 by pattern and carrying the 46 open is
+# the whole point of the exercise.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+
+tiers:
+  third-party: 2869
+
+waivers:
+
+  - id: H-001
+    title: named *_nc dead-end sinks
+    rule: URDWIR
+    subject: "*_nc"
+    expect: 63
+    why: >
+      Wires whose name ends `_nc` are the convention this integration and
+      nanosoc_gen both use for a deliberately unread output: rather than leave
+      `.port()` empty, the output drives a named wire carrying one line of
+      reason at its declaration (docs/LINT_FINDINGS.md 4.1). The suffix is
+      greppable, an empty `()` is not. Zero netlist consequence -- a
+      driven-but-unread wire has no load and synthesis removes it.
+      This is the ONLY population the recorded unit-level justification
+      ("intentional dead-end sinks routed to named `*_nc` wires",
+      nanosoc-multicore-system/lint/hal.tcl:117) actually describes, so this
+      waiver is that justification applied to exactly the nets it names and to
+      nothing else.
+    invalidated_by: >
+      A net named `*_nc` that is NOT an unused output sink -- e.g. the suffix
+      being used for something else, or an `_nc` wire acquiring a real consumer
+      elsewhere and this finding disappearing. Also: if `-design_info` is ever
+      repaired and re-narrowed to `*_nc` at the tool, delete this entry rather
+      than have two mechanisms silently overlap.
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      63 sites, all matching the suffix; sample slcorem0p_integration/codehint_nc,
+      the 22 integration-zone sinks at src/rtl/nanosoc_eth_chiplet.sv:445-486.
+
+  - id: H-002
+    title: explicitly-named unused sinks (_unused* spelling)
+    rule: URDWIR
+    subject: ["_unused*", "unused*", "*_unused*"]
+    expect: 19
+    why: >
+      The same convention with the other spelling the SoC and TideLink repos
+      use: a wire named `_unused`, `_unused_ok`, `_unused_geometry`,
+      `_unused_req`, `_unused_idelay`, `_unused_eye_force` and so on, declared
+      solely to give an unread expression a name and a comment. Structurally
+      identical to H-001; two spellings exist because the convention was adopted
+      in two repos independently.
+    invalidated_by: >
+      A net named `_unused*` that has a consumer, or a real signal being renamed
+      into this pattern to silence a finding. Each of the 19 declarations was
+      opened and carries a reason comment; a new one that does not should not be
+      covered by this entry.
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      eth_rx_cksum.v:62, nanosoc_reset_ctrl.v:111, evt_route_ctrl.v:85,
+      hw_spinlock.v:106, bus_fault_monitor.v:284, chip_core_remap_ctrl.v:92,
+      ctrl_dbg_group.v:190, etc_capture.v:115, qspi_flash_ahb.v:100,
+      tidelink_idelay_rx.sv:243, tidelink_top.sv:1222/1224/1352, and 6 more.
+
+  - id: H-003
+    title: AHB/APB shape narrowing -- signals a reduced-shape port does not carry
+    rule: URDWIR
+    subject: ["*hburst*", "*hmastlock*", "*hprot*", "*hbstrb*", "*hresp*",
+              "*hmaster*", "*haddr[[]*", "*htrans[[]*", "*paddr[[]*", "*pprot*",
+              "*pstrb*", "*psel*", "*wb_adr*", "*hready*", "*hsel*", "*hrdata*",
+              "*hreadyout*", "*araddr[[]*", "*awaddr[[]*"]
+    # Kept DISJOINT from H-001/H-002/H-004 on purpose. Overlapping waivers would
+    # each look correct while the totals stopped adding up, and the count is the
+    # only thing holding an argument to its population.
+    not_subject: ["*_nc", "_unused*", "unused*", "*_unused*", "dbg_*", "obs_*",
+                  "eye_*", "txgen_*", "perf_*", "*_tap", "*_count",
+                  d2d_hready, eth_ss_slave_hsel, eth_ss_slave_hready,
+                  cpu_ss_1_slave_hready, system_hrdata, system_hresp,
+                  system_hreadyout]
+    expect: 83
+    why: >
+      Every site is an AHB/APB signal that the consumer at the other end of a
+      DELIBERATELY NARROWED port does not have. Three sub-populations, all
+      structural rather than accidental:
+        * AHB5 -> AHB-Lite: hburst, hmastlock, hprot[6:4], hbstrb and hresp[1]
+          have no counterpart in the Lite shape the interconnects and the D2D
+          window use. TideLink's ahb_sub / ahb_tx / ahb_fifo / ahb_ptp declare
+          no *_hmastlock port at all, and BP210's cmsdk_ahb_to_apb has no
+          HMASTLOCK input -- there is nowhere to route them.
+        * interconnect debug outputs: i_hmaster_* per-slave master IDs, emitted
+          by the CMSDK matrix generator for every port whether or not anything
+          consumes them.
+        * address and control bits above the aperture: haddr upper bits into a
+          16 KB window, paddr[1:0] into a word-addressed APB, m_axi_a*addr[35:32]
+          into a 32-bit map.
+      None of these can change behaviour by being unread; the information they
+      carry is not representable at the port they arrive at.
+    invalidated_by: >
+      A port shape change -- most concretely, any slave in the D2D window
+      acquiring an HMASTLOCK or full HPROT input, or the AXI map widening past
+      32 bits so that m_axi_a*addr[35:32] stops being structurally zero. Also
+      invalid for any net that merely LOOKS like one of these patterns while
+      being a real datapath signal; H-003 is deliberately anchored on AHB/APB
+      signal names rather than on a file.
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      96 sites; nanosoc_multicore_soc.sv:393-450 (qspi/dmac/shared_sram),
+      ethernet_ss_ahb_rmii.sv:213-268, *_ahb_interconnect_lite.v i_hmaster_*
+      blocks, tidelink_top.sv:639/662.
+
+  - id: H-004
+    title: build-disabled observability and debug taps
+    rule: URDWIR
+    subject: ["dbg_*", "obs_*", "eye_*", "txgen_*", "*_count", "perf_*", "*_tap"]
+    not_subject: ["*_nc", "_unused*", "unused*", "*_unused*"]
+    # SCOPED TO TIDELINK ON PURPOSE. The same globs also catch five TideChart
+    # nets -- commit_ack_count, unreachable_count, malformed_count,
+    # bcast_fwd_err_count, local_subtree_tap. Those are ERROR COUNTERS in a
+    # register-mapped block, i.e. diagnostic state that is computed and cannot
+    # be read, which is H-OPEN-006's question and not this waiver's argument.
+    # They are carried open there rather than swept in here.
+    file: "tidelink/**"
+    expect: 26
+    why: >
+      Observation points that exist so that a bring-up build can bring them out,
+      and that this configuration does not: the FC adapter's dbg_tx_* transaction
+      taps, the a2l/credit obs_* probes, the calibrator's eye_* score and status
+      readbacks, and txgen_* register hooks in a build that sets
+      TXGEN_PRESENT=0 at the point of use. They are assigned and unread by
+      construction in this configuration.
+    invalidated_by: >
+      A bring-up build that is supposed to surface one of these and does not --
+      i.e. the finding persisting after an observability register is wired.
+      Note that eye_* in particular IS the calibrator's status path; if the
+      chiplet ever needs eye score readback over APB, these stop being taps and
+      become a missing connection.
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      tidelink_fc_adapter.sv:254-264 (11), tidelink_top.sv:823-827 and
+      1015-1117 (eye_/obs_/txgen_), tidechart_controller.sv:262-265 counters.
+
+  - id: H-005
+    title: instantiation comment style rule
+    rule: COMINS
+    expect: 1
+    why: >
+      "Instantiated cells should have a comment on the same or preceding line",
+      at tidelink_top.sv:2821 (u_link_clk_div). It is a comment-placement rule:
+      the instance is in fact preceded by 15 lines of comment, but they are
+      separated from the instance by the parameter block, which the rule does
+      not look through. HAL's own ALL_RTL style set is otherwise suppressed
+      wholesale by hal_report.py:STYLE_RULES; COMINS is simply missing from that
+      list. No hardware content.
+    invalidated_by: >
+      Nothing about the design. The tidy fix is to add COMINS to
+      hal_report.py:STYLE_RULES alongside COMGTD, at which point this entry
+      becomes an orphan and apply_waivers.py will say so -- delete it then.
+    decided_by: lint triage session 2026-08-17
+    evidence: "hal_report.py:STYLE_RULES contains COMGTD but not COMINS."
+
+  - id: H-006
+    title: generated passthrough alias nets the emitter creates and then bypasses
+    rule: URDWIR
+    zone: soc-generated
+    subject: [d2d_hready, eth_ss_slave_hsel, eth_ss_slave_hready,
+              cpu_ss_1_slave_hready, system_hrdata, system_hresp,
+              system_hreadyout]
+    expect: 10
+    why: >
+      Split out of H-003 because the AHB-shape argument does NOT describe them
+      and an unread HREADY on the D2D window would be alarming if it did.
+      What is actually happening is a nanosoc_gen emission artefact: for a
+      passthrough port the emitter declares an intermediate alias wire, assigns
+      it, and then binds the ORIGINAL source at the instance -- so the alias is
+      assigned and nothing reads it. Verified at
+      nanosoc_ss_cpu_plus.sv:324-326 (`assign system_hrdata = cpu_0_hrdata`)
+      against :417-418 (`.system_hrdata(cpu_0_hrdata)`), and at
+      nanosoc_multicore_soc.sv:1658 for the D2D pair. The real signal is
+      connected; only the alias is dead, and synthesis removes it.
+    invalidated_by: >
+      An instance binding the ALIAS instead of the source -- then the alias is
+      load-bearing and an unread one means a genuinely disconnected handshake.
+      Re-check after any nanosoc_gen change to instance emission; this is the
+      same emitter hole family as A1/B4/B7 (plan tier D1).
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      nanosoc_multicore_soc.sv:329,338,362,577,1658;
+      nanosoc_ss_cpu_plus.sv:163-165,324-326,417-418;
+      ethernet_ss_ahb_rmii.sv:321-323.
+
+# ---------------------------------------------------------------------------
+open:
+
+  - id: H-OPEN-001
+    title: DMA error reaches no interrupt controller (plan A1)
+    rule: URDWIR
+    subject: dmac_0_err_w
+    expect: 1
+    disposition: ESCALATE
+    severity: functional-hole
+    why: >
+      `dmac_0_err_w` is assigned and read by nothing. It occurs exactly twice in
+      the generated SoC top -- its declaration and its port bind -- and is in no
+      IRQ bus and no event router, so firmware can only learn of a DMA error by
+      polling. A routed IRQ such as spi_irq_w occurs four times.
+      This is LINT_REMEDIATION_PLAN.md A1, still open, and it is the reason the
+      blanket URDWIR waiver was removed: the recorded justification said "*_nc
+      sinks" and the waiver covered everything, so this finding produced no line
+      at all for weeks. Do not re-waive URDWIR as a rule.
+      Fix is in sys_desc/nanosoc_multicore_soc.yaml plus a regenerate, not in
+      RTL, and it changes the netlist -- out of scope for a frozen gating run.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "nanosoc_multicore_soc.sv:266; LINT_REMEDIATION_PLAN.md 2 tier A."
+
+  - id: H-OPEN-002
+    title: APB error responses assigned and never read
+    rule: URDWIR
+    subject: [pslverr_i, fc_cfg_apb_pslverr]
+    expect: 2
+    disposition: FIX-NEXT-SPIN
+    severity: functional-hole
+    why: >
+      Two APB slave-error responses that no consumer reads: `pslverr_i` in the
+      DMA-250 AHB wrapper (dma_250_ahb.v:83) and `fc_cfg_apb_pslverr` on
+      TideLink's flow-control configuration APB (tidelink_top.sv:843). Same
+      shape as A1 -- an error indication that exists in RTL and cannot reach
+      software. The FC one is the more interesting of the two because the FC
+      config space is written during D2D bring-up: a mistyped register address
+      currently returns OKAY.
+      Not waived. "The bus does not propagate PSLVERR here" is a design
+      decision, and if it is the decision it should be recorded at the port,
+      not inferred from a lint waiver.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "dma_250_ahb.v:83; tidelink_top.sv:843."
+
+  - id: H-OPEN-003
+    title: TideChart PUF interface unread with PUF_ENABLE=0 (plan B5)
+    rule: URDWIR
+    subject: [puf_tx_tready, puf_rx_tvalid, puf_rx_tdata]
+    expect: 3
+    disposition: FIX-NEXT-SPIN
+    severity: not-gating
+    why: >
+      The PUF AXI-Stream interface is unread in the shipping PUF_ENABLE=0
+      configuration. This is the read side of LINT_REMEDIATION_PLAN.md B5, whose
+      write side (`puf_rx_tready` undriven in the gen_no_puf branch) is a
+      one-line generate-branch fix. Carried open rather than waived because B5
+      is already an agreed change unit: waiving it would remove the reminder.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "tidechart_controller.sv:188-190; plan tier B, B5."
+
+  - id: H-OPEN-004
+    title: election FSM own_claim assigned and unread
+    rule: URDWIR
+    subject: own_claim
+    expect: 1
+    disposition: REVIEW
+    severity: review
+    why: >
+      `own_claim` in tidechart_election_fsm.sv is computed and read by nothing.
+      Ordinarily a dead status net; here it is not automatically benign, because
+      the election plane has a KNOWN silicon defect of exactly this family --
+      both dies come up is_root=1 (claim-exchange non-convergence, confirmed on
+      hardware with differentiated straps). A claim value that the FSM computes
+      and then does not consume is worth reading against that failure before it
+      is dismissed.
+      Explicitly NOT waived: this is the one URDWIR in the set where "assigned
+      but unread" could be the symptom rather than the tidy-up.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      tidechart_election_fsm.sv:155; election dual-root result recorded in the
+      2026-08-08 hardware campaign.
+
+  - id: H-OPEN-005
+    title: enum FSM rx_path upper bits unread (adjacent to plan A5)
+    rule: URDWIR
+    subject: "rx_path[2:0]"
+    expect: 1
+    disposition: REVIEW
+    severity: review
+    why: >
+      `rx_path[2:0]` -- the low three bits of the received packet's path field --
+      is unread at tidechart_enum_fsm.sv:513. LINT_REMEDIATION_PLAN.md A5 is
+      that the SAME field drives `enum_fc_tx_port` with no bounds check, so at
+      NUM_PORTS=1 any nonzero hop makes both selects out of range and the FSM
+      waits forever on a handshake that cannot complete. An unread slice of a
+      field whose other slice is unvalidated is a review item, not a tidy-up.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "tidechart_enum_fsm.sv:513; tidechart_crossbar.sv:239-241 (A5)."
+
+  - id: H-OPEN-006
+    title: TideChart status/capability nets not surfaced
+    rule: URDWIR
+    subject: [rt_read_secure, rt_read_valid, irqc_burst_done, rsp_compute_class,
+              rsp_interface_map, "cap_rsp_data[31:4]", rx_port_cnt,
+              "rx_ports[11:0]", "apb_paddr_ext[1:0]", commit_ack_count,
+              unreachable_count, malformed_count, bcast_fwd_err_count,
+              local_subtree_tap]
+    expect: 14
+    disposition: REVIEW
+    severity: not-gating
+    why: >
+      Route-table read qualifiers, capability-response fields, link-agent port
+      census, an APB address extension, and four ERROR COUNTERS
+      (unreachable_count, malformed_count, bcast_fwd_err_count,
+      commit_ack_count) plus local_subtree_tap -- all computed and unread.
+      Individually these look like registers that were meant to be readable and
+      were never wired to the APB map. Held open rather than waived because
+      TideChart's register map is the interface a bring-up engineer will reach
+      for, and "the diagnostic exists in RTL but no register returns it" is
+      worth one pass by the TideChart owner rather than a blanket argument from
+      me. The error counters matter most: the enum/election planes have a
+      documented non-convergence history on silicon, and these are exactly the
+      counts that would have named the cause.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      tidechart_controller.sv:140,141,269; tidechart_enum_fsm.sv:454,455,474;
+      tidechart_link_state_agent.sv:108,110; tidechart_apb_regs.sv:393.
+
+  - id: H-OPEN-007
+    title: CoreSight / socdebug / hostio taps unused in this build
+    rule: URDWIR
+    subject: [ROMTABLE_VAL, core_halted, COM_RXE_i, COM_TXF_i, STD_TXF_i,
+              STD_RXE_i, com_tx_ack, TXEN, BAUDTICK, iodata4_t,
+              flash_HMASTLOCKM]
+    expect: 11
+    disposition: FIX-NEXT-SPIN
+    severity: not-gating
+    why: >
+      Debug-infrastructure signals with no consumer in this configuration: the
+      M0+ integration's ROM-table value and core_halted, the socdebug ADP/USRT
+      controller's flow-control inputs and baud tick, hostio4's tri-state
+      control, and the QSPI wrapper's HMASTLOCK. Almost certainly benign -- the
+      same family as H-003/H-004 -- but they are unit-owned signals in the
+      SoC's debug path, and the debug path is the one the eth-chiplet cannot
+      exercise on silicon (the eth_ss_0 backdoor is tied off), so a stray
+      unconnected debug signal is not free to assume away. Grouped for one pass
+      by the SoC owner.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      slcorem0p.v:196,214; socdebug_adp_control.v:54,55,61,62,350;
+      socdebug_usrt_control.v:115,116; nanosoc_ss_hostio4.v:101;
+      top_ahb_qspi.v:94.
+
+  - id: H-OPEN-008
+    title: interrupt aggregates and spare IRQ lines unrouted
+    rule: URDWIR
+    subject: [dualtimer2a_int, dualtimer2b_int, uart0_combined_int,
+              uart1_combined_int, uart2_combined_int, "cc_periph_irq_w[31:11]",
+              "cc_periph_irq_w[3:0]", "cc_periph_irq_w[7:6]"]
+    expect: 8
+    disposition: REVIEW
+    severity: review
+    why: >
+      Five per-peripheral COMBINED interrupt outputs and three slices of the
+      peripheral IRQ bus, all unread. The benign reading is that the individual
+      TX/RX interrupts are routed and the combined ones are spare, and that the
+      unread bus slices are unpopulated IRQ numbers. That reading is probably
+      right -- but it is the SAME SHAPE as A1, which was also "an interrupt that
+      is simply not routed", and A1 turned out to be a functional hole. Checking
+      it costs one look at the IRQ map; assuming it costs an error indication.
+      Not waived until someone has looked.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      nanosoc_soc_peripheral_apb_ss.v:206,207,214,220,226;
+      nanosoc_multicore_soc.sv:193.
+
+  - id: H-OPEN-009
+    title: PTP sub-nanosecond fields and residual datapath slices unread
+    rule: URDWIR
+    subject: [phc_sub_nanoseconds_w, phc_hw_cap_sub_nanoseconds_sync,
+              "ip_fold0[16]", "pushed_flags[0]", "pushed_flags[2]",
+              bridge_xfer_active_w, ptp_wb_sel, "rd_ctr_full[9:3]",
+              "addr_norm[23:0]", apb_region_is_ext]
+    expect: 10
+    disposition: REVIEW
+    severity: not-gating
+    why: >
+      A mixed residue: the PHC's sub-nanosecond field and its captured sync copy
+      (unread because this build's PTP register map exposes seconds/nanoseconds
+      only), ethernet checksum carry and flag bits consumed elsewhere in the
+      expression tree, an unread perf-probe counter high slice, the address
+      translator's normalised address upper bits, and a region flag. Each is
+      individually plausible; none has been read against its consumer, and the
+      PTP pair in particular sits on the path the chiplet's timing story
+      depends on. Recorded rather than argued away.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      nanosoc_multicore_soc.sv:241; tidelink_top.sv:787; eth_rx_cksum.v:296,579;
+      ethmac_subsystem_apb.v:270,376; ctrl_ahb_perf_probe_regs.v:189;
+      tl_addr_trans_cam.sv:50; tidelink_apb_regs.sv:211.
+
+  - id: H-OPEN-010
+    title: D2D link clock is undriven with the filelist as it stands
+    rule: UNCONI
+    expect: 2
+    disposition: ESCALATE
+    severity: gating
+    why: >
+      Two never-waive E,UNCONI in authored RTL, one root cause:
+        src/rtl/nanosoc_eth_chiplet.sv:760  link_clk_div_ratio_i unconnected
+        tidelink/src/rtl/tidelink_top.sv:2874 user_hsclk unconnected
+      The second is the serious one. `user_hsclk` is the D2D PHY high-speed
+      reference -- WlinkGPIOPHY_v2 forwards it 1:1 to the pad, so it IS the link
+      bit rate. It is fed from `link_hsclk_w`, the output of u_link_clk_div, and
+      HAL also reports W,UASWIR on that wire at :2815: unassigned but driving.
+      It is unassigned because tidelink_link_clk_div.sv IS NOT IN THE RESOLVED
+      FILELIST -- build/chip/flist/tidelink_asic.flist was rendered 2026-08-14,
+      three days before the divider landed, and verif/lint/full/run.sh only
+      re-renders it when the file is ABSENT, so a stale render is invisible.
+      Verilator did not catch this because `+incdir+` doubles as a module search
+      path in Verilator and it silently loaded the module from disk; VCS, Genus
+      and HAL do not. Two tools, two different symptoms, one defect.
+      NOT WAIVABLE on any reading: unconnected input, clock path, D2D path, and
+      never-waive rule. See V-OPEN-001/002 for the Verilator half.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      hal_lint.sh VERDICT block, 2026-08-17 23:15; verilator.f has no
+      tidelink_link_clk_div entry; tidelink/flists/tidelink_top_full_asic_v2.flist:410
+      does list it.
+
+  - id: H-OPEN-011
+    title: combinational logic in the async reset path of both CPU reset trees
+    rule: GLTASR
+    expect: 1
+    disposition: ESCALATE
+    severity: gating
+    why: >
+      `assign out = in_a & in_b` in soc_glue_and_gate.sv:15, reported as
+      combinational logic in an asynchronous reset path. The instances that make
+      it a reset path are nanosoc_multicore_soc.sv:783
+      (u_network_core_final_resetn_gate: sys_sysresetn AND
+      reset_ctrl_network_core_resetn_w) and :792 (u_chip_core_final_resetn_gate)
+      -- the FINAL reset of CPU0 and CPU1. An external pad reset AND-ed with a
+      software-controlled reset-controller output can glitch when the two move
+      in opposite directions within a gate delay, and the product is the async
+      reset of both CPU trees.
+      REFUSED AS A WAIVER, for a governance reason as much as a technical one.
+      GLTASR is on hal_lint.sh's SIGNOFF_RULES, which forbids `-nocheck GLTASR`
+      in hal_rules.tcl. But the SoC's `lint/hal_design_info.txt:69` already
+      carries a file-scoped `GLTASR off` for this exact file -- a second channel
+      that the SIGNOFF_RULES grep does not police. It happens not to work (see
+      H-OPEN-012), and repairing it would turn a never-waive rule green through
+      an unpoliced side door. That is a decision for the sign-off owner, not a
+      triage call, and it should be taken with the hole in the invariant fixed
+      first.
+      The clean engineering answer, which the SoC's own waiver comment already
+      proposes: a dedicated `soc_glue_reset_and` cell used only for reset
+      combines, waived by name, leaving the general-purpose AND gate unwaived.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      soc_glue_and_gate.sv:15; nanosoc_multicore_soc.sv:783,792;
+      nanosoc-multicore-system/lint/hal_design_info.txt:55-72;
+      hal_lint.sh SIGNOFF_RULES.
+
+  - id: H-OPEN-012
+    title: an existing waiver that has never matched anything
+    rule: LNTERR
+    expect: 1
+    disposition: ESCALATE
+    severity: waiver-hygiene
+    why: >
+      HAL reports `Design-unit/File 'soc_glue_and_gate.sv' specified with lint
+      pragma is not present in the design` -- i.e. the SoC's own GLTASR waiver
+      selects nothing, while the finding it was written for still fires in that
+      exact file. Probable cause: the clause names a bare basename and HAL
+      matches against the path as compiled (absolute, from the resolved
+      filelist).
+      This is the failure mode this whole waiver directory is built to prevent,
+      caught by the tool itself. It is escalated rather than fixed here for the
+      reason in H-OPEN-011: making that waiver work IS switching off a
+      never-waive rule, so it needs the decision first and the invariant hole
+      closed second. What should NOT happen is someone silencing the LNTERR.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "hal_design_info.txt:69; the E,GLTASR in the same log."
+
+  - id: H-OPEN-013
+    title: unassigned wire driving the PHY clock (symptom of H-OPEN-010)
+    rule: UASWIR
+    expect: 1
+    disposition: FLOW-BLOCKED
+    severity: not-gating
+    why: >
+      `link_hsclk_w` unassigned but driving. Not an independent finding: it is
+      the same missing filelist entry as H-OPEN-010, seen one level up. It
+      closes when the flist is re-rendered, and if it does not, H-OPEN-010 was
+      misdiagnosed.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "tidelink_top.sv:2815."
+
+  - id: H-OPEN-014
+    title: unequal-length operands in the clock-mux compare
+    rule: ULCMPE
+    expect: 1
+    disposition: FIX-NEXT-SPIN
+    severity: review
+    why: >
+      soc_glue_mux2.sv:45, LHS 1 bit against RHS 32 bits, in `u_sys_hclk_mux`.
+      Zero-extension of the narrow side makes the comparison correct today (a
+      1-bit select against an unsized literal), so this is not a live bug -- but
+      it is in the CLOCK MUX, and the plan's standing rule for this family is
+      "always widen the narrow side, never narrow the wide side". Fix by sizing
+      the literal, prove by LEC, do not touch during a freeze.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "soc_glue_mux2.sv:45."
+
+  - id: H-OPEN-015
+    title: ULRELE in the HA1588 PTP servo compare
+    rule: ULRELE
+    expect: 1
+    disposition: FIX-NEXT-SPIN
+    severity: review
+    why: >
+      ha1588_servo.sv:329, a relational operator with a 32-bit LHS and a 31-bit
+      RHS. ULRELE is the one class LINT_REMEDIATION_PLAN.md 3 says must NEVER be
+      waived as a class -- "padding produces an incorrect result", and TideLink's
+      own README ties the class to a real silicon finding. One site, in the PTP
+      servo, on a design whose PTP path has never been validated on hardware.
+      Read it individually; do not waive it.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "ha1588_servo.sv:329."
+
+  - id: H-OPEN-016
+    title: case-item expression out of range in the capture block
+    rule: CEXPOR
+    expect: 1
+    disposition: REVIEW
+    severity: review
+    why: >
+      etc_capture.v:391, "case item expression out of range" in u_servo. Either
+      a dead case arm or a selector narrower than the tag -- the two have
+      opposite consequences, and the message does not distinguish them. One
+      site; read the case.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: "etc_capture.v:391."

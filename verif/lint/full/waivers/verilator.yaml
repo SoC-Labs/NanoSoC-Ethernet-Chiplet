@@ -1,0 +1,331 @@
+# Verilator site waivers -- full-design lint, top nanosoc_eth_chiplet_chip
+#
+# Consumed by verif/lint/full/waivers/apply_waivers.py, which holds every entry
+# below to the design: a waiver that matches a different number of findings than
+# it declares is an ACCOUNTING FAILURE, not a smaller number.
+#
+# A waiver here is an argument that a finding is not a defect ON THIS DESIGN.
+# It is not a way to make a count go down. Four fields are mandatory and the
+# reader refuses an entry without them: why (specific to this design, not the
+# rule's description), invalidated_by (what would make it a defect again),
+# decided_by, evidence.
+#
+# Measured against the run of 2026-08-17 23:11 (Verilator 4.028, 591 files ->
+# 585 linted, 191 Arm IP modules stubbed): 3024 findings, FLOW 1555 /
+# WAIVED 1157 / DESIGN 312, of which 4 authored.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+
+# ---------------------------------------------------------------------------
+# Ungated tiers. Recorded so that "the delta is all third-party" is a statement
+# with a number behind it. apply_waivers.py reports drift; it is fatal only
+# under --strict-tiers, because a vendor bump legitimately moves this.
+tiers:
+  third-party: 308
+
+# ---------------------------------------------------------------------------
+# CLASS dispositions -- the codes verilator_lint.py suppresses by NAME, before
+# any site is considered. These are not site waivers and cannot be: the code
+# tables carry no site. They are here because apply_waivers.py (G3) refuses to
+# pass while any code in FLOW_CODES or WAIVED_CODES lacks an entry -- so the
+# flow cannot acquire a new blanket suppression without an argument being
+# written for it.
+class_dispositions:
+
+  # --- FLOW: artefacts of running Verilator 4.028 over RTL written for
+  #     VCS/Genus. Not statements about the design.
+  UNPACKED:
+    count: 417
+    verdict: FLOW
+    why: >
+      Verilator 4.028 cannot model unpacked structs. All 417 are in three
+      generated *_discovery_pkg.sv register-descriptor packages that contain
+      zero modules; HAL, which can model them, analyses the same files and
+      reports no structural finding there.
+    invalidated_by: >
+      An unpacked struct appearing OUTSIDE *_discovery_pkg.sv -- then 417 stops
+      being three generated files and the suppression is hiding real analysis.
+      Verilator 5.x removes the limitation entirely; re-measure on upgrade.
+  ASSIGNDLY:
+    count: 1001
+    verdict: FLOW
+    why: "`#delay` on a non-blocking assign. Verilator ignores it; so does Genus."
+    invalidated_by: "Nothing -- synthesis semantics, not design semantics."
+  STMTDLY:
+    count: 134
+    verdict: FLOW
+    why: "`#delay` as a statement. Same."
+    invalidated_by: "Nothing."
+  INITIALDLY:
+    count: 2
+    verdict: FLOW
+    why: "`#delay` in an initial block. Simulation-only."
+    invalidated_by: "Nothing."
+  REALCVT:
+    count: 1
+    verdict: FLOW
+    why: "Real-to-integer in a parameter expression; elaboration-time arithmetic."
+    invalidated_by: "Nothing."
+
+  # --- WAIVED: real findings whose owning repo has triaged them.
+  UNUSED:
+    count: 864          # 405 authored
+    verdict: WAIVE-CLASS
+    why: >
+      Unread bits and unread nets. On this design the population is three
+      things: AHB shape narrowing (AHB5 hprot[6:0] into an AHB-Lite hprot[3:0],
+      htrans[0] where only htrans[1] is decoded), address bits that fan out to
+      slaves at the top rather than through a decoder, and the named *_nc
+      dead-end sinks the integration adopted deliberately (LINT_FINDINGS.md
+      4.1). Fixing means ~864 edits across five repos for zero netlist change --
+      a driven-but-unread wire has no load and synthesis removes it.
+    invalidated_by: >
+      An UNUSED naming a net that is neither *_nc, nor a protocol-narrowing
+      slice, nor an undecoded address bit. The integration zone is small enough
+      (24 sites) to read individually and is listed in
+      docs/LINT_WAIVER_INVENTORY.md 4.1; the other zones are not, which is why
+      HAL's URDWIR is deliberately left UNWAIVED in hal.yaml for exactly this
+      class -- that is how the DMA-error hole (A1) surfaced.
+  UNDRIVEN:
+    count: 3
+    verdict: REVIEW-NOT-WAIVED
+    why: >
+      The inherited justification ("noisy on APB register banks",
+      tidelink/lint/verilator/Makefile) DOES NOT COVER the three sites this
+      design actually has. All three are SCANOUTHCLK on generated AHB
+      interconnects -- a DFT scan-out that the toplevel emitter never appends
+      (LINT_REMEDIATION_PLAN.md B7). They are suppressed by the code table, not
+      by an argument; they are carried as open item V-OPEN-003 below.
+    invalidated_by: "n/a -- not waived. See V-OPEN-003."
+  PINCONNECTEMPTY:
+    count: 218          # 217 authored, all direction-resolved to `output`
+    verdict: WAIVE-CLASS
+    why: >
+      Deliberately open OUTPUTS -- APBACTIVE clock-gate hints with no APB gate
+      in this build, PSTRB/PPROT into ports that carry neither, unused AXI/IRQC
+      response channels whose request side is tied inactive at the same
+      instance. The code is direction-resolved before it is waived
+      (verilator_lint.py:classify_pin_findings): an empty INPUT is never waived
+      by this entry and gates instead. That split is the fix that surfaced the
+      real floating inputs, and it must stay.
+    invalidated_by: >
+      Any site here resolving to a direction other than `output`, or an
+      `UNRESOLVED` direction being folded into this class. UNRESOLVED currently
+      falls to DESIGN, which is the right way round; see V-OPEN-002.
+  DECLFILENAME:
+    count: 9
+    verdict: WAIVE-CLASS
+    why: >
+      Sub-module-per-file packaging, deliberate in TideLink and in the SoC.
+      Naming, no hardware consequence.
+    invalidated_by: "Nothing -- a naming convention."
+  SYNCASYNCNET:
+    count: 5
+    verdict: DEFER-TO-CDC
+    why: >
+      A signal flopped both synchronously and asynchronously is a
+      reset-domain-crossing signature, not a lint-class artefact, and this
+      design's five sites include the integration's own sys_hresetn and the D2D
+      controller's role_locked / i2c_mst_reset. The inherited "-nocheck SYNASN,
+      expected with an async active-low reset" is a generic statement about
+      resets, NOT an argument about these five sites. RDC belongs to `make cdc`
+      -- but LINT_REMEDIATION_PLAN.md 4 records that `make cdc` runs the wrong
+      top over the wrong flist, passes no -halargs and has no exit on findings,
+      so the deferral currently points at a gate that cannot receive it.
+      Recorded as deferred WITH that caveat rather than waived.
+    invalidated_by: >
+      Nothing to withdraw -- this is not a waiver. It closes when `make cdc` is
+      repaired and reports on these five sites, or when one of them is shown to
+      be a real crossing.
+  VARHIDDEN:
+    count: 19
+    verdict: WAIVE-CLASS
+    why: "An inner declaration shadows an outer name. Style; no HAL analogue."
+    invalidated_by: "Nothing."
+  UNSIGNED:
+    count: 22          # 19 generated bus-matrix decode, 3 tidechart
+    verdict: WAIVE-CLASS
+    why: >
+      "Comparison is constant due to unsigned arithmetic". 19 are inside the Arm
+      CMSDK bus-matrix decoders, where an address region whose base is 0 makes
+      `addr >= 0` tautological -- generator output, no SoC Labs template to fix.
+      The remaining 3 are TideChart at the SHIPPING parameterisation
+      NUM_PORTS=1: `scan_r >= (NUM_PORTS - 1)` and `port_idx >= (NUM_PORTS - 1)`
+      reduce to `>= 0`, which is correct for a single port -- the pointer
+      always wraps to 0 and the subtree walk always completes in one beat.
+    invalidated_by: >
+      NUM_PORTS != 1. Two distinct hazards then apply, and they are opposite:
+      above 1 these comparisons stop being constant (the finding disappears and
+      the logic starts working as intended), while at NUM_PORTS=8 the SAME
+      expressions hit LINT_REMEDIATION_PLAN.md B2 -- NUM_PORTS[PORT_W-1:0]
+      truncates to 0 and enumeration discovers nothing. Note also that NO
+      TideChart testbench runs NUM_PORTS=1 (all seven cocotb envs and the UVM
+      env use 2), so this waiver is a reasoning result, not a simulated one.
+  BLKSEQ:
+    count: 2
+    verdict: WAIVE-CLASS
+    why: >
+      Blocking assignment in a sequential block, both in Bluespec-generated
+      Wlink bridges (third-party tier). Style; the generator is the only place
+      it could be fixed.
+    invalidated_by: "A BLKSEQ appearing in authored RTL."
+
+# ---------------------------------------------------------------------------
+waivers:
+
+  - id: V-001
+    title: exhaustive 22-bit region map makes the top bound tautological
+    rule: CMPCONST
+    zone: soc-generated
+    file: "nanosoc-multicore-system/build_soc/rtl/nanosoc_cpu_ss_ahb_interconnect/**/nanosoc_cpu_ss_matrix_decode_CPU_0.v"
+    lines: [272, 300]
+    expect: 2
+    why: >
+      Both sites are `decode_addr_dec <= 22'h3fffff` -- the upper bound of the
+      last address region, compared against a 22-bit vector whose maximum IS
+      22'h3fffff. The comparison is therefore always true and Verilator says so.
+      It is not a truncation and it changes nothing: the region it bounds
+      (0x20000000-0xffffffff -> MI3) is the top of an EXHAUSTIVE map, so
+      "everything at or above 0x080000" is precisely the intent. Line 272 is the
+      static branch and line 300 the REMAP[0] branch of the same decoder, which
+      is why there are exactly two. The consequence worth stating: because the
+      map is exhaustive, the `else` that selects the default slave (3'b100) is
+      unreachable in this instance -- also correct, since no address in the
+      22-bit space is unmapped.
+      This file is rendered by the Arm CMSDK bus-matrix generator (see the Arm
+      copyright header in the file itself for the release it came from) out of
+      the sys_desc address map. There is no SoC Labs template to change; the
+      fix, if it were ever worth making, is in the generator's region emitter.
+    invalidated_by: >
+      The CPU_0 address map ceasing to be exhaustive -- a region shrinking so
+      that unmapped addresses exist. The default-slave leg then has to become
+      reachable, and this comparison has to become a real bound. Re-read it
+      after any sys_desc change that touches the CPU_0 master's regions.
+    decided_by: >
+      lint triage session 2026-08-17 (Claude, on David Mapstone's tapeout
+      branch). Converted from a bare baseline entry -- baseline/verilator.json
+      carried `soc-generated|CMPCONST: 2` as a number with no argument, which
+      LINT_REMEDIATION_PLAN.md 3 names as the wrong instrument ("a baseline of 1
+      is a bug you have agreed to keep").
+    evidence: >
+      nanosoc_cpu_ss_matrix_decode_CPU_0.v:257-278 (static branch) and 279-304
+      (remap branch) read in full; decode_addr_dec is 22 bits; the five regions
+      tile 22'h000000..22'h3fffff without a gap.
+
+# ---------------------------------------------------------------------------
+# OPEN -- accounted for, deliberately NOT waived. apply_waivers.py requires each
+# of these to STILL FIRE: an entry that stops matching means the record has
+# outlived the finding and must be closed.
+open:
+
+  - id: V-OPEN-001
+    title: D2D link-clock divider ratio input left floating at the integration
+    rule: PINMISSING
+    zone: integration
+    file: "src/rtl/nanosoc_eth_chiplet.sv"
+    lines: [760]
+    expect: 1
+    disposition: ESCALATE
+    severity: gating
+    why: >
+      `link_clk_div_ratio_i` is a NEW input on tidelink_top, added by the
+      uncommitted submodule bump to tidelink d7fe5d5 ("feat(phy): programmable
+      divider on the D2D link clock -- CHIP INTERFACE CHANGE", today 21:06). The
+      only instance in this design omits it. This is a floating input in the D2D
+      CLOCK path and is in the never-waive set on three independent grounds:
+      floating input, clock path, D2D path.
+      It is ALREADY RED, not a future risk: `make lint` -- the gating stage in
+      ci/signoff.yaml -- fails on this single finding, so `make check` is red on
+      the tapeout branch; and the HAL half reports the same site as E,UNCONI, a
+      never-waive rule, which fails hal_lint.sh's own verdict.
+      The RTL author's header states the port is SAFE TO LEAVE UNCONNECTED
+      because an X ratio never satisfies the divider's two-consecutive-samples-
+      equal filter, so the ratio register holds RATIO_RESET (/1 bypass). That
+      argument is sound IN SIMULATION and was verified against
+      tidelink_link_clk_div.sv:90-102. It does not transfer to gates unchanged:
+      an undriven input is not X after synthesis, it is whatever the tool's
+      undriven-signal policy ties it to. Tied 0 the behaviour is identical to
+      the RTL claim (/1 bypass); tied 1 the filter DOES converge, ratio 3'b111
+      clamps to /16, and the D2D bit rate silently drops 16x. The safe outcome
+      depends on a tool setting, not on the design.
+      NOT A WAIVER CANDIDATE. The fix is one line in
+      src/rtl/nanosoc_eth_chiplet.sv -- an explicit `.link_clk_div_ratio_i(3'd0)`
+      tie with a comment, or a wire from a software-visible register if the
+      divider is meant to be usable at bring-up. RTL is frozen for the gating
+      run, so it is written up here rather than applied.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      Verilator PINMISSING nanosoc_eth_chiplet.sv:760 (pin_dir resolved 'input');
+      HAL E,UNCONI same file:760; tidelink_top.sv:364 port declaration;
+      tidelink_link_clk_div.sv:66-108.
+
+  - id: V-OPEN-002
+    title: divider status readback open at the tidelink_top instance
+    rule: PINCONNECTEMPTY
+    zone: tidelink
+    file: "tidelink/src/rtl/tidelink_top.sv"
+    lines: [2830]
+    expect: 1
+    disposition: FLOW-BLOCKED
+    severity: not-gating
+    why: >
+      `.ratio_o(/* unconnected */)` on u_link_clk_div. ratio_o IS an output
+      (tidelink_link_clk_div.sv:73), so the finding is inert and would normally
+      be covered by the PINCONNECTEMPTY class waiver above.
+      IT IS NOT WAIVED HERE, because the reason it reached the DESIGN bucket at
+      all is a defect elsewhere: verilator_lint.py could not resolve the pin's
+      direction (pin_dir=UNRESOLVED, which correctly falls to DESIGN) -- and it
+      could not because tidelink_link_clk_div.sv IS NOT IN THE RESOLVED
+      FILELIST. Waiving this by hand would paper over that. Fix the filelist and
+      the finding reclassifies itself, with no waiver needed.
+      Root cause, the same one as V-OPEN-001 and worth its own escalation:
+      build/chip/flist/tidelink_asic.flist was rendered 2026-08-14 12:29, three
+      days before the divider commit. TideLink's own flists DO list the file
+      (flists/tidelink_top_full_asic_v2.flist:410). Verilator did not notice
+      because `+incdir+` doubles as a MODULE SEARCH PATH in Verilator and it
+      silently auto-loaded the file from disk -- proven with a two-module probe:
+      without the incdir, "%Error: Cannot find file containing module"; with it,
+      clean. VCS and Genus do not do that. HAL, which does not either, reported
+      the consequence: E,UNCONI on `user_hsclk` at tidelink_top.sv:2874 and
+      W,UASWIR on `link_hsclk_w` at :2815 -- i.e. with the filelist as it stands,
+      the D2D PHY reference clock is UNDRIVEN.
+      Secondary flow defect: verif/lint/full/run.sh only re-renders the
+      generated sub-flists `if [ ! -f ]`, so a STALE render is invisible to the
+      guard whose comment says it exists to stop exactly that.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      verilator.f has no tidelink_link_clk_div entry; `+incdir+.../tidelink/src/rtl`
+      is present; probe under scratchpad/probe/ reproduces the auto-load both
+      ways; ls -la build/chip/flist (Aug 14 12:29) vs tidelink d7fe5d5 (Aug 17
+      21:06).
+
+  - id: V-OPEN-003
+    title: interconnect scan-out never driven (DFT hole, generated top)
+    rule: UNDRIVEN
+    # UNDRIVEN is suppressed by CODE in verilator_lint.py, so these three sit in
+    # the WAIVED bucket and never reach the gate. Named here anyway: the class
+    # justification does not describe them, and a finding that is invisible to
+    # the gate is exactly the one that needs to be visible in the record.
+    bucket: WAIVED
+    expect: 3
+    disposition: FIX-NEXT-SPIN
+    severity: not-gating
+    why: >
+      SCANOUTHCLK is undriven in all three generated AHB interconnects
+      (multicore, eth_ss, nanosoc_cpu_ss). This is LINT_REMEDIATION_PLAN.md B7
+      seen from the other end: nanosoc_gen's subsystem emitter appends
+      sys_scanouthclk (subsystem.py:351-356), the toplevel emitter does not, so
+      the chain's last stage terminates nowhere. The class-level UNDRIVEN waiver
+      inherited from TideLink ("noisy on APB register banks") does not describe
+      these three sites at all, which is why they are carried open rather than
+      waived. No mission-mode consequence -- an undriven scan output is dead
+      logic that synthesis removes -- so it is not gating; it is a DFT
+      completeness item for the generator, +5 lines mirroring subsystem.py.
+    invalidated_by: n/a
+    decided_by: lint triage session 2026-08-17
+    evidence: >
+      multicore_ahb_interconnect.v:880, eth_ss_ahb_interconnect.v:590,
+      nanosoc_cpu_ss_ahb_interconnect.v:300; the matching PINMISSING at
+      nanosoc_multicore_soc.sv:1666 (pin sys_scanouthclk, direction output).
