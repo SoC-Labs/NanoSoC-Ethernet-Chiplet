@@ -218,3 +218,9 @@ voltus.cmd*
 # into an excluded directory, so `!.../build/rom_verify/eth.json` would not have
 # re-included anything -- the same trap the /fpga/haps-sx/ comment above records.
 !/ci/fixtures/**/build/
+
+# Broker correspondence. A private commercial letter to the foundry, not repo
+# content: it must state exact library revisions per the mini@sic submission
+# requirements, which is precisely the inventory that is not ours to publish.
+# Written here, sent from here, never tracked.
+docs/tapeout/27-broker-questions-SEND-NOW.md
