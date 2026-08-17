@@ -117,9 +117,24 @@ stages:
       # ("VERREP (3)", "ALOWID (979)", "DUPMCR (17)" ...); tonight's killed log
       # contains ZERO such lines. Measured, both directions.
       #
-      # This is a strictly better completion test than '^halstruct:' above, which
-      # is retained because it distinguishes "rules never started" from "rules
-      # started and were cut off" — different causes, different fixes.
+      # HOW THE THREE GUARDS LAYER — measured, and stated here because otherwise
+      # someone will notice the overlap and "simplify" one away:
+      #
+      #   guard 1  '*E,BLDSTP|Analysis failed'  -> HAL ABORTED gracefully
+      #   guard 2  '^halstruct:' absent         -> rules NEVER STARTED
+      #   guard 3  rule tally absent            -> rules started and were CUT OFF
+      #
+      # They are NOT disjoint, and the overlap is deliberate. Measured on the
+      # fixtures: the aborted case has ZERO tally lines too, so guard 3 would
+      # also reject it — but guard 1 fires first and names the cause, which is
+      # the difference between "raise the timeout" and "fix the RTL". Keep all
+      # three: each one alone lets a different bad run through, and this gate has
+      # now gone false-green twice for two different reasons.
+      #
+      # Every arm is pinned by a fixture under ci/fixtures/elab-strict/ and
+      # proven by `signoff.py prove`. fail-killed is the one that pins THIS
+      # guard: halstruct lines present, no abort string, no tally, ending
+      # mid-message exactly as a SIGTERM leaves it.
       grep -aqE '^ *[A-Z]{5,6} \([0-9]+\)' "$L" || {
         echo "HAL was KILLED before it finished — no rule-tally summary in the log."
         echo "The run started and was cut off (probably the timeout cap, see"
@@ -133,6 +148,7 @@ stages:
         - ci/fixtures/elab-strict/fail-aborted
         - ci/fixtures/elab-strict/fail-halstruct-never-ran
         - ci/fixtures/elab-strict/fail-no-log
+        - ci/fixtures/elab-strict/fail-killed
     artifacts:
       - verif/elab_strict/build/*.log
       - verif/elab_strict/build/*.f
