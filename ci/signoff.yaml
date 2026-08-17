@@ -15,7 +15,7 @@
 #                  promoting report->block is how this pipeline gets stricter.
 # label: which runner capability the stage needs (see scripts/ci/preflight.sh).
 #        soclabs-sim needs EDA + /research; soclabs-pdk additionally needs
-#        /tsmc65pdk, so ONLY srv03335 can run the physical phase.
+#        ${TSMC_65_HOME}, so ONLY srv03335 can run the physical phase.
 # -----------------------------------------------------------------------------
 design: nanosoc_eth_chiplet
 top: nanosoc_eth_chiplet
@@ -66,14 +66,73 @@ stages:
     # "Analysis failed") the multi-driver rules never run, the grep finds
     # nothing, and the stage reports OK — a false green, observed 2026-08-06.
     # Assert the analysis actually completed before believing the verdict.
+    #
+    # THIS MIRRORS verif/elab_strict/run.sh:113-130 LINE FOR LINE, deliberately.
+    # It did not, until 2026-08-17, and was wrong in two ways at once:
+    #
+    #   * it asserted 'Analysis complete'. HAL 22.03 NEVER PRINTS THAT STRING in
+    #     this mode — only "Analysis failed." on abort. On the 43 MB log of a
+    #     COMPLETED run it occurs zero times, while `^halstruct:` occurs 60,493
+    #     times. So this blocking gate could not pass on a good run, and the
+    #     runner it wraps had already documented exactly that. halstruct is the
+    #     engine that OWNS the MLTDRV rule, so its output is the completion
+    #     evidence: thousands of lines on a complete run, none on an aborted one.
+    #
+    #   * it used plain `grep -q`. The log carries binary bytes, and GNU grep
+    #     without -a stops matching at the first NUL — measured on this host,
+    #     `grep -q '^halstruct:'` returns 1 on a log where `grep -aq` returns 0.
+    #     Here -a changes the EXIT STATUS, not just the printed output.
+    #
+    # Proven against ci/fixtures/elab-strict/ by `signoff.py prove` — including a
+    # must-pass fixture that contains no 'Analysis complete' and does contain a
+    # NUL, i.e. the exact log the old check rejected.
     check: |
       L=verif/elab_strict/build/xrun_hal.log
       test -f "$L" || { echo "no HAL log at $L"; exit 1; }
-      if grep -q 'BLDSTP\|Analysis failed' "$L"; then
+      if grep -aqE '\*E,BLDSTP|Analysis failed' "$L"; then
         echo "HAL ABORTED before the rule set completed — the MLTDRV verdict is meaningless"
-        grep -m5 -E '\*E,(BLDSTP|[A-Z]+)' "$L"; exit 1
+        grep -a -m5 -E '\*E,(BLDSTP|[A-Z]+)' "$L"; exit 1
       fi
-      grep -q 'Analysis complete' "$L" || { echo "HAL never reported 'Analysis complete'"; exit 1; }
+      grep -aq '^halstruct:' "$L" || {
+        echo "halstruct never ran — no structural rules were applied."
+        echo "A zero MLTDRV count here would mean 'not checked', not 'clean'."
+        exit 1; }
+      # THIRD GUARD: the run must have FINISHED, not merely STARTED.
+      #
+      # Added 2026-08-17 after this gate went false-green a SECOND time, through
+      # a hole the two guards above cannot see. A run took 3605.4s against its
+      # own `timeout 3600` cap, was killed by the wall clock, and reported PASS:
+      # 109 MB / 284,834 halstruct lines against 43 MB / 60,493 on the last
+      # known-complete pass, the log ending mid-message on a CLKDMN line.
+      #
+      # Neither guard above fires on a kill. A SIGTERM leaves no '*E,BLDSTP' and
+      # no 'Analysis failed' — those are HAL's own abort strings and `timeout`
+      # never gives it the chance to write them — and by 60 minutes hundreds of
+      # thousands of '^halstruct:' lines are already on disk.
+      #
+      # run.sh now captures `timeout`'s exit status (124/137) directly, which is
+      # the unambiguous signal. THIS FILE CANNOT: it re-reads evidence after the
+      # fact and has no exit status to inspect. So it asserts completion from the
+      # ARTEFACT instead — a finished run emits a rule-tally summary block
+      # ("VERREP (3)", "ALOWID (979)", "DUPMCR (17)" ...); tonight's killed log
+      # contains ZERO such lines. Measured, both directions.
+      #
+      # This is a strictly better completion test than '^halstruct:' above, which
+      # is retained because it distinguishes "rules never started" from "rules
+      # started and were cut off" — different causes, different fixes.
+      grep -aqE '^ *[A-Z]{5,6} \([0-9]+\)' "$L" || {
+        echo "HAL was KILLED before it finished — no rule-tally summary in the log."
+        echo "The run started and was cut off (probably the timeout cap, see"
+        echo "ELAB_STRICT_TIMEOUT in verif/elab_strict/run.sh). MLTDRV=0 here means"
+        echo "NOT MEASURED, not clean, and must never be reported as a pass."
+        echo "  log: $L ($(wc -c <"$L") bytes, $(grep -ac '^halstruct:' "$L") halstruct lines)"
+        exit 1; }
+    check_proof:
+      must_pass: ci/fixtures/elab-strict/pass
+      must_fail:
+        - ci/fixtures/elab-strict/fail-aborted
+        - ci/fixtures/elab-strict/fail-halstruct-never-ran
+        - ci/fixtures/elab-strict/fail-no-log
     artifacts:
       - verif/elab_strict/build/*.log
       - verif/elab_strict/build/*.f
@@ -106,7 +165,7 @@ stages:
       - verif/g2_peer_aperture/results*.xml
       - verif/g2_soc_pair/results*.xml
 
-  # --- Physical phase — srv03335 only (needs /tsmc65pdk + ASIC/romlibs) -------
+  # --- Physical phase — srv03335 only (needs ${TSMC_65_HOME} + ASIC/romlibs) -------
   #
   # IMPLEMENTATION IS NOT HERE. syn -> place -> CTS -> route -> GDSII -> bundle
   # is .github/workflows/asic-gds.yml, which already stages it, reports each
@@ -146,6 +205,11 @@ stages:
       make -C ASIC -f common.mk --no-print-directory romlibs-selftest 2>&1 \
         | grep -qE '^SELFTEST: 2[0-9] passed, 0 failed' \
         || { echo "the ROM gate selftest did not run its full case list"; exit 1; }
+    check_proof:
+      must_pass: ci/fixtures/rom-selftest/pass
+      must_fail:
+        - ci/fixtures/rom-selftest/fail-short-caselist
+        - ci/fixtures/rom-selftest/fail-case-failed
     artifacts:
       - build/rom_verify/selftest/**
 
@@ -200,6 +264,13 @@ stages:
               print(f"{label}: PASS — {max(words)} words match {os.path.basename(code)}")
       sys.exit(1 if bad else 0)
       EOF
+    check_proof:
+      must_pass: ci/fixtures/rom-content/pass
+      must_fail:
+        - ci/fixtures/rom-content/fail-verdict
+        - ci/fixtures/rom-content/fail-zero-words
+        - ci/fixtures/rom-content/fail-no-result
+        - ci/fixtures/rom-content/fail-wrong-rom
     artifacts:
       - build/rom_verify/*.json
       - build/rom_verify/*.log
@@ -208,7 +279,13 @@ stages:
     phase: physical
     gate: block
     label: soclabs-pdk
-    needs_implementation: true
+    # NAMES THE EVIDENCE, and the driver enforces it (see signoff.py,
+    # needs_implementation). This key used to be a bare `true` that nothing in
+    # the driver ever read — a declaration that silently did nothing, which is
+    # the same defect class as a check that cannot fail. It is now the exact
+    # input `run:` consumes below: absent, the stage is UNVERIFIED, not FAIL.
+    needs_implementation:
+      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds
     # Content-correct at synthesis does NOT prove the bits reached the mask. The
     # macro is merged into the stream by write_stream from a hand-maintained
     # $gds_merge_list in scripts/config.tcl; a dropped or stale entry produces a
@@ -230,6 +307,13 @@ stages:
       rows = subprocess.run(["make", "-C", "ASIC", "-f", "common.mk",
                              "--no-print-directory", "rom-vars"],
                             capture_output=True, text=True).stdout.split()
+      # Same guard as rom-content, and for the same reason: with no rows this
+      # loop runs zero times and exits 0, i.e. "the ROM table could not be read"
+      # would render as "both ROMs verified". It was missing here until
+      # 2026-08-17 — see the fail-no-rom-table fixture, which is the case that
+      # found it.
+      if not rows:
+          print("cannot read the ROM table from ASIC/common.mk"); sys.exit(1)
       bad = 0
       for row in rows:
           name, label, romdir, code, memlib, inst, js, bits = row.split("|")
@@ -247,6 +331,13 @@ stages:
               print(f"{label}: PASS, all {depth} words in the stream match {os.path.basename(code)}")
       sys.exit(1 if bad else 0)
       EOF
+    check_proof:
+      must_pass: ci/fixtures/rom-gds/pass
+      must_fail:
+        - ci/fixtures/rom-gds/fail-word-differs
+        - ci/fixtures/rom-gds/fail-partial-extract
+        - ci/fixtures/rom-gds/fail-nothing-extracted
+        - ci/fixtures/rom-gds/fail-no-rom-table
     artifacts:
       - build/rom_verify/*_gds.bits
       - build/rom_verify/*_gds.log
@@ -255,7 +346,12 @@ stages:
     phase: physical
     gate: block
     label: soclabs-pdk
-    needs_implementation: true
+    # `make -C ASIC/genus-innovus lec` is `cd work/; lec -xl -Dofile ./lec.dofile`,
+    # and Genus writes both the dofile and fv/ during `syn`. Without them the
+    # stage burns a Conformal seat to die on a missing file.
+    needs_implementation:
+      - ASIC/genus-innovus/work/lec.dofile
+      - ASIC/genus-innovus/work/fv
     # NOTE this compares RTL -> SYNTHESISED netlist (via Genus's fv_map). It
     # does NOT read outputs/*_pnr.v — there is no post-P&R LEC anywhere in the
     # repo, despite package_submission.sh's MANIFEST claiming otherwise.
@@ -271,7 +367,10 @@ stages:
     # Assert the tool's own verdict line as well as those strings.
     check: |
       L=ASIC/genus-innovus/logs/lec.log
-      test -s "$L" || { echo "no LEC log at $L — did `syn` run in this work area?"; exit 1; }
+      # NOT backticks around syn. Inside a double-quoted string those are COMMAND
+      # SUBSTITUTION, so this line used to try to execute `syn` on the way to
+      # printing its own error message.
+      test -s "$L" || { echo "no LEC log at $L — did 'syn' run in this work area?"; exit 1; }
       if grep -qE 'Different Key Points|Abort Points|Unknown Key Points' "$L"; then
         echo "LEC reported non-equivalence:"; grep -nE 'Different Key Points|Abort Points|Unknown Key Points' "$L" | head; exit 1
       fi
@@ -281,6 +380,14 @@ stages:
       grep -qE 'Compare Results:[[:space:]]+PASS' "$L" || {
         echo "no 'Compare Results: PASS' line — treating as NOT equivalent"
         grep -nE 'Compare Results:' "$L" | head; exit 1; }
+    check_proof:
+      must_pass: ci/fixtures/lec/pass
+      must_fail:
+        # The case the vacuous `|Equivalent` clause used to let through: a
+        # transcript with the summary table but no verdict line at all.
+        - ci/fixtures/lec/fail-no-verdict-line
+        - ci/fixtures/lec/fail-different-key-points
+        - ci/fixtures/lec/fail-empty-log
     artifacts:
       - ASIC/genus-innovus/logs/lec.log*
       - ASIC/genus-innovus/work/noneq.*
@@ -303,7 +410,12 @@ stages:
     phase: physical
     gate: block
     label: soclabs-pdk
-    needs_implementation: true
+    # Exactly the two netlists scripts/lec/run_lec.sh:565-566 reads for `pnr`.
+    # This stage holds a Conformal seat for up to six hours, so refusing it in
+    # seconds when an input is absent is worth more here than anywhere else.
+    needs_implementation:
+      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads_gate_power.v
+      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads_pnr.v
     timeout_s: 21600
     # Closes the gap this manifest previously declared under `unsupported`.
     # Golden is outputs/*_gate_power.v — the exact netlist 2_pnr_setup.tcl hands
@@ -339,7 +451,9 @@ stages:
     phase: physical
     gate: block
     label: soclabs-pdk
-    needs_implementation: true
+    # $(GDS) in ASIC/genus-innovus/Makefile:41 — the stream run_drc.sh reads.
+    needs_implementation:
+      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre DRC on the routed GDS (signoff-grade ruledeck)"
     run: make asic-drc
     # Calibre exits 0 whether or not it found violations, and the Makefile does
@@ -363,6 +477,17 @@ stages:
     # import. That exemption is stated in the script and printed on every run.
     check: |
       python3 scripts/ci/drc_census.py ASIC/genus-innovus/work/drc_run
+    # NOTE these fixtures are also a live test of DRC_DESIGN_BUDGET /
+    # DRC_DENSITY_BUDGET: fail-design-results carries 7 design-owned results, so
+    # if the environment has raised the budget past 7 the must-fail case PASSES
+    # and `prove` goes red. That is the intended behaviour — a budget set high
+    # enough to swallow real violations has made the gate blind.
+    check_proof:
+      must_pass: ci/fixtures/drc/pass
+      must_fail:
+        - ci/fixtures/drc/fail-design-results
+        - ci/fixtures/drc/fail-saturated-cap
+        - ci/fixtures/drc/fail-no-summary
     artifacts:
       - ASIC/genus-innovus/work/drc_run/**
       - ASIC/genus-innovus/work/calibre_drc.runset
@@ -371,14 +496,50 @@ stages:
 # Checks a complete ASIC signoff would include that this pipeline does NOT do.
 # Listed so the report states its own limits — a signoff report that only shows
 # passes is misleading.
+#
+# `refuted_by:` — HOW EACH GAP PROVES IT IS STILL REAL.
+#   A declared gap rots. `full-design-lint` sat here claiming "make lint covers 3
+#   authored files of 598" for weeks after verif/lint/full/run.sh was written and
+#   closed it, and nothing in the pipeline could notice: a `reason:` string is
+#   never executed. `refuted_by:` is a shell command that MUST FAIL for the gap
+#   to still exist. If it SUCCEEDS the gap is gone and this file is stale.
+#   `signoff.py lint` runs every one of them and goes red on any that succeeds.
+#
+#   Write the command against the LOAD-BEARING CLAUSE of the reason, not the
+#   whole prose — "no Tempus installed" is testable, "which is not signoff STA"
+#   is a judgement. An entry with no refuted_by is reported as unfalsifiable and
+#   flagged for manual review rather than quietly trusted.
+#
+#   THE COMMANDS ARE HOST-RELATIVE. `command -v tempus` is a fact about the
+#   runner, not about the design, so a gap can legitimately be refuted on one
+#   host and stand on another. That is the point: it is the runner's tools that
+#   decide what this pipeline could check.
+#
+#   Two entries below were ALREADY STALE when this key was added on 2026-08-17,
+#   and their reasons are corrected here — see metal-density-fill and
+#   power-signoff. That is three stale declarations found by one mechanism on the
+#   day it landed, which is the argument for having it.
 # -----------------------------------------------------------------------------
 unsupported:
   - id: sta-signoff
     reason: "No Tempus or PrimeTime installed. Timing evidence is limited to Genus/Innovus in-tool reports, which is not signoff STA"
+    refuted_by: "command -v tempus >/dev/null || command -v pt_shell >/dev/null || command -v primetime >/dev/null"
   - id: antenna-signoff
     reason: "Innovus check_process_antenna DOES run and ANTENNA diodes ARE inserted by filler.tcl (reports/*_imp_antenna.rep), but nothing gates on the count and it is a router-level check, not foundry antenna signoff"
+    # The load-bearing clause is "nothing GATES on the count". Refuted the day a
+    # stage in this manifest does. (Not a grep for the word 'antenna' — the
+    # reason text above lives in this same file and would match itself.)
+    refuted_by: |
+      python3 -c "import yaml,sys; m=yaml.safe_load(open('ci/signoff.yaml')); \
+      sys.exit(0 if any('antenna' in s['id'] for s in m.get('stages',[])) else 1)"
   - id: metal-density-fill
-    reason: "add_metal_fill appears nowhere in the flow. Std-cell filler exists; per-layer metal density is unaddressed and will fail foundry density rules"
+    # CORRECTED 2026-08-17. The old text read "add_metal_fill appears nowhere in
+    # the flow" and that is false: scripts/4b_pnr_route_eval.tcl:1215-1228 calls
+    # set_metal_fill for M1-M7, M8 and M9 and then add_metal_fill over M1..AP.
+    # What is true is that it is behind an option switched OFF by default, so no
+    # shipped stream has been filled. The gap is real; the stated reason was not.
+    reason: "Metal fill IS implemented (scripts/4b_pnr_route_eval.tcl:1215-1228, set_metal_fill + add_metal_fill) but sits behind EVR_METAL_FILL, which defaults to 0, so no streamed GDS has been filled. Per-layer metal density is still unaddressed and will fail foundry density rules"
+    refuted_by: "grep -qE '^[[:space:]]*opt[[:space:]]+EVR_METAL_FILL[[:space:]]+[1-9]' ASIC/genus-innovus/scripts/4b_pnr_route_eval.tcl"
   - id: gds-completeness
     reason: >
       THE STREAMED GDS HAS NO TRANSISTORS IN 424 OF ITS CELL MASTERS, and it
@@ -390,10 +551,22 @@ unsupported:
       8, FILL1 is 2, PAD70GU is AP/RDL only — against 545 polygons across
       OD/PO/CO/M1 for a correctly merged memory macro. Root cause: this PDK
       ships Front_End packages only, and no *_BE directory exists anywhere on
-      the system. CONSEQUENCE: any DRC result over this stream must be
-      WITHDRAWN, not caveated — Calibre would be checking routing geometry over
-      M1-only shells. Blocked on the TSMC Back-End packages; see
+      the system. PERMANENT AS OF 2026-08-17 — the Back-End packages will not be
+      obtained; that was DECIDED, not discovered, so this is a standing property
+      of every stream this project will ever produce and not a pending delivery.
+      CONSEQUENCE, restated for the decision: the design-owned DRC count is a
+      FLOOR, not a total. A rule between top-level routing and a standard cell's
+      INTERNAL geometry cannot fire, because that geometry is not in the stream,
+      so "design == 0" means "clean in the layers we actually have" and never
+      "clean". Results are therefore waived on the record with that limit stated
+      — see docs/DRC_WAIVER_INVENTORY.md, which supersedes the status section of
       docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+    # The reason names its own root cause — "no *_BE directory exists anywhere on
+    # the system" — so that is the clause to test. ${TSMC_65_HOME} holds only *_FE
+    # (Front-End packages only; no Back-End package is present), measured 2026-08-17.
+    # Bounded at depth 4 so `lint` stays sub-second; the packages would land as
+    # siblings of the FE ones, not buried.
+    refuted_by: "find ${TSMC_65_HOME} -maxdepth 4 -name '*_BE' -type d 2>/dev/null | grep -q ."
   - id: lvs
     reason: >
       Not merely unwired. Tooling is fully available and idle — Calibre
@@ -404,8 +577,42 @@ unsupported:
       source data: there is no CDL and no GDS for tcbn65lp, tphn65lpgv2od3 or
       tpbn65v anywhere on this system (one 92-byte unit.cdl in the whole PDK).
       The Arm sc12 library DOES ship both, but has no IO or bond-pad library,
-      so it cannot close full-chip LVS. See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+      so it cannot close full-chip LVS. PERMANENT AS OF 2026-08-17: the CDL
+      arrives only in the Back-End packages and those will not be obtained, so
+      full-chip LVS is not a deferred task on this project — it will not run
+      here at all. What IS available and should be used instead is black-box
+      LVS, which works on this site today. See docs/DRC_WAIVER_INVENTORY.md § 7.
+    # "there is no CDL ... (one 92-byte unit.cdl in the whole PDK)" is the
+    # testable half. -size +1k excludes that stub, so this fires only on a real
+    # netlist. Scoped to ${TSMC_65_HOME} deliberately: an unbounded search of every
+    # mount is not something a lint verb should do on each invocation, and this
+    # is where the packages would be installed. 0.8 s measured.
+    refuted_by: >
+      find ${TSMC_65_HOME} -maxdepth 6 -size +1k
+      \( -name 'tcbn65lp*.cdl' -o -name 'tphn65*.cdl' -o -name 'tpbn65v*.cdl' \)
+      2>/dev/null | grep -q .
   - id: power-signoff
-    reason: "No power/IR-drop analysis stage (no Voltus/RedHawk); CPF exists for domains but is not verified here"
-  - id: full-design-lint
-    reason: "make lint covers 3 authored files of 598 compiled; the rest is linted only in component repos, if at all. See docs/LINT_FINDINGS.md section 5"
+    # CORRECTED 2026-08-17. "no Voltus/RedHawk" was false: Voltus ships in
+    # SSV_21.11.000 and the binary is on this filesystem at
+    # ${CDS_INSTALL}/tools/bin/voltus — it is simply
+    # not on PATH until that release's setup script is sourced. The tool is not
+    # the blocker; the absence of a stage is. So the refutation tests for the
+    # stage, and the tool clause is stated accurately instead of as an excuse.
+    reason: "No power/IR-drop analysis stage in this pipeline. NOT for want of a tool — Voltus is installed (SSV_21.11.000, off PATH by default); nothing here drives it, and the CPF that defines the power domains is unverified. Note also that ~30% of chip power sits on IO rails this flow cannot attribute"
+    refuted_by: |
+      python3 -c "import yaml,sys; m=yaml.safe_load(open('ci/signoff.yaml')); \
+      sys.exit(0 if any(k in s['id'] for s in m.get('stages',[]) \
+      for k in ('power','ir-drop','voltus')) else 1)"
+  # `full-design-lint` used to sit here reading "make lint covers 3 authored
+  # files of 598 compiled; the rest is linted only in component repos, if at
+  # all". REMOVED 2026-08-17: verif/lint/full/run.sh exists and does exactly the
+  # pass that entry said nobody does — Verilator plus HAL 22.03 over the whole
+  # 590-file ASIC flist, top nanosoc_eth_chiplet_chip, only Arm IP black-boxed.
+  # The successor gap is narrower and is declared immediately below, because
+  # "the harness exists" and "the pipeline runs it" are not the same claim.
+  - id: full-design-lint-gating
+    reason: "verif/lint/full/run.sh DOES lint the whole 590-file design (Verilator + HAL), but no stage in this manifest and no Makefile target invokes it, so no signoff run has ever executed it and its findings are ungated. The `lint` stage above is still the 3-file wrapper pass"
+    refuted_by: |
+      python3 -c "import yaml,sys; m=yaml.safe_load(open('ci/signoff.yaml')); \
+      sys.exit(0 if any('verif/lint/full' in s.get('run','') \
+      for s in m.get('stages',[])) else 1)"
