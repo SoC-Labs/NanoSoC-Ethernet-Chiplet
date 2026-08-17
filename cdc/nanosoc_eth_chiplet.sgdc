@@ -931,7 +931,7 @@ abstract_port -ports "*" -clock clk
 # The stop_module entry in the .prj makes that explicit and keeps the behaviour
 # stable if someone ever adds the models.
 #
-# Port set verified against /research/precompiled_mems/TSMC65/rf_01k/rf_01k.v:83
+# Port set verified against ${MEM_COMPILER_DIR}/TSMC65/rf_01k/rf_01k.v:83
 #   rf_01k (VDD, VSS, Q, CLK, CEN, WEN, A, D, EMA, EMAW, GWEN, RET1N)
 # Single CLK, everything else synchronous to it.
 #
@@ -946,3 +946,410 @@ abstract_port -ports "*" -clock clk
 # with the domain set per instance-site rather than globally — the ethmac RX FIFO
 # memories sit in the MII domains, not the fabric.
 # TODO(cdc): confirm on the first run; see cdc/README.md §7.
+
+# =============================================================================
+# 8. QUALIFIERS   [ADDED B7-ROUND2]
+# =============================================================================
+# The B7 baseline's single most diagnostic number: 125 of the 152 unsynchronised
+# crossings (82%) carried a QUALIFIER-related reason — "Qualifier not found",
+# "Qualifier merges with another source with non-deterministic enable
+# condition", "Gating logic not accepted" — while the report's own summary line
+# read "User-defined qualifiers used to synchronize data crossings: 0". The
+# crossings ARE gated; the setup gave SpyGlass nothing to validate the gating
+# against.
+#
+# WHAT A `qualifier` DECLARATION IS, AND IS NOT. It is NOT a waiver. It names a
+# control signal and asserts "this is a legitimate qualifier for crossings in
+# this direction". SpyGlass still has to find that signal structurally gating
+# the crossing before it will call it synchronised; a crossing the named signal
+# does not actually gate stays in the report. That makes it materially safer
+# than a `cdc_false_path` — but it is still an assertion about the RTL, so each
+# one below carries file:line evidence, and anything that could not be proven
+# is in §9 rather than here.
+
+current_design nanosoc_eth_chiplet
+
+# -----------------------------------------------------------------------------
+# 8a. CoreSight SWJ-DP  DP->AP bus:  busreq/busack request-acknowledge handshake
+# -----------------------------------------------------------------------------
+# Retires the largest single block in the baseline: ALL 33 of the 33
+# dap_swclktck -> sys_fclk crossings (B7 baseline §4c and §6 group C; findings
+# 9, 10 and 38 — ap_sel 25 crossings, ibuswdata 6, ap_bank_sel 2).
+#
+# THE CROSSING. Three registers are written in the SWD probe-clock domain
+# (dbgclk == dap_swclktck) inside cxdapswjdp_sw_dp_protocol and read in the
+# dapclk domain (== sys_fclk here):
+#   ap_sel[7:0]              declared :228, loaded :1049-1051 under ap_sel_en
+#   ap_bank_sel[3:0]         declared :221, loaded :1049-1052 under ap_sel_en
+#   ibuswdata_cdc_check[31:0] declared :157, loaded :1337-1341 under i_bus_wdata_en
+# and exported onto the DP->AP bus at :1366-1369:
+#   assign busreq         = i_bus_req_d;
+#   assign busaddr_31to24 = ap_sel;
+#   assign busaddr_7to2   = {ap_bank_sel, ap_reg_sel};
+#   assign buswdata       = i_bus_wdata;        (= ibuswdata_cdc_check, :1721)
+# (all line numbers in
+#  ${ARM_IP_LIBRARY_PATH}/SoC-400/coresight_soc/shared/logical/cxdapswjdp/
+#  verilog/cxdapswjdp_sw_dp_protocol.v)
+#
+# THE QUALIFIER, AND WHY IT IS THE SYNCHRONISED ONE. `busreq` does NOT reach the
+# destination raw. cxdapswjdp_dapclk.v wires it through a proper two-flop
+# synchroniser first:
+#   cxdapswjdp_dapclk.v:100-108   cxdapswjdp_dp_apb_sync u_cxdapswjdp_dp_apb_sync
+#                                   .busreq(busreq_c) ... .busreq_d(busreq_d)
+#   cxdapswjdp_dp_apb_sync.v:78-86  cx_en_sync u_sync_bus_req (.clk(dapclk),
+#                                     .sync_di(busreq_corrupt), .sync_do(busreq_d))
+#   cxdapswjdp_dapclk.v:89        u_cxdapswjdp_sw_dp_apb_if .busreq (busreq_d)
+# The B7 run already RECOGNISED that synchroniser — it is one of the 35 the DAP
+# contributed to Ac_sync01/02. So the control path is synchronised and the data
+# path is not: the textbook qualified crossing.
+#
+# THE GATING, PROVEN IN THE DESTINATION DOMAIN. In cxdapswjdp_sw_dp_apb_if.v the
+# APB state machine cannot leave idle until the SYNCHRONISED request is high:
+#   :142-145   DAP_APBIDLE : apb_next = DAP_APBSETUP;
+#                            apb_next_en = dapclken & busreq;    (busreq == busreq_d)
+# and the crossing data only ever reaches the AP while the machine is out of
+# idle:
+#   :342-343   assign dapaddr_31to24 = (apb_curr==DAP_APBENABLE |
+#                                       apb_curr==DAP_APBSETUP) ? busaddr_31to24 : 8'b0;
+#   :344-345   assign dapaddr_7to2   = ( ... same condition ... ) ? busaddr_7to2 : 6'b0;
+#   :346-347   assign dapwdata       = ( ... same condition ... ) ? buswdata     : 32'b0;
+#   :335       assign dapsel         = apb_curr==DAP_APBENABLE | apb_curr==DAP_APBSETUP;
+# So every reported destination inside u_ap0/u_ap1's u_cxdapahbap_slv is behind
+# dapsel/dapaddr/dapwdata, which are behind apb_curr, which is behind busreq_d.
+#
+# THE HANDSHAKE CLOSES THE LOOP, so the source cannot move the data mid-window:
+#   sw_dp_apb_if.v:258-264   busack asserted only in DAP_APBEND
+#   sw_dp_apb_if.v:171-174   DAP_APBEND -> DAP_APBIDLE only on ~busreq
+#   sw_dp_protocol.v:1304-1309  while i_bus_req: i_bus_req_d = ~busack,
+#                               i_bus_req_en = busack  (request drops only on ack)
+#   sw_dp_protocol.v:910     the write buffer accepts new data only when
+#                               ~i_bus_req & ~busack  (no outstanding transaction)
+#
+# AND ARM ASSERTS THE CONTRACT ITSELF. cxdapswjdp_sw_dp_apb_if.v:356-357 defines
+# the handshake window
+#     hs_start = busreq & apb_curr==DAP_APBIDLE
+#     hs_end   = busreq & apb_curr==DAP_APBEND & !busacki
+# and then :386-392 and :395-400 carry OVL assertions named in the vendor's own
+# words:
+#     "busaddr_* must remain static during handshake."   assert_win_unchange
+#     "buswdata must remain static during handshake."    assert_win_unchange
+# That is the data-stability property a qualifier declaration exists to express,
+# written into the IP by the IP's author. This is not an inference.
+#
+# SCOPE. -from_clk/-to_clk confines this to the dap_swclktck -> sys_fclk
+# direction. In the baseline that direction contained exactly 33 crossings and
+# all 33 are this one bus, so the declaration is not reaching past its evidence
+# today. It is still a clock-pair scope rather than an object-pair scope, so if
+# a FUTURE change puts some unrelated dap_swclktck -> sys_fclk crossing in the
+# design, this line would let busreq_d qualify it too — but only if busreq_d
+# structurally gates it, which is the tool's check, not this file's claim.
+# -type des (the default) is correct: the qualifier reaches the DESTINATION.
+qualifier -name "u_soc/u_dap_ss_0/u_swjdp_gate/u_swjdp/u_cxdapswjdp_dapclk/busreq_d" \
+          -from_clk dap_swclktck -to_clk sys_fclk
+
+# ---- MEASURED OUTCOME: THIS DECLARATION RETIRES 0 OF THE 33. READ BEFORE ----
+# ---- RE-LITIGATING IT.                                                    ----
+# The baseline predicted "one declaration retires 33 crossings". It does not,
+# and the honest number is zero. What actually happened, across two round-2
+# passes:
+#
+#   pass 1  (-name form, as written above)
+#     The name RESOLVED and the qualifier was USED — two crossings changed their
+#     reason from "Qualifier not found" to "USER-DEFINED qualifier merges with
+#     another source with non-deterministic enable condition before gating
+#     logic". So SpyGlass agrees this is a qualifier; it rejects it on those two
+#     because of the merge, under `-allow_merged_qualifier: strict`.
+#     The other 21 still read "Qualifier not found" — never reached.
+#
+#   pass 2  (additionally tried the -dest_qual form with -dest_qual_depth 5,
+#            on the theory that the default `cdc_qualifier_depth: 3` cannot span
+#            the TWO state machines in series here — the DP's apb_curr
+#            (sw_dp_apb_if.v:184-188) and then the AP's own cur_state inside
+#            u_cxdapahbap_slv — before reaching destinations like
+#            ahb_tr_in_prog / csw_reg_cdc_check.)
+#     Result: `QualifierSetup` Warning, "'qualifier' constraint 'dest_qual :
+#     ...busreq_d' is not used to synchronize any crossing". Depth was not the
+#     blocker. The -dest_qual line was REMOVED rather than left standing, since
+#     a constraint that provably does nothing but emit a warning is clutter.
+#
+# The RTL evidence above is not weakened by this — ARM's own OVL assertions
+# still say the bus is held static across the handshake. What is established is
+# that SpyGlass 2022.06-SP2's STRUCTURAL qualifier engine will not carry
+# busreq_d through the DP-FSM -> AP-FSM chain at strict settings.
+#
+# WHAT WAS DELIBERATELY NOT DONE TO MAKE THE NUMBER MOVE. The global
+# `cdc_qualifier_depth` was left at 3 and `-allow_merged_qualifier` at `strict`.
+# Loosening either would have retired crossings across the WHOLE design,
+# including the 18 qualifiers SpyGlass inferred by itself on paths nobody has
+# examined. Turning a global knob until a report goes green is not analysis.
+# The line above is kept because it is TRUE and because it improves the
+# diagnosis on the two crossings it does reach; the remaining 33 stay in the
+# report where a reviewer can see them.
+# NEXT STEP IF SOMEONE WANTS THESE 33 CLOSED: the functional `cdc/cdc_verify`
+# goal, or a formal check of the handshake — not a bigger depth number.
+
+# -----------------------------------------------------------------------------
+# 8b. HA1588 RTC control registers: the synchronised LOAD STROBES
+# -----------------------------------------------------------------------------
+# THIS CORRECTS THE B7 BASELINE, and the correction matters more than the count.
+# Baseline §6 group E filed reg_14 / reg_18 / reg_24 / reg_2c / reg_30
+# (findings 42-46) as "static configuration registers ... the textbook
+# quasi_static case", needing only a software contract. That is WRONG on both
+# halves:
+#
+#   (a) They are NOT static. They are the PTP servo's live discipline path.
+#       reg_24 is the frequency-trim word, rewritten on essentially every PTP
+#       exchange by ptp_slave.c:151-158 (servo_set_trim -> ha1588_rtc_set_period);
+#       reg_14/reg_18 are rewritten on every phase step (ptp_slave.c:204,227).
+#       A `quasi_static` here would have asserted something the firmware in this
+#       repository visibly violates several times a second.
+#
+#   (b) They do not NEED a software contract, because the hardware already
+#       carries the handshake. This is a multi-cycle-path data bus with a
+#       properly synchronised load strobe — a qualifier, not a waiver.
+#
+# THE MECHANISM, proven end to end in
+# nanosoc-multicore-system/ethernet-subsystem-ahb/ethernet-mac-ahb/src/rtl/
+# ha1588_patches/{reg.v,rtc.v,ha1588.v}:
+#
+#   1. Software writes the DATA register on the fabric side (reg.v:158-165,
+#      `if (wr_in && cs_24) reg_24 <= data_in;` and siblings).
+#   2. Software then sets a COMMAND bit in reg_00 (reg.v:231-233):
+#         time_ld = reg_00[3]   perd_ld = reg_00[2]   adjt_ld = reg_00[1]
+#   3. That command bit is carried into rtc_clk by a THREE-flop synchroniser and
+#      edge-detected there — all three chains are `always @(posedge rtc_clk_in)`:
+#         reg.v:266-276  time_ld_s1/s2/s3 ;  time_ld_out   = time_ld_s2 && !time_ld_s3
+#         reg.v:280-290  perd_ld_s1/s2/s3;  period_ld_out = perd_ld_s2 && !perd_ld_s3
+#         reg.v:294-304  adjt_ld_s1/s2/s3;  adj_ld_out    = adjt_ld_s2 && !adjt_ld_s3
+#      SpyGlass already RECOGNISED these chains in the B7 run.
+#   4. The rtc_clk side captures the data ONLY on that synchronised pulse
+#      (ha1588.v:156-174 wires them straight through):
+#         rtc.v:53-54    if (period_ld) period_fix <= period_in;    <- reg_20,reg_24
+#         rtc.v:58-59    if (adj_ld)    adj_cnt    <= adj_ld_data;  <- reg_30
+#         rtc.v:103-105  if (time_ld)   time_acc_30n_08f_pre_pos/_pre_neg <= ...
+#         rtc.v:129-131  if (time_ld)   time_acc_30n_08f <= time_reg_ns_in;
+#                                       time_acc_48s     <= time_reg_sec_in;
+#      The data bus is stable for the whole 3-flop synchroniser latency because
+#      the strobe is written after the data, by a separate bus cycle.
+#
+# SCOPE — AND WHY THIS ONE IS OBJECT-SCOPED, NOT CLOCK-SCOPED.
+# Unlike §8a, the sys_fclk -> rtc_clk clock pair is NOT clean: it holds 24
+# baseline crossings, and 17 of them belong to FINDING 30, the largest REAL
+# finding in the run (the unresynchronised sys_hresetn distribution into
+# rtc_clk). A clock-pair-scoped qualifier here would be pointed straight at the
+# one finding this whole exercise most needs to keep. So each declaration below
+# is pinned to the exact source and destination objects the RTL above proves,
+# with -from_obj / -to_obj. If these had been written -from_clk/-to_clk they
+# would have been cheaper to write, shorter, and a great deal more dangerous.
+
+# BOTH HALVES OF EACH CONCATENATION MUST BE NAMED. Round-2 pass 2 listed only
+# reg_14/reg_18/reg_24 here and the crossing count barely moved: SpyGlass
+# qualified the halves that were named and immediately RE-REPORTED the same
+# crossings against the halves that were not (reg_10, reg_1c, reg_20 appeared as
+# three "new" findings that had never been in the baseline at all). The buses
+# are concatenations, reg.v:235-237:
+#     time_reg_sec_out[47:0] = {reg_10, reg_14}    <- one time_ld
+#     time_reg_ns_out [37:0] = {reg_18, reg_1c}    <- same time_ld
+#     period_out      [39:0] = {reg_20, reg_24}    <- one period_ld
+# so every member of a concatenation is the same crossing under the same strobe
+# and they stand or fall together. Declaring one half and not the other does not
+# hide anything — the tool just renames the finding — but it does make the
+# report lie about which register is unqualified.
+#
+# WORTH RECORDING ABOUT THE BASELINE'S METHOD: reg_10, reg_1c and reg_20 never
+# appeared in the baseline's 50 findings, yet they were crossing the whole time.
+# A multi-source crossing is reported against ONE named source, so
+# "unique source signals" UNDER-COUNTS, and retiring a named source can
+# re-attribute a finding rather than retire it. Three of the round-2 "new"
+# findings are that artefact, not new crossings.
+qualifier -name "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/time_ld_out" \
+          -from_obj "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/reg_10" \
+                    "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/reg_14" \
+                    "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/reg_18" \
+                    "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/reg_1c" \
+          -to_obj   "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rtc/time_acc_48s" \
+                    "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rtc/time_acc_30n_08f" \
+                    "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rtc/time_acc_30n_08f_pre_pos" \
+                    "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rtc/time_acc_30n_08f_pre_neg"
+
+qualifier -name "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/period_ld_out" \
+          -from_obj "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/reg_20" \
+                    "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/reg_24" \
+          -to_obj   "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rtc/period_fix"
+
+qualifier -name "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/adj_ld_out" \
+          -from_obj "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/reg_30" \
+          -to_obj   "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rtc/adj_cnt"
+
+# NOT DECLARED: reg_2c -> u_rtc.time_adj (baseline finding 44). It looks like a
+# fourth member of the group and it is not. reg_2c is `period_adj`, and rtc.v
+# does NOT capture it on any load strobe — it is consumed live, on a counter
+# terminal count:
+#     rtc.v:65-68   if (adj_cnt==0) time_adj <= period_fix + period_adj;
+#                   else            time_adj <= period_fix + 0;
+# The adj_ld strobe loads adj_cnt (reg_30), and period_adj is then sampled an
+# arbitrary number of rtc_clk cycles LATER, when the counter reaches zero. So
+# the strobe opens a window but does not gate the sample, and there is nothing
+# for a qualifier to attach to. The stability requirement on reg_2c across that
+# window is a genuine software contract — see §9.
+
+# =============================================================================
+# 9. NOT YET CONSTRAINED — NEEDS AN OWNER DECISION   [ADDED B7-ROUND2]
+# =============================================================================
+# Everything in this section is a crossing that is STILL IN THE REPORT and is
+# left there on purpose. Each entry says what the missing declaration would be,
+# what it would assert, and why that assertion could not be made from RTL alone.
+#
+# The rule at the top of this file is the whole reason this section exists:
+# AN ABSENT DECLARATION OVER-REPORTS. A WRONG DECLARATION MASKS. Every line
+# below could be uncommented in seconds and every one of them would make the
+# report smaller. That is not a reason to do it.
+#
+# -----------------------------------------------------------------------------
+# 9a. EthMAC configuration registers — a SOFTWARE contract, and one that the
+#     firmware in this repository already breaks
+# -----------------------------------------------------------------------------
+# Baseline §6 group E proposed `quasi_static` for the OpenCores EthMAC config
+# registers. Checking the firmware against the RTL splits that one class into
+# three, and only one third of it is safe:
+#
+# (i) PROVABLY WRONG — MODER (baseline findings 11, 12, 14; 26 crossings).
+#     MODER is not configuration, it is the run/stop control:
+#       eth_registers.v:902-918   [1] TXEN  [0] RXEN  [10] FULLD  [7] LOOPBCK
+#     and firmware toggles all four WHILE THE MAC IS RUNNING:
+#       firmware/apps/eth_netapp/driver/ethmac.h:114-122 enable()/disable() RMW
+#                                             TXEN|RXEN
+#       ethmac.h:126-134  set_full_duplex()/set_half_duplex() toggles FULLD
+#                         (and :260-261 says to call it AFTER autonegotiation,
+#                          i.e. again on every link renegotiation)
+#       ethmac.h:147-152  set_loopback() toggles LOOPBCK
+#       firmware/apps/eth_mac_loopback/main.c:138-140 explicitly depends on
+#                         RXEN rising 0->1 as a RUNTIME event
+#       firmware/apps/ptp_slave/main.c:192,466-470 live read-modify-write of
+#                         MODER over the SWD proxy during operation
+#     And the consumption side is genuinely unprotected. r_RxEn at least gets a
+#     flop (eth_top.v:738, RxEnSync <= r_RxEn in mrx_clk), but r_LoopBck reaches
+#     the RX datapath COMBINATIONALLY with no synchroniser at all:
+#       eth_top.v:598  assign MRxDV_Lb = r_LoopBck ? mtxen_pad_o
+#                                                  : mrxdv_pad_i & RxEnSync;
+#     A `quasi_static` on MODER would have deleted that from the report.
+#     => THIS IS RECLASSIFIED FROM "SETUP ARTEFACT" TO A REAL FINDING. It is not
+#        a declaration bug. It needs a synchroniser or an explicit "MODER is
+#        only written with the MAC quiesced" contract from the owner.
+#
+# (ii) CONTRACT-DEPENDENT — CTRLMODER (finding 15), MAC_ADDR0 (finding 27).
+#     No firmware in this repository writes either one today, so `quasi_static`
+#     would be true of the software as it stands. But both are architecturally
+#     runtime knobs with no hardware handshake: CTRLMODER carries TXFLOW/RXFLOW/
+#     PASSALL (eth_registers.v:932-934), which PAUSE flow control normally
+#     enables and disables on link-state change; MAC_ADDR0 feeds the mrx-domain
+#     address filter (eth_top.v:653) and changing a MAC address is a legitimate
+#     runtime operation. Declaring these asserts "no future firmware will do the
+#     normal thing". That is an owner's call, not this file's.
+#
+# (iii) SAFE, BUT STILL A SOFTWARE CLAIM — COLLCONF (findings 13, 26),
+#     PACKETLEN (16, 24), IPGR2 (25). These are IEEE timing/length constants.
+#     IPGR2 has no writer anywhere in the tree and sits at its reset default
+#     7'h12 (eth_defines.v:219); PACKETLEN is written exactly once at bring-up
+#     and always with the same literal (eth_rx_diag/main.c:64 and four siblings,
+#     all 0x002E0600); COLLCONF has no writer at all.
+#     THE LINES ARE PRE-DRAFTED SO APPROVING THEM IS A ONE-MINUTE JOB. They are
+#     NOT enabled here because the baseline's own §6E finding stands: this class
+#     has never been adjudicated at ANY level, block or integration, and a
+#     declaration that encodes "software configures before it enables" should
+#     carry a name against it.
+#
+#     quasi_static -name "u_soc/u_network_core/u_ethmac_0/u_inner/u_eth_top/ethreg1/IPGR2_0/DataOut*"
+#     quasi_static -name "u_soc/u_network_core/u_ethmac_0/u_inner/u_eth_top/ethreg1/PACKETLEN_*/DataOut*"
+#     quasi_static -name "u_soc/u_network_core/u_ethmac_0/u_inner/u_eth_top/ethreg1/COLLCONF_*/DataOut*"
+#
+# -----------------------------------------------------------------------------
+# 9b. HA1588 TSU timestamp queues — the pointer contract holds, the capture flop
+#     does not implement it  (baseline findings 35, 36; 4 crossings)
+# -----------------------------------------------------------------------------
+# Baseline §6 group D called these a "textbook gray-code async FIFO ... safe by
+# construction" needing "a qualifier or a targeted waiver". The FIFO half of
+# that is exactly right — ptp_queue.v is a clean gray-code design:
+#   ptp_queue.v:39      reg [127:0] mem [0:15]
+#   ptp_queue.v:61      mem[wr_bin[3:0]] <= data          (posedge wrclk)
+#   ptp_queue.v:87,93-94  wr_gray_rd1/wr_gray_rd2         (posedge rdclk, 2-FF)
+#   ptp_queue.v:116     assign rdempty = (rd_gray == wr_gray_rd2)
+#   ptp_queue.v:68      rd_bin_next = rd_bin + (rdreq & ~rdempty)
+#   ptp_queue.v:82      assign q = mem[rd_bin[3:0]]
+# so the read ADDRESS can never overtake the synchronised write pointer.
+#
+# But a qualifier declaration asserts that the DESTINATION only samples the data
+# when the qualifier says it is valid, and that is not what this RTL does:
+#   ptp_queue.v:82   the array read is COMBINATIONAL and live even when rdempty
+#   reg.v:403        rx_q_data_int <= rx_q_data_in;   <- unconditional, every clk
+#   reg.v:461        tx_q_data_int <= tx_q_data_in;   <- unconditional, every clk
+# The 128-bit capture flop has no enable. `rdempty` never reaches it. So there
+# is no destination gating for a qualifier to attach to, and declaring one would
+# assert a hardware property this design does not implement.
+# The crossing is answered in practice by software polling q_rd_stat
+# (tsu.v:664) before it reads, plus the fact that an unconditional capture is
+# re-taken every cycle and therefore self-corrects once rdempty deasserts. That
+# is a real argument, but it is a `cdc_false_path` with a written justification
+# or an RTL change (enable the capture flop with ~rdempty) — an owner decision,
+# not a declaration. LEFT IN THE REPORT.
+#
+# -----------------------------------------------------------------------------
+# 9c. HA1588 reg_2c -> u_rtc.time_adj  (baseline finding 44; 1 crossing)
+# -----------------------------------------------------------------------------
+# See the NOT DECLARED note at the end of §8b. period_adj is sampled on
+# `adj_cnt==0` (rtc.v:65-68), not on the adj_ld strobe, so the strobe opens the
+# window but does not gate the sample. Retiring this needs a stated software
+# contract ("reg_2c is not rewritten between the adj_ld pulse and adj_cnt
+# reaching zero"), which is an owner's assertion. LEFT IN THE REPORT.
+#
+# -----------------------------------------------------------------------------
+# 9d. HA1588 PTP message-ID masks reg_44 / reg_64  (baseline findings 28, 29)
+# -----------------------------------------------------------------------------
+# ANOTHER RECLASSIFICATION FROM "SETUP ARTEFACT" TO REAL. These are the only two
+# HA1588 registers that cross into the MII domains rather than rtc_clk:
+#   reg.v:244,249  rx_q_ptp_msgid_mask_out = reg_44 ; tx_q_..._out = reg_64
+#   -> ha1588.v:183,201 -> tsu.v:32 -> ptp_parser.v:226,229
+#      i.e. into rx_gmii_clk (mrx_clk) and tx_gmii_clk (mtx_clk)
+# and unlike reg_14/18/24/30 there is NO load strobe and NO synchroniser on the
+# path — nothing corresponding to §8b exists for them. Meanwhile firmware
+# rewrites them mid-run to change which PTP message IDs get timestamped
+# (ptp_tsu_loopdiag/main.c:206-207 then :300; ptp_slave/main.c:599-600 vs
+# :654-655). ptp_parser.v:41 carries a stale comment calling this crossing
+# "quasi-static", which is precisely the assumption the firmware violates.
+# Genuinely unsynchronised, genuinely changed at runtime. LEFT IN THE REPORT as
+# a finding, not a declaration gap.
+#
+# -----------------------------------------------------------------------------
+# 9e. axi_chiplet_controller hresetn / poresetn  (baseline findings 32, 33)
+# -----------------------------------------------------------------------------
+# Full argument at the end of §7a. Both pins are silently defaulted to
+# user_ref_clk by the same mechanism as group A, and both could be "fixed" with
+# one abstract_port line each — but they are inputs fanning into more than one
+# internal reset regime of a stopped module, so either line would collapse a
+# real multi-domain reset question. Needs B8 (un-black-box the controller).
+# LEFT DEFAULTED, i.e. LEFT IN THE REPORT.
+#
+# -----------------------------------------------------------------------------
+# 9f. Unchanged from the baseline, restated so this list is complete
+# -----------------------------------------------------------------------------
+#   - Finding 30 (19 crossings): sys_hresetn's synchronised sync_q distributed
+#     into mrx_clk and rtc_clk without re-synchronisation. REAL. Group H. No
+#     declaration can or should touch it.
+#   - Findings 49, 50: u_tidelink.pad_tx / pad_rx, the D2D source-synchronous
+#     pads. REAL BY DESIGN. They need a `cdc_false_path` with a written
+#     justification, which is an owner decision — a silent one here would be
+#     indistinguishable from hiding the D2D data plane.
+#   - Ar_unsync01 on u_d2d_decode.dph_code[0]: this repository's own integration
+#     RTL, raw sys_hresetn used as an async clear on sys_hclk flops
+#     (src/rtl/chiplet_d2d_decode.sv:179-180). An RTL fix, not a declaration.
+#   - The four inferred black boxes with no port constraints at all
+#     (flash_cache_data, flash_cache_tag, eth_rom_via, rom_via). They produced
+#     no crossing in either run. Constraining them needs their port lists
+#     verified first — a wrong port name here is SGDC_abstract_port02 FATAL.
+#   - EthMAC internal control/status (baseline group F, findings 17/19/20/21/
+#     39/40/41). Third-party RTL with its own ad-hoc synchronisation; a
+#     block-level decision if the MAC is ever signed off.
+#   - Sync-stage fan-out (baseline group G, findings 6/7/18/22/23/8/34). Real
+#     synchronisers flagged because their first stage fans out. Reconvergence
+#     off a first sync stage is a genuine if lower-severity concern and is worth
+#     a look; it is not fixed by a declaration.
