@@ -26,6 +26,37 @@
 #
 #   usage:  verif/lint/run.sh          # or: scripts/lint.sh   (env overrides:)
 #           CMSDK_AHB_TO_APB=<path>    ARM_IP_LIBRARY_PATH=<path>   VERILATOR=<bin>
+#           LINT_ALLOW_SKIP=1          # see "A SKIPPED PASS IS A FAILURE" below
+#-----------------------------------------------------------------------------
+# A SKIPPED PASS IS A FAILURE, AND A PASS THAT DID NOT RUN IS NOT A CLEAN PASS
+#
+#   Both of the following were MEASURED on this script on 2026-08-17, against a
+#   tree where PASS 3 legitimately reports a non-waived PINMISSING
+#   ('link_clk_div_ratio_i' at nanosoc_eth_chiplet.sv:760) and the run correctly
+#   exits 1:
+#
+#   1. SILENT SCOPE COLLAPSE.  `ARM_IP_LIBRARY_PATH=/nonexistent verif/lint/run.sh`
+#      -> "PASS 3 WRAPPER: SKIPPED" -> "LINT OK" -> exit 0.  One unresolved
+#      blackbox source turned the live defect green.  This is not hypothetical in
+#      CI either: ci/signoff.yaml runs `lint` BEFORE `elab`, and `elab`'s own
+#      pre-step `rm -rf`s nanosoc-multicore-system/build_soc — which is where
+#      PASS 3's SoC blackbox source comes from.  On a fresh runner the only pass
+#      that lints the integration top has never run at all.
+#
+#   2. A FAILED TOOL INVOCATION READ AS A CLEAN ONE.  The verdict was
+#      `grep %Warning|%Error | grep ${RTL}/`, i.e. findings were filtered to our
+#      RTL *before* anything asked whether Verilator had got as far as reading
+#      our RTL.  Verilator's setup failures name no src/rtl path —
+#      "%Error: Specified --top-module 'x' was not found in design.",
+#      "%Error: Cannot find file containing module: ..." — so they filtered out
+#      to nothing and printed "(no findings in src/rtl)" -> OK.  Injecting
+#      exactly that failure into PASS 3 alone took the run from exit 1 to exit 0.
+#
+#   Note why the exit status of Verilator cannot be the discriminator here: this
+#   flow does not pass -Wno-fatal, so Verilator 4.028 exits 1 on any -Wall
+#   warning ("%Error: Exiting due to 2 warning(s)") — a normal, healthy pass.
+#   The two tallies "Exiting due to N warning(s)/error(s)" are therefore
+#   discounted, and ANY OTHER %Error line is treated as "this pass did not run".
 #-----------------------------------------------------------------------------
 set -u
 
@@ -69,6 +100,12 @@ echo "== $("${VERILATOR}" --version) =="
 mkdir -p "${BBOX}" "${LOGDIR}"
 
 fail=0
+skipped=""
+
+# Verilator's own end-of-run tallies. They summarise things reported elsewhere
+# in the log and say nothing about whether the tool ran, so they are discounted
+# when deciding "did this pass happen?". Everything else on a %Error line does.
+TALLY_RE='^%Error: Exiting due to [0-9]+ (warning|error)\(s\)'
 
 # --- helper: run one lint pass, print findings in OUR files, gate on non-waived
 lint_pass() { # $1=label  $2=top  ; remaining args after -- are files/flags
@@ -77,15 +114,42 @@ lint_pass() { # $1=label  $2=top  ; remaining args after -- are files/flags
     bold "PASS: ${label}   (top: ${top})"
     # One durable log per pass, named from the label: "1. LEAF  chiplet_d2d_decode"
     # -> 1_LEAF_chiplet_d2d_decode.log
-    local slug log
+    local slug log vrc hard
     slug="$(printf '%s' "${label}" | tr -cs 'A-Za-z0-9' '_' | sed 's/^_*//; s/_*$//')"
     log="${LOGDIR}/${slug}.log"
     "${VERILATOR}" --lint-only -Wall --top-module "${top}" "$@" >"${log}" 2>&1
+    vrc=$?
+
+    # ---- GUARD: did this pass actually run? --------------------------------
+    # Asked BEFORE the findings are filtered to src/rtl, because a Verilator
+    # that never reached our RTL reports nothing about our RTL, and "nothing"
+    # then reads identically to "clean". See the header for the measurement.
+    if [ ! -f "${log}" ]; then
+        red "  ^ NO LOG at ${log} — the pass produced no evidence at all. FAIL"
+        fail=1
+        return
+    fi
+    hard="$(grep -aE '^%Error' "${log}" | grep -avE "${TALLY_RE}" || true)"
+    if [ -z "${hard}" ] && [ "${vrc}" -ne 0 ] \
+       && ! grep -aqE "${TALLY_RE}" "${log}"; then
+        # Non-zero exit with no Verilator diagnostic of any kind: the binary
+        # itself did not run (126/127), or died on a signal.
+        hard="verilator exited ${vrc} having reported nothing — the tool did not run"
+    fi
+    if [ -n "${hard}" ]; then
+        red "  ^ PASS DID NOT RUN — verilator failed before it could judge this RTL:"
+        printf '%s\n' "${hard}" | head -5 | sed 's/^/       /'
+        red "  (verilator exit ${vrc}) — a FLOW failure, NOT a clean pass"
+        fail=1
+        echo "  log: ${log}"
+        return
+    fi
+
     # OUR findings only (src/rtl paths); stub findings live under build/lint/bbox.
-    grep -E '%(Warning|Error)' "${log}" | grep -E "${RTL}/" || echo "  (no findings in src/rtl)"
+    grep -aE '%(Warning|Error)' "${log}" | grep -aE "${RTL}/" || echo "  (no findings in src/rtl)"
     local bad
-    bad="$(grep -E '%(Warning|Error)' "${log}" | grep -E "${RTL}/" \
-             | grep -Ev "${WAIVE_RE}" || true)"
+    bad="$(grep -aE '%(Warning|Error)' "${log}" | grep -aE "${RTL}/" \
+             | grep -aEv "${WAIVE_RE}" || true)"
     if [ -n "${bad}" ]; then
         red "  ^ NON-WAIVED finding(s) above — FAIL"
         fail=1
@@ -93,6 +157,12 @@ lint_pass() { # $1=label  $2=top  ; remaining args after -- are files/flags
         green "  OK (only waived by-design findings)"
     fi
     echo "  log: ${log}"
+}
+
+# --- helper: record a pass that could not run. NOT a pass; see the header.
+skip_pass() { # $1=label  $2=why
+    skipped="${skipped} $1"
+    red "PASS ${1}: SKIPPED — $2"
 }
 
 #-----------------------------------------------------------------------------
@@ -103,11 +173,33 @@ TL_SRC="${REPO}/tidelink/src/rtl/tidelink_top.sv"
 TC_SRC="${REPO}/tidechart/src/rtl/tidechart_controller.sv"
 ARM_IP="${ARM_IP_LIBRARY_PATH:-/research/AAA/ip_library}"
 CMSDK_SRC="${CMSDK_AHB_TO_APB:-${ARM_IP}/Corstone-101/BP210-r1p1-00rel0/BP210-BU-00000-r1p1-00rel0/logical/cmsdk_ahb_to_apb/verilog/cmsdk_ahb_to_apb.v}"
-[ -f "${CMSDK_SRC}" ] || CMSDK_SRC="$(find "${ARM_IP}" -name cmsdk_ahb_to_apb.v 2>/dev/null | head -1)"
+if [ ! -f "${CMSDK_SRC}" ]; then
+    # The fallback search can come back EMPTY, and an empty CMSDK_SRC used to be
+    # reported as "source for 'cmsdk_ahb_to_apb' not found ()" — a diagnostic
+    # that names neither what was wanted nor where it was looked for. Keep the
+    # attempted path so the note is actionable.
+    CMSDK_WANTED="${CMSDK_SRC}"
+    CMSDK_SRC="$(find "${ARM_IP}" -name cmsdk_ahb_to_apb.v 2>/dev/null | head -1)"
+    [ -n "${CMSDK_SRC}" ] || CMSDK_SRC="${CMSDK_WANTED} (and nothing named cmsdk_ahb_to_apb.v under ${ARM_IP})"
+fi
 
-gen() { # $1=module $2=src $3=out ; skips (with note) if src missing
-    if [ -f "$2" ]; then python3 "${GEN}" "$1" "$2" > "$3"; return 0; fi
-    echo "  NOTE: source for '$1' not found ($2) — dependent pass skipped"; return 1
+# $1=module $2=src $3=out. Returns non-zero — and the caller then SKIPS, which
+# now FAILS the run — if the source is absent, if the generator errors, or if it
+# produced an empty stub. The generator's exit status used to be discarded
+# entirely: a failed gen_bbox.py left a truncated stub behind and returned 0, so
+# the dependent pass ran against an empty module and Verilator's resulting
+# "Cannot find module" error was filtered out by the src/rtl grep.
+gen() {
+    if [ ! -f "$2" ]; then
+        echo "  NOTE: source for '$1' not found ($2)"; return 1
+    fi
+    if ! python3 "${GEN}" "$1" "$2" > "$3"; then
+        echo "  NOTE: blackbox generation FAILED for '$1' from $2"; return 1
+    fi
+    if [ ! -s "$3" ]; then
+        echo "  NOTE: blackbox for '$1' generated EMPTY from $2"; return 1
+    fi
+    return 0
 }
 have_tc=0; gen tidechart_controller "${TC_SRC}"   "${BBOX}/tidechart_controller.sv" && have_tc=1
 have_wr=1
@@ -128,7 +220,7 @@ if [ "${have_tc}" = 1 ]; then
     lint_pass "2. SHIM  tidechart_shim" tidechart_shim \
         "${RTL}/tidechart_shim.sv" "${BBOX}/tidechart_controller.sv"
 else
-    echo "PASS 2 SHIM: SKIPPED (no tidechart_controller source)"
+    skip_pass "2 SHIM" "no usable tidechart_controller blackbox (${TC_SRC})"
 fi
 
 #-----------------------------------------------------------------------------
@@ -147,8 +239,9 @@ if [ "${have_wr}" = 1 ] && [ "${have_tc}" = 1 ]; then
         "${BBOX}/tidechart_controller.sv" \
         "${BBOX}/cmsdk_ahb_to_apb.sv"
 else
-    echo "PASS 3 WRAPPER: SKIPPED (missing generated SoC and/or blackbox sources)"
-    echo "  render the SoC first:  make elab   (generates build_soc/rtl/...)"
+    skip_pass "3 WRAPPER" "missing generated SoC and/or blackbox sources"
+    echo "  render the SoC first:  make -C nanosoc-multicore-system/sys_desc"
+    echo "  (or \`make elab\`, which sources the SoC set_env.sh and generates it)"
 fi
 
 #-----------------------------------------------------------------------------
@@ -181,8 +274,35 @@ else
     fail=1
 fi
 
+#-----------------------------------------------------------------------------
+# SKIPPED PASSES. A pass that did not run has measured nothing, so it cannot
+# contribute a clean verdict. Escape hatch for a genuinely fresh clone that has
+# not yet rendered the SoC: LINT_ALLOW_SKIP=1, which downgrades this to a
+# warning — and says so in the final line, so a log reader can see that the
+# green is narrower than the one the description claims.
+#-----------------------------------------------------------------------------
 bold "═══════════════════════════════════════════════════════════════"
-if [ "${fail}" = 0 ]; then green "LINT OK — no non-waived findings on our RTL; loop detection proven"
-else                       red   "LINT FAILED — see non-waived findings above"; fi
+if [ -n "${skipped}" ]; then
+    if [ "${LINT_ALLOW_SKIP:-0}" = "1" ]; then
+        red "SKIPPED (LINT_ALLOW_SKIP=1, NOT gated):${skipped}"
+        red "  Whatever those passes would have found was not looked for."
+    else
+        red "SKIPPED PASS(ES):${skipped}"
+        red "  A pass that did not run is not a pass that was clean. Fix the"
+        red "  missing source above, or set LINT_ALLOW_SKIP=1 to accept a"
+        red "  deliberately narrower run (and read the caveat it prints)."
+        fail=1
+    fi
+fi
+
+if [ "${fail}" = 0 ]; then
+    if [ -n "${skipped}" ]; then
+        green "LINT OK ON WHAT IT RAN — but${skipped} did NOT run (LINT_ALLOW_SKIP=1)"
+    else
+        green "LINT OK — no non-waived findings on our RTL; loop detection proven"
+    fi
+else
+    red   "LINT FAILED — see the non-waived findings / flow failures above"
+fi
 echo "per-pass logs: ${LOGDIR}"
 exit "${fail}"
