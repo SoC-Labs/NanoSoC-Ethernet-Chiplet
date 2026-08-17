@@ -229,11 +229,36 @@ set_db add_stripes_extend_to_closest_target {ring stripe}
 ## > under $TSMC65_MACRO_DIRS; the M4 spacing table is in the tech LEF at
 ## > [tech_get tech_lef]. Read them on your own install; do not copy them here.
 ##
-## The QSPI cache stack is worst because its ten RAMs sit on a placement pitch
-## only slightly greater than their own height, leaving channels a few microns
-## tall -- and at offset 8 the first strap pair lands too high to fit in one.
-## Measured through the whole stack: zero M5 straps in any channel. PG has
-## nowhere to go but inside a macro.
+## The QSPI cache stack is worst, and it is NOT because the channels are small.
+## "leaving channels a few microns tall" was written here without measuring them
+## and has misdirected several people; CORRECTED 2026-08-17 by measuring every
+## channel in the stack (macro extents from the LEF, placements from
+## floorplan.tcl):
+##
+##     way1_w0 -> way1_w1   8.64      way0_w3 -> way1_w3   8.64
+##     way1_w1 -> way0_w0   8.64      way1_w3 -> way0_w2   9.00
+##     way0_w0 -> way0_w1   8.64      way0_w2 -> way1_w2  10.44
+##     way0_w1 -> way0_w3   8.64      way0_tag -> way1_tag 26.09
+##
+## A VDD+VSS pair spans 2.5um, derived from the M5 add_stripes call itself
+## (`-width 1 -spacing 0.5`): VDD occupies [y, y+1], a 0.5 gap, then VSS
+## [y+1.5, y+2.5] -- which is where the "VSS at F + kP + 1.5" in the aliasing
+## note above comes from. EVERY CHANNEL HAS 8.64um OR MORE, three and a half
+## times what a pair needs. There is ample room, and the straps are absent for a
+## different reason entirely.
+##
+## THE REAL REASON IS THE LADDER'S ANCHOR, NOT THE GAP. `split_row -selected`
+## above gives each macro its own row region, so its ladder runs at F + kP
+## measured from that macro's OWN bottom edge. With P=15 and a 36.36um macro,
+## k=0,1,2 put stripes at F, F+15, F+30 and F+30 is the last that still lands
+## inside the footprint. The channel occupies 36.36-45.0 in the same local
+## frame, so the ladder STOPS one pitch short of it, every time, at every
+## offset. That is why the measurement below ("zero M5 straps in any channel")
+## is real while the explanation attached to it was wrong.
+##
+## Consequence for the fix: opening the channels would achieve nothing, because
+## nothing is trying to put a strap in them. The lever is the per-region
+## anchoring itself -- see `split_row -selected` above.
 ##
 ## THE CHANNEL HYPOTHESIS IS WRONG. It predicted that a smaller offset would put
 ## a strap pair in each channel and turn the deep risers into edge taps, and that
@@ -247,10 +272,16 @@ set_db add_stripes_extend_to_closest_target {ring stripe}
 ##
 ## Offset 2 is the WORST, not the best. The result is not monotonic, so it is not
 ## about whether a strap reaches the channel -- 2, 4 and 6 all put a pair inside
-## the channel by construction, and only 6 helps. The likeliest remaining
-## explanation is phase against the memory's own M4 bit-column lattice, i.e.
-## whether a tap lands in a lattice gap or on a pin edge. NOT ESTABLISHED. Do not
-## write the channel story into a report; it has been measured and refuted.
+## the channel by construction, and only 6 helps. Do not write the channel story
+## into a report; it has been measured and refuted.
+##
+## THE X-PHASE HYPOTHESIS IS ALSO WRONG, and it was the next one in the queue.
+## It said the offset works by moving a tap into or out of a gap in the memory's
+## own M4 bit-column lattice. MEASURED 2026-08-17, and refuted outright: the
+## violating tap x-positions are IDENTICAL at every one of the nine offsets --
+## same ladder, same count, same tap-to-column gap to 3 decimal places. The M5
+## start offset is a Y parameter; it does not move a tap in X at all. Whatever
+## the offset does, it does not do it by x-phase.
 ##
 ## A WIDER SWEEP FOUND A SHARP, NARROW OPTIMUM at 5-6, and it is not where the
 ## channel story predicted:
@@ -262,19 +293,188 @@ set_db add_stripes_extend_to_closest_target {ring stripe}
 ##     (* = the shipped default)
 ##
 ## Offset 5 nearly ELIMINATES the macro class -- blockage 33 -> 5, M4 44 -> 17 --
-## while offset 6 gives the lowest TOTAL. They are optimising different things,
-## and one micron either side of them the benefit is gone entirely. A window that
-## narrow, with no mechanism behind it, is a coincidence of this netlist until
-## proven otherwise. Do NOT adopt either as a default on this evidence alone.
+## while offset 6 gives the lowest TOTAL. They are optimising different things.
 ##
-## What IS established: offset 6 beats the default on every axis measured --
-## 15 fewer DRC, 11 fewer macro-blockage records, 12 fewer M4, AND better
-## connectivity on both counts. That is unusual; most knobs here trade DRC
-## against fragmentation. It is not adopted as the default yet because the
-## mechanism is unexplained and an unexplained win can be a coincidence of this
-## netlist. Prove it survives a full route first.
+## ===========================================================================
+## THE MECHANISM, ESTABLISHED 2026-08-17. It is not phase; it is ALIASING.
+## ===========================================================================
+##
+## Notation, all of it read out of the memory LEF -- the VALUES are vendor
+## geometry and are deliberately not written here (see the redaction note above;
+## read them yourself under $TSMC65_MACRO_DIRS):
+##     H       macro height
+##     [Bl,Bh] the y-band, in LEF coordinates, occupied by a run of narrow
+##             internal M4 obstruction columns that crosses the whole macro
+## and from THIS file, which is ours and quotable:
+##     W = 1   M5 stripe width      P = 15  set_to_set_distance      F = offset
+##
+## split_row gives each macro its own row region, so the ladder is anchored on
+## the MACRO's own bottom edge: VDD stripes at F + kP, VSS at F + kP + 1.5.
+## route_special then drives a vertical M4 riser from the macro edge to the
+## nearest in-footprint stripe. The riser is a top-level M4 shape lying in the
+## same channel as the vendor's internal columns, at a gap that is ALREADY below
+## the required spacing -- so a marker appears iff the riser's y-span intersects
+## the band AT ALL, and the marker's height is exactly the length of that
+## intersection. That is the whole rule. Two consequences:
+##
+##   TAP DEPTH IS THE OFFSET. Directly visible on the isolated shared SRAM,
+##   whose single marker measures exactly F+1 um tall at all nine offsets:
+##   3,5,6,7,8,9,10,12,14 for F = 2,4,5,6,7,8,9,11,13. No fitting involved.
+##
+##   THE OPTIMUM IS A STRIPE FALLING OFF THE TOP OF A SHORT MACRO. For the
+##   stacked cache RAMs (flipped, so the band sits near the placed TOP edge) the
+##   riser runs from the topmost stripe that still FITS up to the macro top. The
+##   count therefore switches in a BLOCK rather than sliding -- on the largest
+##   macro it is 13 markers or 0 at every offset measured; on the second it is 13
+##   or a 6-7 subset -- and it reaches zero only when the k=2 stripe both still
+##   fits and has cleared the band:
+##                 F + 2P + W <= H      (it fits)
+##                 F + 2P     >= Bh     (it is above the band)
+##   i.e.  Bh - 2P <= F <= H - W - 2P.   On these macros that window is narrower
+##   than one micron and the only integer inside it is 5.
+##
+## SCORED AGAINST ALL NINE OFFSETS, predicting presence AND marker height:
+## 9/9 on the largest macro, 8/9 on the second. It also explains why the win
+## does not survive to 6: at F=6 the k=2 stripe no longer fits, the ladder falls
+## back to k=1, and the riser gets long again.
+##
+## AND IT EXPLAINS WHY 5 IS NOT SIMPLY BEST. Squeezing that k=2 stripe into the
+## last micron of the footprint is itself expensive: MINHOLE/M5 goes 0 (F>=6)
+## -> 4 (F=2) -> 16 (F=4) -> 27 (F=5), monotonically worse the closer the stripe
+## sits to the macro top edge, plus MINSTEP on M3/M4 with it. So offset 5 buys
+## ~30 macro-blockage markers and pays ~27 M5 geometry markers. ONE binary
+## condition -- does a third stripe fit in a short macro -- drives both, in
+## opposite directions. There is no offset that wins both, and that is now a
+## derived statement, not an observed one.
+##
+## HONEST RESIDUE: the model is exact for the two big flipped macros (13-marker
+## groups). It does NOT predict the small-count macros (1-3 markers each), whose
+## markers sit at near-zero gaps and switch on and off non-monotonically. Those
+## are router tap-placement heuristics. They are ~4 markers, not the swing.
 ##
 ##     EVP_M5_START_OFFSET=6 innovus -stylus -files ../scripts/probe_pg_build.tcl
+##
+## OFFSET 5 THROUGH A FULL ROUTE -- STARTED 2026-08-17 12:08, build/m5off5.
+## Launched with EVP_M5_START_OFFSET=5 and PLACE_SDC_STALE_OK=1 (the SDC guard
+## trips on a comment-only redaction commit; every EXECUTABLE line of
+## inputs/constraints.sdc is byte-identical to the one m5off6 used, checked).
+## The override is CONFIRMED to have reached the tool: an UNPREFIXED
+## "POWER-PLAN: M5 -start_offset overridden to 5" in work/innovus.log. Place and
+## place_opt are banked and match the other builds --
+##     m5off5   setup wns +0.005 tns 0 fep 0 | hold wns -0.314 tns -22.881 fep 466
+##     m5off6   setup wns +0.005 tns 0 fep 0 | hold wns -0.338 tns -21.934 fep 474
+## so the offset is not disturbing placement timing.
+##
+## PREDICTIONS LOGGED BEFORE THE RESULT LANDS, so this is a test and not a
+## story fitted afterwards. The probe has tracked the routed number to within 2
+## markers at both offsets checked (probe 71 -> routed 69 at F=8; probe 56 ->
+## routed 54 at F=6), and probe F=5 is 69 / blockage 5, so:
+##     routed check_drc      ~67
+##     routed macro-blockage  ~5
+##     rail-to-rail M5 SHORT    4   <- offset-invariant, floorplan-caused
+## If the rail shorts come back as 4, that CONFIRMS the offset cannot fix them
+## and the floorplan fix above is the only route. Read it with:
+##     grep -c '^Bounds' build/m5off5/reports/nanosoc_eth_chiplet_pads_imp_drc.rep
+## and NEVER trust the make exit code -- check for the artefact.
+##
+## ---------------------------------------------------------------------------
+## THE OFFSET IS NOT THE VARIABLE THAT MATTERS. Two warnings for whoever reads
+## the sweep table above and reaches for a number.
+##
+## (1) EVERY BUILD IN THAT TABLE HAS NO SUPPLY PADS. The toolkit builds share
+## build/default/outputs/, whose synthesis dropped all the supply pads (they are
+## instantiated with empty port lists, so synthesis saw them unloaded and deleted
+## them; add_io_fillers then backfilled the slots, so the ring closes and looks
+## right). route_special {pad_pin pad_ring} therefore created ZERO wires --
+## IMPSR-1256 "IO ports routed 0". A check_drc TOTAL from those builds cannot be
+## compared with a tapeout number, because the pad-ring classes cannot appear.
+## build/padfix/outputs/ has the pads and is the netlist a re-run should use.
+##
+## WHAT DOES SURVIVE, AND IT IS MORE THAN YOU WOULD GUESS. Diffed marker for
+## marker, `knobs-live` (pad-LESS, toolkit flow) and the pad-CORRECT tapeout
+## database runs/20260812T144334Z_route-baseline-gds-nonstrict -- same floorplan,
+## same default offset -- produce IDENTICAL check_drc output: 71 markers each,
+## 70 unique each, 70 in common, ZERO unique to either side, same per-layer
+## census (M4 47, M5 13, M9 3, M8 3, M7 2, M6 2, M2 1). The missing supply pads
+## add no DRC marker and remove none.
+##
+## So the pad defect is a CONNECTIVITY defect, not a DRC one, and the DRC numbers
+## in the sweep table are measuring real core-grid geometry. What those builds
+## CANNOT measure is the thing the pads are for: mesh-to-pad connectivity, the RV
+## via count, AP special wire, and anything downstream (IR, EM). Do not quote
+## their opens/dangling figures, and do not call any of them a tapeout candidate.
+## build/padfix/outputs/ carries the pads; a re-run should start there.
+##
+## (1b) THE BOOT ROMs DIFFER BETWEEN THESE BUILDS, AND IT DOES NOT MATTER.
+## knobs-live / macro-move / m5off6 consumed the shared ROM drop that was later
+## proved wrong (CPU0's ROM held random data); m5off5 was built after
+## ASIC/rom_build.mk landed and carries the corrected macros compiled 2026-08-14.
+## So m5off5 vs m5off6 varies the offset AND the ROM contents. MEASURED, so that
+## nobody has to assume it: these are via-programmed ROMs, and the two ROMs in
+## the design hold DIFFERENT programs yet their LEF abstracts are byte-identical
+## once the cell name is normalised (2804 lines each, zero diff). The abstract is
+## a function of the compiler and the configured size, not of the data, so the
+## data cannot move a pin, an outline or an OBS rectangle. The DRC comparison
+## stands. (The GDS inside the macro does change -- that is the point of a ROM.)
+##
+## (2) THE FOUR M5 VDD-VSS SHORTS ARE A FLOORPLAN BUG AND THE OFFSET CANNOT FIX
+## THEM. `SHORT ... Special Wire of Net VSS & Special Wire of Net VDD (M5)` is
+## rail to rail. It appears at EVERY offset from 2 to 13, always 4 records,
+## always the same x, only translated in y by the offset -- so the offset moves
+## it and never removes it. Closed form, using only our own numbers:
+##
+##   Two side-by-side macros each anchor their own ladder on their own bottom
+##   edge. With A below B and D = By - Ay, region A's VSS stripe overlaps region
+##   B's VDD stripe iff  D mod P  falls in (S, S+2W) = (0.5, 2.5), and the
+##   overlap is  (S+2W) - (D mod P).  F cancels -- it is on both sides.
+##
+##   net_imem_rf_32k -> bootrom:  D = 1538.60 - 1503.40 = 35.20, mod 15 = 5.20
+##                                -> clear by 2.70 um.  ZERO shorts.
+##   after the 2026-08-13 +2.72 move:
+##                                D = 1538.60 - 1506.12 = 32.48, mod 15 = 2.48
+##                                -> overlap 0.020 um.   FOUR shorts.
+##
+##   The move needed +2.72 and the available clearance was +2.70. It overshot by
+##   20 NANOMETRES and that is the entire defect. Confirmed on the routed builds:
+##   knobs-live (pre-move) 0 shorts; macro-move (post-move, F=8) 4 at y = 1538.60
+##   + 8 + 15j; m5off6 (post-move, F=6) the same 4 at y = 1538.60 + 6 + 15j. The
+##   pad-correct tapeout database is pre-move and also has 0, as the formula says.
+##
+##   THE FIX, MEASURED ON THE PG PROBE -- AND THE FIRST ATTEMPT WAS WRONG.
+##   The obvious repair is to take D mod P to exactly 2.50 by placing rf_32k at
+##   1506.10 instead of 1506.12, a 20 nm nudge. IT DOES NOT WORK, and the probe
+##   said so in three minutes:
+##
+##     rf_32k y     D mod P   check_drc   M5 rail SHORT   marker height   macro M4
+##     1506.12       2.480        71            4            0.020 um       33
+##     1506.10       2.500        71            4            0.000 um       33
+##     1505.60       3.000        65            0               --          33
+##
+##   The window is CLOSED, not open. At exactly S+2W the two stripe edges are
+##   COINCIDENT, and coincident metal on two different nets is still a short --
+##   Innovus reports it with a zero-height marker, which is easy to skim past.
+##   The arithmetic above is confirmed (0.020 -> 0.000 exactly as predicted); it
+##   was the conclusion drawn from it that was wrong.
+##
+##   1505.60 gives D mod P = 3.00, i.e. 0.50 um of real clearance, and it removes
+##   ALL FOUR shorts and 2 markers that travel with them (71 -> 65). Note the
+##   macro-blockage class is UNCHANGED at 33 across all three, which is the
+##   signature of a correctly targeted fix: it touches what it should and nothing
+##   else. The orphan corridor stays closed -- halo top ends 0.52 um below the
+##   core top, well under a row, so the strip is still not a row.
+##   Probe-level only; not yet through a full route.
+##
+##   THE REAL FIX IS STRUCTURAL. Sweeping the rule above over every side-by-side
+##   macro pair in floorplan.tcl (y-ranges overlapping, x-gap under ~60 um) picks
+##   out exactly the one pair that fails and clears all the rest -- but
+##   four of them sit within half a micron of the window -- three of the QSPI/chip
+##   imem pairs at D mod P = 0.09 (0.41 um from failing) and w0_tag|w1_word3 at
+##   2.95 (0.45 um). Any future macro nudge can land in it, silently, and it
+##   costs 4 rail shorts and no error message. The structural cure is to stop
+##   re-anchoring the M5 ladder per row region -- one ladder over the whole core
+##   has no D to alias -- which is the same root cause as the macro-blockage
+##   class above. FIX THAT AND BOTH FAMILIES GO AWAY; the offset only trades
+##   one against the other.
 set M5_START_OFFSET 8
 if {[info exists ::env(EVP_M5_START_OFFSET)] && $::env(EVP_M5_START_OFFSET) ne ""} {
     set M5_START_OFFSET $::env(EVP_M5_START_OFFSET)
