@@ -27,8 +27,64 @@ stages:
     gate: block
     label: soclabs-sim
     description: "Every top-level port classified exactly once; pad ring agrees"
-    run: make chip-boundary
+    # THE VERDICT IS ON STDOUT AND EVERY FAILURE ARM IS ON STDERR, so both are
+    # teed into an artefact. Until 2026-08-17 this stage had no evidence of its
+    # own at all: check_chip_boundary.py writes nothing without --emit, so
+    # `artifacts: build/chip/**` collected a wrapper and flists left behind by a
+    # previous `chip-wrapper` run. The bundle therefore shipped files dated weeks
+    # before the run that supposedly produced them, and the stage's only claim
+    # was its exit status.
+    pre:
+      - mkdir -p build/chip
+    run: make chip-boundary 2>&1 | tee build/chip/chip_boundary.log; exit ${PIPESTATUS[0]}
+    # Re-read the census rather than trusting the rc. The load-bearing clause is
+    # the VACUITY one: `classified == ports` is trivially true when both are 0,
+    # so a run that parsed no ports agrees with itself perfectly. Same defect
+    # class as rom-content's "it reports no words compared, which is not a pass".
+    check: |
+      python3 - <<'EOF'
+      import re, sys
+      p = "build/chip/chip_boundary.log"
+      try:
+          t = open(p, errors="replace").read()
+      except OSError:
+          print(f"chip-boundary: FAIL — no log at {p}; the stage produced no evidence")
+          sys.exit(1)
+      def n(pat):
+          m = re.search(pat, t)
+          return int(m.group(1)) if m else None
+      ports, clsd = n(r"RTL ports\s*:\s*(\d+)"), n(r"classified\s*:\s*(\d+)")
+      pads = n(r"pads\s*:\s*(\d+) pad cells")
+      bad = []
+      if ports is None or clsd is None:
+          bad.append("the log carries no port census — the script never reached one")
+      elif ports == 0:
+          bad.append("0 RTL ports: nothing was classified, so every count agrees "
+                     "with every other count. That is not a clean boundary")
+      elif clsd != ports:
+          bad.append(f"{clsd} of {ports} ports classified — an unclassified port is "
+                     f"silently dropped from the wrapper and its inputs float")
+      if "pad-ring mismatch(es)" in t:
+          bad.append("the log reports pad-ring mismatches against the spec")
+      elif not pads:
+          bad.append("0 pad cells — the pad ring was never read")
+      if "OK — every port accounted for exactly once" not in t:
+          bad.append("no final OK line — the run stopped before its own verdict, "
+                     "so this log is a partial run and not a measurement")
+      for b in bad:
+          print("chip-boundary: FAIL —", b)
+      sys.exit(1 if bad else 0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/chip-boundary/pass
+      must_fail:
+        - ci/fixtures/chip-boundary/fail-count-mismatch
+        - ci/fixtures/chip-boundary/fail-zero-ports
+        - ci/fixtures/chip-boundary/fail-pad-ring-mismatch
+        - ci/fixtures/chip-boundary/fail-truncated
+        - ci/fixtures/chip-boundary/fail-no-log
     artifacts:
+      - build/chip/chip_boundary.log
       - build/chip/**
 
   - id: lint
@@ -60,6 +116,83 @@ stages:
     # build/lint/passes/ (it used to mktemp and delete them), but the pass/fail
     # lines that COMPOSE the verdict are only ever on stdout.
     run: make lint 2>&1 | tee build/lint/lint_verdicts.log; exit ${PIPESTATUS[0]}
+    # verif/lint/run.sh now keeps one durable log per pass under
+    # build/lint/passes/, so this gate can assert on artefacts instead of on the
+    # exit status of a pipeline. That matters here more than almost anywhere: the
+    # runner's own header records TWO measured false greens in this exact pass,
+    # both of which exit 0 and both of which are invisible to `${PIPESTATUS[0]}`
+    # if LINT_ALLOW_SKIP is ever set on a runner —
+    #
+    #   SILENT SCOPE COLLAPSE  one unresolvable blackbox source turns PASS 3
+    #                          (the only pass that lints the integration top)
+    #                          into "SKIPPED", and a live defect goes green. This
+    #                          is not hypothetical in CI: `lint` runs BEFORE
+    #                          `elab`, and elab's pre-step rm -rf's build_soc,
+    #                          which is where PASS 3's SoC blackbox comes from.
+    #   TOOL NEVER RAN         "%Error: Specified --top-module 'x' was not found
+    #                          in design." names no src/rtl path, so filtering
+    #                          findings to our RTL first filtered it away to
+    #                          "(no findings in src/rtl)" -> OK.
+    #
+    # So: every declared pass must have LEFT A LOG, no log may carry a %Error
+    # that is not Verilator's own end-of-run tally, and the loop-detection proof
+    # must still discriminate. A lint that has gone blind reports every design
+    # clean, which is why the sanity pair is gated and not merely printed.
+    check: |
+      python3 - <<'EOF'
+      import glob, os, re, sys
+      D = "build/lint/passes"
+      logs = sorted(glob.glob(os.path.join(D, "*.log")))
+      if not logs:
+          print(f"lint: FAIL — no per-pass logs under {D}; the run left no evidence "
+                f"and 'nothing reported' is not 'nothing found'")
+          sys.exit(1)
+      RTL    = "/src/rtl/"
+      WAIVED = re.compile(r"%Warning-(UNUSED|PINCONNECTEMPTY)")
+      TALLY  = re.compile(r"^%Error: Exiting due to \d+ (warning|error)\(s\)")
+      WANT = {"1_LEAF":       "the decoder standalone",
+              "2_SHIM":       "the TideChart shim",
+              "3_WRAPPER":    "the integration top — the ONLY pass that lints the chiplet as assembled",
+              "4_SANITY_bug": "the loop-detection proof (bug wiring)",
+              "4_SANITY_tie": "the loop-detection proof (structural tie)"}
+      names, bad = [os.path.basename(x) for x in logs], []
+      for slug, what in WANT.items():
+          if not any(x.startswith(slug) for x in names):
+              bad.append(f"PASS {slug} left no log — it was SKIPPED, so {what} was "
+                         f"never linted. A pass that did not run is not a pass that was clean")
+      def body(slug):
+          return "".join(open(x, errors="replace").read()
+                         for x in logs if os.path.basename(x).startswith(slug))
+      for x in logs:
+          txt = open(x, errors="replace").read()
+          hard = [l for l in txt.splitlines() if l.startswith("%Error") and not TALLY.match(l)]
+          if hard:
+              bad.append(f"{os.path.basename(x)}: verilator failed before it could judge "
+                         f"this RTL — {hard[0]!r}. A FLOW failure, not a clean pass")
+          nw = [l for l in txt.splitlines()
+                if ("%Warning" in l or "%Error" in l) and RTL in l and not WAIVED.search(l)]
+          if nw:
+              bad.append(f"{os.path.basename(x)}: non-waived finding on our RTL — "
+                         f"{nw[0].strip()!r}")
+      if any(n.startswith("4_SANITY_bug") for n in names) \
+              and "%Warning-UNOPTFLAT" not in body("4_SANITY_bug"):
+          bad.append("the bug wiring no longer trips UNOPTFLAT: loop detection has gone "
+                     "BLIND, so a clean lint verdict from this run means nothing")
+      if "%Warning-UNOPTFLAT" in body("4_SANITY_tie"):
+          bad.append("the structural tie trips UNOPTFLAT — loop detection is no longer "
+                     "precise about its cause")
+      for b in bad:
+          print("lint: FAIL —", b)
+      sys.exit(1 if bad else 0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/lint/pass
+      must_fail:
+        - ci/fixtures/lint/fail-wrapper-skipped
+        - ci/fixtures/lint/fail-pass-did-not-run
+        - ci/fixtures/lint/fail-nonwaived-finding
+        - ci/fixtures/lint/fail-sanity-blind
+        - ci/fixtures/lint/fail-no-logs
     artifacts:
       - build/lint/**
 
@@ -73,6 +206,45 @@ stages:
     pre:
       - rm -rf tidelink/deps/xhb500/generated nanosoc-multicore-system/build_soc build/elab
     run: make elab
+    # A BARE 'CPU time:' IS NOT COMPLETION EVIDENCE, and that is the whole reason
+    # this check names the LINK phase. Measured 2026-08-17 by running VCS on a
+    # module with a missing child: the failed run ends
+    #
+    #     Error-[CFCILFBI] Cannot find cell in liblist
+    #     ...
+    #     1 error
+    #     CPU time: .199 seconds to compile
+    #
+    # — it prints a CPU-time line like every other run, but with no elab and no
+    # link phase in it. A successful run ends "CPU time: N seconds to compile +
+    # N to elab + N to link". So `to link` separates them and `CPU time:` does
+    # not. The same shape covers a killed run, which is why this is asserted
+    # rather than inferred from the absence of errors: a log with zero Error-[
+    # lines that stopped mid-build is NOT ELABORATED, not clean.
+    check: |
+      L=build/elab/elab.log
+      test -s "$L" || { echo "elab: FAIL — no VCS log at $L; the stage produced no evidence"; exit 1; }
+      if grep -aqE '^Error-\[' "$L"; then
+        echo "elab: FAIL — VCS reported elaboration errors:"
+        grep -anE '^Error-\[' "$L" | head -5
+        exit 1
+      fi
+      grep -aqE 'CPU time:.*to link' "$L" || {
+        echo "elab: FAIL — no 'CPU time: ... to link' line, so VCS never reached the"
+        echo "  link step. An error-free log that did not finish means NOT ELABORATED."
+        echo "  (a FAILED run prints 'CPU time: ... to compile' too — do not weaken this"
+        echo "   to a bare 'CPU time:' grep; that was measured, both directions)"
+        echo "  log: $L ($(wc -c <"$L") bytes)"
+        exit 1; }
+      grep -aqE '^All of [0-9]+ modules done' "$L" || {
+        echo "elab: FAIL — no 'All of N modules done' line; the module build never completed"
+        exit 1; }
+    check_proof:
+      must_pass: ci/fixtures/elab/pass
+      must_fail:
+        - ci/fixtures/elab/fail-vcs-error
+        - ci/fixtures/elab/fail-cut-off
+        - ci/fixtures/elab/fail-no-log
     artifacts:
       - build/elab/*.log
       - build/elab/*.flist
@@ -213,6 +385,68 @@ stages:
     label: soclabs-sim
     description: "Functional regression suite"
     run: make regress
+    # A SKIPPED TEST IS NOT A PASSED TEST, and until 2026-08-17 nothing here
+    # could tell the two apart. scripts/regress.sh's cocotb verdict is
+    #
+    #     tc=$(grep -c '<testcase' "$xml"); fa=$(grep -cE '<failure|<error' "$xml")
+    #     if [ "$tc" -ge 1 ] && [ "$fa" -eq 0 ]; then pass_row ...
+    #
+    # and cocotb writes <skipped /> INSIDE a <testcase>, so a skipped test counts
+    # toward tc and contributes nothing to fa. Measured on the real
+    # verif/g2_soc_pair/results.xml of 2026-08-08: FIVE testcases, FOUR of them
+    # <skipped /> — including test_peer_write_crosses_to_die_b, the headline
+    # cross-die write proof — and the harness reported
+    # "g2_soc_pair PASS  5 testcase(s), 0 failures".
+    #
+    # That is the same defect as the lint stage's SKIPPED PASS, and this repo has
+    # already settled the principle for it, in verif/lint/run.sh's own header:
+    # "A PASS THAT DID NOT RUN IS NOT A CLEAN PASS". A deliberately-disabled
+    # proof is a narrowing of what this pipeline claims, so it belongs in
+    # `unsupported:` where `refuted_by:` keeps it honest — never inside a green
+    # blocking gate.
+    check: |
+      python3 - <<'EOF'
+      import os, sys, xml.etree.ElementTree as ET
+      SUITES = [("verif/g2_peer_aperture/results.xml", "g2_peer_aperture"),
+                ("verif/g2_soc_pair/results.xml",      "g2_soc_pair")]
+      bad = 0
+      for path, name in SUITES:
+          if not os.path.exists(path):
+              print(f"{name}: FAIL — no results.xml at {path}; the build or the run "
+                    f"died. 'No output' is not 'no failures'")
+              bad += 1; continue
+          try:
+              tcs = ET.parse(path).getroot().findall(".//testcase")
+          except ET.ParseError as e:
+              print(f"{name}: FAIL — results.xml does not parse ({e}); a partial file "
+                    f"is a partial run"); bad += 1; continue
+          if not tcs:
+              print(f"{name}: FAIL — 0 testcases. The suite executed nothing, and a "
+                    f"loop over nothing reports no failures"); bad += 1; continue
+          failed  = [t.get("name") for t in tcs
+                     if t.find("failure") is not None or t.find("error") is not None]
+          skipped = [t.get("name") for t in tcs if t.find("skipped") is not None]
+          if failed:
+              print(f"{name}: FAIL — {len(failed)}/{len(tcs)} testcase(s) failed: "
+                    + ", ".join(failed[:4])); bad += 1
+          if skipped:
+              print(f"{name}: FAIL — {len(skipped)}/{len(tcs)} testcase(s) were SKIPPED "
+                    f"and never executed: " + ", ".join(skipped[:4]))
+              print(f"    regress.sh counts these toward its testcase total and reports "
+                    f"'{len(tcs)} testcase(s), 0 failures'. Declare a deliberately "
+                    f"disabled proof under `unsupported:` instead.")
+              bad += 1
+          if not failed and not skipped:
+              print(f"{name}: PASS — {len(tcs)} testcase(s) executed, 0 failures")
+      sys.exit(1 if bad else 0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/regress/pass
+      must_fail:
+        - ci/fixtures/regress/fail-skipped-tests
+        - ci/fixtures/regress/fail-failure-element
+        - ci/fixtures/regress/fail-zero-testcases
+        - ci/fixtures/regress/fail-no-xml
     artifacts:
       - build/regress/*.log
       - verif/g2_peer_aperture/results*.xml
@@ -244,7 +478,7 @@ stages:
     phase: physical
     gate: block
     label: soclabs-pdk
-    description: "Mutation-test the ROM gate itself — 22 cases, both directions"
+    description: "Mutation-test the ROM gate itself — 25 cases, both directions"
     # Runs BEFORE rom-content, deliberately, exactly as lec-selftest runs before
     # lec. It feeds the gate a ROM that IS the firmware (must pass), one bit
     # flipped in one word, a truncated code file, an empty ROM directory, a
@@ -253,15 +487,32 @@ stages:
     # fail NAMING THE RIGHT CAUSE. ~3 s, no licence, no design data.
     run: make -C ASIC -f common.mk romlibs-selftest
     check: |
-      # The count is asserted, not just the exit status: a selftest that silently
-      # stops running cases still exits 0.
+      # THE EXACT COUNT, not a decade-wide window. This read `2[0-9]` until
+      # 2026-08-17, while the selftest ran 25 cases and this manifest's own
+      # description said 22 — so the number was never actually asserted, and the
+      # case list could have lost FIVE cases (20% of the proof) with the gate
+      # still green. The comment above it claimed "the count is asserted, not
+      # just the exit status"; it was asserted only to within a decade.
+      #
+      # 25 = 23 expect_fail + 2 expect_pass in ROM_SELFTEST_PY (ASIC/rom_gate.mk).
+      # Pinned in BOTH directions, exactly as ASIC/asic-toolkit/test/MUTATION_COVERAGE
+      # pins its own numbers and for the same reason: fewer means a proof was
+      # dropped; more means one was added and nobody reviewed it. If you add a
+      # case, this line and the description above move together.
       make -C ASIC -f common.mk --no-print-directory romlibs-selftest 2>&1 \
-        | grep -qE '^SELFTEST: 2[0-9] passed, 0 failed' \
-        || { echo "the ROM gate selftest did not run its full case list"; exit 1; }
+        | grep -qE '^SELFTEST: 25 passed, 0 failed' \
+        || { echo "the ROM gate selftest did not run its full 25-case list, or a case failed"
+             echo "  (if you deliberately added or removed a case, update BOTH this count"
+             echo "   and the stage description — an unreviewed change to what this gate"
+             echo "   proves is not a pass)"; exit 1; }
     check_proof:
       must_pass: ci/fixtures/rom-selftest/pass
       must_fail:
         - ci/fixtures/rom-selftest/fail-short-caselist
+        # 24 of 25. The case the old `2[0-9]` regex ACCEPTED: one dropped proof,
+        # still inside the decade, reported as a full clean run. This fixture is
+        # the whole argument for pinning the exact number.
+        - ci/fixtures/rom-selftest/fail-one-case-dropped
         - ci/fixtures/rom-selftest/fail-case-failed
     artifacts:
       - build/rom_verify/selftest/**
@@ -528,6 +779,16 @@ stages:
     # std-cell/IO/pad layout exists on this site (every TSMC delivery is a
     # front-end kit), so they are not fixable here and clear at eptsmc's IO
     # import. That exemption is stated in the script and printed on every run.
+    #
+    # It also applies CELL-SCOPED waivers from
+    # ASIC/genus-innovus/scripts/calibre/drc_waivers.yaml — today the 691 PO.R.8
+    # inside 22 Artisan memory leaf cells, established 2026-08-18 as a
+    # black-boxing artefact and not vendor defects (docs/tapeout/39-po-r8-
+    # resolved.md). The DECK is untouched: Calibre still reports all 837, and
+    # the census prints raw and waived side by side. The waiver cannot hide our
+    # own geometry — results attributed to the layout primary cell are refused
+    # in code — and it FAILS the gate if it goes stale or if any waived count
+    # moves. See the fail-waiver-stale fixture below.
     check: |
       python3 scripts/ci/drc_census.py ASIC/genus-innovus/work/drc_run
     # NOTE these fixtures are also a live test of DRC_DESIGN_BUDGET /
@@ -541,9 +802,135 @@ stages:
         - ci/fixtures/drc/fail-design-results
         - ci/fixtures/drc/fail-saturated-cap
         - ci/fixtures/drc/fail-no-summary
+        # A LIVE TEST OF THE WAIVER FILE, not just of the code. Its summary
+        # reports PO.R.8 in `rf_08kCNTRL_RECOMPILED` — the plausible accident of a
+        # memory-compiler re-run renaming the leaf cells. Every cell named in
+        # ASIC/genus-innovus/scripts/calibre/drc_waivers.yaml then matches
+        # nothing while the check still fires, and a waiver that matches nothing
+        # reads as coverage it does not have. If someone widens that file to a
+        # rule-scoped suppression, this case stops failing and `prove` goes red.
+        - ci/fixtures/drc/fail-waiver-stale
     artifacts:
       - ASIC/genus-innovus/work/drc_run/**
       - ASIC/genus-innovus/work/calibre_drc.runset
+
+  # --- Power delivery ---------------------------------------------------------
+  # THE FIRST VOLTAGE THIS PIPELINE HAS EVER COMPUTED. Before this row the
+  # nearest thing to a power-delivery check was `pg_capacity`, which rates the
+  # grid's ELECTROMIGRATION CEILING in milliamps — a different quantity — and
+  # 2b_pnr_place_eval.tcl §12, which halts the run on an RV-VIA COUNT with a
+  # floor of 8. That floor came from one day's tool configuration, and net VDD
+  # has no RV via at top level at all, so it was guarding a plane the core
+  # supply does not cross. A count cannot answer whether a supply is adequate;
+  # only a voltage can.
+  #
+  # gate: report, DELIBERATELY, and here is what has to be true to promote it to
+  # block:
+  #   * the PG opens must be zero. Instances with no path to a supply rail do
+  #     not power up; that is a functional defect, not a margin, and it is the
+  #     one criterion here with no defensible non-zero value.
+  #   * EM current density must be ANALYSED. In static mode, with no -em_models
+  #     and no -process_techgen_em_rules, the tool DISABLES current-density
+  #     analysis and the run still succeeds with the EM report simply absent.
+  #     At --tier signoff the gate treats that as a hard failure, which is why
+  #     this row runs at --tier report until models are wired in.
+  # Promoting is a one-word edit here plus RAIL_TIER=signoff. Do not promote by
+  # relaxing a budget: every threshold in rail_budgets.txt carries a provenance
+  # string and the gate refuses to load a file whose provenance is a measurement.
+  - id: ir-drop
+    phase: physical
+    gate: report
+    label: soclabs-pdk
+    description: "Static rail analysis (Voltus rail commands under Innovus): measured IR drop on the routed database, gated on the completeness assertions that decide whether the millivolts mean anything"
+    run: make -C ASIC/genus-innovus rail
+    # THE CHECK NEVER CONSULTS AN EXIT CODE — not the tool's and not the stage
+    # script's. report_rail, report_resistance and set_power_pads have all been
+    # observed printing `**ERROR` and returning SUCCESS on this design, so the
+    # verdict is recomputed from the artefacts by rail_gate.py, which anyone can
+    # re-run months later with no licence and no database.
+    #
+    # AND ABSENCE IS NOT A PASS. The failure mode this whole stage defends
+    # against is a rail solve that attached no current, completed successfully
+    # and reported a SMALL drop — the best possible result produced from no
+    # data. A missing census is the same class of event and is a failure here.
+    check: |
+      set -u
+      CEN="${RAIL_CENSUS:-}"
+      if [ -z "$CEN" ]; then
+        CEN=$(ls -1t ASIC/genus-innovus/rail/work/*/census.txt 2>/dev/null | head -1)
+      fi
+      if [ -z "$CEN" ] || [ ! -f "$CEN" ]; then
+        echo "no rail census under ASIC/genus-innovus/rail/work/*/ — the stage did not run."
+        echo "An absent IR-drop result is NOT a pass. A rail run that fails to attach"
+        echo "current reports SMALL drops, which is the failure mode that looks like"
+        echo "good news; having no result at all is not better than that."
+        exit 1
+      fi
+      echo "census: $CEN"
+      python3 ASIC/genus-innovus/rail/rail_gate.py \
+          --census  "$CEN" \
+          --budgets ASIC/genus-innovus/rail/rail_budgets.txt \
+          --tier    "${RAIL_TIER:-report}"
+    # Both directions, and each must-fail case is a way this project has ALREADY
+    # been misled — not an invented mutation. The fixtures are cut down from the
+    # real artefacts of the fp1505 run, so the shapes are the tool's own.
+    check_proof:
+      must_pass: ci/fixtures/ir-drop/pass
+      must_fail:
+        - ci/fixtures/ir-drop/fail-no-voltage-sources
+        - ci/fixtures/ir-drop/fail-low-coverage
+        - ci/fixtures/ir-drop/fail-era-method
+        - ci/fixtures/ir-drop/fail-disconnected-instances
+        - ci/fixtures/ir-drop/fail-over-budget
+        - ci/fixtures/ir-drop/fail-no-census
+    artifacts:
+      - ASIC/genus-innovus/rail/work/*/census.txt
+      - ASIC/genus-innovus/rail/work/*/verdict.json
+      - ASIC/genus-innovus/rail/work/*/results/*/Reports/*/*.main.rpt
+      - ASIC/genus-innovus/rail/work/*/results/*/Reports/*/*.layerbased_ir.rpt
+      - ASIC/genus-innovus/rail/work/*/results/*/*/*_vsrcs.rpt
+
+  # --- Can the IR-drop gate actually FAIL? ------------------------------------
+  # Same doctrine as rom-selftest and lec-selftest, and runs before the row it
+  # guards. Twenty mutations of a rail run, each broken in one specific way this
+  # project has been misled by: zero voltage sources reported as "6/6 (100.00%)",
+  # a source on every via of a layer, an ERA method that would bridge the PG
+  # opens, a stream-derived grid, the 1.20-vs-1.08 divisor, a demand file that
+  # loaded no current, a tool summary that disagrees with the per-instance
+  # report, and a budget file whose provenance is the previous run's number.
+  # No licence, no database, no PDK: ~1 s on any host.
+  - id: ir-drop-selftest
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "Mutation-test the IR-drop gate itself — 20 cases, both directions, plus two anti-ratchet refusals"
+    run: make -C ASIC/genus-innovus rail-selftest
+    # The COUNT is asserted, not just the exit status: a selftest that quietly
+    # stops running cases still exits 0. This is the same hole rom-selftest's
+    # row already guards against.
+    check: |
+      OUT=$(python3 ASIC/genus-innovus/rail/rail_gate.py --selftest 2>&1) || {
+        echo "$OUT"; echo "the rail gate's own mutation battery FAILED"; exit 1; }
+      echo "$OUT" | tail -3
+      N=$(echo "$OUT" | sed -n 's/^ *\([0-9]\+\) passed, \([0-9]\+\) failed.*/\1/p')
+      F=$(echo "$OUT" | sed -n 's/^ *\([0-9]\+\) passed, \([0-9]\+\) failed.*/\2/p')
+      test -n "$N" || { echo "the battery printed no tally — it did not run"; exit 1; }
+      test "${F:-1}" = 0 || { echo "$F mutation(s) were not caught"; exit 1; }
+      test "$N" -ge 20 || { echo "only $N cases ran; the battery has been cut down"; exit 1; }
+      # A battery that contains no must-PASS case proves only that the gate says
+      # no to everything, which is not a gate either.
+      echo "$OUT" | grep -q 'baseline_healthy .*got PASS' || {
+        echo "the positive control did not pass — this gate rejects good evidence"; exit 1; }
+    # Each must_fail shadows rail_gate.py with a stub printing a DIFFERENT tally,
+    # so the three clauses above are proved separately rather than all at once by
+    # one mutation. The must_pass fixture supplies no file at all: the positive
+    # control has to be the real battery, or it proves only that a stub can be read.
+    check_proof:
+      must_pass: ci/fixtures/ir-drop-selftest/pass
+      must_fail:
+        - ci/fixtures/ir-drop-selftest/fail-mutation-escaped
+        - ci/fixtures/ir-drop-selftest/fail-battery-cut-down
+        - ci/fixtures/ir-drop-selftest/fail-positive-control-missing
 
 # -----------------------------------------------------------------------------
 # Checks a complete ASIC signoff would include that this pipeline does NOT do.
@@ -644,18 +1031,60 @@ unsupported:
       find ${TSMC_65_HOME} -maxdepth 6 -size +1k
       \( -name 'tcbn65lp*.cdl' -o -name 'tphn65*.cdl' -o -name 'tpbn65v*.cdl' \)
       2>/dev/null | grep -q .
-  - id: power-signoff
-    # CORRECTED 2026-08-17. "no Voltus/RedHawk" was false: Voltus ships in
-    # SSV_21.11.000 and the binary is on this filesystem at
-    # ${CDS_INSTALL}/tools/bin/voltus — it is simply
-    # not on PATH until that release's setup script is sourced. The tool is not
-    # the blocker; the absence of a stage is. So the refutation tests for the
-    # stage, and the tool clause is stated accurately instead of as an excuse.
-    reason: "No power/IR-drop analysis stage in this pipeline. NOT for want of a tool — Voltus is installed (SSV_21.11.000, off PATH by default); nothing here drives it, and the CPF that defines the power domains is unverified. Note also that ~30% of chip power sits on IO rails this flow cannot attribute"
-    refuted_by: |
-      python3 -c "import yaml,sys; m=yaml.safe_load(open('ci/signoff.yaml')); \
-      sys.exit(0 if any(k in s['id'] for s in m.get('stages',[]) \
-      for k in ('power','ir-drop','voltus')) else 1)"
+  # `power-signoff` used to sit here reading "No power/IR-drop analysis stage in
+  # this pipeline". CLOSED 2026-08-17 by the `ir-drop` stage above, which is
+  # exactly what its own refuted_by tested for. The entry is not deleted
+  # silently, because "an IR-drop stage exists" and "power delivery is signed
+  # off" are very different claims, and collapsing the second into the first is
+  # how a closed gap becomes an overclaim. The three successors below are what
+  # actually remains, each narrower than the entry it replaces and each with a
+  # refutation that CANNOT succeed today.
+  - id: dynamic-ir-drop
+    # This one is a LIMIT OF THE SITE, not work not yet done, and it should be
+    # handed to the recipient alongside LVS and metal fill rather than carried
+    # as an open action. set_pg_library_mode -cell_type stdcells|macros needs
+    # cell SPICE netlists or cell GDS to model the path from a cell's PG pin to
+    # its transistors; this site has LEF abstracts and .lib timing only, so only
+    # a `techonly` power grid library can ever be built here. Static analysis at
+    # an assumed activity is therefore the strongest claim available, and 15 mV
+    # of static collapse says nothing about di/dt or decap effectiveness.
+    reason: "No dynamic rail analysis, and none is reachable on this site: a cell-accurate power grid library needs cell SPICE or cell GDS and neither is installed here (same root cause that black-boxes full-chip LVS). There is also no switching activity anywhere in this flow — no SAIF, no VCD — so even the static currents are a default-activity estimate"
+    # Refuted the day either cell SPICE or cell GDS for the standard-cell library
+    # appears on this host. Written against the LOAD-BEARING clause: the absence
+    # of the collateral, not the absence of the run.
+    refuted_by: >
+      find ${TSMC_65_HOME} -maxdepth 8 -size +1k
+      \( -name 'tcbn65lp*.sp' -o -name 'tcbn65lp*.spi' -o -name 'tcbn65lp*.gds*' \)
+      2>/dev/null | grep -q .
+  - id: io-rail-ir-drop
+    # The IO ring is excluded from the ir-drop stage BY NAME, and the exclusion
+    # is recorded in the run's census, because an unexplained absence would
+    # eventually be read as a pass. Four independent reasons, and the last is
+    # the dangerous one: VDDIO/VSSIO have no routing and no attributed demand,
+    # so a rail run that INCLUDED them would return ~0 mV and look excellent.
+    # That is a false green by construction and the single most likely way to
+    # produce a reassuring power-delivery number for this die that means
+    # nothing. The prerequisite is not a tool — it is the power intent.
+    reason: "VDDIO/VSSIO carry no IR-drop verdict. The CPF the flow actually reads declares only VDD/VSS, so report_power cannot attribute the IO group to them and files ~30% of chip power on an unnamed Default rail at the CORE voltage; the IO supply is also distributed by ABUTMENT inside the pad cells, so there is no top-level PDN to analyse. Including those nets would return ~0 mV and look excellent — a false green by construction"
+    # Refuted the day the generated CPF — the one Innovus reads, not the dead
+    # hand-written one — declares the IO rails.
+    refuted_by: >
+      grep -qE '^create_power_nets .*VDDIO'
+      ASIC/eth-chiplet/build/*/outputs/*_gate1.cpf
+      ASIC/genus-innovus/outputs/*_gate1.cpf 2>/dev/null
+  - id: em-current-density
+    # The trap is explicit in the tool's own documentation: in static mode, if
+    # -em_models is not supplied and -process_techgen_em_rules is not true,
+    # current-density analysis is DISABLED. The run still succeeds and the EM
+    # report is simply absent — so this gap is invisible unless it is declared.
+    # The gate records em_status=NOT_ANALYSED and treats it as a hard failure at
+    # --tier signoff, which is why the ir-drop row runs at --tier report.
+    reason: "PG electromigration is NOT analysed by the ir-drop stage: no -em_models and no -process_techgen_em_rules are supplied, so Voltus disables current-density analysis and completes successfully without it. The licence-free pg_capacity step computes a DC-average capacity margin from the tech LEF instead, which assumes perfect current sharing across every via on a plane and is not the same check. EM limits are the one genuinely foundry-defined number in this area"
+    # Refuted the day the rail stage passes EM models and a run records that it
+    # analysed current density.
+    refuted_by: >
+      grep -rqE 'em_models|process_techgen_em_rules'
+      ASIC/genus-innovus/rail/rail_run.tcl 2>/dev/null
   # `full-design-lint` used to sit here reading "make lint covers 3 authored
   # files of 598 compiled; the rest is linted only in component repos, if at
   # all". REMOVED 2026-08-17: verif/lint/full/run.sh exists and does exactly the

@@ -76,10 +76,97 @@ believe the tool prints" into evidence.
 
 | fixture set | derived from | confidence |
 |---|---|---|
-| `elab-strict/` | the documented behaviour of HAL 22.03 in `verif/elab_strict/run.sh`, whose comments record both the absent `Analysis complete` banner and the `^halstruct:` line count (60,493) from a real 43 MB run | high — the runner was written against the real log |
-| `drc/` | the Calibre summary grammar parsed by `scripts/ci/drc_census.py`, which was itself written against real runs (`M6.DN.1` saturating at 1000 is a measured value from the 2026-08-10 baseline) | high |
-| `rom-content/`, `rom-gds/`, `rom-selftest/` | the row format of `make -C ASIC -f common.mk rom-vars`, checked against its real output; the JSON keys the check actually reads | high for the interface, synthetic for the values |
+| `chip-boundary/` | `pass` is a **verbatim capture** of `scripts/check_chip_boundary.py` (2026-08-17, 111 ports / 23 pad cells). The failure arms use that script's own `print(...)` strings, read out of the source | high |
+| `lint/` | **real Verilator 4.028 captures** from `build/lint/passes/` (2026-08-17). `fail-nonwaived-finding` is the untouched real WRAPPER log carrying the live `PINMISSING link_clk_div_ratio_i`; `fail-pass-did-not-run` is a real `--top-module ... was not found` capture; `pass` is that same real log with its one non-waived stanza removed | high — captures, not excerpts |
+| `elab/` | trimmed extract of the real 155 kB `build/elab/elab.log` (VCS 2022.06-SP2); `fail-vcs-error` is a **real VCS failure captured on purpose** by elaborating a module with a missing child | high |
+| `regress/` | **real cocotb `results.xml` captures**: `fail-skipped-tests` is the untouched 2026-08-08 file (5 testcases, 4 `<skipped/>`), `fail-failure-element` a real failing run of 2026-08-17 | high |
+| `elab-strict/` | the documented behaviour of HAL 22.03 in `verif/elab_strict/run.sh`, plus direct measurement of three real HAL logs on this host (see the correction below) | medium — see `pass`, whose tally shape is wrong |
+| `drc/` | **rebuilt 2026-08-17 from 24 real Calibre v2023.1 summaries** under `ASIC/genus-innovus/calibre_runs/` (see the correction below) | high |
+| `rom-content/`, `rom-gds/`, `rom-selftest/` | the row format of `make -C ASIC -f common.mk rom-vars`, checked against its real output; the JSON keys the check actually reads | **interface high, values synthetic — and the values are now known to be wrong in two places, see below** |
 | `lec/` | **inference only — no Conformal transcript was available** | **low, see below** |
+| `ir-drop/` | **cut down from the real artefacts of the fp1505 rail run** (Voltus 21.11 under Innovus, 2026-08-17): the `.iv` header and row format, both `*.main.rpt` summaries and the per-rail table of the implementation run's own `imp_power.rep` are the tool's own bytes | high — captures, with two documented edits, below |
+| `ir-drop-selftest/` | `pass` supplies **no file at all**, so the positive control is the real battery; the three failure arms are stubs that print a tally shape and nothing else | high — the stubs are the fixture's whole subject |
+
+#### Two edits in `ir-drop/`, stated because they are the only places the bytes are not the tool's
+
+1. **`pass` is scaled.** The design as it stands does not pass its own mean-collapse
+   budget, so a must-pass fixture built from unmodified rows would prove that the
+   check rejects good evidence rather than that it accepts it. The per-instance
+   values are scaled by 0.62 and **both `*.main.rpt` summaries are rewritten to
+   match**, because otherwise `parity.parser_vs_tool` fires and the case would pass
+   for the wrong reason. The J/Jmax field is also filled in, so the fixture is not
+   quietly relying on `--tier report` to hide an unmeasured EM criterion.
+2. **Every case is truncated to 3,000 rows** — the worst 1,200 plus a seeded
+   uniform sample of the rest, so the distribution keeps its shape and `p99` and
+   the mean stay meaningful. `db.insts_total` in each census is scaled to hold the
+   real coverage fraction, so `coverage.instances` is testing what it says.
+
+`fail-disconnected-instances` needed no invention at all: its 60 `NA` rows are
+real instances from the real run, which is also the defect the stage found.
+
+### Corrections made on 2026-08-17, and what they say about the method
+
+Three of the rows above used to claim more than the evidence supported. Each was
+found by comparing a fixture against real tool output rather than against its
+own check — which is the only comparison that can find this class of defect.
+
+**`drc/` was rated "high" on a false measurement.** The old note read *"`M6.DN.1`
+saturating at 1000 is a measured value from the 2026-08-10 baseline"*. It is
+not: `M6.DN.1` is a **density** check, Calibre reports one merged result for it,
+and across every real summary on this host it reads `TOTAL Result Count = 1` —
+never 1000. `drc_census.py`'s own docstring says so, about the same baseline.
+The fixture had picked the one rulecheck name that provably *cannot* saturate.
+The checks that really do saturate here are `DM9.W.1`/`DM9.S.1` (`drc_filled`),
+`M1..M6.A.1`, `LOGO.S.1`/`LOGO.R.4` and `CENSUS.*`, so `fail-saturated-cap` now
+uses `DM9.W.1`/`DM9.S.1` with the accompanying `Maximum result count of 1000
+exceeded in DRC RuleCheck …` lines that real Calibre emits alongside them.
+
+Two more shape errors went with it. Every fixture carried a section header
+`--- RULECHECK RESULTS STATISTICS (BY RULECHECK)`, a string that occurs **0
+times in 24 real summaries** — the real header has no suffix. And every result
+line had one count where real Calibre prints two (`= 7    (252)`, result count
+then vertex count). Both are fixed.
+
+**`drc/pass` proved nothing about the exemption it exists to permit.** It listed
+three rulechecks all at zero and an *empty* BY CELL section, so the three-way
+`owner()` split — design vs io-pad-abstract vs vendor-memory, the split that
+keeps ~697 real vendor results out of the gated bucket — had no test at all.
+Widening `MEMORY_PREFIXES` to swallow a design cell would not have moved
+`prove`. It now carries a real `PAD70GU` and a real `rf_16kCNTRL` cell row, so
+PASS means "these were exempted", not "there was nothing there".
+
+**`rom-selftest/pass` asserted a count the tool does not print.** The fixture
+said `SELFTEST: 22 passed`, this manifest's description said 22, and the real
+selftest runs **25** cases (23 `expect_fail` + 2 `expect_pass` in
+`ROM_SELFTEST_PY`). Nothing noticed because the check matched `2[0-9]` — a
+decade-wide window, so the case list could lose five cases, a fifth of the
+proof, with the blocking gate still green. The check now pins 25 exactly, and
+`fail-one-case-dropped` (24 of 25) is the fixture the old regex accepted.
+
+**`elab-strict/pass` has the wrong tally shape, and this is not yet fixed.**
+Guard 3 asserts a rule-tally summary block. The fixture prints one code per
+line; real HAL prints them **four to a line in padded columns**, grouped under
+severity headers (` Warnings : (35413)`, ` Notes    : (8326)`), and follows them
+with `Analysis complete.` — measured on the only real *completed* HAL log on
+this host, `build/lint/full/hal/xrun_hal.log` (34 MB, 78,742 `^halstruct:`
+lines, 32 tally lines). The guard's regex happens to match the real shape via
+its first column only, so anyone tightening it to anchor at end-of-line would
+keep `prove` green and blind the real gate.
+
+Note also what that log does to this manifest's stated reasoning. The
+`elab-strict` comment says HAL 22.03 *"NEVER PRINTS"* `Analysis complete` — but
+a completed run of the same build (`xrun 22.03-s005`) prints it exactly once,
+immediately after the tally block. The elab-strict invocation differs
+(`-halargs -BB_NONSYNTH`, different flist), so this does not refute the claim
+for that mode; it does mean the claim is unverified for it, and that a stronger
+completion marker may exist. **No completed elab-strict log exists on this host
+to settle it** — every one measured was aborted or killed.
+
+One more, recorded because it wasted an hour and will waste someone else's:
+`verif/elab_strict/build/xrun_hal.log` and `verif/g2_soc_pair/results.xml` are
+**rewritten by concurrent runs**. Two measurements of "the same" file minutes
+apart disagreed by 284,905 `halstruct` lines and looked exactly like a
+`grep`-compatibility bug. Snapshot before measuring, and re-check the mtime.
 
 **`lec/` is the weak one and should be re-derived from the first real
 `logs/lec.log` anyone produces.** The check fails on the mere *presence* of
@@ -90,6 +177,36 @@ for `Equivalent`, which is the whole reason that clause was removed — then the
 Note that `ASIC/genus-innovus/scripts/lec/run_lec.sh`, the more mature harness,
 deliberately avoids bare-presence greps and uses anchored markers plus a
 by-name comparison instead. That is a hint, not a measurement.
+
+## A must-fail fixture should trip exactly ONE clause
+
+`prove` only asks whether a check said no. It does not ask *which guard* said
+no, so a fixture that violates three conditions at once passes its case while
+pinning none of them — delete two of the three guards and it still goes red.
+
+Every fixture here has been checked against that. The discrimination matrix for
+`lint` is representative:
+
+| fixture | logs present | hard `%Error` | non-waived finding | bug-wiring UNOPTFLAT |
+|---|---|---|---|---|
+| `pass` | 6 | 0 | 0 | 1 |
+| `fail-wrapper-skipped` | **5** | 0 | 0 | 1 |
+| `fail-pass-did-not-run` | 6 | **1** | 0 | 1 |
+| `fail-nonwaived-finding` | 6 | 0 | **1** | 1 |
+| `fail-sanity-blind` | 6 | 0 | 0 | **0** |
+| `fail-no-logs` | **0** | 0 | 0 | 0 |
+
+One bold cell per row: each case isolates one guard. Where the tool makes that
+impossible the overlap is stated rather than hidden — `chip-boundary`'s
+`fail-pad-ring-mismatch` also lacks the final OK line, because the real script
+exits before printing it, and `fail-zero-ports` trips both vacuity clauses
+because a run that classified nothing also read no pads. In those two the
+isolating case is a separate fixture (`fail-truncated`).
+
+`elab-strict` is the worked example of guards that genuinely layer: guard 1
+(aborted), guard 2 (rules never started) and guard 3 (rules cut off) each own a
+distinct arm, and `fail-aborted-after-halstruct` exists precisely because it is
+the only shape where guard 1 fires alone.
 
 ## Adding a check
 

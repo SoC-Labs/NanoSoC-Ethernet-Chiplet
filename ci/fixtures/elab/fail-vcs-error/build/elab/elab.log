@@ -1,0 +1,21 @@
+Command: vcs -full64 -sverilog -timescale=1ns/1ps -f /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/flist/nanosoc_eth_chiplet.flist \
+-top nanosoc_eth_chiplet -o simv_chiplet -l /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/elab/elab.log \
+
+                         Chronologic VCS (TM)
+       Version T-2022.06-SP2_Full64 -- Mon Aug 17 18:44:32 2026
+
+...
+Parsing design file 'src/rtl/nanosoc_eth_chiplet.sv'
+Top Level Modules:
+       nanosoc_eth_chiplet
+
+Error-[CFCILFBI] Cannot find cell in liblist
+src/rtl/nanosoc_eth_chiplet.sv, 2
+  Cell 'tidelink_top' cannot be found in liblist for binding instance 
+  'nanosoc_eth_chiplet.u_tidelink'.
+  Liblist: work
+  Config rule: global default liblist
+  Source Info: tidelink_top u_tidelink( .clk (clk));
+
+1 error
+CPU time: .199 seconds to compile

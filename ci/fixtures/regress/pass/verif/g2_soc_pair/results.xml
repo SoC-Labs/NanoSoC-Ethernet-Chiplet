@@ -1,0 +1,10 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1786213783" />
+    <testcase name="test_smoke_eth_ss0_reaches_sram" classname="test_g2_soc_pair" file="/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/verif/g2_soc_pair/test_g2_soc_pair.py" lineno="521" time="0" sim_time_ns="0" ratio_time="0" />
+    <testcase name="test_peer_write_crosses_to_die_b" classname="test_g2_soc_pair" file="/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/verif/g2_soc_pair/test_g2_soc_pair.py" lineno="543" time="0" sim_time_ns="0" ratio_time="0" />
+    <testcase name="test_peer_write_survives_w_backpressure" classname="test_g2_soc_pair" file="/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/verif/g2_soc_pair/test_g2_soc_pair.py" lineno="679" time="0" sim_time_ns="0" ratio_time="0" />
+    <testcase name="test_diag_q_hold" classname="test_g2_soc_pair" file="/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/verif/g2_soc_pair/test_g2_soc_pair.py" lineno="753" time="0" sim_time_ns="0" ratio_time="0" />
+    <testcase name="test_tidechart_election_root_is_die_a" classname="test_g2_soc_pair" file="/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/verif/g2_soc_pair/test_g2_soc_pair.py" lineno="792" time="2.88606858253479" sim_time_ns="384590.0" ratio_time="133257.40154872567" />
+  </testsuite>
+</testsuites>

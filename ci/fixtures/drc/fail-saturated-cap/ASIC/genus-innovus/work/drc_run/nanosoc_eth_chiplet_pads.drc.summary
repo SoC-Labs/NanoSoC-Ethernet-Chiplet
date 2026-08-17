@@ -1,9 +1,26 @@
-CALIBRE::DRC-H  SUMMARY REPORT
 
-Layout Primary Cell: nanosoc_eth_chiplet_pads
+
+==================================================================================
+=== CALIBRE::DRC-H SUMMARY REPORT
+===
+Execution Date/Time:       Mon Aug 10 15:09:25 2026
+Calibre Version:           v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+Layout Primary Cell:       nanosoc_eth_chiplet_pads
 Maximum Results/RuleCheck: 1000
+==================================================================================
+MAXIMUM RDB limit 1000 reached for output layer M2.DN.5::<1>.
+Maximum result count of 1000 exceeded in DRC RuleCheck DM9.W.1.
+Maximum result count of 1000 exceeded in DRC RuleCheck DM9.S.1.
 
---- RULECHECK RESULTS STATISTICS (BY RULECHECK)
-RULECHECK M6.DN.1 ........................ TOTAL Result Count = 1000
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS
+---
+RULECHECK DM9.W.1 ....................... TOTAL Result Count = 1000 (1000)
+RULECHECK DM9.S.1 ....................... TOTAL Result Count = 1000 (1000)
 
+----------------------------------------------------------------------------------
 --- RULECHECK RESULTS STATISTICS (BY CELL)
+---
+CELL rf_16kCNTRL ........................ TOTAL Result Count = 2000 (2000)
+    RULECHECK DM9.W.1 ................... TOTAL Result Count = 1000 (1000)
+    RULECHECK DM9.S.1 ................... TOTAL Result Count = 1000 (1000)

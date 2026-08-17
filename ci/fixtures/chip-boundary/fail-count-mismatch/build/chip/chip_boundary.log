@@ -1,0 +1,6 @@
+chip_boundary 'nanosoc_eth_chiplet_chip' <- 'nanosoc_eth_chiplet'
+  RTL ports  : 111  (377 bits)
+  classified : 109  (bonded 33 / tied 36 / open 40 / terminated 0)
+  pads       : 23 pad cells
+  pad ring   : nanosoc_eth_chiplet_pads.v agrees (all 33 bonded ports reach a pad cell)
+  OK — every port accounted for exactly once

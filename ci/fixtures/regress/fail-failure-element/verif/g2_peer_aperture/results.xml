@@ -1,0 +1,6 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1784237764" />
+    <testcase name="test_peer_aperture_crosses_the_link" classname="test_peer_aperture" file="/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/verif/g2_peer_aperture/test_peer_aperture.py" lineno="307" time="4.457508087158203" sim_time_ns="212440.0" ratio_time="47658.91521588623" />
+  </testsuite>
+</testsuites>

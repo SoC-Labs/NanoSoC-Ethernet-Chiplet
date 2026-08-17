@@ -1,0 +1,129 @@
+# ci/MUTATION_COVERAGE — which signoff gates are PROVEN able to fail
+#
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+# license.  Copyright 2026, SoC Labs (www.soclabs.org)
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS FILE IS, AND WHY IT IS NOT THE TOOLKIT'S LEDGER
+#
+# ASIC/asic-toolkit/test/MUTATION_COVERAGE declares how many planted faults the
+# TOOLKIT's own suite must reject — its Tcl flow procs, its static gates, its
+# stage scenarios. That toolkit is a pinned submodule shared with the compute
+# chiplet, and its numbers are about code that is identical on both.
+#
+# This file is the other half, and it is deliberately HERE rather than there:
+# ci/signoff.yaml is, in its own words, "THE ONLY PART THAT DIFFERS BETWEEN
+# CHIPLETS". A gate matrix for these stages is a fact about THIS design, so
+# recording it in the shared submodule would both bump a pinned pointer and make
+# one chiplet's coverage look like the other's.
+#
+# ---------------------------------------------------------------------------
+# HOW TO READ IT
+#
+#   PROVEN     the stage has a `check:` that re-reads the evidence, plus a
+#              must_pass fixture AND at least one must_fail fixture, and
+#              `scripts/ci/signoff.py prove` runs all of them. The gate is
+#              demonstrated to say yes to one shape of evidence and no to
+#              another.
+#   RC-ONLY    the stage has no `check:`. Its verdict is the exit status of the
+#              tool it invokes, and NOTHING in this repository demonstrates that
+#              a bad result would produce a nonzero one. `prove` skips these
+#              stages entirely — they do not appear in its case count, so the
+#              green "N problem(s): 0" line says nothing whatever about them.
+#
+# A `report`-gate stage that is RC-ONLY costs a missing observation. A `block`
+# stage that is RC-ONLY can pass a bad chip, which is why those are listed first
+# and separately.
+#
+# THE LIMIT OF THE WORD "PROVEN". `prove` confirms a check is SELF-CONSISTENT
+# WITH ITS FIXTURE. It does not confirm the fixture resembles the tool. A green
+# prove run over an unrepresentative fixture is theatre, and this project has
+# already shipped one: a hand-written 322-byte "aborted HAL run" with zero
+# rule-tally lines, where a real 26 MB abort emits 40 — on the strength of which
+# a load-bearing guard was documented as redundant. Fixture provenance is
+# tracked in ci/fixtures/README.md and is the thing to distrust first.
+#
+# NOTHING EDITS THIS FILE AUTOMATICALLY. A coverage floor that the flow raises
+# to whatever today's run produced is the exact defect this repository keeps
+# finding in its own gates — an RV-via count set to the day's number, a DRC
+# budget set to the day's number. Moving a row is the thirty seconds in which
+# somebody reads the new case.
+# ---------------------------------------------------------------------------
+
+
+# === BLOCKING STAGES WITH NO PROOF THEY CAN FAIL ===========================
+# These decide whether the chip is signed off, and their entire verdict is a
+# process exit status. Closing these is the highest-value work available.
+#
+#   lec-selftest   ASIC/genus-innovus lec-selftest. Ironic: it is itself a
+#                  mutation harness for the LEC gate, and nothing checks that it
+#                  ran its case list. A selftest that silently executes ZERO
+#                  cases exits 0 — precisely the hole rom-selftest's `check:`
+#                  was added to close, still open here. It needs the same
+#                  treatment: assert the case count from the artefact.
+#   lec-pnr        holds a Conformal seat for up to six hours, and its log is
+#                  not re-read. A stale logs/lec_pnr.log from a previous run
+#                  satisfies nothing and is contradicted by nothing.
+blocking-unproven       2
+
+# === REPORT-ONLY STAGES WITH NO PROOF THEY CAN FAIL ========================
+#   cdc             gate: report by design (findings not yet triaged to zero).
+#   lvs-preflight   gate: report by design (procurement blocker, expected red).
+# Both are RC-ONLY. Neither can currently distinguish "the tool ran and found
+# things" from "the tool did not run", which is the same failure both of their
+# HAL/Calibre siblings have already been caught making.
+report-unproven         2
+
+# === PROVEN GATES ==========================================================
+# One row per stage with a `check:` + `check_proof:`, giving the number of
+# must_fail fixtures. Asserted against ci/signoff.yaml by
+# scripts/ci/check_mutation_coverage.py, red in BOTH directions: fewer than
+# declared means a proof was dropped; more means one was added unreviewed.
+#
+# fixtures are under ci/fixtures/<stage>/. Every must_fail case below has been
+# checked to trip exactly ONE clause of its guard unless noted — a fixture that
+# trips three guards at once pins none of them.
+#
+# stage              must_fail cases
+chip-boundary           5
+lint                    5
+elab                    3
+elab-strict             5
+regress                 4
+rom-selftest            3
+rom-content             4
+rom-gds                 4
+lec                     3
+# 3 -> 4 on 2026-08-17: fail-waiver-stale, added by a concurrent session and
+# read before this number was moved. The other three are fail-design-results,
+# fail-saturated-cap and fail-no-summary.
+drc                     4
+
+# Total across the proven gates. `signoff.py prove` reports its own case count
+# (must_pass + must_fail); this is the must_fail half, which is the half that
+# demonstrates a gate can FAIL.
+must-fail-cases-total   40
+
+# Stages carrying a `check:` AND a complete proof (a must_pass plus at least one
+# must_fail, every fixture present on disk). Cross-checked against the manifest
+# so that adding a gate without a proof, or a proof without a gate, is visible
+# here and not only in a transient prove run.
+stages-with-check      10
+
+
+# === PENDING — OWNED BY ANOTHER SESSION, REPORTED BUT NOT GATED ============
+# ir-drop and ir-drop-selftest were added to the manifest by a concurrent
+# session while this ledger was being written. ir-drop-selftest is complete and
+# green; ir-drop declares six must_fail fixtures that do not yet exist on disk,
+# so `prove` reports NO FIXTURE for all seven of its cases and the stage is NOT
+# proven.
+#
+# They are listed here rather than given rows because a row is a claim this
+# ledger stands behind, and these are somebody else's work in flight. The
+# checker prints them as UNDECLARED and does not fail on them. When that work
+# lands, delete this block and add the rows — that edit is the review.
+#
+# THIS EXEMPTION IS NAMED, NOT GENERAL. Any OTHER stage that appears with a
+# check and no row is a hard failure, because "a stage showed up and nobody
+# looked at it" is how a decorative gate gets in.
+pending-undeclared      ir-drop ir-drop-selftest

@@ -1,0 +1,6 @@
+chip_boundary 'nanosoc_eth_chiplet_chip' <- 'nanosoc_eth_chiplet'
+  RTL ports  : 0  (0 bits)
+  classified : 0  (bonded 0 / tied 0 / open 0 / terminated 0)
+  pads       : 0 pad cells
+  pad ring   : nanosoc_eth_chiplet_pads.v agrees (all 0 bonded ports reach a pad cell)
+  OK — every port accounted for exactly once

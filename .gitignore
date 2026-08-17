@@ -219,6 +219,24 @@ voltus.cmd*
 # re-included anything -- the same trap the /fpga/haps-sx/ comment above records.
 !/ci/fixtures/**/build/
 
+# THE SAME TRAP AGAIN, ONE RULE DOWN, found 2026-08-17 when the `regress` gate
+# got its first fixtures. `results.xml` and `results_*.xml` near the top of this
+# file carry no slash, so they match AT ANY DEPTH -- and the regress fixtures are
+# cocotb result files by definition: they sit at verif/g2_peer_aperture/
+# results.xml and verif/g2_soc_pair/results.xml because that is where the check
+# reads them. All nine were silently ignored.
+#
+# That failure is quiet in the direction that matters. The fixtures exist in the
+# working tree, `prove` is green locally, and a fresh clone -- which is what CI
+# is -- has none of them, so `prove` reports NO FIXTURE and the regress gate is
+# unproven on the only machine whose verdict counts. A gate that looks covered
+# on the author's disk and is uncovered in CI is worse than one openly uncovered.
+#
+# Here the excluded thing is a FILENAME, not a directory, so unlike the build/
+# case above git does descend and a file-level negation does re-include.
+!/ci/fixtures/**/results.xml
+!/ci/fixtures/**/results_*.xml
+
 # Broker correspondence. A private commercial letter to the foundry, not repo
 # content: it must state exact library revisions per the mini@sic submission
 # requirements, which is precisely the inventory that is not ours to publish.

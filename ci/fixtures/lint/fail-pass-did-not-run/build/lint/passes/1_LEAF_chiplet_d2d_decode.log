@@ -1,0 +1,10 @@
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/chiplet_d2d_decode.sv:68: Bits of signal are not used: 'haddr'[31:25,23:20,15:0]
+                                                                                                : ... In instance chiplet_d2d_decode
+    input  wire [31:0] haddr,
+                       ^~~~~
+                 ... Use "/* verilator lint_off UNUSED */" and lint_on around source to disable this message.
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/chiplet_d2d_decode.sv:69: Bits of signal are not used: 'htrans'[0]
+                                                                                                : ... In instance chiplet_d2d_decode
+    input  wire  [1:0] htrans,
+                       ^~~~~~
+%Error: Exiting due to 2 warning(s)

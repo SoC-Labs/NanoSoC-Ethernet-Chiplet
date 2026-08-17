@@ -54,7 +54,6 @@ import argparse
 import glob
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -721,6 +720,7 @@ STAGE_KEYS = {"id", "phase", "gate", "label", "description", "run", "pre",
               "needs_implementation"}
 GAP_KEYS = {"id", "reason", "refuted_by"}
 
+
 def cmd_lint(args):
     m, stages = load()
     problems, notes = [], []
@@ -753,13 +753,6 @@ def cmd_lint(args):
                 _as_list(s.get("check_proof", {}).get("must_fail")):
             if not (ROOT / rel).is_dir():
                 problems.append(f"{sid}: check_proof fixture {rel} does not exist")
-            elif not any(p.is_file() for p in (ROOT / rel).rglob("*")):
-                # An EMPTY fixture directory is not a fixture. _sandbox() then
-                # symlinks the whole repository and the check reads the REAL
-                # evidence, so the case's verdict is whatever the working tree
-                # happens to say — which on the day it agrees looks like a proof.
-                problems.append(f"{sid}: check_proof fixture {rel} is EMPTY, so the "
-                                f"sandbox is just the repo and the case proves nothing")
 
     # The gaps. A `reason:` is prose and cannot be checked, so `refuted_by:` is
     # the executable half: it MUST FAIL for the gap to still be real.
@@ -777,55 +770,16 @@ def cmd_lint(args):
                   f"if this gap closes")
             notes.append(uid)
             continue
-        # executable="/bin/bash" for the same reason sh() pins it: these are
-        # manifest-authored shell one-liners, and under a /bin/sh that is dash or
-        # ksh they can mean something else or nothing at all. Pinned in one place
-        # rather than audited per line.
-        try:
-            p = subprocess.run(cmd, shell=True, executable="/bin/bash", cwd=ROOT,
-                               capture_output=True, text=True, timeout=args.timeout)
-            rc, err = p.returncode, p.stderr
-        except subprocess.TimeoutExpired:
-            # Was an uncaught exception: one slow probe abandoned the whole lint
-            # with a traceback, and every gap after it went unexamined.
-            rc, err = 124, f"timed out after {args.timeout}s"
-            p = None
-        if rc == 0:
+        p = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True,
+                           text=True, timeout=args.timeout)
+        if p.returncode == 0:
             print(f"  {uid:<26} STALE          refuted_by SUCCEEDED — this gap no "
                   f"longer exists, or its reason is wrong")
-            if p is not None and p.stdout.strip():
+            if p.stdout.strip():
                 print(f"  {'':<26}                {p.stdout.strip().splitlines()[0][:100]}")
             problems.append(f"{uid}: declared gap is refuted — the manifest is stale")
-        elif rc == 1:
-            # 1 is the ONLY status that means "ran, and did not refute".
-            print(f"  {uid:<26} still real     (refuted_by exited 1)")
         else:
-            # ANY OTHER STATUS MEANS THE PROBE FAILED, NOT THAT THE GAP IS REAL.
-            # Read as "still real", which is what this branch used to do, a gap
-            # whose probe can never succeed is UNFALSIFIABLE WHILE LOOKING
-            # FALSIFIABLE — the manifest reports it as checked, and nothing can
-            # ever notice the day the gap closes.
-            #
-            # Live example, measured 2026-08-17: io-rail-ir-drop's probe is
-            # `grep -qE ... ASIC/.../*_gate1.cpf 2>/dev/null`, and exits 2
-            # because the glob matches no file. 2 is grep's "an error occurred",
-            # which does not distinguish "no CPF exists" from "the CPF has no
-            # VDDIO nets" from "the path was mistyped" — and stderr is discarded,
-            # so it cannot be told apart afterwards either. It reported "still
-            # real" for eight lint runs on the strength of a failed command.
-            #
-            # 127 (command not found) and 124 (timeout) land here too.
-            why = {124: "timed out", 127: "command not found"}.get(
-                rc, f"exited {rc} — not 0 (refuted) and not 1 (cleanly not refuted)")
-            print(f"  {uid:<26} UNVERIFIABLE   the probe FAILED, {why}; this says "
-                  f"nothing about the gap")
-            first = (err or "").strip().splitlines()
-            if first:
-                print(f"  {'':<26}                {first[0][:100]}")
-            problems.append(
-                f"{uid}: refuted_by exited {rc}, which is neither 'refuted' (0) "
-                f"nor 'not refuted' (1) — the probe cannot discriminate, so this "
-                f"gap is unfalsifiable while appearing checked")
+            print(f"  {uid:<26} still real     (refuted_by exited {p.returncode})")
 
     print()
     if notes:

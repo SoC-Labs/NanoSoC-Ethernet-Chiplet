@@ -1,0 +1,101 @@
+%Warning-PINMISSING: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:760: Cell has missing pin: 'link_clk_div_ratio_i'
+    tidelink_top #(.NUM_PHY_LANES(NUM_PHY_LANES), .SELF_ARM_TRAIN_EN(1'b1), .AUTO_ANCHOR_EN(1'b1), .TXGEN_PRESENT(1'b0)) u_tidelink (
+                                                                                                                         ^~~~~~~~~~
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:335: Bits of signal are not used: 'd2d_ahb_s_hprot'[6:4]
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire  [6:0] d2d_ahb_s_hprot;     
+                ^~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:375: Bits of signal are not used: 'tcapb_paddr'[11:8]
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire [11:0] tcapb_paddr;
+                ^~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:445: Signal is not used: 'soc_d2d_ahb_m_hmastlock_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        soc_d2d_ahb_m_hmastlock_nc;
+                ^~~~~~~~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:450: Signal is not used: 'tlapb_apbactive_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tlapb_apbactive_nc;
+                ^~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:451: Signal is not used: 'tcapb_apbactive_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tcapb_apbactive_nc;
+                ^~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:457: Signal is not used: 'tcapb_pstrb_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire  [3:0] tcapb_pstrb_nc;
+                ^~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:458: Signal is not used: 'tcapb_pprot_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire  [2:0] tcapb_pprot_nc;
+                ^~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:465: Signal is not used: 'tl_i2c_axi_awready_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tl_i2c_axi_awready_nc;
+                ^~~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:466: Signal is not used: 'tl_i2c_axi_wready_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tl_i2c_axi_wready_nc;
+                ^~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:467: Signal is not used: 'tl_i2c_axi_bvalid_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tl_i2c_axi_bvalid_nc;
+                ^~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:468: Signal is not used: 'tl_i2c_axi_bid_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire  [1:0] tl_i2c_axi_bid_nc;
+                ^~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:469: Signal is not used: 'tl_i2c_axi_bresp_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire  [1:0] tl_i2c_axi_bresp_nc;
+                ^~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:470: Signal is not used: 'tl_i2c_axi_arready_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tl_i2c_axi_arready_nc;
+                ^~~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:471: Signal is not used: 'tl_i2c_axi_rvalid_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tl_i2c_axi_rvalid_nc;
+                ^~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:472: Signal is not used: 'tl_i2c_axi_rid_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire  [1:0] tl_i2c_axi_rid_nc;
+                ^~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:473: Signal is not used: 'tl_i2c_axi_rdata_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire [31:0] tl_i2c_axi_rdata_nc;
+                ^~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:474: Signal is not used: 'tl_i2c_axi_rresp_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire  [1:0] tl_i2c_axi_rresp_nc;
+                ^~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:475: Signal is not used: 'tl_i2c_axi_rlast_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tl_i2c_axi_rlast_nc;
+                ^~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:483: Signal is not used: 'tc_to_irqc_tvalid_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tc_to_irqc_tvalid_nc;
+                ^~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:484: Signal is not used: 'tc_to_irqc_tdata_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire [47:0] tc_to_irqc_tdata_nc;
+                ^~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:485: Signal is not used: 'tc_to_irqc_tlast_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        tc_to_irqc_tlast_nc;
+                ^~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/nanosoc_eth_chiplet.sv:486: Signal is not used: 'irqc_to_tc_tready_nc'
+                                                                                                  : ... In instance nanosoc_eth_chiplet
+    wire        irqc_to_tc_tready_nc;
+                ^~~~~~~~~~~~~~~~~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/chiplet_d2d_decode.sv:68: Bits of signal are not used: 'haddr'[31:25,23:20,15:0]
+                                                                                                : ... In instance nanosoc_eth_chiplet.u_d2d_decode
+    input  wire [31:0] haddr,
+                       ^~~~~
+%Warning-UNUSED: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/src/rtl/chiplet_d2d_decode.sv:69: Bits of signal are not used: 'htrans'[0]
+                                                                                                : ... In instance nanosoc_eth_chiplet.u_d2d_decode
+    input  wire  [1:0] htrans,
+                       ^~~~~~
+%Error: Exiting due to 25 warning(s)

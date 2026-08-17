@@ -1,0 +1,8 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1787005796" />
+    <testcase name="test_peer_write_burst_delivers_each_beat" classname="test_peer_burst_corruption" file="/home/dam1n19/.local/lib/python3.8/site-packages/cocotb/decorators.py" lineno="193" time="72.76832914352417" sim_time_ns="1881430.001" ratio_time="25855.066663536727">
+      <failure />
+    </testcase>
+  </testsuite>
+</testsuites>

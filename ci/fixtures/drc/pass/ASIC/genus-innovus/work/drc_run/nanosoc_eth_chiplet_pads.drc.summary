@@ -1,11 +1,27 @@
-CALIBRE::DRC-H  SUMMARY REPORT
 
-Layout Primary Cell: nanosoc_eth_chiplet_pads
+
+==================================================================================
+=== CALIBRE::DRC-H SUMMARY REPORT
+===
+Execution Date/Time:       Mon Aug 10 15:09:25 2026
+Calibre Version:           v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+Layout Primary Cell:       nanosoc_eth_chiplet_pads
 Maximum Results/RuleCheck: 1000
+==================================================================================
 
---- RULECHECK RESULTS STATISTICS (BY RULECHECK)
-RULECHECK M1.S.1 ......................... TOTAL Result Count = 0
-RULECHECK M3.W.1 ......................... TOTAL Result Count = 0
-RULECHECK VIA1.S.1 ....................... TOTAL Result Count = 0
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS
+---
+RULECHECK M1.S.1 ........................ TOTAL Result Count = 0    (0)
+RULECHECK M3.W.1 ........................ TOTAL Result Count = 0    (0)
+RULECHECK VIA1.S.1 ...................... TOTAL Result Count = 0    (0)
+RULECHECK M8.W.2 ........................ TOTAL Result Count = 3    (126)
+RULECHECK M1.W.3 ........................ TOTAL Result Count = 1    (36)
 
+----------------------------------------------------------------------------------
 --- RULECHECK RESULTS STATISTICS (BY CELL)
+---
+CELL PAD70GU ............................ TOTAL Result Count = 3    (126)
+    RULECHECK M8.W.2 .................... TOTAL Result Count = 3    (126)
+CELL rf_16kCNTRL ........................ TOTAL Result Count = 1    (36)
+    RULECHECK M1.W.3 .................... TOTAL Result Count = 1    (36)

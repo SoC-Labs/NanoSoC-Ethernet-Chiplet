@@ -1,0 +1,7 @@
+chip_boundary 'nanosoc_eth_chiplet_chip' <- 'nanosoc_eth_chiplet'
+  RTL ports  : 111  (377 bits)
+  classified : 111  (bonded 35 / tied 36 / open 40 / terminated 0)
+  pads       : 23 pad cells
+chip_boundary 'nanosoc_eth_chiplet_chip': 2 pad-ring mismatch(es) vs the spec:
+  pad ring: bonded port 'mdio_i' is never connected
+  pad ring: 'link_clk_p' -> 'link_clk_p_net' reaches no pad cell — the port is bonded in the spec but the ring leaves it floating
