@@ -218,6 +218,33 @@ worse at the die edge than Calibre does. Calibre is the authority here.
   (one 92-byte stub in the whole PDK), and with the BE decision there will not
   be. Black-box LVS *does* work on this site and is the only form available; see
   `ci/signoff.yaml`'s `lvs` gap entry.
-- **Antenna** needs no waiver: it is **0** across every rulecheck on this stream,
-  down from 1,549, closed by the LEFOBS stream-map fix.
+- **Antenna** is **NOT COVERED, and must not be read as clean** (corrected
+  2026-08-17). The previous wording here — "needs no waiver: it is 0 across every
+  rulecheck on this stream, down from 1,549" — was true as written and materially
+  misleading, because **the signoff deck contains zero antenna rulechecks**. The
+  only `AN.*` check executed is `AN.R.46`, a differential-pair *matching* rule.
+  A count of 0 over a set of no checks measures nothing; this is the same class of
+  false pass as a capped `check_connectivity` count.
+  **The foundry antenna deck HAS been run separately, and its 0 is also not a
+  pass.** `ASIC/genus-innovus/calibre_runs/ant_toolkit_20260817` (2026-08-17
+  15:39–16:02) ran
+  the foundry antenna deck (an `INCLUDE` of the revision-coded antenna rule file
+  under the PDK's `ANTENNA_DRC/` directory — not reproduced here, per §3; read it
+  from `deck_expanded.rules` in that run directory on your own install) against
+  `ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds`:
+  **714 rulechecks, 0 results, 0 of 204 report files non-empty.** That is a NULL
+  RESULT, not a clean one. An antenna ratio is gate area over connected metal
+  area, and this stream carries no standard-cell, IO or pad layout — its
+  `write_stream -merge` list holds only the eight vendor-memory GDS files. There
+  are no gates in the stream for a ratio to be computed against, so 0 is the
+  arithmetic of an absent measurement.
+  (An earlier revision of this correction, made the same day, wrongly stated the
+  foundry deck had never been run. It had. The conclusion is unchanged and better
+  grounded: antenna cannot be measured until the foundry merges its own layout.)
+  The 1,549 → 0 improvement is real but belongs to the LEFOBS stream-map fix as
+  measured by Innovus `check_process_antenna`, which is a router-level LEF-based
+  check and is not foundry antenna signoff.
+  `route_gate.txt` already states this correctly ("antenna against the foundry
+  deck" is listed as not covered); this inventory previously contradicted it.
+  **Antenna signoff remains open.**
 - **Boundary** is 1 result (`AP.DN.1.L`), inside the metal-fill item above.
