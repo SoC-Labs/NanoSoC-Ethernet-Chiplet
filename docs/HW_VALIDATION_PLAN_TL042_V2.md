@@ -47,6 +47,9 @@ discarded by the `& 1` mask at `kr260_eth_bringup.py:258,261`. Dropping that mas
 skew *span* alongside the binary anchor pair, so the stratifier can begin to explain itself (does a larger
 span predict the Y/N failure?). NOT done now (avoid a dangling edit to the shared bring-up script + collide
 with live peer agents) — do it as the first setup step when the rig is allocated.
+**UPDATE 2026-08-17: ALREADY LANDED.** Commit `8d71ee2` made `kr260_eth_bringup.py` log the full word
+(`sr_span_meas` at `:369`/`:382`), so this is now a *verify-don't-edit* no-op — the harness already captures
+`span_a`/`span_b`. The old `:258,261 & 1` mask is gone; do not blind-edit those lines.
 
 ## 3. Delivery truth + harness gotchas (will corrupt the numbers if unfixed)
 - **Delivery truth = LOCALMEM byte-exact verify.** The Region F sampler (`OBS_AXI_NODES 0x21E0`) was dead in
