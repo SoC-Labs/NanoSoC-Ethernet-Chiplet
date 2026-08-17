@@ -764,6 +764,32 @@ module nanosoc_eth_chiplet #(
         .poresetn   (sys_poresetn),
         .phc_clk    (sys_hclk),       // PHC shares the AHB clock in this build
         .phc_resetn (sys_hresetn),
+        // D2D link-clock divider ratio. 3'd0 = /1 bypass = the pre-divider
+        // clock path, which is what this tapeout ships.
+        //
+        // TIED EXPLICITLY, AND THE COMMENT ABOVE IS WHY. tidelink_link_clk_div
+        // is X-safe by construction — an undriven ratio never satisfies its
+        // two-consecutive-samples-equal filter, so it holds RATIO_RESET and
+        // stays in bypass. Leaving it unconnected therefore WORKS, and that is
+        // exactly the trap TXGEN_PRESENT fell into twelve lines up: a default
+        // that happens to be right, resting on a mechanism no reader re-derives,
+        // until something moves and it silently is not. It also left a floating
+        // input on a CLOCK-PATH module, which reads as a defect to anyone
+        // auditing the netlist whatever the RTL argument says — and it was the
+        // only authored lint failure in the design (Verilator PINMISSING +
+        // HAL E,UNCONI, both at this instantiation).
+        //
+        // [OPEN] This literal is the placeholder, not the feature. The divider
+        // exists so the D2D bit rate can be LOWERED at bring-up to open a
+        // marginal receive eye without moving the SoC clock or the board
+        // oscillator — which matters because this die transmits at 100 MHz into
+        // a compute-die RX word domain that carries no timing constraint at all,
+        // while compute forwards back at 50 MHz. Making the knob reachable means
+        // replacing this 3'd0 with a register output; TideLink has no free APB
+        // aperture (every paddr[8:5] nibble is claimed), so that register belongs
+        // in this chiplet's own APB space. Until then the capability is built and
+        // verified but inert.
+        .link_clk_div_ratio_i (3'd0),
         // ahb_sub — peer aperture (0x2F, address-translated). Full 32-bit haddr;
         // carries hburst/hprot; no hmastlock (reduced shape).
         .ahb_sub_hsel       (hsel_peer),
