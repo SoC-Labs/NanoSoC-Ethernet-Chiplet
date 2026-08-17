@@ -139,6 +139,23 @@ opt EVR_VIA_FILL      0  ;# add_via_fill. Cadence's order is via fill, then
                          ;#   metal fill. Same objection, same default.
 opt EVR_TOP_LAYER     "" ;# override design_top_routing_layer for routing.
                          ;#   "" = inherit whatever the input DB carries.
+opt EVR_FOUNDRY_DECK  [expr {[info exists ::env(FOUNDRY_DECK)] ? $::env(FOUNDRY_DECK) : ""}]
+                         ;# the DRC deck that metal fill reads its dummy-fill
+                         ;#   GEOMETRY out of (DMn_W_1 / DMn_S_1 / DMn_EN_1).
+                         ;#   Only consulted when EVR_METAL_FILL=1.
+                         ;#   INHERITED, NEVER SPELLED HERE. The release-coded
+                         ;#   deck name states which deck version this site
+                         ;#   holds, and this repository is public. It comes
+                         ;#   from FOUNDRY_DECK, which ASIC/eth-chiplet/
+                         ;#   design.mk already exports from drc_project.mk's
+                         ;#   DRC_FOUNDRY_DECK -- so the makefile path resolves
+                         ;#   exactly as before and the two cannot drift,
+                         ;#   because there is now only one of them.
+                         ;#   Empty when run outside the makefile. That is
+                         ;#   caught by evr_deck_fill_geometry, which RAISES
+                         ;#   rather than returning a hole -- a missing
+                         ;#   -min_width makes add_metal_fill fill nothing and
+                         ;#   report success. Unset is loud, not silent.
 opt EVR_CALIBRE       0  ;# run Calibre from inside Innovus. It has never
                          ;#   worked on this site - see section 14.
 opt EVR_SIGNOFF_STRICT 0 ;# force every budget below to zero, i.e. gate the way
@@ -218,11 +235,62 @@ opt EVR_SRCLAT_TOL    0.05
 opt EVR_ERROR_ALLOWLIST {IMPLF-223 IMPMSMV-3501}
 
 # --- Stream-out ----------------------------------------------------------------
-# The production stage hardcodes this path to /tsmc65pdk/... while config.tcl
-# parameterises every other PDK path through $::env(TSMC_65_HOME). common.mk
-# exports TSMC_65_HOME ?= /tsmc65pdk/65, so the two resolve identically today
-# and diverge the moment anyone points at a second PDK install.
-opt EVR_GDS_MAP_FILE $::env(TSMC_65_HOME)/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map
+# [2026-08-13] A DERIVED map, not the PDK map and no longer a committed copy.
+# scripts/gdsmap_derive.py generates it from two read-only foundry inputs (the
+# PDK map + the tech LEF) into $(WORK_DIR)/tech; `make gdsmap` writes it and
+# `make gdsmap-parity` proves it still reproduces the vendor row set 40/40.
+# Read that script's header for the argument behind every deviation. In short:
+#   1. LEFOBS dropped from the geometry rows. The PDK map sends LEF obstruction
+#      to the real metal layer, which put 7.37 mm^2 of phantom conductor --
+#      68.8% of ALL metal, 2.30x the die area -- into the tapeout stream, and is
+#      the measured source of all 1,549 A.R.8.3 antenna results and the ~1,300
+#      M*.W.3 pad blankets. TSMC's layer table has no blockage purpose at all
+#      (0 hits in 1452 rows), so there is no correct layer to move it to either.
+#   2. NAME <layer>/SPNET added, so the power grid streams its net names. Worth
+#      exactly 2 text records here (VDD, VSS on M9) and it does NOT arm latch-up.
+#   3. NAME <layer>/LEFPIN added, so LEF macro pins stream their names. Without
+#      it the pad drivers' pin SHAPES stream and their NAMES do not -- measured
+#      2026-08-13, every IO structure in the stream carried text=0 and layer 137
+#      (M7 pin text) was empty despite 25 M7 pin shapes being present. The
+#      2026-08-10 22:56 pintext experiment proved these rows fix it: 137/0 went
+#      0 -> 25, one label per shape, +2,508 labels across all layers.
+#   4. The two dead NAME M10/M11 PIN rows are not emitted -- this is a 1P9M
+#      stack and the tech LEF stops at M9.
+#
+# The PDK map is a transform of a VIRTUOSO LAYOUT EDITOR map (see its trailer),
+# where drawing a blockage on the layer it blocks is correct. It was never a
+# signoff stream-out map. Cadence's streamOut reference says of map files "You
+# must customize the file to make it appropriate for your design", and its own
+# example gives LEFOBS a separate layer and includes NAME <layer>/SPNET and
+# NAME <layer>/LEFPIN rows -- so this moves TOWARD the documented reference.
+#
+# The PDK mount is read-only lab-shared collateral and is never written.
+# Set EVR_GDS_MAP_FILE in the environment to A/B against the stock PDK map, or
+# use `make restream` to re-stream an existing routed DB with a different map
+# without paying for another P&R run.
+#
+# RESOLVED BY GLOB, NOT BY NAME, and the reason is not brevity. The derived map
+# is OUR artefact -- gdsmap_derive.py writes it into work/tech/ -- but it
+# inherits the vendor map's release-coded filename, and this repository is
+# public. Globbing `*.derived.map` names nothing while selecting the identical
+# file, and it survives a PDK deck upgrade that a hardcoded name would silently
+# miss.
+#
+# EXACTLY ONE, OR STOP. A glob that matched two derived maps and quietly took
+# the first would choose the stream-out layer map at random, and the layer map
+# is the difference between 1,549 antenna violations and none (see doc 28).
+# Zero matches means gdsmap_derive.py has not run. Both are named, not guessed.
+set _evr_maps [glob -nocomplain -directory \
+    $::design_home/ASIC/genus-innovus/work/tech *.derived.map]
+if {[llength $_evr_maps] != 1} {
+    error "expected exactly one *.derived.map in\
+           $::design_home/ASIC/genus-innovus/work/tech, found\
+           [llength $_evr_maps]: $_evr_maps\n  Run `make gdsmap` to derive it,\
+           or set EVR_GDS_MAP_FILE explicitly. The stream-out layer map is not\
+           a thing to choose by accident."
+}
+opt EVR_GDS_MAP_FILE [lindex $_evr_maps 0]
+unset _evr_maps
 opt EVR_GDS_UNIT      1000
 opt EVR_MTARPT_PATHS  10000
 
@@ -262,6 +330,49 @@ if {$EVR_SIGNOFF_STRICT} {
 # helper called `fail` shadowed an Innovus 21.11 builtin and aborted
 # 4_pnr_route.tcl 2.5 hours into a run. Do not add short generic names here.
 ################################################################################
+
+# --- dummy-fill geometry, read out of the foundry deck -------------------------
+# The deck is SVRF; its dimensional constants are `VARIABLE <name> <value>`
+# lines, one definition each, so this is a grep and not a parser. Only the named
+# variables are taken, only their value, and only into memory -- the rule bodies
+# around them are TSMC's text and this repository has no business holding any of
+# it. Same rule the toolkit's tech/tsmc65/derive.tcl states, and the same
+# transform its ::tsmc65::drc_variables performs; kept local here so this stage
+# does not have to source a whole tech pack inside an Innovus session.
+#
+# IT RAISES RATHER THAN RETURNING A HOLE. A missing -min_width makes
+# add_metal_fill fill to nothing and report success, so "the deck did not answer"
+# has to stop the run, not become an empty string.
+proc evr_deck_fill_geometry {deck names} {
+    if {![file readable $deck]} {
+        error "cannot read the foundry DRC deck for dummy-fill geometry:\
+               '$deck'\n  Needs the shared PDK mount (TSMC_65_HOME, exported by\
+               ASIC/common.mk) and membership of its unix group. Empty means the\
+               stage was run outside the makefile, so FOUNDRY_DECK was never\
+               exported. Set EVR_FOUNDRY_DECK, or run with EVR_METAL_FILL=0."
+    }
+    set out {}
+    set fh [open $deck r]
+    try {
+        while {[gets $fh line] >= 0} {
+            if {[regexp {^\s*VARIABLE\s+(\S+)\s+([-0-9.]+)} $line -> n v]} {
+                if {[lsearch -exact $names $n] >= 0 && ![dict exists $out $n]} {
+                    dict set out $n $v
+                }
+            }
+        }
+    } finally { close $fh }
+    set missing {}
+    foreach n $names { if {![dict exists $out $n]} { lappend missing $n } }
+    if {[llength $missing]} {
+        error "the foundry deck does not define: [join $missing {, }]\n \
+              deck: $deck\n  A deck revision that renames a dummy-fill variable\
+              changes the fill geometry this stage must use. Do NOT substitute a\
+              literal -- find the new name in the deck."
+    }
+    return $out
+}
+
 
 # --- check_drc report census ---------------------------------------------------
 # Fills the caller's array with the counts a triage actually needs: not just the
@@ -378,6 +489,47 @@ proc evroute_srclat_skew {path} {
     }
     close $fh
     return $d
+}
+
+# --- launch/capture clock names from the same report ---------------------------
+# The first "Clock:" line follows Startpoint (launch), the second follows
+# Endpoint (capture). Needed because the skew above is only MEANINGFUL when both
+# ends are on the same clock: source latency is measured from each clock's OWN
+# definition point, so across two clocks the difference is the master-clock delay
+# between those points, not skew. See docs/tapeout/16-open-defects.md ADDENDUM
+# 2026-08-12, where that delta was 0.538 ns = input-pad 0.426 + divider CP->Q
+# 0.112, on a database whose hold view measured -0.005 ns WNS.
+proc evroute_srclat_clocks {path} {
+    if {![file exists $path]} { return [list "" ""] }
+    set fh [open $path r] ; set lau "" ; set cap "" ; set seen 0
+    while {[gets $fh line] >= 0} {
+        if {[regexp {^\s*Clock:\s+\([RF]\)\s+(\S+)} $line -> c]} {
+            if {$seen == 0} { set lau $c ; incr seen } else { set cap $c ; break }
+        }
+    }
+    close $fh
+    return [list $lau $cap]
+}
+
+# --- the STRICT item-1 signature -----------------------------------------------
+# Item 1 is not "the two numbers differ". It is "one side is exactly zero" - a
+# source latency path the tool could not find, so it substituted 0 ns. That is
+# what 2026-08-06 looked like (0.000 against -1.076 -> hold WNS -1.167) and it
+# stays gated on every path, same-clock or not.
+proc evroute_srclat_zero {path} {
+    if {![file exists $path]} { return 0 }
+    set fh [open $path r]
+    set hit 0
+    while {[gets $fh line] >= 0} {
+        if {[regexp {Src Latency:\+\s+(-?[0-9.]+)\s+(-?[0-9.]+)} $line -> cap lau]} {
+            set cz [expr {abs($cap) < 0.0005}]
+            set lz [expr {abs($lau) < 0.0005}]
+            set hit [expr {$cz != $lz}]
+            break
+        }
+    }
+    close $fh
+    return $hit
 }
 
 # --- one line of the report/view index -----------------------------------------
@@ -544,9 +696,29 @@ if {$EVR_HOLD_SANITY} {
                 > $srclat_rep
         }]} {
         set skew [evroute_srclat_skew $srclat_rep]
+        lassign [evroute_srclat_clocks $srclat_rep] lau_clk cap_clk
+        set srclat_xclk [expr {$lau_clk ne "" && $cap_clk ne ""
+                               && $lau_clk ne $cap_clk}]
         if {$skew eq ""} {
             warn "no 'Src Latency' row in $srclat_rep - could not run the check."
             warn "  Read the file by hand before trusting any hold number below."
+        } elseif {$srclat_xclk} {
+            # Cross-clock worst hold path. The Src Latency columns are measured
+            # from two DIFFERENT definition points, so their difference is not
+            # skew and is structurally >= the input-pad delay - it can never pass
+            # a 50 ps tolerance, on any database, however good. Do not gate on
+            # it. The item-1 MECHANISM is still gated, by the zero test below.
+            say "worst hold path crosses clocks: $lau_clk -> $cap_clk"
+            say "  Src Latency not comparable across definition points; raw delta"
+            say "  ${skew} ns is pad + divider CP->Q, not skew. Not gated here."
+            say "  Item 1 is gated at CTS instead: 3b gate 2, wb_hold_max."
+            if {[evroute_srclat_zero $srclat_rep]} {
+                flow_fail "one side of Src Latency is exactly 0.000 against a" \
+                          "non-zero other side - that IS the item-1 signature," \
+                          "cross-clock or not: a source latency path the tool" \
+                          "could not find, so it substituted 0 ns." \
+                          "Evidence: $srclat_rep"
+            }
         } elseif {$skew > $EVR_SRCLAT_TOL} {
             flow_fail "clock source latency is asymmetric by ${skew} ns between" \
                       "the capture and launch sides of the worst hold path." \
@@ -1018,13 +1190,95 @@ if {$EVR_VIA_FILL} {
 }
 
 if {$EVR_METAL_FILL} {
-    warn "EVR_METAL_FILL=1: add_metal_fill has never run on this design."
-    # No set_metal_fill overrides are issued: with none, add_metal_fill and
-    # check_metal_density both use the LEF's own MINIMUMDENSITY/MAXIMUMDENSITY,
-    # which are the foundry's numbers for this stack. Overriding them here would
-    # mean inventing density targets, and an invented target is worse than none.
+    # DENSITY TARGETS still come from the LEF (MINIMUMDENSITY / MAXIMUMDENSITY),
+    # which are the foundry's numbers for this stack. Nothing below invents one.
+    #
+    # WHAT IS SET HERE IS FILL *GEOMETRY*, WHICH THE LEF DOES NOT CARRY AND WHICH
+    # THE FOUNDRY DECK STATES EXPLICITLY. Running with no overrides at all is what
+    # the 2026-08-08 filled run did, and it did not merely fail --- it SATURATED:
+    #     DM9.W.1  (dummy M9 width)   1000, capped
+    #     DM9.S.1  (dummy M9 space)   1000, capped
+    #     DM8.EN.1 / DM9.EN.1 (chip-edge enclosure)       997 / 316
+    #     CSR.R.1 on DUM8_NEW / DUM9_NEW / APi            302 / 225 / 172
+    # i.e. fill defaulted to thin-layer geometry on the thick top metals, ran into
+    # the die edge, and filled the sealring corner keep-out. Two of those checks
+    # hit the result cap, so the true counts are unknown. Trading ~11k min-density
+    # window failures for an unbounded number of dummy-geometry ones is not a fix.
+    #
+    # THE CONSTANTS ARE READ OUT OF THE DECK, NOT WRITTEN DOWN HERE. They are the
+    # foundry's numbers; this repository is public and TSMC's licence does not
+    # permit reproducing them, so this follows the same rule as the stream-out map
+    # (scripts/gdsmap_derive.py) and the DRC header (scripts/calibre/
+    # make_project_header.py): ship the transform, read the values at run time.
+    # Rule NAMES stay -- they are what a violation report says.
+    #
+    # It is also the more correct engineering. A transcribed constant is right on
+    # the day it is typed and nothing checks it again; a deck revision that moves
+    # DM9_W_1 would leave this script filling to the old geometry and reporting
+    # success. Reading the deck cannot go stale that way, and the reader below
+    # ERRORS on a name the deck does not define rather than returning an empty
+    # value -- an empty -min_width makes fill produce nothing and report success,
+    # which is the failure this whole stage exists to catch.
+    #
+    # Mapping: -min_width <- DMn_W_1   -gap_spacing <- DMn_S_1 (fill-to-fill,
+    # DMn.S.1 is `EXT DUMn`)   -border_spacing <- DMn_EN_1.
+    # Verified 2026-08-14: all 27 values resolve from the installed deck and are
+    # identical to the literals this block used to carry.
+    #
+    # The sealring corner triangles are handled in floorplan.tcl by
+    # CSR_CORNER_KEEPOUT (create_route_blockage -fills), not here: fill silently
+    # ignores TRIANGULAR blockages, so that keep-out has to be square. See the
+    # comment there.
+    set _fill_names {}
+    foreach _n {1 2 3 4 5 6 7 8 9} {
+        lappend _fill_names DM${_n}_W_1 DM${_n}_S_1 DM${_n}_EN_1
+    }
+    set _fill [evr_deck_fill_geometry $EVR_FOUNDRY_DECK $_fill_names]
+
+    # M1-M7 share one geometry, M8 and M9 each have their own. Asserted rather
+    # than assumed: if a deck revision splits the thin-metal group, filling M1-M7
+    # from DM1's numbers would be silently wrong.
+    foreach _n {2 3 4 5 6 7} {
+        foreach _s {W_1 S_1 EN_1} {
+            if {[dict get $_fill DM${_n}_${_s}] ne [dict get $_fill DM1_${_s}]} {
+                error "deck DM${_n}_${_s} differs from DM1_${_s}: the thin-metal\
+                       fill group is no longer uniform, so this stage's M1-M7\
+                       set_metal_fill is wrong. Split the group before filling."
+            }
+        }
+    }
+    set_metal_fill -layer {M1 M2 M3 M4 M5 M6 M7} \
+        -min_width      [dict get $_fill DM1_W_1] \
+        -gap_spacing    [dict get $_fill DM1_S_1] \
+        -border_spacing [dict get $_fill DM1_EN_1]
+    set_metal_fill -layer {M8} \
+        -min_width      [dict get $_fill DM8_W_1] \
+        -gap_spacing    [dict get $_fill DM8_S_1] \
+        -border_spacing [dict get $_fill DM8_EN_1]
+    set_metal_fill -layer {M9} \
+        -min_width      [dict get $_fill DM9_W_1] \
+        -gap_spacing    [dict get $_fill DM9_S_1] \
+        -border_spacing [dict get $_fill DM9_EN_1]
+
     add_metal_fill -layers {M1 M2 M3 M4 M5 M6 M7 M8 M9 AP} \
                    -nets [concat $power_nets $ground_nets]
+
+    # AP carries no set_metal_fill override: the deck defines no DMAP_W_1/S_1, so
+    # there is no foundry number to apply and inventing one would be exactly the
+    # error this block exists to avoid. AP is still inside CSR_CORNER_KEEPOUT.
+    #
+    # Expect check_metal_density to look WORSE at the die edge than Calibre does:
+    # per the 21.11 reference, once -border_spacing is set both add_metal_fill and
+    # check_metal_density "consider the density in the specified border space area
+    # as 0". That is an Innovus-side reporting artefact of a keep-out we are
+    # required to honour, not a new density failure. Calibre is the authority.
+    #
+    # VERIFY, do not assume. The dummy-geometry checks that saturated last time
+    # are the ones to read first in the next Calibre summary: DM8.W.1, DM8.S.1,
+    # DM9.W.1, DM9.S.1, DM8.EN.1, DM9.EN.1, and CSR.R.1 on DUM8_NEW/DUM9_NEW/APi.
+    # `scripts/ci/drc_census.py <rundir>` fails the run if any of them cap, so a
+    # capped count can no longer be mistaken for a real one.
+    try_step "post-fill metal density" { check_metal_density }
 }
 
 # RE-MEASURE TIMING AFTER FILL. Everything above ran BEFORE add_metal_fill, and
@@ -1378,8 +1632,29 @@ if {$EVR_STREAM} {
 
     warn "this GDS is NOT self-contained. gds_merge_list holds only the 8 memory"
     warn "  macros; standard cells, IO drivers and bond pads are empty cell"
-    warn "  references, because this site's PDK ships no GDS or CDL for them."
-    warn "  411 masters came back unmerged on 2026-08-07 (IMPOGDS-218)."
+    warn "  references. 411 masters came back unmerged on 2026-08-07"
+    warn "  (IMPOGDS-218)."
+    # [CORRECTED 2026-08-11] This warning used to read "because this site's PDK
+    # ships no GDS or CDL for them", which is true of tcbn65lp -- the library
+    # THIS design uses -- but false of the site. The Arm standard-cell family in
+    # the shared phys-IP tree (ARM_IP_LIBRARY_PATH, exported by ASIC/common.mk)
+    # ships BOTH .gds2 and .cdl for its rvt/lvt/hvt base, eco and pmk variants,
+    # readable today; the sibling accelerator-project merges that library's base
+    # GDS in exactly this position. The old wording would stop anyone ever
+    # looking. The tree is named by variable rather than by path on purpose --
+    # this repository is public and the layout of a licensed IP tree is the
+    # licensor's business, not a thing to publish in a comment.
+    #
+    # It is NOT a drop-in for us: the two libraries share no cell names (ours are
+    # AN2D1 / AO211D0, Arm's are A2DFFQ_X1M_A12TR), so merging that file here
+    # would match no master and change nothing. Taking the benefit means
+    # re-synthesising against sc12 -- new .lib, new LEF, full P&R and timing
+    # re-closure. Recorded as an option with a known price, not a pending fix.
+    warn "  Cause is the LIBRARY (tcbn65lp ships no back-end GDS/CDL here), not"
+    warn "  the site: the Arm cell family in the phys-IP tree ships both. Not"
+    warn "  interchangeable -- disjoint cell names, so it needs a re-synthesis."
+    warn "IO driver and bond-pad GDS exist NOWHERE on this site (0 files under"
+    warn "  the PDK mount), so the pad ring stays abstract for any library."
 }
 
 if {$EVR_NETLIST} {

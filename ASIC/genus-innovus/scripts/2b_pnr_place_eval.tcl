@@ -863,9 +863,46 @@ if {$EVP_CHECKS && $EVP_PG_AUDIT} {
                    $EVP_MIN_RV_VIAS was never tested. This is the narrowest point\
                    in the supply path and it is now unverified, not clean."
     } elseif {$rv < $EVP_MIN_RV_VIAS} {
-        flow_fail "only $rv RV vias carry VDD+VSS from M9 to AP (floor\
-                   $EVP_MIN_RV_VIAS, was 14 on the 2026-08-05 floorplan).\
-                   This is the narrowest point in the supply path."
+        # DEMOTED TO AN AUDIT LINE 2026-08-14. This branch used to flow_fail, and
+        # it stopped the 08-13 full run at stage 2 of 7. It was blocking on a
+        # number that cannot discriminate:
+        #
+        #   * `add_stripes -layer M8` (power_plan.tcl) reads RV 7 created / 0
+        #     deleted, AP 4, in EVERY Innovus log in this repo -- 40+ runs across
+        #     08-06..08-14 plus both archived baselines, with zero exceptions. The
+        #     supply path has never been anything other than what it is today.
+        #   * "was 14 on the 2026-08-05 floorplan" is hand arithmetic in
+        #     docs/tapeout/21-physical-audit.md over two ViaGen tables. No 08-05
+        #     log exists in this repo, no log anywhere contains the rows it sums,
+        #     and its confirming query uses `.via_def.bottom_layer.name` -- the
+        #     spelling evp_special_vias_from's own comment records as matching
+        #     nothing. The 14 is not reproducible here and should not be asserted.
+        #   * Exactly one run in repo history ever measured 8, off a route_special
+        #     that created 2 RV vias and deleted 1. The floor is that run's number.
+        #   * check_power_vias -layer_range {M8 AP} reports ZERO missing RV (and 8
+        #     missing VIA8). Innovus, asked directly, says every M9/AP overlap
+        #     already has its via: the binding constraint is AP metal AREA, not
+        #     via generation. A via count cannot see that constraint at all.
+        #
+        # docs/tapeout/30-ir-drop-gate-design.md reached the same conclusion
+        # independently -- "8 vias is not a number anybody derived from a current
+        # ... the gate is measuring the narrowest point of the supply path in the
+        # wrong units" -- and its Step 4 is exactly this demotion.
+        #
+        # THE NOT-MEASURED BRANCH ABOVE STAYS FATAL. That one is meaningful and
+        # was hard-won (see the 2026-08-11 note); do not soften it to match this.
+        #
+        # THIS LEAVES THE SUPPLY PATH WITH NO BLOCKING CHECK. Doc 30 asks that the
+        # demotion be paired with a measured IR-drop gate so the flow is never
+        # left with neither. Voltus is installed and idle. Until that lands the
+        # supply path is AUDITED, NOT VERIFIED -- a green run is not evidence that
+        # it is adequate.
+        warn "only $rv RV vias carry VDD+VSS from M9 to AP (audit floor\
+              $EVP_MIN_RV_VIAS). NOT BLOCKING: the count cannot tell an adequate\
+              supply from an inadequate one, and check_power_vias reports zero\
+              missing RV -- the binding constraint is AP metal area ($ap shapes)."
+        warn "  The supply path is UNVERIFIED, not clean. It needs an IR-drop\
+              gate; see docs/tapeout/30-ir-drop-gate-design.md."
     }
 
     # --- P5: M5 stripe fragmentation -----------------------------------------

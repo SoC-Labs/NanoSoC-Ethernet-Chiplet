@@ -93,8 +93,38 @@ set rf_01k_dir /research/precompiled_mems/TSMC65/rf_01k/
 set flash_cache_data_dir /research/precompiled_mems/TSMC65/flash_cache_data
 set flash_cache_tag_dir /research/precompiled_mems/TSMC65/flash_cache_tag
 
-set bootrom_dir $::design_home/ASIC/romlibs/cc_rom
-set eth_rom_dir $::design_home/ASIC/romlibs/eth_rom
+# ── THE BOOT ROMs — THIS RUN'S, NOT THE SHARED DROP ────────────────────────
+# These two macros are MASK PROGRAMMED, and until 2026-08-14 they were a
+# gitignored binary drop hand-copied out of another user's tapeout tree, with no
+# dependency on the firmware they were supposed to contain. Both shipped holding
+# something else. ASIC/rom_build.mk now compiles them per run into
+# <run>/romlibs and pins the run to that build; ROMLIBS_DIR is how the run tells
+# these scripts where its own copy is.
+#
+# THE FALLBACK IS THE OLD SHARED PATH, and it is not a soft landing: everything
+# in ASIC/romlibs is still gated word-for-word by ASIC/rom_gate.mk before
+# synthesis is allowed to start. What the override buys is that synthesis, P&R
+# and stream-out read the SAME build — the run holds it, so it cannot be
+# swapped underneath a flow that takes hours to cross those three stages.
+if {[info exists ::env(ROMLIBS_DIR)]} {
+    set romlib_root $::env(ROMLIBS_DIR)
+} else {
+    set romlib_root $::design_home/ASIC/romlibs
+}
+set bootrom_dir $romlib_root/cc_rom
+set eth_rom_dir $romlib_root/eth_rom
+
+# A missing ROM directory here becomes "Cannot open file rom_via_*.lib" about
+# ten minutes into a licence hour, with the path buried in a Genus log. Say it
+# now, with the variable that produced it.
+foreach {_rd _rn} [list $bootrom_dir cc_rom $eth_rom_dir eth_rom] {
+    if {![file isdirectory $_rd]} {
+        error "config.tcl: no $_rn macro directory at $_rd\
+             \n  ROMLIBS_DIR = [expr {[info exists ::env(ROMLIBS_DIR)] ? $::env(ROMLIBS_DIR) : \"(unset — using the default shared drop)\"}]\
+             \n  Build this run's ROMs:  make -C ASIC -f common.mk rom-run ROM_RUN_DIR=$romlib_root"
+    }
+}
+unset _rd _rn
 
 set lib_search_path_list "$io_lib_dir $sc_lib_dir $rf_32k_dir $rf_16k_dir $rf_08k_dir $rf_01k_dir $bootrom_dir $eth_rom_dir $flash_cache_data_dir $flash_cache_tag_dir"
 
@@ -246,6 +276,64 @@ set gds_merge_list [list \
     ${FLASH_DATA_GDS} \
     ${FLASH_TAG_GDS} \
 ]
+
+# ── GDS stream-out layer map ────────────────────────────────────────────────
+# Read by the LEGACY flow's write_stream (asic-flows/Cadence/4_pnr_route.tcl),
+# which errors by name if this is unset rather than failing inside write_stream.
+# The eval flow reaches the SAME file through its own knob, EVR_GDS_MAP_FILE
+# (scripts/4b_pnr_route_eval.tcl) — one map, two spellings, deliberately not two
+# maps.
+#
+# THIS IS THE DERIVED MAP, NOT THE STOCK PDK ONE, AND THAT IS THE POINT. The
+# stock map streams LEFOBS — LEF *obstruction*, i.e. routing blockage — onto the
+# same GDS layer as the metal it blocks, so a blockage arrives at the foundry as
+# conductor. That is the "phantom metal" defect: 68.8% of the metal in the
+# 2026-08-07 tapeout stream, and the measured source of the 1,549 antenna
+# results and the M*.W.3 blankets. scripts/gdsmap_derive.py moves LEFOBS to
+# <layer>+9000 instead (keeping the geometry, off every mask layer), except on
+# M8/M9/AP where OBS is the bond pads' real pad metal and must stay.
+#
+# DERIVED FROM THE READ-ONLY PDK, NOT COMMITTED — a BUILD PRODUCT, exactly like
+# IO_PAD_DRIVER_LEF above, and for the same licence reason. Produce it with:
+#     make -C $DESIGN_HOME/ASIC/genus-innovus gdsmap
+# `pnr_route` and `pnr_route_eval` both depend on that target, so under make the
+# file is always present and current before Innovus starts.
+#
+# Set GDS_LAYER_MAP in the environment to A/B against the stock PDK map without
+# editing this file (`make restream` does the same for an already-routed DB).
+#
+# RESOLVED BY GLOB, NOT BY NAME. The derived map is our own build product, but it
+# inherits the vendor map's release-coded filename and this repository is public,
+# so the name is not spelled here. `*.derived.map` selects the identical file and
+# survives a PDK map upgrade that a hardcoded name would silently miss. The same
+# glob is used by 4b_pnr_route_eval.tcl, so the two consumers cannot diverge --
+# which they could when each carried its own copy of the literal.
+#
+# Deliberately NOT fatal on zero or several matches, unlike the stage script:
+# this file is sourced by EVERY stage (see the note below), and synthesis,
+# placement and CTS neither read nor need the map. It leaves gds_layer_map empty
+# and lets the warning below do its job; the stream-out stage does its own strict
+# check, and the Makefile gates before Innovus takes a licence.
+if {[info exists ::env(GDS_LAYER_MAP)] && $::env(GDS_LAYER_MAP) ne ""} {
+    set gds_layer_map $::env(GDS_LAYER_MAP)
+} else {
+    set _cfg_maps [glob -nocomplain -directory \
+        $::design_home/ASIC/genus-innovus/work/tech *.derived.map]
+    set gds_layer_map [expr {[llength $_cfg_maps] == 1 ? [lindex $_cfg_maps 0] : ""}]
+    unset _cfg_maps
+}
+
+# WARN, NOT error: this file is sourced by EVERY stage, and synthesis, placement
+# and CTS neither read nor need the map. Making them fatal on a missing stream
+# map would break four stages to protect one. The stage that does stream is
+# gated in the Makefile BEFORE Innovus launches, which costs no licence — a
+# missing map must never be discovered hours in, at write_stream. That was the
+# 2026-08-14 defect this line exists to close.
+if {![file readable $gds_layer_map]} {
+    warn "GDS stream-out map not generated: $gds_layer_map"
+    warn "  produce it with: make -C \$DESIGN_HOME/ASIC/genus-innovus gdsmap"
+    warn "  harmless before the route stage; write_stream will FAIL without it."
+}
 
 set drc_ruledeck /tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a
 
