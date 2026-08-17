@@ -95,6 +95,45 @@ echo "   wrote MANIFEST.txt"
 # The Makefile's stage assertions test for files BY NAME. A leftover report from
 # a previous run satisfies them, so a stage that dies still looks like it passed.
 cd "$ASIC"
+
+# 3a. DO NOT ROTATE A DIRECTORY SOMEONE IS STANDING IN.
+# The `mv` below operates on the SHARED ASIC/genus-innovus tree, and several
+# sessions work in this repository at once. On 2026-08-13 another session's
+# Innovus had its working directory inside ASIC/genus-innovus/work while this
+# script would have renamed it: mv does not fail and does not warn, the live
+# tool keeps writing into a detached inode, and its log moves out from under
+# whoever is watching it. This script has been unsafe to run alongside a live
+# flow since it was written; the guard closes that.
+#
+# It is a DETECTOR, not a proof -- /proc entries for other UNIX users are not
+# readable -- so it reports "nothing detected", never "nothing running". Set
+# RUN_GUARD_OVERRIDE=1 to proceed anyway, which is recorded in the MANIFEST
+# because a run that overrode this needs to say so.
+GUARD="$ROOT/scripts/ci/run_live_guard.sh"
+if [ -x "$GUARD" ]; then
+    if ! GUARD_PID=$$ "$GUARD" check work logs reports outputs; then
+        if [ "${RUN_GUARD_OVERRIDE:-0}" = "1" ]; then
+            echo "!! RUN_GUARD_OVERRIDE=1 -- rotating anyway" >&2
+            {
+                echo
+                echo "--- LIVE-RUN GUARD OVERRIDDEN --------------------------------"
+                echo "  The guard reported another process standing in work/, logs/,"
+                echo "  reports/ or outputs/, and RUN_GUARD_OVERRIDE=1 was set."
+                echo "  Anything that other process wrote may be missing or split"
+                echo "  between this run directory and its own."
+            } >> "$M"
+        else
+            echo "!! refusing to rotate work/logs/reports/outputs -- see above." >&2
+            echo "!! this run directory ($RUN) has been left in place." >&2
+            exit 4
+        fi
+    fi
+    GUARD_PID=$$ "$GUARD" claim "$ASIC" "$LABEL" || true
+    trap 'GUARD_PID=$$ "$GUARD" release "$ASIC" >/dev/null 2>&1 || true' EXIT
+else
+    echo "!! $GUARD is missing or not executable -- rotating UNGUARDED" >&2
+fi
+
 # outputs/ IS ROTATED TOO. It was not, in the first version of this script, and
 # that is a real hole: `make syn` asserts on outputs/<block>_gate_power.v, so a
 # netlist left from a previous run satisfies the check and a FAILED synthesis
@@ -184,6 +223,29 @@ if [ -n "${SEED_WORK_FROM:-}" ]; then
     done
 fi
 
+# --- 3d. PRE-RUN PROVENANCE CAPTURE -------------------------------------------
+# The config/ copy above is a good snapshot of the flow SCRIPTS. It is not a
+# record of the INPUTS: it does not resolve the flist, does not hash anything,
+# does not record which submodule pins still exist, and does not notice a gate
+# turned off in the environment. run_provenance.py does, in about six seconds.
+#
+# It is deliberately NOT fatal. A three-and-a-half hour flow must not be
+# cancelled because a provenance check tripped -- but a capture that fails
+# leaves PROVENANCE_INCOMPLETE.txt at the top of the run directory, so the run
+# still says so. Silence is the only outcome that is not allowed.
+PROV="$ROOT/scripts/ci/run_provenance.py"
+PROV_SPEC="${PROV_SPEC:-$ASIC/provenance.spec}"
+if [ -f "$PROV" ] && [ -f "$PROV_SPEC" ]; then
+    echo "== provenance: pre-run capture"
+    python3 "$PROV" capture --run "$RUN" --spec "$PROV_SPEC" --phase pre \
+        --label "$LABEL" ${PROV_DEVIATION:+--deviation "$PROV_DEVIATION"} \
+        2>&1 | sed 's/^/   /' || echo "   (capture reported failures -- see $RUN/PROVENANCE_INCOMPLETE.txt)"
+    echo "provenance_spec : $PROV_SPEC" >> "$M"
+else
+    echo "!! no provenance capture: $PROV or $PROV_SPEC missing" >&2
+    echo "provenance      : NOT CAPTURED ($PROV_SPEC missing)" >> "$M"
+fi
+
 # --- 4. run ------------------------------------------------------------------
 LOG="$ASIC/logs/run.log"
 {
@@ -193,6 +255,18 @@ set -o pipefail
 make "${TARGETS[@]}" 2>&1 | tee -a "$LOG"
 rc=$?
 echo "=== finished $(date) rc=$rc ===" | tee -a "$LOG"
+
+# --- 4a. POST-RUN CAPTURE — did anything move under the run? ------------------
+# Taken BEFORE section 5 moves the artefacts, so the inputs are still where the
+# pre-capture recorded them. `--phase post` diffs itself against capture 000 and
+# writes MUTATED_UNDER_RUN.txt if an input changed while the flow was running.
+# rc is NOT consulted: Genus, Innovus and Calibre all exit 0 after failing here,
+# so a run that "succeeded" is exactly as likely to need this as one that did not.
+if [ -f "$PROV" ] && [ -f "$PROV_SPEC" ]; then
+    echo "== provenance: post-run capture"
+    python3 "$PROV" capture --run "$RUN" --spec "$PROV_SPEC" --phase post \
+        2>&1 | sed 's/^/   /' || true
+fi
 
 # --- 5. archive the artefacts beside the config that produced them -----------
 for d in logs reports work; do
@@ -246,6 +320,18 @@ mkdir -p "$ASIC/logs" "$ASIC/reports" "$ASIC/outputs" "$ASIC/work"
 } >> "$M"
 
 echo "$rc" > "$RUN/rc"
+
+# --- 5b. the replay procedure, written into the run ---------------------------
+# The run now carries its own instructions for reproducing it, and — the part
+# that matters — its own statement of what about it CANNOT be reproduced: a
+# submodule pin that no longer exists upstream, an unpushed pin that dies with
+# this checkout, gitignored build products that live in no revision control.
+# Established here, at archive time, rather than left for whoever tries in a
+# year to find out the hard way.
+if [ -f "$PROV" ]; then
+    python3 "$PROV" replay --run "$RUN" 2>&1 | sed 's/^/   /' || true
+fi
+
 # `latest` FOLLOWS SUCCESS, NOT RECENCY. It used to be updated unconditionally,
 # so a run that died in its first seconds captured the pointer — on 2026-08-07 it
 # spent an evening aimed at a run with rc=2, empty reports/ and no GDS, and the
