@@ -193,24 +193,38 @@ grep -qE 'Compare Results:[[:space:]]*PASS|Equivalent' "$L" \
 **Prerequisite:** `make clean` deletes `work/`, which destroys `lec.dofile` and `fv/`.
 LEC must run in the same work area as the `syn` that produced them, or not at all.
 
-### 6. Logical equivalence: synthesised vs **post-P&R** netlist — DOES NOT EXIST
+### 6. Logical equivalence: synthesised vs **post-P&R** netlist — EXISTS, AND IS STALE
 
-There is **no post-P&R LEC anywhere in this repository.** Item 5 compares RTL to the
-netlist Genus wrote; nothing compares anything to `outputs/nanosoc_eth_chiplet_pads_pnr.v`.
+> **Corrected 2026-08-17.** This item was headed "DOES NOT EXIST" and opened "There is no
+> post-P&R LEC anywhere in this repository." That has been false since 2026-08-08. The
+> check exists (`make lec-pnr`, `ASIC/genus-innovus/scripts/lec/`), it has been run, and it
+> came back **61,375 / 61,375 equivalent, 0 non-equivalent, 0 abort** with Conformal's own
+> `Compare Results: PASS`. The `post-pnr-lec` coverage gap has been removed from
+> `ci/signoff.yaml`, which now carries a `lec-pnr` stage. Full account and evidence paths:
+> [13 §7 item 1](13-lec.md).
 
-`scripts/ci/package_submission.sh`'s MANIFEST item 6 asks the reader to
-"confirm `make lec` has been run and passed for **THIS netlist**" — but `make lec` cannot
-do that. Declared as a coverage gap (`post-pnr-lec`) in
-[`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml).
+What is still true is narrower, and it is what belongs in the hand-off: **the run does not
+cover the netlist we would ship.** The `_pnr.v` that was compared is sha1 `45a6c089…`
+(2026-08-08); `runs/latest/outputs/` holds `7a8d6cdb…` (2026-08-10). So the shipped netlist
+is still "not equivalence-checked" — because the check has not been repeated on it, not
+because it does not exist. Two further caveats from the same page: the archived
+`verdict.txt` reads `RESULT=FAIL` on an accounting rule since repaired (the runner's
+`LEC-RUNNER: RESULT=PASS` is the verdict), and the RTL → synthesis leg has still never
+completed.
+
+`scripts/ci/package_submission.sh`'s MANIFEST item 6 has been rewritten and now names both
+stages and both scopes correctly.
 
 **What this leaves uncovered:** anything CTS, `opt_design -post_route -hold` or the
 bond-pad/filler stage could change. Post-route hold repair inserted **65,250 instances**
 between `opt_design_postcts_hold` (194,869) and `opt_design_postroute_hold` (260,119) —
 that is a large amount of unverified structural change.
 
-**To close it:** run Conformal with the synthesised netlist as golden and
-`outputs/*_pnr.v` as revised, reading the same LEF/liberty set. Not scripted here.
-Until then, say so in the hand-off rather than implying LEC covered the shipped netlist.
+**To close it:** `make lec-selftest && make lec-gate && make lec-pnr`, against a single
+`outputs/` so the chain's joint holds — the two archived legs used different
+`_gate_power.v` files, so they do not compose. Roughly seven minutes of Conformal per leg,
+not the multi-hour job this checklist used to assume. Until that has been done on the
+netlist actually being shipped, say so in the hand-off rather than implying LEC covered it.
 
 ---
 
@@ -527,7 +541,8 @@ issues](11-known-issues.md) end to end, then confirm all of:
 - [ ] `make status` all `yes`; the four bundle files present and plausibly sized
 - [ ] `scripts/ci/signoff.py run rtl` → all blocking stages PASS
 - [ ] **LEC run, and the log grepped by hand** (`exit -f` returns 0 regardless)
-- [ ] It is written down that **post-P&R LEC does not exist**
+- [ ] `make lec-pnr` **re-run on the `_pnr.v` actually being shipped**, and its
+      `LEC-RUNNER: RESULT=PASS` line read (not `LEC-VERDICT:` — see item 6)
 - [ ] `check_filler` → 0 gaps; `add_fillers` → non-zero
 - [ ] `check_process_antenna` → `No Violations Found`
 - [ ] `check_connectivity` opens count recorded — **currently 329, not zero**

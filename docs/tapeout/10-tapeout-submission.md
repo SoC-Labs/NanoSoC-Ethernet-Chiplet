@@ -87,12 +87,18 @@ non-self-contained GDS, no metal fill, no LVS, DRC-is-not-signoff-DRC, no seal r
 scribe, and logical equivalence. **A bundle that does not declare its own gaps invites
 somebody downstream to assume they were covered.**
 
-> **One correction to make by hand.** Manifest item 6 asks the reader to confirm
-> `make lec` "has been run and passed for **THIS netlist**". `make lec` compares RTL to
-> the **synthesised** netlist via Genus's `fv_map` — it never reads `outputs/*_pnr.v`.
-> There is no post-P&R LEC in this repository (declared as the `post-pnr-lec` coverage gap
-> in [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml)). State that plainly in the covering note.
-> See [09 item 6](09-signoff-checklist.md).
+> **Corrected 2026-08-17 — this correction is no longer needed, and what it said is now
+> false.** It read: *"Manifest item 6 asks the reader to confirm `make lec` has been run and
+> passed for THIS netlist … There is no post-P&R LEC in this repository (declared as the
+> `post-pnr-lec` coverage gap in `ci/signoff.yaml`)."* Manifest item 6 has since been
+> rewritten and names both stages and both scopes; the `post-pnr-lec` gap has been removed
+> from `ci/signoff.yaml`, which now carries a `lec-pnr` stage; and post-P&R LEC ran on
+> 2026-08-08, clean.
+>
+> **What the covering note must still say** is narrower: the post-P&R LEC that passed was
+> run against `_pnr.v` sha1 `45a6c089…`, and that is **not** the netlist in the bundle.
+> Re-run `make lec-pnr` on the shipped netlist, or state that it has not been.
+> See [13 §7 item 1](13-lec.md) and [09 item 6](09-signoff-checklist.md).
 
 ---
 
@@ -272,9 +278,12 @@ Do not rely on the recipient reading `MANIFEST.txt`. Put this in the email:
 4. **The DRC numbers in `reports/` are Innovus `check_drc` over the incomplete stream**,
    not signoff DRC. Calibre was run against the same incomplete stream.
 5. **No seal ring, no scribe.** Die is 1600 × 2000 µm, pad ring from (0,0).
-6. **Logical equivalence covers RTL → synthesised netlist only.** Nothing in this repo
-   compares anything to the enclosed `*_pnr.v`. State it; do not let silence imply
-   coverage.
+6. **Logical equivalence: a post-P&R check exists and passed, but not on the enclosed
+   netlist.** `make lec-pnr` ran 2026-08-08 — 61,375/61,375 equivalent — against `_pnr.v`
+   sha1 `45a6c089…`. Confirm the sha1 of the enclosed `*_pnr.v` before claiming any of that
+   applies to it. Separately, the RTL → synthesised leg has never completed. State both;
+   do not let silence imply coverage. (Corrected 2026-08-17; this item previously read
+   "Nothing in this repo compares anything to the enclosed `*_pnr.v`.")
 
 ---
 

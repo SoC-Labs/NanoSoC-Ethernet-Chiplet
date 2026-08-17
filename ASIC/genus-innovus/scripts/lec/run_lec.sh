@@ -94,11 +94,22 @@ note() { printf 'LEC-RUNNER: %s\n' "$*"; }
 # Cell libraries
 #-----------------------------------------------------------------------------
 # The SAME .lib files scripts/config.tcl hands Genus and Innovus. Conformal
-# reads Liberty (not Verilog): TSMC ships Front_End-only packages on this site,
-# so there is no tcbn65lp / tphn65lp Verilog simulation model to read — but
-# there does not need to be, because every combinational cell in
-# tcbn65lpwc.lib carries a `function` attribute and every sequential cell a
-# full ff()/latch() description, which is exactly what LEC consumes.
+# reads Liberty (not Verilog) because every combinational cell in the
+# standard-cell Liberty carries a `function` attribute and every sequential cell
+# a full ff()/latch() description, which is exactly what LEC consumes.
+#
+# CORRECTED 2026-08-17. This comment used to justify that by asserting the site
+# has Front_End-only packages and therefore no standard-cell or IO Verilog to
+# read. That is false, and it was being cited elsewhere as proof that
+# gate-level simulation is impossible here. Front_End IS the simulation
+# package; Back_End (GDS/layout) is what this site lacks. The simulation models
+# sit in the SAME _FE packages the two *_LIB_DIR paths below resolve: go one
+# level up from the NLDM directory and take the sibling verilog/ subtree.
+# Liberty is still the right input for LEC -- but it is a choice, not the only
+# option. If you do use the Verilog, mind the revision skew: inside each
+# package the verilog/ subdirectory carries an OLDER release revision than the
+# NLDM/ one, so the models are not the same release as the Liberty. ls both and
+# compare. See docs/tapeout/13-lec.md section 3.
 #
 # The memory macros (rf_*, *rom_via, flash_cache_*) also come in as Liberty and
 # are then BLACKBOXED by LEC_NOTRANS below — see the long note in pnr_lec.do.

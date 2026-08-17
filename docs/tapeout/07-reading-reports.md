@@ -857,7 +857,10 @@ grep -c FILLER outputs/${B}_pnr.v
 
 Even a fully green column is **not** a signoff. Work through
 [09 — Signoff checklist](09-signoff-checklist.md), which covers the checks this flow does
-not run at all: metal fill, LVS, logical equivalence, seal ring.
+not run at all: metal fill, LVS, seal ring. Logical equivalence is a fourth case and no
+longer belongs in that list — post-P&R LEC ran clean on 2026-08-08, but against a `_pnr.v`
+that has since been superseded, and the RTL → synthesised leg has never completed. See
+[13 §7](13-lec.md).
 
 ---
 

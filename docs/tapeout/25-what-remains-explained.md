@@ -146,7 +146,10 @@ fragment is a node that does not exist in the schematic), not an IR-drop one.
 
 CAVEAT: bounding-box overlap is not connectivity. That the big fragment IS the
 main mesh is strongly indicated, not proven. Proving it needs a database query or
-IR-drop analysis (no Voltus/RedHawk on site).
+IR-drop analysis. ~~(no Voltus/RedHawk on site)~~ — **that parenthesis was wrong.
+Voltus is installed and licensed here** (`SSV_21.11.000`, version-matched to the
+Innovus in use; checkout verified live, not just `lmstat`). See
+`31-power-delivery-measured.md`.
 
 **The 1501 dangling wires are mostly cosmetic**, and their layer distribution is
 the diagnosis: M2 634, M1 466, M5 341, M3 41, rest <10. 1100 of 1501 on M1/M2 —
@@ -294,14 +297,19 @@ so we ship parts with latent faults and cannot distinguish a bad die from a bad
 board from bad firmware. Defensible for a prototype with tens of parts; not for a
 yield target. Adding it later means re-synthesis and re-P&R.
 
-**No post-P&R LEC.** Between synthesis and GDS, Innovus ran pre-CTS opt, CTS,
+**Post-P&R LEC, run but not on this netlist.** *(Corrected 2026-08-17; this paragraph
+was headed "No post-P&R LEC".)* Between synthesis and GDS, Innovus ran pre-CTS opt, CTS,
 post-CTS opt, post-CTS hold, post-route opt and post-route hold. Instance count
 went 183,836 -> 203,260 — ~20,000 instances added or changed, every one a logic
-rewrite. LEC proves formally that those transforms preserved function. Without it,
-our whole verification story is against a netlist that is not the one being taped
-out. Note `make lec` exits 0 even on non-equivalence — grep for "Compare Results:".
-Run `make lec-selftest` (~15s, mutation-tests the harness) BEFORE trusting
-`lec-pnr`. A LEC that always passes is worse than no LEC.
+rewrite. LEC proves formally that those transforms preserved function, and on
+2026-08-08 it did: 61,375/61,375 equivalent, 0 non-equivalent, 0 abort, in 412 s.
+**But against `_pnr.v` sha1 `45a6c089…`, which is not the netlist we would tape out**
+(`runs/latest/` holds `7a8d6cdb…`), so the verification story still does not attach to
+the shipped object. Re-run it. Note `make lec` — the *other*, RTL-side target — exits 0
+even on non-equivalence; grep for "Compare Results:". Run `make lec-selftest` (~15s,
+mutation-tests the harness) BEFORE trusting `lec-pnr`, and read its `LEC-RUNNER:` verdict
+line rather than `LEC-VERDICT:`. A LEC that always passes is worse than no LEC.
+Details: [13 §7 item 1](13-lec.md).
 
 ## 6. What stands between us and tapeout
 
@@ -311,7 +319,9 @@ Run `make lec-selftest` (~15s, mutation-tests the harness) BEFORE trusting
 3. The M4 SHORT — severity unknown, could be fatal. Settle it against `rf_16k.gds2`.
 4. Hold timing — currently WNS -0.099ns / 68 endpoints. Not fixable by slowing the
    clock. A chip failing hold is scrap.
-5. Post-P&R LEC — costs runtime only.
+5. Post-P&R LEC **re-run on the netlist actually being shipped** — passed on 2026-08-08
+   against a since-superseded `_pnr.v`; costs ~7 minutes of Conformal, not runtime worth
+   deferring.
 
 ### (b) Waivable with justification, or one iteration away
 6. 43 M4 + 1 M8 SPACING — one root cause; route blockage over macros.
@@ -331,10 +341,19 @@ Run `make lec-selftest` (~15s, mutation-tests the harness) BEFORE trusting
 ### (c) Procurement / lead time — these GATE section (a)
 18. Standard-cell, IO and bond-pad **GDS** — absent. Blocks signoff DRC.
 19. **CDL** netlists for the same — absent. Blocks LVS.
-20. **QRC/Quantus** tech file — absent. Blocks credible timing signoff.
+20. ~~**QRC/Quantus** tech file — absent.~~ **Present.** A QRC deck for the exact
+    stack is on site and the mmmc file has been wired to it for some time —
+    see the note at the head of
+    `ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc`. It is also the
+    extraction tech file the rail work now uses.
 21. Seal ring and scribe — not in the design data. Without a seal ring the die
     cracks at dicing and moisture kills it in the field.
-22. IR-drop signoff — no Voltus/RedHawk licence.
+22. ~~IR-drop signoff — no Voltus/RedHawk licence.~~ **The licence exists.**
+    `SSV_21.11.000`, version-matched to the Innovus in use, 41 features issued
+    and idle, checkout verified live. What is genuinely absent is cell SPICE
+    and cell GDS, so a *cell-accurate* PGV — and therefore all dynamic rail
+    analysis — cannot be built here. Static rail and effective resistance can.
+    See `31-power-delivery-measured.md`.
 23. Calibre + foundry rule deck — licence + NDA.
 
 **Items 18, 19 and 20 are the same conversation with the same broker, and they gate

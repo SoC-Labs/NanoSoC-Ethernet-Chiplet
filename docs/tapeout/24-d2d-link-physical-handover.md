@@ -180,9 +180,19 @@ which CCOpt then re-sources at `mtx_clk_reg/Q`, i.e. the **TX** register. See
    variants — so the run that produced the current GDS emitted **neither report**. Wire them in.
 2. **No gate-level simulation anywhere.** The `_gate.sdf` (203 MB) is written and never consumed.
    GLS is exactly what would expose reset-ordering X's and the runt-pulse behaviour in §7.
-3. **No post-P&R LEC.** `docs/tapeout/11-known-issues.md:560-590`. The precedent is not hypothetical:
-   a July GDS shipped with TideLink's **entire TX datapath removed by Genus `GLO-34`** and passed every
-   physical check.
+   *Nothing blocks it.* Measured 2026-08-17: TSMC ships standard-cell and IO Verilog in the same
+   `Front_End` packages this flow already takes its Liberty from, all six RAM macros have `.v`
+   models, and VCS, Xcelium and Verilator are all installed here. See
+   [13 §3](13-lec.md) for where they sit and the one caveat: within each package the `verilog/`
+   subdirectory carries an **older release revision** than the `NLDM/` one the Liberty comes
+   from, so compare those two directory names on your installation before trusting a GLS run.
+3. **Post-P&R LEC is stale, not absent** *(corrected 2026-08-17; this item read "No post-P&R LEC")*.
+   It ran clean on 2026-08-08 — 61,375/61,375 equivalent — but against a `_pnr.v` that has since
+   been superseded, and the RTL → synthesised leg has still never completed.
+   `docs/tapeout/11-known-issues.md` issue (i); full account in `docs/tapeout/13-lec.md` §7.
+   The precedent is not hypothetical: a July GDS shipped with TideLink's **entire TX datapath
+   removed by Genus `GLO-34`** and passed every physical check — and `GLO-34` is caught by the
+   RTL → synthesised leg, the one still missing.
 4. **GDS completeness** — the streamed artefact has **424 cell masters with no transistors**
    (`ci/signoff.yaml`, `gds-completeness`), blocked on TSMC Back-End packages. Any DRC over it must be
    *withdrawn*, not caveated.

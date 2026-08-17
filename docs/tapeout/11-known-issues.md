@@ -19,7 +19,7 @@ Numbers come from the 2026-08-05 baseline unless stated otherwise:
 | [f](#f-check_cpf-errors-tolerated-by-a-wrapper-in-configtcl) | `check_cpf` errors tolerated by a wrapper | low | deliberate; conditions stated below |
 | [g](#g-1243-max_transition-618-max_capacitance-violations-post-route) | 1,243 `max_transition` + 618 `max_capacitance` | **high** | observed, **never triaged** |
 | [h](#h-filler-runs-post-route-and-nothing-cleans-up-after-it) | Filler post-route, no `eco_route` after | medium | two tool warnings, one silent no-op |
-| [i](#i-no-post-pr-logical-equivalence-exists) | No post-P&R LEC exists | **high** | coverage gap, not a bug |
+| [i](#i-post-pr-logical-equivalence-is-stale-not-absent) | Post-P&R LEC is stale, not absent | medium | ran clean 2026-08-08, on a superseded netlist |
 
 ---
 
@@ -548,23 +548,43 @@ diodes, and `work/check_filler.log` reports `Total number of gaps found: 0` and
 
 ---
 
-## i) No post-P&R logical equivalence exists
+## i) Post-P&R logical equivalence is stale, not absent
 
-A coverage gap rather than a defect, recorded here because it is the one that would let the
-worst class of failure through silently.
+> **Rewritten 2026-08-17, and downgraded from high to medium.** This issue was titled "No
+> post-P&R logical equivalence exists" and asserted that *"nothing anywhere in this
+> repository compares anything to the post-P&R netlist"*. False since 2026-08-08. Full
+> account: [13 §7 item 1](13-lec.md).
+
+A coverage gap rather than a defect, and now a *narrower* one than this entry used to
+claim. Kept at the top of the list because the failure class behind it is still the worst
+one on these pages.
 
 ### What is known
 
-- `make lec` runs Conformal against **RTL vs the synthesised netlist**, via Genus's
-  `fv_map`. It never reads `outputs/nanosoc_eth_chiplet_pads_pnr.v`.
-- **Nothing anywhere in this repository compares anything to the post-P&R netlist.**
-  Declared as the `post-pnr-lec` coverage gap in
-  [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml).
-- `scripts/ci/package_submission.sh`'s MANIFEST item 6 nonetheless asks the reader to
-  confirm LEC "has been run and passed for **THIS netlist**" — which `make lec` cannot do.
+- **Post-P&R LEC exists and has run clean.** `make lec-pnr`
+  (`ASIC/genus-innovus/scripts/lec/`) compared `outputs/*_gate_power.v` against
+  `outputs/*_pnr.v` on 2026-08-08: **61,375 compare points, 61,375 equivalent, 0
+  non-equivalent, 0 abort, 0 not-compared**, with Conformal's own `Compare Results: PASS`.
+  412 s CPU, 874 MB. `ci/signoff.yaml` now carries a `lec-pnr` stage and the `post-pnr-lec`
+  entry has been removed from its `unsupported:` list.
+- **It does not cover the netlist we would ship.** The compared `_pnr.v` is sha1
+  `45a6c089…`; `runs/latest/outputs/` holds `7a8d6cdb…` (2026-08-10). *That* netlist is
+  unverified. This is now the whole of the gap on the P&R side.
+- **The archived verdict says `RESULT=FAIL` and does not mean it.** The dofile's
+  unreachable rule fired on 34 supply pads per side whose golden and revised name sets are
+  identical. Repaired in `run_lec.sh` on 2026-08-09, in the runner rather than the dofile —
+  so on an accepted-exception pass `verdict.txt` still reads
+  `LEC-VERDICT: RESULT=FAIL` and the verdict is the `LEC-RUNNER: RESULT=PASS` line beneath
+  it. Do not gate on the wrong line.
+- **The RTL → synthesised leg has still never completed.** The single attempt aborted on a
+  hardcoded path (`runs/20260808T185931Z_stage1a-syn-place-cts/logs/eval/lec.log`, FIL1.2 at
+  dofile line 104). So the `GLO-34` class below is the part that remains genuinely
+  unevidenced — not the P&R half.
 - **`lec.dofile` ends `exit -f`, returning 0 even on non-equivalence**, and the Makefile
   adds no check. The `check:` block on the `lec` stage in `ci/signoff.yaml` is the only
-  thing that turns a Conformal run into a verdict.
+  thing that turns *that* Conformal run into a verdict. `run_lec.sh` (the `lec-pnr` /
+  `lec-gate` path) does not have this defect — it asserts its own verdict twice, from two
+  independent sources.
 
 **Why this is high severity.** A previous build silently lost TideLink's **entire TX
 datapath** to Genus `GLO-34` unused-logic removal, and the July reference GDSII shipped
@@ -576,15 +596,19 @@ the design between post-CTS and post-route.
 
 ### What to do next
 
-1. **Run the LEC that does exist, and grep its log by hand** — see
-   [09 item 5](09-signoff-checklist.md). It is the highest catch per minute of anything on
-   these pages, and `make clean` destroys the `work/fv/` it needs.
-2. **Add a synth-vs-`_pnr.v` compare.** Same Conformal invocation, golden =
-   `outputs/*_gate_power.v`, revised = `outputs/*_pnr.v`, same library set. Then add it to
-   `ci/signoff.yaml` as a `physical` stage with a `check:` block like the existing one, and
-   remove `post-pnr-lec` from the `unsupported:` list.
-3. **Until then, correct the MANIFEST text by hand in the covering note** — see
-   [10 §2](10-tapeout-submission.md). Do not let silence imply coverage.
+1. **Get the RTL → synthesised leg to complete.** This is the one that catches `GLO-34`,
+   and it has never produced a verdict. The blocker is a path, not the tool: Genus's
+   generated dofile hardcodes an absolute path into `outputs/` that the run archiver moves.
+   Either run it before archiving or drive it from `run_lec.sh`, which takes its netlists as
+   arguments.
+2. **Re-run `make lec-gate` and `make lec-pnr` against a single `outputs/`.** Both passed on
+   2026-08-08 but against *different* `_gate_power.v` files (sha1 `431c06a5…` vs
+   `664d76d7…`), so `A ≡ B` and `B ≡ C` do not compose. About seven minutes of Conformal
+   each. Read the `LEC-RUNNER:` verdict line, not `LEC-VERDICT:`.
+3. **Record the netlist sha1 beside the GDS sha1** in the covering note, so "LEC passed" can
+   never be read as applying to a netlist it never saw — see
+   [10 §2](10-tapeout-submission.md) and
+   [26 §A1](26-plan-to-submittable-gds.md). Do not let silence imply coverage.
 
 ---
 

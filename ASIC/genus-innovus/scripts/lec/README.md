@@ -116,8 +116,24 @@ drifted, so a memory-corner swap cannot silently turn a macro into an accidental
 blackbox.
 
 Conformal reads **Liberty, not Verilog**: `tcbn65lpwc.lib` carries a `function` on every
-combinational output and a full sequential description on every flop, and the TSMC
-packages on this site are Front_End-only — there is no standard-cell Verilog to read.
+combinational output and a full sequential description on every flop, which is exactly
+what LEC consumes.
+
+> **Corrected 2026-08-17.** That sentence used to end "and the TSMC packages on this site
+> are Front_End-only — there is no standard-cell Verilog to read." False. `Front_End` *is*
+> the simulation package (`Back_End` — the GDS and layout views — is what this site lacks).
+> Both the standard-cell and the IO simulation models are present, in the very same `_FE`
+> packages `SC_LIB_DIR` / `IO_LIB_DIR` below already resolve for the NLDM: look one level up
+> from the NLDM directory and take the sibling `verilog/` subtree instead (3.7 MB / 844
+> modules for the standard cells, plus a `…_pwr.v` PG-pin variant; 26 KB / 58 modules for the
+> IO). Liberty remains the right input **for LEC** — a choice, not a forced move — but the
+> false version of this claim was being cited elsewhere as proof that gate-level simulation
+> is impossible on this site, which it is not.
+>
+> Before relying on those models, note the revision skew: inside each package the `verilog/`
+> subdirectory carries an **older release revision** than the `NLDM/` one, so the simulation
+> models are not the same release as the Liberty. `ls` both subdirectories and compare the
+> names. See `docs/tapeout/13-lec.md` §3.
 
 ### `-PG_PIN` is load-bearing
 

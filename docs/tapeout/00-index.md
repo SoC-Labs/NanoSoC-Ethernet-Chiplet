@@ -40,7 +40,7 @@ self-documentation commands that make Innovus stop being opaque.
 | 10 | [Tapeout submission](10-tapeout-submission.md) | The bundle, and the questions to settle with your broker |
 | 11 | [Known issues](11-known-issues.md) | Open problems on this design, and what has been ruled out |
 | 12 | [Calibre DRC](12-calibre-drc.md) | The working headless invocation, and why the in-flow one never ran |
-| 13 | [LEC](13-lec.md) | Post-P&R equivalence — the check nothing here previously performed |
+| 13 | [LEC](13-lec.md) | Post-P&R equivalence — the harness, and what its two 2026-08-08 runs did and did not prove |
 | 14 | [DRC triage](14-drc-triage.md) | The 102 surviving violations, classified and root-caused |
 | 15 | [PG opens analysis](15-pg-opens-analysis.md) | Evidence and ranked hypotheses for the unexplained opens |
 | 16 | [Open defects](16-open-defects.md) | The hold-timing defect, DRV, GWEN, and other live findings |

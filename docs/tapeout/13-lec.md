@@ -10,8 +10,15 @@ Harness: `ASIC/genus-innovus/scripts/lec/`
 (`README.md` there is the operating manual). Tool: `lec 22.10-s200` at
 `/eda/cadence/confrml/bin/lec`.
 
-> Every number on this page was measured from `outputs/` as written by the run that
+> Every number in §§1–5 was measured from `outputs/` as written by the run that
 > finished 2026-08-06 17:45. Where something has not been run, it says so.
+>
+> **Amended 2026-08-17.** Two claims on this page were measured false and are corrected in
+> place, each marked where it stands: §3's assertion that no standard-cell or IO Verilog
+> exists on this site, and §7's assertion that the production comparison has never been
+> run. Both LEC legs ran on 2026-08-08. §4's unreachable-point prediction, §6's "proposed,
+> not applied", and §7 items 1–3 have been re-derived from the measurements rather than
+> quietly restated — what changed is called out at each.
 
 ---
 
@@ -178,8 +185,61 @@ legitimate one.
 
 **Liberty, not Verilog.** `tcbn65lpwc.lib` carries a `function` attribute on every
 combinational output and a full sequential description on every flop and latch — exactly
-what LEC consumes. There is no alternative anyway: the TSMC packages installed here are
-Front_End-only and ship no standard-cell or IO Verilog at all.
+what LEC consumes. That is the right input for this tool; it is a choice, not a forced
+move.
+
+> **Corrected 2026-08-17.** This paragraph used to end *"There is no alternative anyway:
+> the TSMC packages installed here are Front_End-only and ship no standard-cell or IO
+> Verilog at all."* Both halves are false, and the error escaped this page — `Front_End`
+> **is** the simulation package. The thing this site genuinely lacks is `Back_End`: GDS and
+> the layout views, which is why §7 item 5 and the `gds-completeness` entry in
+> `ci/signoff.yaml` are still correct.
+>
+> Measured with `ls`, 2026-08-17. **Locations below are given relative to the variables the
+> flow already sets, never as absolute paths or release names** — this repository is public
+> and the PDK is licensed to the site, so an inventory of what is installed here does not
+> belong in it. `ls` your own installation.
+>
+> | model | where | size |
+> |---|---|---|
+> | standard cells | the standard-cell `_FE` package, `TSMCHOME/digital/Front_End/verilog/` | 3.7 MB, 844 modules |
+> | standard cells, PG-pin variant | a `…_pwr.v` beside it, same directory | 3.9 MB |
+> | IO drivers | the IO `_FE` package, same `Front_End/verilog/` position | 26 KB, 58 modules |
+> | RAM macros | one directory per macro in the tree `$MEM_PATH` points into — all six carry a `<macro>.v` beside their `.lib` | 74–142 KB |
+>
+> Both `_FE` packages are the ones `scripts/config.tcl:85-86` already resolves under
+> `$TSMC_65_HOME` to reach the NLDM. So the Verilog needs nothing installed, and no *package*
+> skew is possible — it is the same package, not a parallel one.
+>
+> **A revision skew *inside* those packages is possible, and on this installation it exists.
+> Check it before trusting a gate-level run.** Both packages have this shape:
+>
+> ```
+> <package>/TSMCHOME/digital/Front_End/
+>         timing_power_noise/NLDM/<A>/     <- the Liberty config.tcl reads
+>         verilog/<B>/                     <- the simulation models
+> ```
+>
+> `<A>` and `<B>` are release-revision directory names. **In both packages `<A>` carries the
+> same revision as the enclosing package and `<B>` carries an older one** — so the Verilog is
+> not the same release as the Liberty, for the standard cells and the IO alike. Two `ls`
+> outputs are the whole test:
+>
+> ```sh
+> # $p = the _FE package config.tcl:85 (IO) or :86 (standard cells) resolves to
+> ls -d "$p"/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/*/
+> ls -d "$p"/TSMCHOME/digital/Front_End/verilog/*/
+> ```
+>
+> Compare the two directory names; then `head` the `.v` file, whose own `Version:` header
+> field agrees with `<B>` rather than `<A>`. A caveat, not a blocker — but a cell whose
+> function or timing changed between those two releases would make a gate-level simulation
+> disagree with STA for a reason that is not the design's.
+>
+> **The consequence is not on this page.** VCS `T-2022.06-SP2`, Xcelium `xrun` and
+> Verilator 4.028 are all on `PATH` here, so **gate-level simulation of `…_pnr.v` against
+> the 203 MB `_gate.sdf` is achievable on this site.** Several documents said or implied it
+> was not; they are listed in §7's closing note.
 
 ### `-PG_PIN` — the setup detail that decides whether this works
 
@@ -231,7 +291,26 @@ only ever prove the model equals itself.
 
 `PAD70GU` (42) and `PAD70NU` (40) are created by `scripts/place_bondpads.tcl` during
 `4_pnr_route` and exist only in `…_pnr.v`. There is **no `.lib` and no Verilog** for them
-anywhere in this PDK install — no `.lib` file exists under `$TSMC_65_HOME/iolib` at all.
+anywhere in this PDK install — but the reason is not the one this section used to give, and
+the difference is worth six lines because it also says where the pads come from.
+
+Run `grep -rl PAD70 "$TSMC_65_HOME"` (2026-08-17) and it returns **exactly one file**, a
+**LEF**, in the `Back_End/lef/` subtree of the **bump/pad IO library's `_FE` package** — a
+different library from the IO-driver one `config.tcl` reads. It defines `MACRO PAD70GU`,
+`PAD70GU_SL`, `PAD70NU` and `PAD70NU_SL`.
+
+So the pads have **a LEF abstract and nothing else**: that package ships only
+`Back_End/{lef,milkyway,volcano}` and its documentation — no Liberty, no Verilog, no GDS.
+That is the evidence for "physical-only", and it is now measured rather than inferred.
+
+> Two superseded arguments, both wrong in the same way — each searched a tree the pads were
+> never in. The original text said no `.lib` existed under `$TSMC_65_HOME/iolib` at all; that
+> path is missing the `CMOS/LP/IO2.5V` segment, so it named nothing. The first correction to
+> it (also 2026-08-17) fixed the path and found 126 `.lib` files with no `PAD70` among them —
+> true, but irrelevant: bond pads come from the **bump/pad library**, not the IO-driver
+> library `config.tcl` reads. The conclusion was right three times running; only the third
+> argument supports it. If you are re-checking, grep the whole of `$TSMC_65_HOME` rather than
+> the subtree you expect the answer to be in.
 They are physical-only, written by Innovus with an empty connection list
 (`PAD70GU BuPAD_HOST_IO_5 ();`), so they carry zero key points either way. Correct: bond
 pads are LVS/DRC scope, not equivalence scope.
@@ -323,6 +402,16 @@ has nothing to do with P&R. The rule that carries information:
 
 `LEC_STRICT_UNREACHABLE=1` restores a blanket fail for a reviewer who wants it.
 
+> **The "42 per side" prediction was wrong, and both production legs hit the first row of
+> that table.** Measured 2026-08-08, identically on both: `unreachable_tristate=0` and
+> `unreachable_other=34` per side. The blackboxed macros contributed no unreachable key
+> points at all. The 34 are **supply pads** — 6 `uPAD_VDD_*`, 12 `uPAD_VDDIO_*`,
+> 4 `uPAD_VSS_*`, 12 `uPAD_VSSIO_*` — blackbox instances rather than tri-state pins, so
+> the rule above classifies them as "real logic became unreachable" and fails. Their golden
+> and revised name sets are identical: 34 each, diffed to empty (re-verified 2026-08-17
+> from `lec_pnr_unreachable_{golden,revised}.rpt`). The reasoning behind the rule is sound;
+> the population it was calibrated against was the wrong one. §7 item 1 records the repair.
+
 ### The harness is mutation-tested
 
 `scripts/lec/run_lec.sh selftest` runs four small netlists shaped like the real ones —
@@ -393,8 +482,32 @@ and it declares the gap in `unsupported:`:
              compares RTL (or the synth netlist) to outputs/*_pnr.v"
 ```
 
-Three things follow. **These are proposed, not applied — `ci/signoff.yaml` and
-`scripts/ci/` are outside this change's file ownership.**
+Three things follow.
+
+> **Status corrected 2026-08-17. All three were applied; this section was written when they
+> were proposals and never updated.** `ci/signoff.yaml` and `scripts/ci/` remain outside
+> this page's file ownership, so what follows is now a *reading* of them, not a request.
+> Verified by inspection today:
+>
+> | | state |
+> |---|---|
+> | (a) `lec-pnr` stage | **applied**, in the physical phase, with a `lec-selftest` stage placed before it exactly as §6 recommended below |
+> | (b) `post-pnr-lec` in `unsupported:` | **removed** — no such id remains in the file |
+> | (c) `package_submission.sh` MANIFEST item 6 | **rewritten**, and now names both stages and both scopes |
+>
+> **What was not applied is the `check:` block in (a) — and that is the right outcome.**
+> The shipped stage carries no `check:` at all and leans on `run_lec.sh`'s exit status. Had
+> the block below been adopted verbatim it would have failed every good run: it greps
+> `verdict.txt` for `^LEC-VERDICT: RESULT=PASS`, and on an accepted-exception pass that
+> line still reads `RESULT=FAIL` because the repair of 2026-08-09 lives in the runner, not
+> the dofile. The runner's own `LEC-RUNNER: RESULT=PASS` is the line that carries the
+> verdict. See §7 item 1. The block is left below as written so the trap is on the record.
+>
+> **One stale comment remains in `ci/signoff.yaml`, on the `lec` stage** — the NOTE quoted
+> just above still says "there is no post-P&R LEC anywhere in the repo, despite
+> package_submission.sh's MANIFEST claiming otherwise". Both clauses are now false, and the
+> stage that refutes the first sits about sixty lines below it in the same file. Flagged
+> here rather than fixed, per this page's file ownership.
 
 **(a) Add a `lec-pnr` stage** after `lec` in the physical phase:
 
@@ -447,23 +560,97 @@ licence), so it belongs in the physical phase immediately before `lec-pnr`.
 
 Ordered by how much it should worry you.
 
-**1. The production comparison has never been run.** Everything above is a harness that
-is proven to work on small netlists shaped like the real ones and proven to read the real
-libraries. `run_lec.sh pnr` on the 53 MB netlist has *not* been executed — it is a
-multi-hour licensed run. **A green self-test is not a green design.** Until `make lec-pnr`
-has been run and passed, the correct statement about `outputs/…_pnr.v` remains "not
-equivalence-checked".
+**1. The production comparison ran on 2026-08-08. It is stale, not absent.**
 
-**2. Runtime and memory are unmeasured.** A flat compare of 231,742 instances with 55,516
-state points is a large job. If it aborts on resources, the levers are `LEC_THREADS`,
-`LEC_DIAG=0`, and — if aborts appear — Conformal's hierarchical or ECO flows, none of
-which have been tried here.
+> *Corrected 2026-08-17. This item read "The production comparison has never been run",
+> and item 3 read "`make lec-gate` has never been run either". Both were false when
+> written, and both had been copied into other documents — see the closing note.*
 
-**3. `make lec-gate` has never been run either,** and its `LEC_PG_PIN=revised` mode
-(Liberty read with PG pins for the revised side only, because `…_gate.v` has no PG
-connections) is untested. The static evidence that `…_gate.v` ≡ `…_gate_power.v` is
-strong — identical cell histograms, identical instance-name sets, same Genus DB, 10
-seconds apart — but it is static evidence, not a proof.
+Both legs completed, and both are logically clean:
+
+| leg | golden → revised | compare points | equivalent | non-eq | abort | not-compared |
+|---|---|---:|---:|---:|---:|---:|
+| `pnr` | `…_gate_power.v` → `…_pnr.v` | 61,375 | 61,375 | 0 | 0 | 0 |
+| `gate` | `…_gate.v` → `…_gate_power.v` | 61,534 | 61,534 | 0 | 0 | 0 |
+
+Conformal's own line for the `pnr` leg is `6. Compare Results:   PASS`
+(`ASIC/genus-innovus/lec_shadow/logs/lec_pnr.log:423`). Evidence: `lec_shadow/reports/lec/pnr/`
+and `lec_gate_shadow/reports/lec/gate/`. The `gate` leg exercised `LEC_PG_PIN=revised` as
+designed, so §2's static argument that `…_gate.v` ≡ `…_gate_power.v` is now confirmed by
+Conformal rather than merely strong.
+
+**Both archived `verdict.txt` files nonetheless say `RESULT=FAIL`, and neither says
+anything about the design.** The unreachable rule expected tri-state points and got 34
+non-tri-state ones per side — the supply pads, golden and revised name sets identical
+(§4). The `gate` leg additionally failed on 4 extra revised primary inputs,
+`VDD`/`VDDIO`/`VSS`/`VSSIO`, which *are* precisely the difference between those two
+netlists (§2). Both were repaired in `run_lec.sh` on 2026-08-09 (`b6b2196`) as an
+**accepted-exception pass**: the runner enumerates every `LEC-VERDICT: reason=` line and
+overrides the FAIL only if it can re-verify each one benign from the reports — unreachable
+lists identical by name, or, on the `gate` tag only, the extra revised PIs being exactly
+those four supply ports. One unrecognised reason and the FAIL stands.
+
+Two consequences, neither comfortable.
+
+**The dofile was not changed, so `verdict.txt` still carries `LEC-VERDICT: RESULT=FAIL`
+even on an accepted-exception pass.** The verdict is the `LEC-RUNNER: RESULT=PASS` line the
+runner appends. Anything grepping `verdict.txt` for `^LEC-VERDICT: RESULT=PASS` fails a
+good run — see the note in §6.
+
+**Neither leg has been re-run since the repair,** so the two archived verdicts are stale
+rather than wrong about the design. Nothing here has been re-measured under the fixed
+rules.
+
+**And the run does not cover the netlist we would ship.** Measured 2026-08-17:
+
+| `_pnr.v` | sha1 | bytes | written |
+|---|---|---:|---|
+| the one the `pnr` leg compared | `45a6c089…` | 43,785,964 | 2026-08-08 12:12 |
+| the one in `runs/latest/outputs/` | `7a8d6cdb…` | 41,953,539 | 2026-08-10 10:20 |
+
+`ASIC/genus-innovus/outputs/` holds no netlists at all today; the run archiver moved them
+under `runs/`. **So this item's original conclusion survives, for a different reason: the
+correct statement about the `_pnr.v` we would ship is still "not equivalence-checked"** —
+because the check has not been repeated on it, not because the check does not exist. That
+distinction decides what to do next, which is why it is worth the paragraph.
+`docs/tapeout/26-plan-to-submittable-gds.md:331` already records the same pairing gap.
+
+**The chain's joint also fails, and §2 is why we can tell.** `run_lec.sh` records a sha1 of
+both inputs on every run so the joint is checkable rather than assumed. Checked, it does
+not hold: the `pnr` leg's golden `…_gate_power.v` is `431c06a5…` (41,061,573 bytes,
+2026-08-07 17:43); the `gate` leg's revised `…_gate_power.v` is `664d76d7…` (40,690,594
+bytes, 2026-08-08 17:14). Different files. `A ≡ B` and `B ≡ C` were each proved, of two
+different `B`s, so they do not compose into `A ≡ C`. Re-running both legs against one
+`outputs/` fixes this; nothing else does.
+
+**2. Runtime and memory are measured, and the job is small.** The `pnr` leg cost
+**412.54 s CPU, 405 s elapsed, 874.07 MB** (`lec_pnr.log`, immediately after the compare
+summary). This item used to warn of a multi-hour, resource-marginal run; that is not what a
+flat compare of 231,742 instances and 55,516 state points costs here, and §2's
+name-identical state-point mapping is why. `LEC_THREADS`, `LEC_DIAG=0` and Conformal's
+hierarchical or ECO flows remain untried, and on this evidence are not needed. Worth
+knowing when scheduling: the `lec-pnr` stage in `ci/signoff.yaml` budgets
+`timeout_s: 21600`, over fifty times the measured cost.
+
+**3. The RTL → synthesis leg has still never completed.** With items 1 and 2 corrected this
+is the weakest link in §2's chain, and nothing above covers it. The single attempt is
+`ASIC/genus-innovus/runs/20260808T185931Z_stage1a-syn-place-cts/logs/eval/lec.log`. It read
+the libraries, read and elaborated the golden `fv_map`, and then died:
+
+```
+// Error: Cannot open file '…/ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads_gate.v'.
+// Error: FIL1.2: Failed to open file
+//  Design file not found
+// 'dofile …/lec_rtl_shadow/work/./lec.dofile' is aborted at line 104
+```
+
+Genus's generated dofile hardcodes an absolute path into `outputs/`, and the run archiver
+had relocated the netlist. A path failure, not an equivalence failure — but the consequence
+is that **nothing has ever proved RTL ≡ `…_gate.v` for this design.** `lec_rtl_shadow/` has
+an `outputs/` and a `work/` and no log or verdict of any kind. So "synthesis did not lose
+logic" remains unevidenced here, and that is exactly the `GLO-34` class
+`scripts/ci/package_submission.sh` warns a fab broker about. Do not let the corrections
+above be read as closing it.
 
 **4. Memory array behaviour is out of scope,** by design and permanently on this site.
 Connectivity is checked; contents are not. See §3.
@@ -472,18 +659,47 @@ Connectivity is checked; contents are not. See §3.
 and [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) already records that LVS cannot run on
 this site.
 
-**6. The `X`/undriven modelling is deliberately conservative and untested at scale.**
-`set_undriven_signal 0` is *not* set — Genus sets it on the RTL side, but here both sides
-are netlists and an undriven net that feeds logic in one and not the other is a real
-finding, not something to flatten to 0. If the production run reports aborts, this is the
-first thing to look at, and loosening it is a decision to be argued in writing, not a
-quick fix.
+**6. The `X`/undriven modelling is deliberately conservative, and has now survived a
+production run.** `set_undriven_signal 0` is *not* set — Genus sets it on the RTL side, but
+here both sides are netlists and an undriven net that feeds logic in one and not the other
+is a real finding, not something to flatten to 0. Both legs on 2026-08-08 reported **0
+abort points** under that setting, so the conservatism costs nothing at this scale. If
+aborts ever do appear this is still the first thing to look at, and loosening it remains a
+decision to be argued in writing, not a quick fix.
 
 **7. Equivalence is not timing.** LEC says the shipped netlist computes the same
 function. It says nothing about whether the 10,555 hold-repair delay cells actually fixed
 hold, or whether the design meets setup. That is STA, and
 [`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) lists `sta-signoff` as unsupported: no Tempus
 or PrimeTime is installed.
+
+---
+
+### Where these two errors had spread
+
+Both corrected claims had been copied outward before anyone re-measured them, which is the
+reason for correcting them loudly rather than editing them away. Swept and corrected
+2026-08-17:
+
+| document | what it said |
+|---|---|
+| `docs/tapeout/09-signoff-checklist.md` §6 | headed "DOES NOT EXIST"; also a pre-send checkbox asserting it |
+| `docs/tapeout/10-tapeout-submission.md` §2, §5 item 6 | "There is no post-P&R LEC in this repository" |
+| `docs/tapeout/11-known-issues.md` issue (i) | "No post-P&R logical equivalence exists", severity **high** |
+| `docs/tapeout/24-d2d-link-physical-handover.md` §6 items 2–3 | "No post-P&R LEC"; and GLS listed as a gap with no note that it is reachable |
+| `docs/tapeout/25-what-remains-explained.md` §5, §6(a) | "No post-P&R LEC" |
+| `docs/tapeout/07-reading-reports.md` | logical equivalence listed among "checks this flow does not run at all" |
+| `ASIC/genus-innovus/scripts/lec/README.md` | "the TSMC packages on this site are Front_End-only" |
+| `ASIC/genus-innovus/scripts/lec/run_lec.sh` (comment) | same, as the justification for reading Liberty |
+
+Two restatements were **left standing**, both outside this page's file ownership and both
+flagged rather than edited:
+
+- `ci/signoff.yaml`, the NOTE on the `lec` stage — "there is no post-P&R LEC anywhere in
+  the repo, despite package_submission.sh's MANIFEST claiming otherwise". Both clauses are
+  false; the `lec-pnr` stage that refutes the first is in the same file.
+- `docs/tapeout/26-plan-to-submittable-gds.md` needed no correction — it was written after
+  the runs and already records both the clean compare and the netlist-pairing gap.
 
 ---
 
