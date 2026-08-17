@@ -41,11 +41,30 @@ WHAT THIS DOES INSTEAD
 The owner split is reported, and only the design-owned bucket is gated. That is
 a deliberate, documented exemption, not a convenience: no standard-cell, IO or
 bond-pad layout exists on this site (every TSMC delivery is a front-end kit), so
-the pad-abstraction results cannot be fixed here at all -- they clear when eptsmc
-imports the IO layout. The vendor-memory results are inside ARM Artisan compiler
-GDS and need a vendor waiver. Both are real and neither is actionable by a P&R
+the pad-abstraction results cannot be fixed here at all. The vendor-memory
+results are inside ARM Artisan compiler GDS. Neither is actionable by a P&R
 iteration, so gating on them would make the gate permanently and uninformatively
 red. The design bucket has NO exemptions and defaults to a budget of zero.
+
+THESE EXEMPTIONS ARE NOW PERMANENT, AND TWO SENTENCES HERE USED TO SAY OTHERWISE
+(corrected 2026-08-17). The old text said the pad results "clear when eptsmc
+imports the IO layout" and that the memory results "need a vendor waiver", both
+of which described a route that is no longer being taken:
+
+  * THE BACK-END PACKAGES ARE NOT COMING. That was decided, not discovered; see
+    docs/DRC_WAIVER_INVENTORY.md. So the missing base layers are a standing
+    property of every stream this project will ever produce, and the design
+    bucket is a FLOOR, not a total -- a route-to-cell-internal check cannot fire
+    against geometry that is not in the stream. Do not read design == 0 as
+    clean; read it as "clean in the layers we actually have".
+  * PO.R.8 IS NOT AN ABSTRACTION ARTEFACT and would not clear on an IO import
+    even if one happened. Its 691 results are real merged memory GDS, identical
+    under the 2012 and 2024 decks, in 23 Artisan leaf cells we cannot edit.
+
+The consequence for this script is nil -- the split and the gating are unchanged
+and were always right. The consequence for whoever READS its output is the whole
+point: the two non-design buckets are waived permanently and on the record,
+rather than parked pending a delivery.
 
 Usage:  drc_census.py <rundir> [--budget N] [--density-budget N]
 Env:    DRC_DESIGN_BUDGET, DRC_DENSITY_BUDGET  (command line wins)
