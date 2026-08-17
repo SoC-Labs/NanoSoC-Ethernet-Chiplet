@@ -120,9 +120,10 @@ _ROW = re.compile(
 )
 
 
-def parse_timing_summary(path, r):
+def parse_timing_summary(path, r, want=("setup", "hold")):
     """
     Return {'setup': (wns,fep), 'hold': (wns,fep)} or {} on failure.
+    `want` names the sections this particular file is required to contain.
 
     Unparseable is a FAILURE (R1). This is the exact spot where a gate can
     quietly become a no-op: if the report format shifts by one column and the
@@ -156,11 +157,11 @@ def parse_timing_summary(path, r):
             if mo and mo.group("view").upper() == "ALL":
                 out[section] = (float(mo.group("wns")), int(mo.group("fep")))
 
-    for want in ("setup", "hold"):
-        if want not in out:
+    for want_sec in want:
+        if want_sec not in out:
             r.fail(
                 "SUMMARY_UNPARSED",
-                f"could not extract a '{want}' View:ALL row from {path}. "
+                f"could not extract a '{want_sec}' View:ALL row from {path}. "
                 "Refusing to treat an unreadable report as a clean one.",
             )
     return out
@@ -337,7 +338,28 @@ def check(reports_dir, policy, r):
             r.fail("UNTESTED_CHECKS", f"{untested} timing checks are UNTESTED. These are endpoints the analysis never evaluated; they cannot be assumed to pass.")
 
     # --- quality ----------------------------------------------------------
-    summary = parse_timing_summary(os.path.join(reports_dir, "timing_summary.rpt"), r)
+    # Tempus splits these across two files: report_timing_summary -checks setup
+    # and -checks hold. Asking one invocation for both is REFUSED
+    # (TCLCMD-1130) and it then quietly produces a setup-only report that looks
+    # complete. So a hold row missing from timing_summary.rpt is normal, and
+    # the hold file is the place to look — but if NEITHER file yields a hold
+    # row, that is still a failure, because a design with no hold analysis is
+    # exactly how hold ships unexamined.
+    summary = parse_timing_summary(
+        os.path.join(reports_dir, "timing_summary.rpt"), r, want=("setup",)
+    )
+    hold_path = os.path.join(reports_dir, "timing_summary_hold.rpt")
+    if os.path.isfile(hold_path):
+        summary.update(
+            parse_timing_summary(hold_path, r, want=("hold",))
+        )
+    else:
+        r.fail(
+            "HOLD_SUMMARY_MISSING",
+            f"no {os.path.basename(hold_path)}. Tempus reports setup and hold "
+            "in separate invocations; without the hold one there is no hold "
+            "analysis at all.",
+        )
     for mode, bkey in (("setup", "setup_fep_budget"), ("hold", "hold_fep_budget")):
         if mode not in summary:
             continue
@@ -406,9 +428,14 @@ spef.default_rc_corner_typical.bytes = 250000000
 sta_finished = 2026-08-18T02:00:00
 """
 
+# Real Tempus emits setup and hold in SEPARATE files; a combined request is
+# refused (TCLCMD-1130). The fixtures mirror that split.
 GOOD_SUMMARY = """\
 # SETUP                   WNS       TNS   FEP
  View : ALL             0.012     0.000     0
+"""
+
+GOOD_HOLD_SUMMARY = """\
 # HOLD                    WNS     TNS   FEP
  View : ALL             0.004    0.000     0
 """
@@ -447,10 +474,14 @@ MEASURED_COVERAGE = """\
 """
 
 
-def _mk(tmp, manifest=GOOD_MANIFEST, summary=GOOD_SUMMARY, coverage=GOOD_COVERAGE):
+def _mk(tmp, manifest=GOOD_MANIFEST, summary=GOOD_SUMMARY, coverage=GOOD_COVERAGE,
+        hold_summary=GOOD_HOLD_SUMMARY):
     d = tempfile.mkdtemp(dir=tmp)
     with open(os.path.join(d, "sta_manifest.txt"), "w") as fh:
         fh.write(manifest)
+    if hold_summary is not None:
+        with open(os.path.join(d, "timing_summary_hold.rpt"), "w") as fh:
+            fh.write(hold_summary)
     if summary is not None:
         with open(os.path.join(d, "timing_summary.rpt"), "w") as fh:
             fh.write(summary)
@@ -543,11 +574,13 @@ def selftest():
                  " View : ALL             0.012     0.000     0",
                  " View : ALL            -0.759  -309.637  1444")),
              "SETUP_FEP"),
-            ("hold does not close",
-             dict(summary=GOOD_SUMMARY.replace(
+            ("hold does not close (measured: Tempus finds 79, in-flow found 7)",
+             dict(hold_summary=GOOD_HOLD_SUMMARY.replace(
                  " View : ALL             0.004    0.000     0",
-                 " View : ALL            -0.021   -0.070    11")),
+                 " View : ALL            -0.006   -0.069    79")),
              "HOLD_FEP"),
+            ("hold summary absent entirely",
+             dict(hold_summary=None), "HOLD_SUMMARY_MISSING"),
         ]
 
         for name, kw, want_code in cases:

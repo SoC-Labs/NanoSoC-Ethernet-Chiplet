@@ -10,8 +10,14 @@ Innovus **in-flow** analysis, which is an optimisation-side estimate, not a
 signoff measurement.
 
 That is no longer entirely true: a Tempus run set exists, it loads this
-design, and it is committed. What it still cannot do is enumerated below,
-honestly, rather than declared closed.
+design, it is committed, and it has produced numbers. What it still cannot do
+is enumerated below, honestly, rather than declared closed.
+
+**If you read only one thing:** an independent signoff tool, on the same
+database, finds **fewer setup violations (462 vs 1429) but eleven times the
+hold violations (79 vs 7)**. The setup number is probably flattered by missing
+parasitics; the hold number is not, and it is the one that decision **D2**
+(ship slower) cannot fix. See §5.4.
 
 ---
 
@@ -25,7 +31,7 @@ Done tonight, or mechanically doable from here.
 |---|---|---|
 | A1 | **Measure tool availability** (Tempus / PrimeTime / StarRC), against the licence servers, with a positive control | **DONE** — §2 |
 | A2 | **Build a Tempus signoff run set** that does not contend for Innovus | **DONE** — `ASIC/sta/` |
-| A3 | **Prove the gate can fail** — mutation self-test over every property it claims to check | **DONE** — 20/20 mutants rejected |
+| A3 | **Prove the gate can fail** — mutation self-test over every property it claims to check | **DONE** — 23/23 mutants rejected |
 | A4 | **Diagnose why Tempus would not load this design** (two separate blockers, both non-obvious) | **DONE** — §5 |
 | A5 | **Generate an SI-stripped MMMC** so the DB loads, with the cost stated not buried | **DONE** — `make_sta_mmmc.py` |
 | A6 | **Re-issue OCV derate in Tempus** rather than inheriting it | **DONE** — and it matters, see §4.4 |
@@ -55,7 +61,7 @@ cost attached, and I have deliberately not made any of them.
 | **B1** | **Corner-correct extraction** | Both the Cadence QRC deck and the StarRC deck on site are built from the **typical** ICT. Corner-specific QRC tarballs exist (A7) and will improve this, but the *cap tables* remain modelled on the wrong metal stack (`1p9m_6x2z`, M9 at 0.9 µm) versus the real 6X1Z1U (M9 at 3.4 µm). No 6X1Z1U cap table exists in the ARM set and the TSMC PDK ships none. **Vendor collateral request.** |
 | **B2** | **AOCV / SOCV / LVF derating** | No statistical-derate data in any library on site. Flat OCV is the only option until the vendor package includes it. |
 | **B3** | **SI with concurrent MMMC** | The noise libraries here are Celtic `.cdb`, which Tempus supports only in SMSC. ECSM/CCS-noise data would remove the restriction entirely. Vendor request. |
-| **B4** | **Hold sign-off on the D2D word clocks** | Not a tool gap — a *constraint* gap, §4.5. Until source latency covers those domains, hold on them is fiction regardless of which STA tool runs. |
+| **B4** | **Hold sign-off on the D2D word clocks** | Not a tool gap — a *constraint* gap, §4.5. Until source latency covers those domains, hold on them is fiction regardless of which STA tool runs. **Now quantified:** Tempus finds 79 hold violations where the flow reported 7 (§5.4). |
 
 ---
 
@@ -283,11 +289,31 @@ spend the half-day chasing.
 
 ### 5.2 The cost of the fix, stated rather than buried
 
-`make_sta_mmmc.py` strips the three `-si` sections. **Crosstalk analysis is
-therefore OFF**, while the P&R post-route header claims `Signoff Settings: SI
-On`. Tonight's run is *not* like-for-like with the in-flow number on
-SI-sensitive paths. Recorded in the manifest as `si_analysis = off`, so no
-future reader can mistake it for a full signoff. Restoring SI is **D6**.
+`make_sta_mmmc.py` strips the three `-si` sections, and the run records
+`si_analysis = off` in its manifest so no future reader mistakes it for a full
+signoff.
+
+The tool's own report header is more subtle than that flag, and worth quoting
+because it is easy to misread as reassurance:
+
+```
+# Analysis Mode: MMMC OCV
+# Parasitics Mode: No SPEF/RCDB
+# Signoff Settings: SI On
+```
+
+It says **SI On** — but then:
+
+```
+ERROR (IMPESI-2016): There is no coupling capacitance found in the design.
+                     SI analysis requires the SPEF to contain coupling
+                     capacitance.
+```
+
+So SI is *enabled and inert*. Crosstalk is not being analysed either way, and
+it will stay that way until extraction works (**A9**) regardless of the `.cdb`
+question. `Parasitics Mode: No SPEF/RCDB` in that same header is the honest
+one-line summary of this run's standing. Restoring real SI is **D6**.
 
 ### 5.3 Blockers three and four: extraction
 
@@ -353,13 +379,34 @@ result substantially:
 | `reg2reg` FEP | 1299 | **421** |
 | `ClockGate` FEP | 130 | **41** |
 | max_transition FEP | 72 | 59 |
+| **Hold WNS** | −0.001 | **−0.006** |
+| **Hold TNS** | −0.004 | **−0.069** |
+| **Hold FEP** | **7** | **79** |
 
-Tempus is reporting roughly **a third** of the failing endpoints and **half**
-the WNS. Do not bank that yet — SI is off (removes crosstalk pessimism) and
-extraction had failed (so parasitics are not signoff-grade), both of which bias
-optimistic. But it is now clear that **the 1444/−0.759 figure is a
-tool-and-setup artefact as much as a design property**, and the true signoff
-number needs the corrected run before anyone plans work against it.
+**The two checks move in opposite directions, and that is the headline.**
+
+Tempus reports roughly **a third** of the setup failures — but **eleven times
+the hold failures** (79 against 7). Setup got better; hold got much worse.
+
+That asymmetry is not noise, and it is the single most decision-relevant
+number produced tonight:
+
+- The setup improvement is *plausibly* an artefact — SI contributes nothing
+  here and extraction is not signoff-grade, both of which bias optimistic.
+  Treat −0.368/462 as an upper bound on the good news.
+- The hold degradation cannot be explained the same way. Hold is where the
+  §4.5 coverage hole lives, and an independent tool looking at the same
+  database with the same derate finds an order of magnitude more hold
+  violations than the flow reported. **That is exactly the shape you would
+  expect if the in-flow hold number were partly fictional**, which is what
+  §4.5 predicted on constraint grounds alone, before any of this ran.
+
+So: **the accepted open item "hold FEP 11" understates the problem.** Nobody
+should plan against 7–11 hold violations. The real figure is at least 79 and
+is still measured under incomplete clock coverage.
+
+It is now clear that **the 1444/−0.759 pair is a tool-and-setup artefact as
+much as a design property** — in both directions.
 
 Also measured: the loaded database has **66 clocks**, not the 33 the SDC
 defines. That gap is unexplained and worth ten minutes in the morning — the
@@ -409,7 +456,7 @@ set the budget to the day's number; treat a missing or unparseable report as
 "nothing to complain about".
 
 `sta_gate.py --selftest` mutates a known-good artefact set one property at a
-time and asserts rejection. **20/20 mutants rejected, baseline passes:**
+time and asserts rejection. **23/23 mutants rejected, baseline passes:**
 
 ```
 ok    baseline PASSES
@@ -428,7 +475,7 @@ ok    rejects: coverage report unreadable            [COVERAGE_UNPARSED]
 ok    rejects: timing summary format drifted         [SUMMARY_UNPARSED]
 ok    rejects: setup does not close                  [SETUP_FEP]
 ok    rejects: hold does not close                   [HOLD_FEP]
-                                     (16 of 20 shown)
+                                     (16 of 23 shown)
 ```
 
 Design rules, enforced by that self-test:
@@ -496,12 +543,12 @@ endpoints, 1299 are `reg2reg` and 130 are `ClockGate`.
    same-clock `reg2reg` paths, which dominate here (1299/1429). Inter-clock
    and multicycle paths do not scale with the period identically. Tonight's
    Tempus run is the instrument to confirm it properly.
-2. **Hold FEP 7–11 is not trustworthy yet.** With source latency covering 5 of
-   33 clocks and none of the 16 D2D word clocks, the true hold count is
-   *unknown* — and hold violations are the ones that cannot be fixed by
-   slowing the clock. **§4.5 must be closed before any hold number is quoted,
-   including a small one.** A small wrong number is more dangerous than a
-   large one.
+2. **Hold FEP 7–11 is now known to be wrong, not merely untrustworthy.**
+   Tempus measures **79** on the same database (§5.4). With source latency
+   covering 5 of 33 clocks and none of the 16 D2D word clocks, even 79 is a
+   floor. Hold violations are the ones that **cannot** be fixed by slowing the
+   clock, so this is the part of the problem that survives decision **D2**
+   untouched. **§4.5 must be closed before any hold number is quoted.**
 3. **The signoff number will not equal 1444.** Different extraction, different
    derate handling, SI off. Expect movement in both directions.
 
