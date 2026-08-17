@@ -75,6 +75,7 @@ Copyright (C) 2026, SoC Labs (www.soclabs.org)
 import argparse
 import hashlib
 import os
+import subprocess
 import sys
 
 PROG = "patch_pad_lef"
@@ -84,11 +85,30 @@ PROG = "patch_pad_lef"
 # exports it, defaulting to /tsmc65pdk/65). The fallback keeps this script
 # runnable standalone, without a sourced environment.
 PDK_ROOT_ENV = "TSMC_65_HOME"
-PDK_ROOT_DEFAULT = "/tsmc65pdk/65"
-VENDOR_RELPATH = (
-    "CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/"
-    "Back_End/lef/tphn65lpgv2od3_sl_210a/mt_2/9lm/lef/tphn65lpgv2od3_sl_9lm.lef"
-)
+
+# THE VENDOR PATH IS RESOLVED, NOT SPELLED. Its two release directories name the
+# IO-library release this site licensed, and this repository is public. The same
+# pdk_paths.sh the rest of the flow uses globs them (exactly one installed), so
+# the file selected is unchanged -- and the VENDOR_SHA256 pin below is the proof:
+# a different file cannot pass it. There is no site-path default either; without
+# TSMC_65_HOME there is no PDK to read, and the error at the call site says so.
+_PDK_PATHS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "pdk_paths.sh")
+
+
+def _vendor_default():
+    """The installed IO-driver LEF, or None if it cannot be resolved."""
+    val = os.environ.get("PDK_PAD_DRIVER_LEF")
+    if val:
+        return val
+    if not os.access(_PDK_PATHS, os.X_OK):
+        return None
+    try:
+        out = subprocess.run([_PDK_PATHS, "pad-driver-lef"], capture_output=True,
+                             text=True, check=True).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return out or None
 
 # --- the identities this script is pinned to --------------------------------
 # VENDOR_SHA256: TSMC tphn65lpgv2od3_sl_9lm.lef, 414,474 bytes, dated 2012-11-15,
@@ -252,7 +272,7 @@ def main():
     )
     ap.add_argument(
         "--vendor",
-        help=f"vendor LEF (default: ${PDK_ROOT_ENV}/{VENDOR_RELPATH})",
+        help=f"vendor LEF (default: resolved under ${PDK_ROOT_ENV})",
     )
     ap.add_argument("-o", "--out", help="patched LEF to write (gitignored build tree)")
     ap.add_argument(
@@ -286,9 +306,12 @@ def main():
     if not a.out:
         ap.error("-o/--out is required (or use --print-delta)")
 
-    vendor = a.vendor or os.path.join(
-        os.environ.get(PDK_ROOT_ENV, PDK_ROOT_DEFAULT), VENDOR_RELPATH
-    )
+    vendor = a.vendor or _vendor_default()
+    if not vendor:
+        ap.error(
+            f"could not resolve the vendor LEF. Set {PDK_ROOT_ENV} to the PDK "
+            f"root and let {os.path.basename(_PDK_PATHS)} find it (run that "
+            f"script directly to see why it could not), or pass --vendor.")
 
     # Idempotence: if the output is already byte-correct, do nothing. Makes this
     # safe to hang off every stage target without churning the build tree.

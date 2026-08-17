@@ -176,7 +176,7 @@ resolve() {
     local key=$1 prod d
     case $key in
     # Foundry keys glob under $TSMC_65_HOME; arm-* keys glob under $PHYS_IP.
-    base-lef|io-pad-lef|stdcell-vlog|io-vlog|lvs-deck|lvs-source-added|stdcell-cdl|iodrv-cdl|pad-cdl|sc-nldm-dir|io-nldm-dir)
+    base-lef|io-pad-lef|stdcell-vlog|io-vlog|lvs-deck|lvs-source-added|stdcell-cdl|iodrv-cdl|pad-cdl|sc-nldm-dir|io-nldm-dir|pad-driver-lef)
         need_root TSMC_65_HOME "$TSMC_65_HOME" ;;&
     arm-*)
         need_root PHYS_IP "$PHYS_IP" ;;&
@@ -224,6 +224,13 @@ resolve() {
     io-nldm-dir)
         pick_one "the IO-driver NLDM directory" \
             "$TSMC_65_HOME"/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_*_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_*
+        ;;
+
+    # The unpatched IO-driver LEF patch_pad_lef.py reads. Both release
+    # directories in the path are globbed.
+    pad-driver-lef)
+        pick_one "the IO-driver LEF" \
+            "$TSMC_65_HOME"/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_*_FE/TSMCHOME/digital/Back_End/lef/tphn65lpgv2od3_sl_*/mt_2/9lm/lef/tphn65lpgv2od3_sl_9lm.lef
         ;;
 
     lvs-deck)         pick_one "the foundry LVS deck" "$TSMC_65_HOME"/CMOS/LP/pdk/Calibre/lvs/calibre.lvs ;;
@@ -323,7 +330,7 @@ ALL_KEYS="tech-lef gdsout-map drc-ruledeck base-lef io-pad-lef stdcell-vlog
           arm-target-lib arm-db-dir arm-stdcell-verilog-dir arm-tf-file
           arm-mw-ref-lib arm-tech-dir arm-tluplus-dir
           arm-rf-compiler-rel arm-rom-compiler-rel
-          sc-nldm-dir io-nldm-dir eda-rtla-rm"
+          sc-nldm-dir io-nldm-dir pad-driver-lef eda-rtla-rm"
 
 case ${1:-} in
     --list)

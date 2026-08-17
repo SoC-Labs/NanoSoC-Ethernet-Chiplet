@@ -113,8 +113,14 @@ note() { printf 'LEC-RUNNER: %s\n' "$*"; }
 #
 # The memory macros (rf_*, *rom_via, flash_cache_*) also come in as Liberty and
 # are then BLACKBOXED by LEC_NOTRANS below — see the long note in pnr_lec.do.
-IO_LIB_DIR="$TSMC_65_HOME/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a"
-SC_LIB_DIR="$TSMC_65_HOME/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tcbn65lp_220a"
+# Resolved by the same script config.tcl uses, so LEC and P&R cannot end up
+# reading different library releases -- which, given the note directly above
+# about verilog/ and NLDM/ carrying different revisions, is exactly the kind of
+# mismatch this comparison exists to not have. The release codes are globbed,
+# not spelled: this repository is public.
+_PDK_PATHS="$NANOSOC_ETH_CHIPLET_HOME/ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh"
+IO_LIB_DIR="${PDK_IO_NLDM_DIR:-$("$_PDK_PATHS" io-nldm-dir)}"
+SC_LIB_DIR="${PDK_SC_NLDM_DIR:-$("$_PDK_PATHS" sc-nldm-dir)}"
 BOOTROM_DIR="$NANOSOC_ETH_CHIPLET_HOME/ASIC/romlibs/cc_rom"
 ETH_ROM_DIR="$NANOSOC_ETH_CHIPLET_HOME/ASIC/romlibs/eth_rom"
 

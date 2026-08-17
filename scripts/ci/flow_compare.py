@@ -73,6 +73,7 @@ Copyright (C) 2026, SoC Labs (www.soclabs.org)
 import argparse
 import hashlib
 import json
+import glob
 import os
 import re
 import subprocess
@@ -515,11 +516,24 @@ def parse_prod_route(rundir):
     # so look for the artefact gdsmap_derive.py leaves in the flow's tech work
     # area. Never guess from a filename: BOTH flows emit a file whose basename
     # is the stock PDK map's, and they are different files.
-    for cand in (os.path.join(REPO, "ASIC", "genus-innovus", "work", "tech",
-                              "PRTF_EDI_N65_gdsout_6X1Z1U.24a.derived.map"),
-                 os.path.join(rundir, "work", "tech",
-                              "PRTF_EDI_N65_gdsout_6X1Z1U.24a.derived.map")):
-        if os.path.isfile(cand):
+    # FOUND BY GLOB, not by name. The basename is the stock PDK map's, which
+    # carries the foundry release code, and this repository is public -- so the
+    # file is located by shape (*.derived.map, one per tech dir) rather than
+    # spelled. Same file selected either way.
+    #
+    # EXACTLY ONE PER DIRECTORY OR NONE. A second .derived.map in the same tech
+    # dir means a stale artefact, and silently taking the first would compare
+    # against a map the flow never streamed with -- reading as clean while
+    # answering about the wrong file, which is the whole failure mode this
+    # comparison exists to catch. Ambiguity is skipped, not guessed.
+    def _derived_map(d):
+        hits = sorted(glob.glob(os.path.join(d, "*.derived.map")))
+        return hits[0] if len(hits) == 1 else None
+
+    for cand in (_derived_map(os.path.join(REPO, "ASIC", "genus-innovus",
+                                           "work", "tech")),
+                 _derived_map(os.path.join(rundir, "work", "tech"))):
+        if cand and os.path.isfile(cand):
             m["gds_map_file"] = cand
             break
     else:
