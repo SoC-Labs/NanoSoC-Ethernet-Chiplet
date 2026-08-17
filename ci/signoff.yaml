@@ -36,8 +36,29 @@ stages:
     gate: block
     label: soclabs-sim
     description: "Verilator structural lint of authored RTL (3 files) + loop-detection sanity"
-    # run.sh logs each pass to a mktemp and deletes it, so build/lint/ holds
-    # only the four blackbox stubs. Tee the verdicts or there is no evidence.
+    # THE THIRD FILE WAS NEVER LINTED HERE. PASS 3 — the only pass that lints
+    # the integration top nanosoc_eth_chiplet — blackboxes the SoC from the
+    # GENERATED source at nanosoc-multicore-system/build_soc/rtl/. Nothing
+    # before this stage renders it, and the `elab` stage BELOW begins by
+    # `rm -rf`-ing it. So on a fresh runner PASS 3 was skipped every single
+    # time, and until 2026-08-17 verif/lint/run.sh scored a skipped pass as a
+    # clean one: this BLOCKING gate went green having linted 2 of the 3 files
+    # its own description names. Measured — one unresolvable blackbox source
+    # took a run from rc 1 (a real PINMISSING) to rc 0.
+    #
+    # run.sh now fails on a skip, which turns that silent green into a red. The
+    # pre-step is what makes it a green honestly: it renders exactly what PASS 3
+    # reads, and is a no-op once the artefact is there, so it costs nothing on a
+    # warm runner and does not fight the `elab` stage's own regeneration.
+    #
+    # `mkdir -p build/lint` because `tee` opens its file before `make` runs, and
+    # on a clean checkout build/ does not exist yet.
+    pre:
+      - mkdir -p build/lint
+      - test -f nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv || make -C nanosoc-multicore-system/sys_desc
+    # Tee the verdicts: run.sh keeps its per-pass Verilator logs under
+    # build/lint/passes/ (it used to mktemp and delete them), but the pass/fail
+    # lines that COMPOSE the verdict are only ever on stdout.
     run: make lint 2>&1 | tee build/lint/lint_verdicts.log; exit ${PIPESTATUS[0]}
     artifacts:
       - build/lint/**
