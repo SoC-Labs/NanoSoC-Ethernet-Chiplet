@@ -1,0 +1,30 @@
+{
+  "_comment_1": "Acceptance policy for the signoff STA gate. There are TWO kinds of value in here and they must not be confused.",
+
+  "_comment_2": "REQUIREMENTS. What a signed-off chip must satisfy. These are NOT observations and must never be relaxed to match a run. The design currently FAILS these, which is correct: it does not close timing.",
+  "setup_fep_budget": 0,
+  "hold_fep_budget": 0,
+
+  "_comment_3": "TRIPWIRES. These ARE pinned to a measured baseline, deliberately. Their job is change detection - to notice a clock or a view disappearing between P&R and STA - not to assert that the baseline is right. Pinning a requirement to today's number would be back-fitting; pinning a structural tripwire is the only way it can work.",
+
+  "_comment_4": "clock count: the SDC defines 33 clocks (4 create_clock + 29 create_generated_clock) but the loaded database reports 66. That discrepancy is UNEXPLAINED as of 2026-08-18 and is an open question, not a settled fact. The tripwire is set to the database number because that is what STA actually analyses. If you resolve the 33-vs-66 question, update this AND the note in docs/tapeout/40-signoff-sta-plan.md.",
+  "expected_clock_count": 66,
+
+  "_comment_5": "Signing off on exactly one setup corner and one hold corner is a DECISION (D3 in the plan doc), not a default. Listed here so that a view silently vanishing is caught. Adding corners can only find more violations.",
+  "required_setup_views": ["default_analysis_view_setup"],
+  "required_hold_views": ["default_analysis_view_hold"],
+
+  "_comment_6": "Extraction quality. require_qrc_all_rc_corners fails the gate if any RC corner falls back to cap-table-only extraction, which is how a 65nm design silently gets effort-level 'low' parasitics (IMPEXT-3518).",
+  "require_qrc_all_rc_corners": true,
+  "require_spef_min_bytes": 1000000,
+
+  "_comment_7": "Analysis mode. Both of these are re-issued by run_signoff_sta.tcl rather than inherited, because the routed DB persists derate for typical_delay_corner ONLY - neither signoff corner. A run that inherits reports better timing than the flow did.",
+  "require_cppr": "both",
+  "require_analysis_type": "ocv",
+  "require_derate": {
+    "derate_data_early": 0.95,
+    "derate_data_late": 1.05,
+    "derate_clk_early": 0.97,
+    "derate_clk_late": 1.03
+  }
+}

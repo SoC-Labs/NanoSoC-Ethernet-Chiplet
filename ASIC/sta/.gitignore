@@ -1,0 +1,10 @@
+# Run outputs. work/ and outputs/ are already covered by the repo-level
+# ASIC/*/work and ASIC/*/outputs rules; reports/ is NOT, and it holds
+# multi-megabyte Tempus logs, check_timing dumps and per-view path reports.
+# The committed artefacts are the run set and the plan document, not the runs.
+reports/
+work/
+outputs/
+
+# Site-local tool paths (see site.env.example). Never commit.
+site.env
