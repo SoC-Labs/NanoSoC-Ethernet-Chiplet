@@ -155,8 +155,21 @@ fi
 # ---- G2 equivalence --------------------------------------------------------
 if run_gate G2 && [ "$VERDICT" = PASS ]; then
     say G2 "equivalence — RTL-to-RTL LEC, expect '$CU_LEC'"
-    if [ "$CU_LEC" = "n/a" ]; then
-        skip "flow-only CU, no RTL changed" G2
+    NRTL_ALL=0
+    while IFS= read -r f; do
+        case "$f" in *.sv|*.v) NRTL_ALL=$((NRTL_ALL+1)) ;; esac
+    done <<< "$CU_FILES"
+    if [ "$CU_LEC" = "n/a" ] && [ "$NRTL_ALL" != 0 ]; then
+        # THE MIRROR OF THE CHECK TWELVE LINES BELOW, which was written for the
+        # opposite mistake (an LEC expectation with no RTL to compare) and left
+        # this direction unguarded. `lec: n/a` is the sentence "no RTL changed";
+        # nothing verified it, so a manifest could declare it, list .sv files,
+        # and skip the equivalence spine entirely -- the one gate that can say
+        # the netlist still means what it meant. A skip taken on an unchecked
+        # claim is not a skip, it is a hole.
+        bad "manifest declares expect.lec='n/a' (no RTL changed) but lists $NRTL_ALL .sv/.v file(s). Either the LEC expectation or the file list is wrong; G2 will not be skipped on an unverified claim." G2
+    elif [ "$CU_LEC" = "n/a" ]; then
+        skip "flow-only CU, no RTL changed (verified: 0 .sv/.v in files:)" G2
     else
         # A manifest that declares an LEC expectation but lists no RTL file
         # would sail through the compare loop with ZERO comparisons and report
@@ -307,9 +320,40 @@ if run_gate G5 && [ "$VERDICT" = PASS ]; then
     fi
 fi
 
+# ---- ANTI-VACUITY ----------------------------------------------------------
+# A LADDER OF SKIPS IS NOT A PROOF. VERDICT starts at "PASS" and only bad()
+# moves it, so a run in which every gate SKIPPED printed "VERDICT PASS" and
+# exited 0 having tested nothing:
+#
+#   $ prove_fix.sh A3-rom-spec-word-count.yaml --from G5 --stop-after G5
+#     G5|SKIP|CU does not touch the D2D / ethernet datapath
+#     VERDICT PASS   rc=0
+#
+# This is the same defect class the whole ladder exists to catch, in the tool
+# that catches it — and selftest_prove.sh already carries exactly this guard
+# ("NO cases were exercised ... nothing was proven") for its own run. It was
+# never applied here.
+#
+# INCONCLUSIVE, not FAIL: nothing failed. But it is not a PASS either, and the
+# exit status must not say it is.
+NPASS=0; NSKIP=0; NFAIL=0
+for r in "${RESULTS[@]}"; do
+    case "$r" in
+        *"|PASS|"*) NPASS=$((NPASS+1)) ;;
+        *"|SKIP|"*) NSKIP=$((NSKIP+1)) ;;
+        *"|FAIL|"*) NFAIL=$((NFAIL+1)) ;;
+    esac
+done
+if [ "$VERDICT" = PASS ] && [ "$NPASS" = 0 ]; then
+    VERDICT="INCONCLUSIVE"
+    printf '\n   \033[33mINCONCLUSIVE\033[0m %s\n' \
+        "no gate ran: ${NSKIP} skipped, 0 passed. Nothing was proven about $CU_ID."
+fi
+
 echo
 echo "=============================================================="
 printf 'VERDICT %s   %s\n' "$VERDICT" "$CU_ID"
+printf '  gates: %d passed, %d skipped, %d failed\n' "$NPASS" "$NSKIP" "$NFAIL"
 echo "=============================================================="
 for r in "${RESULTS[@]}"; do printf '  %s\n' "$r"; done
 
