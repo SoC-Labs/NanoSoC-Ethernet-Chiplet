@@ -150,6 +150,42 @@ Quote the code-only counts when arguing about behaviour and the raw counts when
 arguing about review burden; they differ by roughly 2.5x here and mixing them
 makes two people think they disagree when they do not.
 
+## 5a. A freeze protects the run from edits — and freezes in the defects
+
+Two more instances of the same disease appeared while `gate1` was being prepared.
+Both are worth naming because neither looks like a measurement error at the time.
+
+**The frozen snapshot.** A route stage died in `route_power_via_census` on a
+`regexp` pattern beginning with a hyphen and no `--` guard. It presents perfectly
+as a live toolkit bug, and the obvious response is to fix the toolkit. But:
+
+```
+  pinned toolkit 3910c18, line 371   regexp -- {-layer_range...}   HAS the guard
+  toolkit worktree                   clean, 0 diff lines
+  the scratchpad snapshot it ran     regexp {-layer_range...}      LACKS it
+```
+
+The run had been frozen against a snapshot to insulate it from another session
+editing a stage script mid-execution. That freeze worked — and it captured the
+defect as it stood before the upstream fix. **A freeze protects a run from
+changes, including the ones that fix things.** Someone acting on the failure would
+have "fixed" a file that was already correct, then wondered why the next run
+behaved identically.
+
+Before treating a stage failure as a live defect, check *which copy* of the script
+actually executed. The log names its own path; read it.
+
+**The config-layer inversion.** A toolkit ships `opt PLACE_ERROR_ALLOWLIST {}` and
+the obvious inference is that the effective allowlist is empty — so a placement
+raising 211 `IMPLF-223` will be rejected. Wrong: `design.mk` already overrode it
+with the needed IDs, and the empty toolkit default is *correct*, because the
+project is supposed to override it. The contract was working exactly as designed.
+
+Reading a default and inferring the effective value is the same error as reading
+the index and inferring the commit — a real measurement, at the wrong layer.
+**Resolve the value the flow actually exports, not the one its lowest layer
+declares.**
+
 ## 6. The general shape
 
 This is the same failure that has recurred all week in different clothing: **a
@@ -159,6 +195,11 @@ correct command answering a different question than the one being asked.**
 - `grep | head -2` stops before the answer and reads as "not present"
 - `git status` letters cannot distinguish staged work from a stale index entry
 - **a submodule SHA comparison cannot see the submodule's working tree**
+- a stage failure in a *frozen* script is not evidence about the live one
+- a shipped default is not the effective value when a layer above overrides it
+- a violation-class grep anchored on the net pair (`Net VDD & ... Net VSS`)
+  instead of on `^SHORT` counts M4 spacing records as power-to-ground shorts —
+  it returns 3 on a build that has none
 
 In each case the instrument was fine and the inference from it was not. When a
 check reports clean, the question to ask is not "do I believe it" but **"what
