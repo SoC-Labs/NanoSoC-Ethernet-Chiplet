@@ -5,9 +5,18 @@ ever been run on `nanosoc_eth_chiplet_pads`. Tool feasibility, licences and PDK
 collateral are a separate piece of work; this note assumes static rail analysis
 is reachable in some form and says which branch each decision sits on.
 
-Prototype: `rail_static.tcl`, `rail_gate.py`, `rail_config.eth_chiplet.tcl`,
+~~Prototype: `rail_static.tcl`, `rail_gate.py`, `rail_config.eth_chiplet.tcl`,
 `rail_budgets.eth_chiplet.txt` in this directory. `python3 rail_gate.py
---selftest` runs a 20-case mutation battery; it is green.
+--selftest` runs a 20-case mutation battery; it is green.~~
+
+**[2026-08-17] RETRACTED. None of those four files has ever existed** — not in
+this directory, not anywhere in the tree, and not in any run directory. There
+is therefore also no 20-case selftest and no green result; that paragraph
+described work that was not done. It is struck rather than deleted so the claim
+cannot be quoted again from an older revision.
+
+The real scripts, and the measurements they produced, are in
+`ASIC/genus-innovus/rail/` and written up in `31-power-delivery-measured.md`.
 
 ---
 
