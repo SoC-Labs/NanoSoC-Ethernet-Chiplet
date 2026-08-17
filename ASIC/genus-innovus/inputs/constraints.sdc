@@ -94,16 +94,138 @@ set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks $SWDCLK]
 set_clock_uncertainty -setup $INTER_CLOCK_UNCERTAINTY -rise_from [get_clocks $SWDCLK] -rise_to [get_clocks $EXTCLK]
 set_clock_uncertainty -setup $INTER_CLOCK_UNCERTAINTY -rise_from [get_clocks $EXTCLK] -rise_to [get_clocks $SWDCLK]
 
-### Multicycle path through asynchronous clock domains
-set_multicycle_path 2 -setup -end -from [get_clocks $SWDCLK] -to [get_clocks $EXTCLK]
-set_multicycle_path 1 -hold -end -from [get_clocks $SWDCLK] -to [get_clocks $EXTCLK]
-set_multicycle_path 2 -setup -end -from [get_clocks $EXTCLK] -to [get_clocks $SWDCLK]
-set_multicycle_path 1 -hold -end -from [get_clocks $EXTCLK] -to [get_clocks $SWDCLK]
-
-
-set_false_path -hold -from [get_clocks $EXTCLK] -to [get_clocks $SWDCLK]
+#### [C5] THE SWD EXCEPTIONS BELOW ARE DEAD CODE. NEUTRALISED 2026-08-17. #####
+#
+# READ THIS BEFORE UNCOMMENTING ANYTHING.
+#
+# THE DECISION: THIS CONSTRAINT SET USES set_clock_groups, NOT PER-PAIR
+# EXCEPTIONS, TO DECLARE ITS ASYNCHRONOUS BOUNDARIES. ONE MECHANISM. The
+# `set_clock_groups -asynchronous -name eth_chiplet_cdc` at the bottom of this
+# file is the single place any clock-to-clock cut is expressed. The five lines
+# below, and the CDC 1/2/3 exceptions in ethernet_constraints.sdc, are the OTHER
+# mechanism. Both were live at once, which is worse than either alone: the file
+# recorded two different intents for the same boundary and the next reader had a
+# 50% chance of maintaining the one the tool ignores.
+#
+# WHY THEY ARE DEAD. $SWDCLK sits in a group of its own
+# (-group [get_clocks [list $SWDCLK]]), so every swdclk <-> clk path is cut
+# outright. set_clock_groups -asynchronous is defined as reciprocal FALSE PATHS
+# between groups, and false path is the top of the SDC exception priority
+# ladder: it beats set_multicycle_path unconditionally. The four multicycles
+# below therefore apply to a set of paths that no longer exists, and the
+# `set_false_path -hold` is a strictly weaker restatement of a cut already made
+# in both directions.
+#
+# NOTE THE ORDERING ARGUMENT IS A RED HERRING, AND IT MATTERS THAT YOU KNOW.
+# It is tempting to conclude "the group wins because it is written later".
+# Exception PRIORITY, not file order, is what kills these — moving the group
+# above the multicycles, or below them, changes nothing. This is also why the
+# claim in ethernet_constraints.sdc CDC 1 that not grouping CLK<->SWDCLK there
+# "preserves the existing SWD multicycle/false-path block" was wrong twice over:
+# that file cannot preserve a block THIS file cuts, and it could not have done
+# so by ordering even if it had tried. That comment is corrected in place.
+#
+# WHY THE GROUP AND NOT THE MULTICYCLES — the decision, argued rather than
+# asserted:
+#   * SWD IS GENUINELY ASYNCHRONOUS. It is driven by a debug probe with its own
+#     oscillator (see the Lauterbach characterisation further down this file).
+#     A 2-cycle multicycle relaxes a check between two clocks with NO phase
+#     relationship; the check is meaningless at 2 cycles for exactly the reason
+#     it is meaningless at 1. Relaxing a fiction does not make it true.
+#   * THE CROSSING IS SYNCHRONISED IN RTL, in the CoreSight DAP, which is where
+#     a clock-domain crossing belongs.
+#   * THE MULTICYCLE BLOCK WAS ALREADY SELF-CONTRADICTORY before the group
+#     existed: it declares `-hold 1 -end` in both directions and then a
+#     `set_false_path -hold` in one of them. Two different hold intents on the
+#     same clock pair, written four lines apart.
+#   * THE GROUP IS WHAT THE SHIPPED DATABASE ACTUALLY USED. build/full-20260814
+#     was placed, CTS'd and routed with these paths cut. Choosing the group is
+#     therefore a NO-OP on timing and pure removal of dead text; choosing the
+#     multicycles would newly time ~an entire debug interface and force a
+#     re-closure. Do not spend a 5-hour run on that without deciding to.
+#
+# IF YOU EVER DO WANT SWD TIMED, the correct edit is to remove $SWDCLK's group
+# from set_clock_groups AND re-enable the block below in the same change. Doing
+# only the second half is the state this comment exists to prevent.
+#
+# ### Multicycle path through asynchronous clock domains
+# set_multicycle_path 2 -setup -end -from [get_clocks $SWDCLK] -to [get_clocks $EXTCLK]
+# set_multicycle_path 1 -hold -end -from [get_clocks $SWDCLK] -to [get_clocks $EXTCLK]
+# set_multicycle_path 2 -setup -end -from [get_clocks $EXTCLK] -to [get_clocks $SWDCLK]
+# set_multicycle_path 1 -hold -end -from [get_clocks $EXTCLK] -to [get_clocks $SWDCLK]
+#
+# set_false_path -hold -from [get_clocks $EXTCLK] -to [get_clocks $SWDCLK]
+#
+# FOR COMPLETENESS, THE TWO set_clock_uncertainty -rise_from/-rise_to LINES
+# ABOVE ARE ALSO INERT for the same reason — there are no swdclk <-> clk paths
+# left for an inter-clock uncertainty to apply to. They are LEFT IN PLACE, not
+# neutralised: uncertainty is a margin, not an exception, it costs nothing while
+# the group stands, and it is exactly what you would need back if the group were
+# ever split. Flagged so nobody re-derives them as evidence the crossing is timed.
+##############################################################################
 
 ### Multicycle path through pads
+##
+## THIS GLOB MATCHES POWER AND GROUND PINS, AND THAT STOPS PLACEMENT.
+##
+## `uPAD*/*` selects every pin on every pad instance, supply pins included.
+## Genus resolves it against its own pin namespace -- which contains PG pins --
+## and writes the expansion out as 548 literal `get_pins` entries into
+## outputs/${block}_syn.sdc. Innovus's `get_pins` does NOT resolve PG pins, so
+## each one raises TCLCMD-917: 34 distinct objects, exactly one per supply pad
+## (12 VDDPST, 12 VSSPST, 6 VDD, 4 VSS), each twice because the same wildcard
+## feeds both -from and -to.
+##
+## IT WAS INVISIBLE UNTIL THE PAD RING WAS FIXED. While synthesis was deleting
+## all 34 supply pads as unloaded, the expansion produced no PG pins at all and
+## this line looked clean. Restoring the pads did not create the defect; it
+## uncovered one that had been masked by the other. Both flows now hit it:
+## ASIC/genus-innovus allowlists TCLCMD-917 (2b_pnr_place_eval.tcl) so placement
+## survives; the toolkit ships an empty PLACE_ERROR_ALLOWLIST, so the same
+## successful placement -- 198,110 instances, 0 unplaced, database written -- is
+## rejected afterwards by the message census.
+##
+## ALLOWLISTING IS THE WORKAROUND. The fix is to stop selecting PG pins here, so
+## the synthesised SDC never carries the 34 bogus objects into any downstream
+## tool. Semantically that changes nothing: PG pins have no timing arcs, so a
+## multicycle exception on them was never doing anything.
+##
+## AN ATTRIBUTE FILTER CANNOT DO IT. Two independent reasons, both established
+## against the installed reference rather than assumed:
+##
+##   1. Genus's SDC `get_pins -filter` has NO power/ground predicate. The command
+##      reference enumerates the supported expressions exhaustively and
+##      is_power/is_ground are not among them -- they exist only as lib_pin
+##      attributes reachable through get_db, below the SDC layer.
+##   2. Even if one existed it would answer false. This pad Liberty declares its
+##      supply pins as ordinary `pin(...)` with `direction : inout` and no
+##      `pg_type` -- old-style modelling. Nothing in the Liberty marks them as
+##      power at all.
+##
+## AND THAT IS ALSO WHY THE TWO TOOLS DISAGREE. Genus takes the Liberty at face
+## value and sees them as ordinary pins; Innovus classifies them as PG from the
+## LEF and the power intent and removes them from the timing-pin namespace. The
+## asymmetry is in the tools' PIN MODELS, not in filter spelling, so no amount of
+## getting the filter right would have reconciled it.
+##
+## `direction` is dead for the same reason: the real signal pin PAD is `inout`,
+## exactly like every supply pin.
+##
+## THE ONLY DISCRIMINATOR IN THE SDC LAYER IS THE PIN NAME, and here it is exact
+## and stable -- signal pins are {I, C, PAD, OEN, REN} across all four signal pad
+## types, supply pins are {VDD, VDDPST, VSS, VSSPST}. Naming them explicitly is
+## plain SDC with no vendor filter, so Formality and PrimeTime read it identically:
+##
+##   set_multicycle_path 2 \
+##     -from [get_pins {uPAD*/I uPAD*/C uPAD*/PAD uPAD*/OEN uPAD*/REN}] \
+##     -to   [get_pins {uPAD*/I uPAD*/C uPAD*/PAD uPAD*/OEN uPAD*/REN}]
+##
+## NOT APPLIED YET. Acceptance, all three: the expansion in
+## outputs/${block}_syn.sdc drops 548 -> 480 entries (34 distinct PG objects, each
+## appearing twice because one wildcard feeds both -from and -to); TCLCMD-917 goes
+## to zero in the Innovus log; and setup/hold are UNCHANGED. The third is the one
+## that matters -- PG pins carry no timing arcs, so if timing moves at all, the
+## premise that this exception was inert on them was wrong.
 set_multicycle_path 2 -from uPAD*/* -to uPAD*/*
 
 ### IP Constraints
@@ -118,7 +240,18 @@ source ../inputs/i2c_constraints.sdc
 #### DELAY DEFINITION
 
 set_input_delay -clock [get_clocks $EXTCLK] -add_delay 0.1 [get_ports NRST]
-set_input_delay -clock [get_clocks $EXTCLK] -add_delay 0.1 [get_ports TEST]
+# REMOVED 2026-08-17: set_input_delay ... 0.1 [get_ports TEST]
+# TEST carries `set_case_analysis 0` at the bottom of this file. A port held at a
+# case-analysed constant launches no transition, so it has no arrival window and
+# the input delay could never produce a check — the constraint was dead the
+# moment the case analysis was added. Worse than dead: it is the only surviving
+# statement in this file that TEST is a TIMED input, and the block around the
+# case analysis says the opposite ("STATIC configuration pins -- strapped, and
+# never toggling in mission mode"). SE, the other strap, correctly has none and
+# always did; this line is what made the pair look deliberately different.
+# If the scan chain is ever bonded and TEST genuinely becomes a timed input,
+# restore this line IN THE SAME CHANGE that comments out its set_case_analysis
+# — not on its own.
 set_input_delay -clock [get_clocks $EXTCLK] -add_delay 0.1 [get_ports HOSTIO4_P1]
 set_input_delay -clock [get_clocks $SWDCLK] -add_delay 0.1 [get_ports SWDIO]
 
@@ -136,18 +269,89 @@ set_input_delay -clock [get_clocks $SWDCLK] -add_delay 0.1 [get_ports SWDIO]
 # rtc_clk / user_ref_clk / scan_clk are absent here (aliased onto $EXTCLK or
 # tied), so the CDC SDC's separate groups for them fold into the $EXTCLK group:
 #   sys_fclk + scan_clk + rtc_clk -> $EXTCLK (+ the QSPI clocks generated off it)
-#   user_ref_clk + pad_clk_tx     -> D2D_TX_CLK_0 alone; user_ref_clk IS $EXTCLK
-#                                    now, so the TX clock keeps its own group
-#                                    and the $EXTCLK <-> D2D_TX cut is REAL.
+#   user_ref_clk + pad_clk_tx     -> D2D_TX_CLK_0 alone. *** SEE [C2] BELOW ***
+#                                    the reasoning that used to sit here ran the
+#                                    alias BACKWARDS and concluded the cut is
+#                                    REAL. It is the alias that makes the cut
+#                                    FICTION. Do not restore that sentence.
 #   pad_clk_rx                    -> D2D_RX_CLK_0
 #   rmii_ref_clk                  -> stands alone, dragging its two divide-by-2
 #                                    MII clocks with it.
 #
-# NOTE the consequence of aliasing user_ref_clk onto $EXTCLK: the Wlink PLL
-# reference and the system clock are now the SAME net, so what used to be a
-# genuine asynchronous crossing inside the Wlink controller is synchronous in
-# this build. The synchronisers remain (harmless). Bond user_ref_clk separately
-# and this group must split again.
+#############################################################################
+# [C2] OPEN DECISION, FOR THE OWNER — THE TRANSMIT GROUP CUTS A BOUNDARY THAT
+#      IS SYNCHRONOUS. NO CONSTRAINT IS CHANGED BY THIS BLOCK. Recorded
+#      2026-08-17 because it needs a pad-budget call, not an SDC edit.
+#############################################################################
+#
+# THE FINDING. D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 are grouped -asynchronous
+# against $EXTCLK below. They are not asynchronous to it. They are generated
+# from it, 1:1, on the same net, and the tool says so.
+#
+# EVIDENCE 1 — THE TOOL'S OWN RESOLUTION. From the shipped run:
+#     Using master clock 'clk' for generated clock 'D2D_TX_CLK_0'
+#     Using master clock 'clk' for generated clock 'D2D_TX_WORD_CLK_0'   ... _7
+#   (build/full-20260814/logs/pnr_qor_after_opt_design_post_cts.rep:21-34)
+# Every clock in the -asynchronous TX group resolves its master to `clk`.
+#
+# EVIDENCE 2 — THE RTL CHAIN, and note there is no PLL and no divider anywhere
+# on it. It is assigns and one scan mux:
+#   ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v:137,266
+#                                 rtc_clk / user_ref_clk aliased onto the
+#                                 sys_fclk pad -> user_ref_clk IS the CLK pad
+#   tidelink_top.sv:2483          .user_hsclk (user_ref_clk)
+#   axi_chiplet_controller.sv:6160 .user_hsclk (user_hsclk)
+#   Wlink.v:2105                  phy_user_hsclk = user_hsclk
+#   WlinkGPIOPHY_v2.v:357         gpio_io_hsclk  = user_hsclk
+#   WavD2DGpio_v2.v:2088          hsclk_scan_mux_io_i_a = io_hsclk
+#                                 -> the io_clk of all 8 TX lanes, hence
+#                                    pad_clk_tx (gated) and the /16 word clocks
+#
+# EVIDENCE 3 — THE CONTRAST WITH RECEIVE, which is the check that this is a real
+# asymmetry and not a misreading. D2D_RX_CLK_0 is a create_clock on a PAD
+# (TL_CLK_RX): an off-die clock from the peer die, mesochronous at best, and its
+# word clocks correctly resolve master 'D2D_RX_CLK_0'. The RX group is right.
+# Only the TX group asserts asynchrony against a clock it is generated from.
+#
+# WHAT THE CUT IS ACTUALLY HIDING. Everything between the system clock and the
+# TX word domain: the a2l FC-replay write sides and their enable_link_clk_demet,
+# lltx, txpstate, txrouter and the sp2wl TX FIFO — the same blocks censused in
+# tidelink_constraints.sdc's TX word-clock block. Roughly 2k flops' worth of
+# boundary, currently false-pathed by group membership rather than by any
+# statement about those paths.
+#
+# WHY THIS IS A DECISION AND NOT A BUG FIX. Those crossings DO carry RTL
+# synchronisers (the demet stages are right there in the names). Merging the
+# groups would newly time paths whose RTL treats them as CDC, which is honest
+# but not free. Conversely, leaving the group is defensible ONLY as
+# "deliberately not timed, because the RTL synchronises it" — which is not what
+# `-asynchronous` says. Either way the file should say the true thing.
+#
+# THE TWO OPTIONS, BOTH DEFENSIBLE:
+#
+#   OPTION A — MERGE D2D_TX_* INTO THE $EXTCLK GROUP.
+#     Deletes the TX group and adds its clocks to the system group, so the
+#     boundary is timed as the synchronous crossing it physically is.
+#     COST: ~2k TX-word flops newly timed against clk across a /16 ratio.
+#     EXPECT NEW VIOLATIONS ON THE FIRST RUN AND EXPECT THEM TO BE REAL — the
+#     same lesson as the 16,653-flop RX block. The demet crossings then want
+#     narrow, NAMED false paths (set_false_path -to the first demet stage),
+#     not a blanket group. No pad, no board, no silicon change.
+#
+#   OPTION B — BOND user_ref_clk TO ITS OWN PAD.
+#     Removes the alias, so the Wlink reference stops being `clk` and the
+#     existing -asynchronous group becomes TRUE AS WRITTEN, with no SDC edit at
+#     all. It also restores the peer-independent link reference the Wlink was
+#     designed around.
+#     COST: one more bonded clock pad out of the ring's budget, plus a board
+#     clock source for it. THAT IS THE DECISION THE OWNER HAS NOT MADE, and it
+#     is why nothing here is changed.
+#
+# NOTE FOR WHOEVER TAKES OPTION B: the TX word clocks' -source in
+# tidelink_constraints.sdc was deliberately anchored at $WL/user_hsclk rather
+# than [get_ports CLK] so that it stays correct under either option. Check
+# D2D_TX_CLK_0's own -source and this group at the same time.
+#############################################################################
 #
 # [OWNER] For SIGNOFF, narrow the D2D_RX_CLK_0 cut rather than leaving it a
 # blanket group: TideLink's own SDC constrains that crossing instead of grouping

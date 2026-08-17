@@ -218,8 +218,121 @@ if {$_rxn_bound != 8} {
 # Do NOT anchor on count_reg[3]/QN: QN exists only post-map, and an SDC is read
 # after elaborate and before mapping, so it would match nothing here.
 #
-# -source is $WL/pad_clk_tx — the same pin D2D_TX_CLK_0 already uses, so the two
-# stay phase-coherent.
+# ---------------------------------------------------------------------------
+# -source WAS $WL/pad_clk_tx. IT COULD NEVER RESOLVE, FOR ANY LANE, AND THE
+# 2026-08-14 RUN SAYS SO 24 TIMES. CORRECTED 2026-08-17.
+# ---------------------------------------------------------------------------
+# The evidence, before the mechanism:
+#
+#   **WARN: (TA-1018): A source latency path to the generated clock
+#   D2D_TX_WORD_CLK_3 through source pin .../u_wlink/pad_clk_tx to target pin
+#   .../u_wlink/phy_gpio/gpiotx_3/io_link_clk in view default_analysis_view_hold
+#   cannot be found. Timing analysis will use 0 ns source latency for the
+#   generated clock and will interpret the master clock based on the polarity
+#   at the master clock source pin.
+#     (build/full-20260814/logs/pnr_qor_after_opt_design_post_cts.rep:113)
+#
+# 8 clocks x 3 analysis views = 24 TA-1018, and check_timing counts the same
+# defect from the other end — "master_clk_edge_not_reaching  Master clock edge
+# does not reach the generated clock target  16" (8 clocks x the 2 setup views,
+# reports/check_timing_03_cts_opt.rep:15). NOT ONE of the 24 names an RX clock.
+# The RX blocks above are clean, which is the control experiment: the shape they
+# use works and the shape this block used did not.
+#
+# WHY IT COULD NEVER RESOLVE — pad_clk_tx AND io_link_clk ARE SIBLINGS, NOT
+# PARENT AND CHILD. Both descend from ONE common high-speed net, and neither
+# descends from the other. From the RTL, verified not assumed:
+#
+#   WavD2DGpio_v2.v:2088    hsclk_scan_mux_io_i_a = io_hsclk
+#   WavD2DGpio_v2.v:1978++  gpiotx_<0..7>_io_clk  = hsclk_scan_mux_io_o_z
+#       -> ONE ungated high-speed net feeds the io_clk of ALL EIGHT lanes.
+#
+#   WavD2DGpioTx.v:332      count <= count + 1 on posedge io_clk (free-running,
+#                           4 bits, reset 4'hf)
+#   WavD2DGpioTx.v:330      io_link_clk_mux_io_i_a = ~count[3]
+#   WavD2DGpioTx.v:320      io_link_clk = io_link_clk_mux_io_o_z
+#       -> the WORD clock is io_clk/16, taken off the UNGATED clock. Same /16,
+#          same free-running-counter idiom as the RX side.
+#
+#   WavD2DGpioTx.v:326      hs_clk_gated_wcg_io_clk_in = io_clk
+#   WavD2DGpioTx.v:322      io_pad_clk = hs_clk_gated_wcg_io_clk_out
+#   WavD2DGpio_v2.v         io_pad_clk_tx = gpiotx_0_io_pad_clk
+#       -> the PAD clock is a WavClockGate on that same io_clk, lane 0 only.
+#
+# So io_clk forks into (a) a clock GATE, giving pad_clk_tx, and (b) a /16
+# DIVIDER, giving io_link_clk. There is no combinational path from (a) to (b),
+# and clock does not propagate backwards out of an ICG, so NO -source expressed
+# on pad_clk_tx can ever be found — not even for lane 0, whose own gate it is.
+# This was never a hierarchy typo, and no amount of re-spelling the same pin
+# would have fixed it.
+#
+# WHAT 0 ns SOURCE LATENCY COSTS, so this is not filed as a warning-count fix.
+# The TX word domain is the ~2k flops censused above. With the source latency
+# forced to zero, every one of them is timed against a clock the tool believes
+# arrives instantly, while the real insertion delay through the pad, the SoC and
+# the lane divider is order-of-nanoseconds — for scale, the measured RX-side
+# figure is 1.09ns (pnr_m7.log:81871). Those same clocks are then handed to
+# CCOpt. This is the third run to ship that way.
+#
+# THE FIX: SOURCE AT THE COMMON ANCESTOR, $WL/user_hsclk. That is the Wlink port
+# the high-speed net enters on, three assigns above the lane mux:
+#   Wlink.v:2105            phy_user_hsclk = user_hsclk
+#   WlinkGPIOPHY_v2.v:357   gpio_io_hsclk  = user_hsclk
+#   WavD2DGpio_v2.v:2088    hsclk_scan_mux_io_i_a = io_hsclk
+# so user_hsclk -> hsclk mux -> gpiotx_$n/io_clk -> count_reg -> io_link_clk is
+# ONE OPEN PATH. That is precisely the shape the RX blocks already prove works
+# (TL_CLK_RX -> pad clock -> count_reg -> io_link_clk, zero TA-1018), and it is
+# what the "mirror the RX pattern" instruction actually means: anchor where the
+# divider's clock COMES FROM, not on a neighbouring branch of it.
+#
+# WHY THIS PIN AND NOT [get_ports CLK], WHICH WOULD ALSO RESOLVE. Two reasons,
+# both about what the constraint is allowed to assert.
+#   1. THE /16 CLAIM STAYS LOCAL. -divide_by 16 is a statement about the lane
+#      divider and nothing else, and sourced here it is checkable in one file
+#      (WavD2DGpioTx.v, quoted above). Sourced at CLK it would ALSO silently
+#      assert that CLK -> user_hsclk is 1:1 — a claim spanning the pad wrapper,
+#      the SoC, tidelink_top.sv:2483 and axi_chiplet_controller.sv:6160. That
+#      chain is 1:1 today (pure assigns plus one scan mux, no PLL, no divider),
+#      and it is still not this constraint's business to assert it.
+#   2. IT SURVIVES THE user_ref_clk PAD DECISION EITHER WAY. See the [C2] block
+#      in constraints.sdc: bonding user_ref_clk to its own pad is a live option
+#      with pad-budget implications. If it is ever taken, -source [get_ports CLK]
+#      becomes a lie that still elaborates and still reports clean; -source
+#      $WL/user_hsclk simply picks up whatever master then feeds the link.
+#
+# D2D_TX_CLK_0 (top of this file) KEEPS -source $WL/pad_clk_tx AND IS CORRECT.
+# There the source really is an ancestor of the target: pad_clk_tx drives the
+# TL_CLK_TX pad. It draws no TA-1018. Do not "fix" it to match this block. The
+# two clocks stay phase-coherent regardless, because the gate and the divider
+# hang off the same io_clk.
+#
+# THE PIN EXISTS AND SURVIVES write_sdc — CHECKED AT BOTH ENDS:
+#   * gate netlist: user_hsclk and pad_clk_tx are adjacent ports on the SAME
+#     Wlink module header (outputs/nanosoc_eth_chiplet_pads_gate.v:387000).
+#   * the previous run's WRITTEN SDC already carries a -source on
+#     .../u_wlink/pad_clk_tx through write_sdc intact
+#     (outputs/nanosoc_eth_chiplet_pads_syn.sdc:39), i.e. a port pin on this
+#     exact instance round-trips. user_hsclk is its sibling on that header.
+#   DO NOT be tempted by $GPIO/hsclk_scan_mux/io_o_z, which is nearer still:
+#   `hsclk_scan_mux` does not appear ANYWHERE in the gate netlist (grep returns
+#   nothing) because Genus dissolves the WavClockMux. That anchor would bind at
+#   read time and then evaporate at write_sdc — the exact silent-drop failure
+#   the guards in this file exist to prevent.
+#
+# WHAT AN SDC CANNOT CHECK, AND WHERE THE REAL GATE IS. The guards below prove a
+# pin MATCHES. Nothing expressible in SDC proves a source latency path is
+# REACHABLE, which is exactly how a block that binds 8/8 and errors loudly on a
+# miss still shipped a whole domain with zero source latency. THE GATE IS THE
+# TA-1018 / master_clk_edge_not_reaching COUNT IN THE NEXT RUN, AND IT MUST BE 0.
+set _tx_src [get_pins -quiet $WL/user_hsclk]
+if {[sizeof_collection $_tx_src] == 0} {
+    error "tidelink_constraints.sdc: D2D TX word-clock SOURCE $WL/user_hsclk\
+           matched NOTHING. Refusing to fall back to $WL/pad_clk_tx: that pin is\
+           a SIBLING of the target (both hang off io_clk, one through a clock\
+           gate and one through the /16 divider), so it can never resolve -- it\
+           produced 24 TA-1018 'source latency path ... cannot be found' on\
+           2026-08-14 and left ~2k TX flops on 0 ns source latency."
+}
 set _tx_bound 0
 foreach n {0 1 2 3 4 5 6 7} {
     set _pin [get_pins -quiet $GPIO/gpiotx_$n/io_link_clk]
@@ -229,7 +342,7 @@ foreach n {0 1 2 3 4 5 6 7} {
                (~2k flops) would be left untimed. Refusing to continue."
     }
     create_generated_clock -name "D2D_TX_WORD_CLK_$n" \
-        -source [get_pins $WL/pad_clk_tx] -divide_by 16 $_pin
+        -source $_tx_src -divide_by 16 $_pin
     set_clock_uncertainty -setup $CLK_ERROR      [get_clocks "D2D_TX_WORD_CLK_$n"]
     set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks "D2D_TX_WORD_CLK_$n"]
     incr _tx_bound

@@ -225,6 +225,149 @@ set_load -min  5.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (
 set_input_transition -max 5.0 [get_ports RMII_MDIO] ; # (c) PLACEHOLDER clamped at the library max-transition ceiling; true rising edge is RC, ~82-550ns
 set_input_transition -min 1.0 [get_ports RMII_MDIO] ; # (b) the FALLING edge really is buffer-driven (VOD8 sinks 8mA); pessimistic-for-hold
 
+#=============================================================================
+# SMI (RMII_MDC / RMII_MDIO)  —  THE CLOCK DECISION
+#=============================================================================
+# Added 2026-08-17. Finding 3 in the block below flagged that these two pins
+# "carry no set_input_delay or set_output_delay at all", called them "a genuine
+# candidate for an asynchronous/false-path declaration rather than a timed
+# budget", and then left it — correctly, since that block's scope was drive and
+# load. This is that declaration. It follows THE CLOCK DECISION in
+# i2c_constraints.sdc, which argues an almost identical case at length; the
+# structure below is deliberately the same so the two can be read together.
+#
+# WHAT WAS AND WAS NOT MISSING. Checked, because the gap is narrower than
+# "unconstrained" suggests and it decides what to add:
+#   * set_load              ALREADY PRESENT for both, in the block above
+#                           (25 pF max / 5 pF min, [RMII] 7.4.1 AC load).
+#   * set_input_transition  ALREADY PRESENT for RMII_MDIO, above.
+#                           RMII_MDC needs none: it is `output wire` on the pad
+#                           ring (nanosoc_eth_chiplet_pads.v:68), instantiated
+#                           PDDW16DGZ_G uPAD_RMII_MDC with .C() unconnected and
+#                           .OEN(tielo) — permanently driving, no input arc.
+#   * ANY TIMING STATEMENT  ABSENT for both. That, and only that, is what
+#                           follows.
+#
+# WHY "ABSENT" IS THE PROBLEM, MEASURED RATHER THAN ASSERTED. In the shipped
+# run's check_timing, these two pins are indistinguishable from I2C_SCL/I2C_SDA,
+# which ARE fully declared asynchronous:
+#     RMII_MDIO   No input delay assertion with respect to clock   (both views)
+#     RMII_MDIO   Unconstrained signal arriving at end point       (both views)
+#     RMII_MDC    Unconstrained signal arriving at end point       (both views)
+#       (reports/check_timing_03_cts_opt.rep:37-38, 7131-7132, 7614-7615)
+#     I2C_SCL     ... the identical three entries at :5377-5380, :8097-8098
+# So the timing report CANNOT TELL "deliberately not timed, here is why" from
+# "nobody looked". Declaring the boundary does not change what the tool computes
+# and it will not make those lines go away. It changes what the constraint set
+# RECORDS, which is the whole of the difference — the same argument the i2c file
+# makes, now with the measurement that proves the report is no help.
+#
+# NOTHING IN THIS DESIGN CLOCKS OFF MDC, AND MDC IS NOT A CLOCK — IT IS A
+# REGISTER OUTPUT IN THE CLK DOMAIN. From the RTL, verified not assumed
+# ($ETHMAC_IP_DIR = ${ARM_IP_LIBRARY_PATH}/OpenCores-EthMAC, rtl/verilog):
+#   eth_clockgen.v   always @(posedge Clk or posedge Reset)
+#                      if (CountEq0) Mdc <= ~Mdc;
+#   eth_clockgen.v   assign MdcEn   = CountEq0 & ~Mdc;
+#                    assign MdcEn_n = CountEq0 &  Mdc;
+#   eth_top.v:376    eth_miim ... .Clk(wb_clk_i), .Divider(r_ClkDiv)
+# MDC is a flop output on the WB/system clock, and MdcEn/MdcEn_n are ONE-CLK
+# ENABLE PULSES, not clocks. Every `always` block in eth_miim.v is
+# `posedge Clk` — all eight of them (:192, :208, :222, :257, :285, :304, :359,
+# :391) — and there is not one `posedge Mdc` or `negedge Mdc` in the file. The
+# two submodules that touch the wire take the same clock:
+#   eth_miim.v:432   eth_shiftreg      shftrg  (.Clk(Clk), .MdcEn_n(MdcEn_n), ...)
+#   eth_miim.v:438   eth_outputcontrol outctrl (.Clk(Clk), .MdcEn_n(MdcEn_n), ...)
+# A create_clock on RMII_MDC would therefore be a clock with ZERO SINK
+# REGISTERS: it would propagate nowhere, generate no real check, add a
+# fictitious domain to MMMC, and invite CTS to build a tree backwards out of an
+# output pad. That is the same conclusion, for the same reason, that
+# i2c_constraints.sdc reaches for I2C_SCL.
+#
+# AND A create_generated_clock WOULD BE WORSE, BECAUSE THE RATIO IS SOFTWARE.
+# The divider is not a constant:
+#   eth_clockgen.v   TempDivider   = (Divider < 2) ? 8'h02 : Divider
+#                    CounterPreset = (TempDivider >> 1) - 1      ; # half period
+#   => MDC period = TempDivider Clk cycles,  Fmdc = Fclk / Divider
+# `Divider` is r_ClkDiv = MIIMODER[7:0], a writable register whose POR default
+# is 8'h64 = 100 (eth_defines.v:228, ETH_MIIMODER_DEF_0). At clk = 100 MHz that
+# is MDC = 1 MHz, period 1000 ns — but software may write anything from 2
+# upward, and a -divide_by written here would be true only at whichever value
+# happened to be in the register the day it was written. THAT IS EXACTLY THE
+# [C3] DEFECT DOCUMENTED IN qspi_constraints.sdc, where -divide_by 2 holds only
+# at a 5-bit register's reset value. One instance of it in this constraint set
+# is one too many; do not add a second.
+#
+# THE REAL REQUIREMENT ON THIS INTERFACE IS PROTOCOL, NOT STATIC TIMING, AND THE
+# MARGIN IS THREE TO FOUR ORDERS OF MAGNITUDE. From [DS] Table 5-12 (already
+# quoted in finding 3 below): MDC period min 400 ns (2.5 MHz ceiling); MDIO
+# tsu 10 ns; MDIO tihold 10 ns; MDIO tval max 300 ns.
+#   * MDIO OUT is launched on MdcEn_n, i.e. HALF an MDC period before the MDC
+#     rising edge that the PHY captures on: 500 ns at the POR divider of 100,
+#     and >= 200 ns even at the 2.5 MHz protocol ceiling. Against a 10 ns tsu
+#     and a 10 ns tihold that is 20-50x margin, and it is created by the
+#     divider, not by placement. Breaking it would take ~200 ns of pad-to-pad
+#     skew between two pads on the same edge of a 1600x2000um die.
+#   * MDIO IN is launched by the PHY off the MDC WE generate, up to 300 ns
+#     later (tval), and sampled back in the Clk domain by eth_shiftreg
+#     (`ShiftReg[7:0] <= {ShiftReg[6:0], Mdi}` on posedge Clk, gated by
+#     MdcEn_n — eth_shiftreg.v:104,128). Its arrival is bounded relative to an
+#     MDC edge whose position in clk cycles is set by a writable register.
+# There is consequently NO honest clk-referenced arrival window to state, and no
+# placement or routing decision that a timing constraint could usefully steer.
+#
+# NO set_input_delay / set_output_delay IS WRITTEN, DELIBERATELY — same reason
+# as i2c_constraints.sdc. Both commands require a -clock. The only two candidates
+# are a create_clock on MDC (argued above: zero sinks, software ratio, fiction)
+# or `clk` itself (which would assert an arrival window measured in clk cycles
+# that no document bounds and the divider makes meaningless). Writing a delay
+# AND a false path on the same port would also reproduce, in a new place, the
+# dead-constraint contradiction that [C5] below exists to clear out: the false
+# path wins on exception priority and the delay is inert but still reads as
+# intent. One mechanism.
+#
+# SCOPE — the exceptions are narrow on purpose, exactly as the i2c ones are.
+# `-to` on RMII_MDC and RMII_MDIO selects only paths that END at the pad
+# (MIIM flop -> pad). `-from` on RMII_MDIO selects only paths that START there
+# (pad -> eth_shiftreg). Every Clk-to-Clk path inside eth_miim, eth_shiftreg and
+# eth_outputcontrol stays fully timed by the $EXTCLK create_clock in
+# constraints.sdc. Nothing here relaxes the MIIM itself.
+set_false_path -to   [get_ports RMII_MDC]
+set_false_path -to   [get_ports RMII_MDIO]
+set_false_path -from [get_ports RMII_MDIO]
+#
+# WARNINGS — READ BEFORE SIGNOFF. NONE OF THESE IS FIXED BY THE LINES ABOVE.
+#
+# S1. THE 2.5 MHz CEILING IS ENFORCED BY SOFTWARE ONLY. The RTL clamps Divider
+#     at the BOTTOM (`(Divider<2) ? 8'h02 : Divider`) and nowhere else, so a
+#     write of MIIMODER[7:0] = 2 produces a 50 MHz MDC — 20x past [DS] Table
+#     5-12's 400 ns minimum period, and past the point where the half-period
+#     margin argument above holds. The POR value of 100 is safe (1 MHz at
+#     clk = 100 MHz) and the driver must keep Divider >= 40 at this clock. Not
+#     expressible in SDC; it belongs in the MIIM driver and in a bring-up check.
+#
+# S2. MDIO IS SAMPLED THROUGH A SINGLE FLOP, WITH NO SYNCHRONISER.
+#     eth_shiftreg.v:128 shifts `Mdi` straight into ShiftReg on posedge Clk.
+#     The far end is the PHY responding to our own MDC, so the exposure is a
+#     turnaround-edge sample rather than a free-running asynchronous input, and
+#     the ~100:1 oversampling means a metastable bit costs at most one clk of
+#     edge placement. Recorded because it is a real single-stage sample on an
+#     off-chip input, the false path above is what makes it invisible to STA,
+#     and a CDC audit should find it declared rather than discover it. Same
+#     class as WARNING 5 in i2c_constraints.sdc. RTL issue, not an SDC one.
+#
+# S3. UNBOUNDED ROUTE ON THE FALSE-PATHED PADS. A false path lets the router
+#     take an arbitrarily long route pad-to-flop. At >= 200 ns of protocol
+#     margin that is unreachable by anything this floorplan can produce. If a
+#     future revision wants the router held to a number anyway, the correct tool
+#     is set_max_delay on these same -from/-to sets, NOT a create_clock. Note
+#     that DRV is unaffected by false paths, so the 25 pF / 5 pF set_load above
+#     and the design-wide set_max_capacitance still bind on both pins.
+#
+# S4. THE MDIO set_input_transition ABOVE REMAINS A CLASS (c) CLAMP and these
+#     exceptions do not upgrade it. With the pad-to-flop path false-pathed it
+#     now feeds DRV only, which is the same position i2c_constraints.sdc reaches
+#     for I2C_SCL/I2C_SDA. It is still not the real RC edge.
+
 # --- CONSISTENCY CHECK of the EXISTING input/output delays (FLAGGED, NOT ------
 # --- CHANGED) ----------------------------------------------------------------
 # The four delay constraints above predate this block and are self-labelled
@@ -283,15 +426,92 @@ set_input_transition -min 1.0 [get_ports RMII_MDIO] ; # (b) the FALLING edge rea
 #    permits 35-65%. Harmless for the /2 MII generation (single-edge toggle),
 #    but any negedge-triggered logic in the RMII domain is currently timed
 #    against an edge that can legally move +/-2 ns.
-# 3. RMII_MDC / RMII_MDIO carry no set_input_delay or set_output_delay at all.
+# 3. CLOSED 2026-08-17 — see the SMI (RMII_MDC / RMII_MDIO) THE CLOCK DECISION
+#    block above, which acted on this finding. The finding as written:
+#    "RMII_MDC / RMII_MDIO carry no set_input_delay or set_output_delay at all.
 #    SMI is slow and software-timed ([DS] Table 5-12: MDC period min 400 ns =
 #    2.5 MHz max; MDIO tsu 10 ns, tihold 10 ns, tval max 300 ns), so it is a
 #    genuine candidate for an asynchronous/false-path declaration rather than a
-#    timed budget — but "no constraint at all" is not the same thing as
-#    "declared asynchronous". Flagged; outside this block's drive/load scope.
+#    timed budget — but 'no constraint at all' is not the same thing as
+#    'declared asynchronous'. Flagged; outside this block's drive/load scope."
+#    The conclusion it reached was the right one and is the one implemented: an
+#    explicit asynchronous declaration, no create_clock, no invented delays.
+#    The [DS] Table 5-12 numbers quoted here are the ones that block argues from.
 #-----------------------------------------------------------------------------
 
-### CDC 1 — wholly-asynchronous directions (RMII/MII family <-> CLK)
+#############################################################################
+# [C5] CDC 1 / 2 / 3 ARE DEAD CODE. NEUTRALISED 2026-08-17.
+#      THE "max-robustness alternative" NOTED AT THE BOTTOM OF THIS BLOCK WAS
+#      ALREADY IN FORCE — IT JUST LIVES IN constraints.sdc, NOT HERE.
+#############################################################################
+#
+# THE DECISION: THIS CONSTRAINT SET USES set_clock_groups, NOT PER-PAIR
+# EXCEPTIONS, TO DECLARE ITS ASYNCHRONOUS BOUNDARIES. ONE MECHANISM. See the
+# matching [C5] block in constraints.sdc, which retires the SWD half of the same
+# problem. Every clock-to-clock cut in this design is expressed once, in
+# `set_clock_groups -asynchronous -name eth_chiplet_cdc`.
+#
+# WHY THE THREE BLOCKS BELOW ARE DEAD. constraints.sdc groups
+#     -group [get_clocks [list $EXTCLK QSPI_SCLK QSPI_SCLK_o]]
+#     -group [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}]
+# so the ENTIRE RMII/MII family is cut from clk in BOTH directions, including
+# the mii_rx -> clk direction CDC 1 deliberately left timed. That subsumes:
+#   * CDC 1's two set_false_paths      — restatements of a cut already made.
+#   * CDC 2's seven targeted exceptions — every one of them is a mii_rx -> clk
+#     crossing, and every one is inside the cut.
+#   * CDC 3's last_push_flags multicycle — NOT merely redundant, EXTINGUISHED.
+#     set_clock_groups -asynchronous means reciprocal false paths, and false
+#     path outranks multicycle at the top of the SDC exception priority ladder.
+#     The 2/1 relaxation has never been what the tool applied.
+#
+# ORDERING IS A RED HERRING AND IT MATTERS THAT YOU KNOW. It is tempting to
+# reason "constraints.sdc sources this file first, so its later group wins".
+# Exception PRIORITY, not file order, is what decides this: a false path beats a
+# multicycle wherever either is written. Re-ordering the source lines would
+# change nothing.
+#
+# THIS IS THE ALTERNATIVE THIS FILE ALREADY ENDORSED. The closing note of the
+# original CDC 3 block described precisely this configuration —
+#   "if a name-free, guaranteed-complete cut of the mii_rx->CLK boundary is
+#    preferred over the verified last_push_flags MCP, replace CDC 2+3 with a
+#    single async clock group ... That is safe (last_push_flags is held stable
+#    for a whole frame vs a ~2-cycle toggle resync) but converts last_push_flags
+#    from a timed MCP into a false path."
+# — and judged it SAFE, with the reason. That configuration has been in force
+# since the group was added. The only thing that was missing was anyone saying
+# so, while three blocks of live-looking constraint said otherwise.
+#
+# THE COMMENT THAT WAS WRONG, CORRECTED HERE RATHER THAN LEFT IN PLACE. CDC 1
+# ended: "(CLK<->SWDCLK is intentionally NOT grouped so the existing SWD
+# multicycle/false-path block above is preserved.)" That was wrong twice.
+# First, THIS file not grouping swdclk preserves nothing, because constraints.sdc
+# puts $SWDCLK in a group of its own and cuts the pair anyway. Second, even had
+# the intent been achievable, ordering could not have achieved it — see above.
+# The SWD block it believed it was protecting is itself dead, and is neutralised
+# in constraints.sdc under the same [C5].
+#
+# WHAT THIS COSTS AND WHAT IT DOES NOT. For every mii_rx -> clk crossing this is
+# a NO-OP against the shipped database: build/full-20260814 was placed, CTS'd
+# and routed with those paths cut by the group, not by these lines.
+#
+# ONE HONEST CAVEAT, BECAUSE IT IS THE ONLY WAY THE NEXT RUN CAN DIFFER. Four of
+# CDC 2's exceptions were written as `-to <pin>` or `-to <cell>` with NO `-from`.
+# An unqualified `-to` cuts paths ENDING there from EVERY launch clock, not just
+# from mii_rx — so wherever one of those synchroniser flops also has a clk-domain
+# endpoint (a clear/set pin, a clock-gate enable), that clk -> clk path was being
+# cut too, silently and with no stated intent. Removing them RE-TIMES those, and
+# a small number of new endpoints may appear. THAT IS THE SAFE DIRECTION and
+# they are real clk-domain paths that should always have been timed. If any of
+# them violates, fix it or false-path it deliberately with both -from and -to;
+# do not restore a blanket `-to`.
+#
+# IF YOU EVER DO WANT THE last_push_flags MCP BACK, the correct edit is to
+# remove the {rmii_ref_clk mii_rx_clk mii_tx_clk} group from constraints.sdc's
+# set_clock_groups AND re-enable CDC 1/2/3 here in the same change. The RTL
+# reasoning recorded in the original CDC 3 block is preserved verbatim below and
+# is still correct; it is the mechanism, not the analysis, that was retired.
+#
+# --- CDC 1 (retired) — wholly-asynchronous directions (RMII/MII family <-> CLK)
 # The RMII ref clock and its two /2 children are MUTUALLY SYNCHRONOUS (one
 # source) and stay timed relative to each other (rmii_ref->mii_rx carries the
 # real mrxd/mrxdv datapath; mii_rx<->mii_tx are synchronous siblings). They are
@@ -303,30 +523,24 @@ set_input_transition -min 1.0 [get_ports RMII_MDIO] ; # (b) the FALLING edge rea
 #   * {ref,mii_tx} -> CLK : every TX/ref-side crossing (OpenCores MAC TX status
 #     + TX-FIFO syncs TxRetrySync/TxAbortSync/TxDoneSync/ReadTxDataFromFifo_sync,
 #     and the u_tx_ptp_det TX event strobe -> PHC).
-# The mii_rx -> CLK direction is deliberately LEFT TIMED here because it carries
-# the eth_rx_cksum last_push_flags data-with-toggle path we want to keep as a
-# (relaxed) multicycle — see CDC 3. Its correctly-synchronised crossings are cut
-# individually in CDC 2. (CLK<->SWDCLK is intentionally NOT grouped so the
-# existing SWD multicycle/false-path block above is preserved.)
-set_false_path -from [get_clocks clk] -to [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}]
-set_false_path -from [get_clocks {rmii_ref_clk mii_tx_clk}] -to [get_clocks clk]
-
-### CDC 2 — mii_rx -> CLK correctly-synchronised crossings (targeted false paths)
+# The mii_rx -> CLK direction was left timed here for CDC 3's sake.
+# set_false_path -from [get_clocks clk] -to [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}]
+# set_false_path -from [get_clocks {rmii_ref_clk mii_tx_clk}] -to [get_clocks clk]
+#
+# --- CDC 2 (retired) — mii_rx -> CLK correctly-synchronised crossings
 # Cut ONLY the metastability-capture flops so the last_push_flags MCP (CDC 3)
 # survives on the same clock pair. eth_rx_cksum (exact paths, RTL-verified):
-set_false_path -to [get_pins ${CKSUM}/wptr_gray_pclk_s0_reg\[*\]/D] ; # gray write-pointer sync (async FIFO)
-set_false_path -to [get_pins ${CKSUM}/ovf_tog_pclk_s0_reg/D]      ; # overflow toggle synchroniser
-set_false_path -to [get_pins ${CKSUM}/push_tog_pclk_s0_reg/D]     ; # push  toggle synchroniser
-set_false_path -from [get_cells ${CKSUM}/fifo_mem_reg*] -to [get_clocks clk] ; # async FIFO memory read (mrx write -> pclk peek/prdata)
-# OpenCores MAC (u_eth_top) MRxClk->WB(CLK) crossings + PTP RX event. Leaf names
-# are RTL-verified; deep hierarchy is matched with -hierarchical (confirm the
-# set is complete post-elaboration — see review note):
-set_false_path -to [get_cells -hierarchical -filter {name =~ *RxAbortSync1_reg}]               ; # RX abort MRx->WB sync
-set_false_path -to [get_cells -hierarchical -filter {name =~ *RxStatusWriteLatched_sync1_reg}] ; # RX status/frame-done MRx->WB sync
-set_false_path -from [get_cells -hierarchical -filter {name =~ *RxDataLatched2_reg*}] -to [get_clocks clk] ; # RX data (MRx) -> bd_ram (WB), gated by the synced write enable
-set_false_path -from [get_cells ${ETH_SS}/u_ethmac_0/u_inner/u_rx_ptp_det/ptp_event_reg] -to [get_clocks clk] ; # eth_rx_ptp_event (mii_rx) -> PHC eth_rx_capture (CLK)
-
-### CDC 3 — eth_rx_cksum last_push_flags data-with-toggle (MULTICYCLE, not cut)
+# set_false_path -to [get_pins ${CKSUM}/wptr_gray_pclk_s0_reg\[*\]/D] ; # gray write-pointer sync (async FIFO)
+# set_false_path -to [get_pins ${CKSUM}/ovf_tog_pclk_s0_reg/D]      ; # overflow toggle synchroniser
+# set_false_path -to [get_pins ${CKSUM}/push_tog_pclk_s0_reg/D]     ; # push  toggle synchroniser
+# set_false_path -from [get_cells ${CKSUM}/fifo_mem_reg*] -to [get_clocks clk] ; # async FIFO memory read (mrx write -> pclk peek/prdata)
+# OpenCores MAC (u_eth_top) MRxClk->WB(CLK) crossings + PTP RX event:
+# set_false_path -to [get_cells -hierarchical -filter {name =~ *RxAbortSync1_reg}]               ; # RX abort MRx->WB sync
+# set_false_path -to [get_cells -hierarchical -filter {name =~ *RxStatusWriteLatched_sync1_reg}] ; # RX status/frame-done MRx->WB sync
+# set_false_path -from [get_cells -hierarchical -filter {name =~ *RxDataLatched2_reg*}] -to [get_clocks clk] ; # RX data (MRx) -> bd_ram (WB)
+# set_false_path -from [get_cells ${ETH_SS}/u_ethmac_0/u_inner/u_rx_ptp_det/ptp_event_reg] -to [get_clocks clk] ; # eth_rx_ptp_event -> PHC
+#
+# --- CDC 3 (retired) — eth_rx_cksum last_push_flags data-with-toggle
 # last_push_flags_mrx[7:0] is latched in mii_rx_clk on the SAME edge that flips
 # push_tog_mrx; the CLK-side counters read it only AFTER push_tog resynchronises
 # through push_tog_pclk_s0/s1/s2 (edge = s1^s2), i.e. >= 2 CLK cycles later. It
@@ -334,17 +548,14 @@ set_false_path -from [get_cells ${ETH_SS}/u_ethmac_0/u_inner/u_rx_ptp_det/ptp_ev
 # destination cycles — a set_multicycle_path, NOT a false path. last_push_flags
 # fans out ONLY to the five CLK-domain counters (frame_count_q / ip_good_q /
 # ip_bad_q / l4_good_q / l4_bad_q), so "-to CLK" targets exactly this crossing.
-# Multiplier 2/1 mirrors the toggle's >=2-cycle handshake and the SWDCK->CLK
-# idiom above (-end = relax on the capturing CLK).
-set_multicycle_path 2 -setup -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg\[*\]] -to [get_clocks clk]
-set_multicycle_path 1 -hold  -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg\[*\]] -to [get_clocks clk]
-
-# NOTE (max-robustness alternative): if a name-free, guaranteed-complete cut of
-# the mii_rx->CLK boundary is preferred over the verified last_push_flags MCP,
-# replace CDC 2+3 with a single async clock group and drop the -to clk direction
-# from CDC 1:
-#   set_clock_groups -asynchronous \
-#     -group [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}] -group [get_clocks clk]
-# That is safe (last_push_flags is held stable for a whole frame vs a ~2-cycle
-# toggle resync) but converts last_push_flags from a timed MCP into a false path.
+# THE ANALYSIS ABOVE STANDS; only the mechanism is retired. Under the group the
+# crossing is a false path instead, which the note below judged safe because
+# last_push_flags is held stable for a whole frame against a ~2-cycle resync.
+# set_multicycle_path 2 -setup -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg\[*\]] -to [get_clocks clk]
+# set_multicycle_path 1 -hold  -end -from [get_cells ${CKSUM}/last_push_flags_mrx_reg\[*\]] -to [get_clocks clk]
+#############################################################################
+#
+# ${ETH_SS} and ${CKSUM} are now referenced only from the retired blocks above.
+# They are LEFT DEFINED at the top of this file on purpose: they document the
+# hierarchy this file was written against, and re-enabling any block needs them.
 
