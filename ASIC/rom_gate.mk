@@ -134,11 +134,35 @@ ROMS := eth cc
 # missing is NOT that statement, and fails.
 ROM_SIM_RTL_DIR ?= $(NANOSOC_MULTICORE_HOME)/src/rtl/bootrom
 
+# ROM_WRAP_<r> — the ASIC RTL wrapper that binds the hard macro.
+#
+# THESE MUST BE THE SUBMODULE COPIES UNDER nanosoc-multicore-system, because
+# THOSE ARE THE FILES THE FLIST COMPILES (nanosoc_multicore_asic.flist, and the
+# build/chip/flist/soc.flist generated from it). Do not "simplify" these back to
+# $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/ — that is the mistake
+# this comment exists to prevent.
+#
+# Until 2026-08-14 they pointed at a pair of STALE HAND-COPIES that used to sit
+# in ASIC/tech_wrappers/tsmc65/. Those copies still declared word_addr[10:0] and
+# .TA(11'd0) into a 512-word A[8:0] macro, long after the real wrappers were
+# fixed. The gate therefore reported two geometry FAILURES PER ROM against RTL
+# THAT NOTHING BUILDS, while the wrappers that do get compiled were correct.
+# Four red lines, zero real defects — and, far worse, the reverse was equally
+# possible: a genuine width defect in the compiled wrapper would have been
+# invisible, because the gate was not reading that file. The stale copies were
+# deleted in the same change; ASIC/tech_wrappers/tsmc65 still legitimately owns
+# the ROM .spec files, the pad wrapper and the pad LEF, just not these two.
+#
+# ROM_FLIST below turns this from a convention into an assertion: rom-static-%
+# fails if ROM_WRAP_<r> is not a file the flist actually compiles.
+ROM_FLIST ?= $(NANOSOC_MULTICORE_HOME)/flist/nanosoc_multicore_asic.flist
+ROM_WRAP_DIR ?= $(NANOSOC_MULTICORE_HOME)/syn/asic/tech_wrappers/tsmc65
+
 ROM_LABEL_eth  := eth_rom
 ROM_DIR_eth    := $(ROMLIBS_DIR)/eth_rom
 ROM_CODE_eth   := $(ETH_BINTXT)
 ROM_SPEC_eth   := $(ETH_ROM_SPEC)
-ROM_WRAP_eth   := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/eth_ss_bootrom.sv
+ROM_WRAP_eth   := $(ROM_WRAP_DIR)/eth_ss_bootrom.sv
 ROM_INST_eth   := eth_rom_via
 ROM_MEMLIB_eth := $(ROM_DIR_eth)/eth_rom_via.memlib
 ROM_SIM_eth    := $(ROM_SIM_RTL_DIR)/eth_ss_bootrom.sv
@@ -148,7 +172,7 @@ ROM_LABEL_cc   := cc_rom
 ROM_DIR_cc     := $(ROMLIBS_DIR)/cc_rom
 ROM_CODE_cc    := $(CC_BINTXT)
 ROM_SPEC_cc    := $(CC_ROM_SPEC)
-ROM_WRAP_cc    := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/nanosoc_bootrom_chip_core.sv
+ROM_WRAP_cc    := $(ROM_WRAP_DIR)/nanosoc_bootrom_chip_core.sv
 ROM_INST_cc    := rom_via
 ROM_MEMLIB_cc  := $(ROM_DIR_cc)/rom_via.memlib
 ROM_SIM_cc     := $(ROM_SIM_RTL_DIR)/nanosoc_bootrom_chip_core.sv
@@ -230,9 +254,19 @@ rom-static-%:
 	    echo "      cc : build the bootloader firmware"; exit 1; }
 	@test -s "$(ROM_WRAP_$*)" || { \
 	    echo "FAIL: [$(ROM_LABEL_$*)] no RTL wrapper at $(ROM_WRAP_$*)"; exit 1; }
-	@printf '%s\n' "$$ROM_STATIC_ASSERT" | python3 - \
+	@# A flist that is missing is NOT a skip: without it the wrapper-vs-flist
+	@# assertion below cannot run, and that assertion is the only thing stopping
+	@# this gate from grading a file nothing compiles.
+	@test -s "$(ROM_FLIST)" || { \
+	    echo "FAIL: [$(ROM_LABEL_$*)] no flist at $(ROM_FLIST) — without it this gate"; \
+	    echo "      cannot prove it is reading the wrapper the design actually builds."; exit 1; }
+	@NANOSOC_MULTICORE_HOME="$(NANOSOC_MULTICORE_HOME)" \
+	 NANOSOC_ETH_CHIPLET_HOME="$(NANOSOC_ETH_CHIPLET_HOME)" \
+	 printf '%s\n' "$$ROM_STATIC_ASSERT" | \
+	 NANOSOC_MULTICORE_HOME="$(NANOSOC_MULTICORE_HOME)" \
+	 NANOSOC_ETH_CHIPLET_HOME="$(NANOSOC_ETH_CHIPLET_HOME)" python3 - \
 	    "$(ROM_LABEL_$*)" "$(ROM_SPEC_$*)" "$(ROM_CODE_$*)" "$(ROM_WRAP_$*)" \
-	    "$(ROM_MEMLIB_$*)" "$(ROM_INST_$*)"
+	    "$(ROM_MEMLIB_$*)" "$(ROM_INST_$*)" "$(ROM_FLIST)"
 
 #-----------------------------------------------------------------------------
 # Gate 3 — content. Word for word, against the code file.
@@ -415,7 +449,7 @@ romlibs-selftest:
 define ROM_STATIC_ASSERT
 import os, re, sys
 
-name, spec, code, wrap, memlib, inst = sys.argv[1:7]
+name, spec, code, wrap, memlib, inst, flist = sys.argv[1:8]
 fails = []
 def ok(m):  print("  OK:   [%s] %s" % (name, m))
 def bad(m): fails.append(m); print("  FAIL: [%s] %s" % (name, m))
@@ -497,6 +531,43 @@ else:
        % (waddr, 1 << waddr, os.path.basename(wrap)))
 if not re.search(r"^\s*%s\s+\w+\s*\(" % re.escape(inst), wtxt, re.M):
     bad("the wrapper %s does not instantiate %s" % (wrap, inst))
+
+# ---- is this wrapper the one the design actually COMPILES? ----------------
+# The failure this catches is not hypothetical: until 2026-08-14 this gate
+# graded a stale hand-copy under ASIC/tech_wrappers/tsmc65 that no flist had
+# referenced for months. It reported a width defect that had already been fixed
+# in the compiled file, and it would just as happily have reported a clean pass
+# while the compiled file was broken. Checking RTL nothing builds is the exact
+# silent-pass shape this whole file exists to refuse, so it is an assertion.
+want = os.path.realpath(wrap)
+base = os.path.basename(want)
+hits, unresolved = [], False
+for raw in open(flist):
+    line = raw.split("//", 1)[0].strip()
+    if not line or line.startswith(("+", "-")):
+        continue
+    exp = re.sub(r"\$$[({](\w+)[)}]", lambda m: os.environ.get(m.group(1), "\x00"), line)
+    if "\x00" in exp:
+        unresolved = True
+        continue
+    if os.path.basename(exp) == base:
+        hits.append(os.path.realpath(exp))
+if want in hits:
+    ok("the wrapper checked here is the one the flist compiles (%s)" % os.path.basename(flist))
+elif hits:
+    bad("THIS GATE IS READING RTL THE DESIGN DOES NOT BUILD.\n"
+        "        checked : %s\n"
+        "        compiled: %s\n"
+        "        (%s)\n"
+        "        Point ROM_WRAP_%s at the compiled file. A verifier aimed at an\n"
+        "        unbuilt copy passes and fails for reasons the silicon never sees."
+        % (want, "\n                  ".join(hits), flist, name))
+elif unresolved:
+    bad("cannot tell whether %s is compiled: %s has entries this gate could not\n"
+        "        expand (an environment variable is unset here). Refusing to assume." % (base, flist))
+else:
+    bad("the flist %s compiles NO file named %s, so nothing in this design builds\n"
+        "        the wrapper this gate is checking (%s)." % (flist, base, want))
 
 # ---- agreement ------------------------------------------------------------
 # A code file SHORTER than the macro is the defect that produced eth_rom: the
@@ -747,6 +818,11 @@ wrap_txt = re.sub(r"\[\s*\d+\s*-\s*1\s*:\s*0\s*\]\s*word_addr",
 open(os.path.join(good, "wrap.sv"), "w").write(wrap_txt)
 open(os.path.join(good, "rom.memlib"), "w").write(
     "MemoryTemplate (x) {\n\tNumberOfWords : %d;\n}\n" % n)
+# A flist that DOES compile the synthetic wrapper, so the "is this the file the
+# design builds?" assertion has a consistent set to pass. The case below points
+# ROM_WRAP_eth somewhere this flist does not name, and must fail.
+open(os.path.join(good, "rom.flist"), "w").write(
+    "// synthetic flist for the ROM gate selftest\n%s\n" % os.path.join(good, "wrap.sv"))
 
 # A ROM directory whose contents ARE this firmware, and one that is off by a
 # single bit in word 7 -- the smallest defect that still kills a die.
@@ -762,7 +838,8 @@ assert open(os.path.join(D, "rom_ok/content.bits")).read() != \
 S = dict(ROM_SPEC_eth=os.path.join(good, "rom.spec"),
          ROM_CODE_eth=os.path.join(good, "code.bintxt"),
          ROM_WRAP_eth=os.path.join(good, "wrap.sv"),
-         ROM_MEMLIB_eth=os.path.join(good, "rom.memlib"))
+         ROM_MEMLIB_eth=os.path.join(good, "rom.memlib"),
+         ROM_FLIST=os.path.join(good, "rom.flist"))
 
 # ---- checker doubles: harness controls, not tests of the real checker ------
 def double(name, body):
@@ -827,6 +904,22 @@ expect_pass("consistent spec/wrapper/macro/code", "rom-static-eth", **S)
 print("-- static gate: induced faults")
 expect_fail("code file path resolves to nothing", "no code file at", "rom-static-eth",
             **dict(S, ROM_CODE_eth=os.path.join(D, "nope/absent.bintxt")))
+# The 2026-08-14 defect, as a control, reproduced in its exact shape: a stale
+# DUPLICATE that shares the compiled file's name and sits in another directory.
+# It is real, self-consistent and parseable, and every other check passes on it,
+# so ONLY the flist assertion can tell it from the file the design builds.
+staled = os.path.join(D, "stale"); os.makedirs(staled, exist_ok=True)
+stale = os.path.join(staled, "wrap.sv")
+open(stale, "w").write(wrap_txt)
+expect_fail("stale duplicate of a compiled file", "DOES NOT BUILD", "rom-static-eth",
+            **dict(S, ROM_WRAP_eth=stale))
+# The other shape: a wrapper no flist mentions under any name.
+orphan = os.path.join(D, "orphan_wrap.sv")
+open(orphan, "w").write(wrap_txt)
+expect_fail("wrapper nothing compiles at all", "compiles NO file named", "rom-static-eth",
+            **dict(S, ROM_WRAP_eth=orphan))
+expect_fail("flist missing entirely", "no flist at", "rom-static-eth",
+            **dict(S, ROM_FLIST=os.path.join(D, "nope/absent.flist")))
 short = os.path.join(D, "short.bintxt")
 open(short, "w").write("\n".join(words[:100]) + "\n")
 expect_fail("code file truncated to 100 words", "the compiler fills the", "rom-static-eth",

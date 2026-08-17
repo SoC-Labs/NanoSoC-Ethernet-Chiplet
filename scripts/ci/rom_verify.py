@@ -35,10 +35,17 @@
 #     rom_verify.py --rom-dir ASIC/romlibs/eth_rom \
 #                   --code-file .../eth_ss_bootrom.bintxt \
 #                   --spec ASIC/tech_wrappers/tsmc65/eth_rom.spec \
-#                   [--wrapper ASIC/tech_wrappers/tsmc65/eth_ss_bootrom.sv] \
+#                   [--wrapper .../syn/asic/tech_wrappers/tsmc65/eth_ss_bootrom.sv] \
 #                   [--sim-rtl .../src/rtl/bootrom/eth_ss_bootrom.sv | --no-sim-check] \
 #                   [--region-rtl .../nanosoc_region_bootrom.v] \
 #                   [--json out.json]
+#
+#   --wrapper MUST name the wrapper the design's flist compiles -- for this
+#   chip that is nanosoc-multicore-system/syn/asic/tech_wrappers/tsmc65/, NOT
+#   the chiplet's own ASIC/tech_wrappers/tsmc65/.  Aiming it at an uncompiled
+#   copy was a real defect here (2026-08-14): it produced four geometry
+#   failures against RTL nothing builds, and would equally have hidden a real
+#   one.  ASIC/rom_gate.mk asserts this rather than trusting it.
 #
 #   Several ROMs in one invocation -- repeat the group.  Each --rom-dir opens
 #   a new group; the options after it belong to that group:
