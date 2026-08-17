@@ -141,6 +141,51 @@ timeout "$TMO" "$XRUN" -sv -hal -elaborate \
 rc=$?
 set -e
 
+# ---------------------------------------------------------------------------
+# FOUR GUARDS ON "DID THIS RUN FINISH?", BEFORE ANY VERDICT IS DRAWN FROM $LOG.
+#
+# This script had two of the four. It captured `timeout`'s exit status into $rc
+# and then only ECHOED it, which is how a killed run reported a clean design.
+# MEASURED 2026-08-17, against this flow's own captured output rather than a
+# hand-written log: the real 34 MB completed run truncated at 4,432,000 bytes —
+# i.e. exactly what SIGTERM at that instant leaves on disk — replayed with
+# rc=124 gave
+#
+#     xrun exit=124
+#     parsed          : 13577 finding(s), 3004 in authored RTL
+#     HAL LINT OK — no never-waive rule fires in authored RTL.
+#     rc=0
+#
+# That is the same defect verif/elab_strict/run.sh fixed for the elab-strict
+# gate and ci/signoff.yaml fixed for its post-condition, in the third place it
+# lives. All three now carry the same four guards, in the same order:
+#
+#   0  timeout rc 124/137     -> the wall clock KILLED it   (only $rc sees this)
+#   1  '*E,BLDSTP|Analysis failed' -> HAL ABORTED gracefully
+#   2  '^halstruct:' absent   -> the structural rules NEVER STARTED
+#   3  rule tally absent      -> the rules started and were CUT OFF
+#
+# NONE IS REDUNDANT, and the order matters. Guard 0 alone misses a kill that
+# `timeout` did not deliver (an OOM kill, a scheduler, a lost NFS mount); guard
+# 3 catches those from the artefact. Guard 3 alone misses a graceful abort,
+# because a REAL abort DOES emit the tally block — measured, 40 tally lines and
+# 0 halstruct lines on the aborted 26 MB run at verif/cdc/build/xrun_hal.log —
+# so guard 1 must be asked first. Guard 2 separates "never started" from "cut
+# off" so the message sends the reader to the right place.
+#
+# Reference numbers for this flow, from the completed run of 2026-08-17:
+# 34,347,490 bytes, 78,742 halstruct lines, 32 tally lines, 0 abort markers.
+# ---------------------------------------------------------------------------
+if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "FAIL: HAL was KILLED at ${TMO}s by the wall clock, not finished (rc=$rc)."
+    echo "      Every rule that had not run yet reports zero, and zero here means"
+    echo "      NOT MEASURED, not clean. Raise --timeout and re-run; do not read"
+    echo "      this log as a result."
+    echo "      log: $LOG ($(wc -c <"$LOG" 2>/dev/null || echo 0) bytes,"
+    echo "           $(grep -ac '^halstruct:' "$LOG" 2>/dev/null || echo 0) halstruct lines)"
+    exit 1
+fi
+
 # A grep over $LOG means something only if HAL actually finished. Assert that
 # before drawing any conclusion from it — see verif/elab_strict/run.sh for the
 # false-clean this guards against.
@@ -152,6 +197,20 @@ if grep -aqE '\*E,BLDSTP|Analysis failed' "$LOG" 2>/dev/null; then
 fi
 if ! grep -aq '^halstruct:' "$LOG" 2>/dev/null; then
     echo "FAIL: halstruct never ran — no structural rules were applied.  log: $LOG"
+    exit 1
+fi
+# GUARD 3 — started, then CUT OFF. A finished run closes with a rule-tally
+# summary block ("GLTASR (7)", "SIZMIS (10)", "ASNRST (1442)" ...): 32 such
+# lines on the completed run of 2026-08-17, and none at any earlier byte
+# offset of that same log. This is the only guard that catches a kill `timeout`
+# did not deliver — an OOM kill, a scheduler, a lost mount — because there is
+# then no exit status for guard 0 to read.
+if ! grep -aqE '^ *[A-Z]{5,6} \([0-9]+\)' "$LOG" 2>/dev/null; then
+    echo "FAIL: HAL started and was CUT OFF — no rule-tally summary in the log."
+    echo "      The rules that had not run report zero, and that zero is NOT"
+    echo "      MEASURED, not clean.  log: $LOG"
+    echo "      ($(wc -c <"$LOG" 2>/dev/null || echo 0) bytes, "\
+"$(grep -ac '^halstruct:' "$LOG" 2>/dev/null || echo 0) halstruct lines, xrun rc=$rc)"
     exit 1
 fi
 
