@@ -807,10 +807,37 @@ export CTS_DERATE ?= 1
 #                 budget that would otherwise report a genuine failure. Remove
 #                 this line when the constraints stop naming supply pins.
 #
-# The first two are neither a licence nor an environment artefact -- both are
-# properties of this design's collateral, and both would recur on every run
+#                 REMOVED 2026-08-17, on that condition being met. The upstream
+#                 fix landed in f8df605: the pad multicycle now names the five
+#                 signal pins explicitly -- {I C PAD OEN REN} -- instead of the
+#                 uPAD*/* wildcard that swept up supply pins. Measured from SDC
+#                 written by a restored session either side of the swap:
+#
+#                     expansion    548 -> 480 entries, PG entries 68 -> 0
+#                     TCLCMD-917   21 -> 0
+#                     setup/hold   UNCHANGED  (setup 0.008 = 0.008,
+#                                  hold -0.462 = -0.462, all seven path
+#                                  groups identical)
+#
+#                 The third line was the PRE-REGISTERED falsification condition:
+#                 a supply pin carries no timing arc, so if timing had moved at
+#                 all the premise was wrong and the fix came back out. It did not
+#                 move. The pin list is exhaustive rather than a guess -- all
+#                 nine instantiated pad masters were enumerated, the four signal
+#                 masters expose exactly {C,I,OEN,PAD,REN} and all five supply
+#                 masters exactly one PG pin. An attribute filter was ruled out
+#                 at the tool, not inferred: Genus answers `'is_power' is not a
+#                 recognized attribute for object 'pin' [TUI-183]`.
+#
+#                 DO NOT RE-ADD IT. The cause is gone, so a recurrence would be
+#                 TCLCMD-917 arriving from a DIFFERENT constraint, and that is a
+#                 finding rather than noise. Re-adding the ID would re-hide the
+#                 whole class to excuse a symptom nothing is producing.
+#
+# The two that remain are neither a licence nor an environment artefact -- both
+# are properties of this design's collateral, and both would recur on every run
 # forever. Anything NOT on this list still fails the stage, which is the point.
-export PLACE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501 TCLCMD-917
+export PLACE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
 # CTS adds six more, and every one is a state this design chose:
 #   CHKCTS-18/19/20  buffer / inverter / clock-gating cells "not specified".
 #                    PERMANENT and INTENDED: config/design_config.tcl withdraws
