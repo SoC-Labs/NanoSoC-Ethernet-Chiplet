@@ -110,7 +110,19 @@ def sh(cmd, log_path, env=None, timeout=None, cwd=None):
         log.flush()
         try:
             p = subprocess.Popen(
-                cmd, shell=True, cwd=str(cwd or ROOT), stdout=subprocess.PIPE,
+                # executable="/bin/bash" is NOT cosmetic. Python's shell=True
+                # runs /bin/sh, and stage commands in the manifest use bashisms
+                # - the `lint` stage ends `exit ${PIPESTATUS[0]}` to recover the
+                # status of a command piped into tee. Under a /bin/sh that is
+                # dash or ksh, PIPESTATUS is unset, so that expands to a bare
+                # `exit` and the stage returns rc=0: a lint FAILURE reported as
+                # a silent PASS. Measured rc=0 under ksh. Not live while
+                # /bin/sh is bash on this host, but it is one runner image away
+                # and it fails GREEN, which is the direction that ships.
+                # Pinning bash here fixes every stage at once rather than
+                # auditing each `run:` line for portability.
+                cmd, shell=True, executable="/bin/bash",
+                cwd=str(cwd or ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, errors="replace",
                 env={**os.environ, **(env or {})},
             )
