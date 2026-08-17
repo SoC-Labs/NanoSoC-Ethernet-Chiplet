@@ -66,14 +66,69 @@ OUT="$(cd "$OUT" && pwd)"
 worst() { [ "$2" -gt "$1" ] && printf '%s' "$2" || printf '%s' "$1"; }
 
 # The ASIC flist is the SHIP configuration (TideLink V2 PHY, tech memories).
-# Its two generated sub-flists are rendered by `make asic-flist`; regenerate
-# them here so a stale render cannot silently change what gets linted.
+# Its two generated sub-flists are rendered by `make asic-flist`.
+#
+# ALWAYS RE-RENDER. DO NOT TEST FOR EXISTENCE.
+#   This block's comment has always claimed it regenerates them "so a stale
+#   render cannot silently change what gets linted". The code tested `[ ! -f ]`
+#   — file EXISTS, not file CURRENT — and so did the exact opposite: once a
+#   sub-flist had been rendered, it was reused forever, and the older it got the
+#   more confidently it was reused.
+#
+#   MEASURED 2026-08-18. build/chip/flist/tidelink_asic.flist was rendered
+#   2026-08-14 12:29; tidelink/flists changed 2026-08-17 21:05. A fresh render
+#   differed by exactly one line — tidelink_link_clk_div.sv, the link-clock
+#   divider — ABSENT from the netlist both tools had been linting for four days.
+#   Its absence is what produced HAL's E,UNCONI on user_hsclk and its UASWIR on
+#   link_hsclk_w. Those are phantoms of the stale flist, not an undriven PHY
+#   clock, and they are the shape of finding that costs a day to chase.
+#
+#   Synthesis was never exposed to it: ASIC/eth-chiplet/design.mk makes
+#   asic-flist a real prerequisite of syn, so Genus re-renders on every run. The
+#   defect is lint-only — which is exactly why nothing else caught it, and why
+#   the lint and the netlist could drift apart unnoticed.
+#
+#   The re-render costs 0.592s measured. There was never a cost argument for the
+#   `[ ! -f ]`, only an assumption.
+#
+#   AND IT IS REPORTED WHEN IT CHANGES ANYTHING. A lint that quietly repairs its
+#   own inputs cannot tell you that the previous verdict was drawn from a
+#   different design; the whole point of noticing is to distrust the last one.
 source "$CHIPLET_HOME/set_env.sh" >/dev/null
-if [ ! -f "$CHIPLET_HOME/build/chip/flist/soc.flist" ] || \
-   [ ! -f "$CHIPLET_HOME/build/chip/flist/tidelink_asic.flist" ]; then
-    echo "== rendering the generated ASIC sub-flists (make asic-flist) =="
-    make -C "$CHIPLET_HOME" asic-flist
+FL_SOC="$CHIPLET_HOME/build/chip/flist/soc.flist"
+FL_TL="$CHIPLET_HOME/build/chip/flist/tidelink_asic.flist"
+for f in "$FL_SOC" "$FL_TL"; do
+    rm -f "$f.prelint"
+    [ -f "$f" ] && cp "$f" "$f.prelint"
+done
+echo "== re-rendering the generated ASIC sub-flists (make asic-flist) =="
+set +e
+make -C "$CHIPLET_HOME" asic-flist
+flist_rc=$?
+set -e
+if [ "$flist_rc" != 0 ]; then
+    echo "FLOW ERROR -- \`make asic-flist\` failed (rc=$flist_rc). Without a current"
+    echo "render there is no way to know WHICH netlist this lint would measure, so"
+    echo "no verdict is drawn. This is NOT a pass."
+    exit 2
 fi
+for f in "$FL_SOC" "$FL_TL"; do
+    if [ -f "$f.prelint" ] && ! cmp -s "$f.prelint" "$f"; then
+        echo
+        echo "!! STALE FLIST REPAIRED: $(basename "$f") CHANGED on re-render."
+        echo "   Every earlier verdict from this flow was drawn from a different"
+        echo "   netlist than the one about to be linted. Re-read any finding that"
+        echo "   touches the modules below before acting on it:"
+        # `|| true` is load-bearing: diff exits 1 BECAUSE the files differ,
+        # which is the case we are in, and `set -eo pipefail` turns that into an
+        # abort — killing the run at the banner, before the lint it was warning
+        # about. Caught by the positive control rather than by reading: the
+        # first version of this guard printed the banner and exited 1.
+        diff "$f.prelint" "$f" | head -20 | sed 's/^/   /' || true
+        echo
+    fi
+    rm -f "$f.prelint"
+done
 
 rc=0
 V_RC=skipped
