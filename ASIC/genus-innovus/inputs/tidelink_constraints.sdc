@@ -40,6 +40,59 @@ create_clock -name "D2D_RX_CLK_0" -period "$D2D_LINK_PERIOD"  -waveform "0 [expr
 
 set_input_delay 1 -clock [get_clocks "D2D_RX_CLK_0"] [get_ports {TL_RX[*]}]
 
+#-----------------------------------------------------------------------------
+# THE LINK-CLOCK DIVIDER, AND WHY THE TX CONSTRAINTS STILL HOLD
+#
+# Added 2026-08-17, when tidelink_link_clk_div landed between the user_ref_clk
+# port and the controller's user_hsclk input. tidelink_link_clk_div.sv's own
+# PHYSICAL NOTE points here; this is the note it points at.
+#
+# WHAT CHANGED: the D2D bit-rate clock now reaches user_hsclk through a
+# programmable power-of-two divider (0=/1 1=/2 2=/4 3=/8 4=/16) instead of
+# straight from user_ref_clk. A bring-up knob to lower the link rate and open a
+# marginal receive eye without a board change.
+#
+# WHY THE TX CONSTRAINTS SURVIVE, AT THE DEFAULT CONFIGURATION ONLY:
+#
+#   assign clk_out = (clk_in & byp_en_r) | (clkdiv_r & div_en_r);   (:190)
+#
+# At reset byp_en_r = 1'b1 and div_en_r = 1'b0 (:166, :177), so clk_out is
+# clk_in through an AND-OR with NO SEQUENTIAL ELEMENT IN THE CLOCK PATH. It is
+# a glitchless combinational mux, not a registered divide-by-1. So in the
+# default-configuration netlist the effective topology is unchanged: the master
+# of D2D_TX_CLK_0 and the eight D2D_TX_WORD_CLK_n still resolves back through
+# the mux to $EXTCLK, which is what the merged clock group in constraints.sdc
+# asserts. scan_mode also forces the /1 bypass leg (:159), so the scan-mode
+# topology matches the functional default.
+#
+# The -source anchor is unaffected. $WL/user_hsclk is the Wlink port, now fed by
+# link_hsclk_w, i.e. the mux OUTPUT - downstream of the divider. The /16 word
+# clock relationship is therefore expressed against the post-divider clock and
+# holds at EVERY ratio. Anchoring at [get_ports CLK] would NOT have survived
+# this; that option was rejected for a different reason and happens to be why
+# the re-anchor still stands.
+#
+# [OWNER] WHAT IS NOT CONSTRAINED, AND MUST BE BEFORE ANY NON-ZERO RATIO SHIPS:
+#
+#   1. At ratio_i != 0 clk_out is clkdiv_r - a REGISTERED divided clock, and a
+#      genuinely different clock structure. Every -divide_by here, and both D2D
+#      delay budgets, describe the /1 case only. This is the same defect class
+#      as C3 (QSPI: the constrained ratio is reg13's RESET VALUE, not the
+#      silicon) and as the SGDC's period set. Three instances now; they want one
+#      decision, not three. Constrain the ratio STA signs off, or declare a
+#      generated clock per leg and select by MMMC mode.
+#
+#   2. The AND-OR is on the clock path and the module requires set_dont_touch /
+#      size_only on the instance, mapped to clock-net cells, a CTS source leaf
+#      rather than something CCOpt reshapes. NO SUCH CONSTRAINT EXISTS IN THIS
+#      FLOW TODAY - grep dont_touch/size_only across the synthesis config finds
+#      only the unrelated uPAD* rule. If synthesis restructures this mux the
+#      glitchless-handover property it was designed around is gone, and a
+#      combinational clock structure whose select comes from a register is
+#      exactly the shape of the confirmed ICG hazard in docs/tapeout/24.
+#      That belongs in the synthesis flow, not in this SDC.
+#-----------------------------------------------------------------------------
+
 create_generated_clock -name "D2D_TX_CLK_0" -source [get_pins u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_chiplet_controller/u_wlink/pad_clk_tx] -divide_by 1 [get_ports TL_CLK_TX]
 
 set_output_delay 0.8 -clock [get_clocks "D2D_TX_CLK_0"] [get_ports {TL_TX[*]}]
