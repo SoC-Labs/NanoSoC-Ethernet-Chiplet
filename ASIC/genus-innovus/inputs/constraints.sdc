@@ -220,13 +220,22 @@ set_clock_uncertainty -setup $INTER_CLOCK_UNCERTAINTY -rise_from [get_clocks $EX
 ##     -from [get_pins {uPAD*/I uPAD*/C uPAD*/PAD uPAD*/OEN uPAD*/REN}] \
 ##     -to   [get_pins {uPAD*/I uPAD*/C uPAD*/PAD uPAD*/OEN uPAD*/REN}]
 ##
-## NOT APPLIED YET. Acceptance, all three: the expansion in
-## outputs/${block}_syn.sdc drops 548 -> 480 entries (34 distinct PG objects, each
-## appearing twice because one wildcard feeds both -from and -to); TCLCMD-917 goes
-## to zero in the Innovus log; and setup/hold are UNCHANGED. The third is the one
-## that matters -- PG pins carry no timing arcs, so if timing moves at all, the
-## premise that this exception was inert on them was wrong.
-set_multicycle_path 2 -from uPAD*/* -to uPAD*/*
+## APPLIED 2026-08-17. Acceptance, all three, and the third is the one that
+## matters: the expansion in outputs/${block}_syn.sdc drops 548 -> 480 entries (34
+## distinct PG objects, each appearing twice because one wildcard feeds both -from
+## and -to); TCLCMD-917 goes to zero in the Innovus log; and setup/hold are
+## UNCHANGED. PG pins carry no timing arcs, so if timing moves at all, the premise
+## that this exception was inert on them was wrong and this change must come back
+## out rather than be argued with.
+##
+## THE DEFECT WAS LIVE, NOT LATENT, and an earlier note here said otherwise.
+## Measured per stage in a routed build's own logs: 68-70 occurrences in each
+## PLACE log, 0 at CTS, 0 at route. The "masked by pad deletion" framing described
+## how it was HIDDEN historically, and was wrong about the present -- with the pad
+## ring restored it fires on every placement.
+set_multicycle_path 2 \
+  -from [get_pins {uPAD*/I uPAD*/C uPAD*/PAD uPAD*/OEN uPAD*/REN}] \
+  -to   [get_pins {uPAD*/I uPAD*/C uPAD*/PAD uPAD*/OEN uPAD*/REN}]
 
 ### IP Constraints
 source ../inputs/qspi_constraints.sdc
