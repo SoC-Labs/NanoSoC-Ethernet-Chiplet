@@ -13,6 +13,13 @@ ASIC/*/logs
 ASIC/*/outputs
 ASIC/*/reports
 ASIC/*/work
+# One level deeper than ASIC/*/work, so the rule above does NOT cover it. The
+# rail-analysis working tree holds Voltus state, power-grid libraries and the
+# pg_capacity report, and the last of those prints DCCURRENTDENSITY limits read
+# straight out of the vendor tech LEF. Those are foundry rule values and must
+# not reach a public repository. The scripts and the frozen inputs beside it
+# are ours and stay tracked.
+ASIC/genus-innovus/rail/work/
 ASIC/*/calibre_runs
 ASIC/romlibs
 build/
@@ -182,3 +189,32 @@ ASIC/tech_wrappers/tsmc65/local_overrides/*.map
 # name (`git ls-files | grep vcst` is empty), so nothing is being hidden.
 .vcstPref
 vcst_session.log
+
+# Voltus droppings. Third member of the same family as the genus.log*/innovus.log*
+# rules above, and unanchored for the identical reason. `voltus -h` -- a one-off
+# probe to read the version banner -- wrote voltus.logv into the directory it was
+# launched from, which on 2026-08-17 was the repository ROOT, and a real invocation
+# writes voltus.log/.cmd/.logv wherever it starts too. `/*.log` above is anchored
+# and would not have caught it, and `.logv` is a DISTINCT verbose log rather than a
+# typo, so both suffixes have to be covered. The rail analysis that uses Voltus for
+# real logs into ASIC/genus-innovus/rail/work/, already ignored.
+voltus.log*
+voltus.cmd*
+
+# ── ci/fixtures: hand-written evidence sitting at generated-looking paths ────
+# `scripts/ci/signoff.py prove` overlays these partial repo trees onto a sandbox
+# to show each ci/signoff.yaml `check:` can both accept and reject evidence. A
+# fixture must sit at the path its check actually reads, and three checks read
+# into a directory called `build/` -- rom-content and rom-gds under build/
+# rom_verify/, elab-strict under verif/elab_strict/build/ -- so the unanchored
+# `build/` rule near the top of this file swallowed 11 of them. Their absence
+# from a clone does not fail loudly; `prove` just runs fewer cases.
+#
+# These are source: hand-written excerpts of a few hundred bytes, no tool wrote
+# any of them, and `prove` builds its sandbox elsewhere and never writes back
+# into the repository.
+#
+# The negation names the DIRECTORY, not the files in it. Git does not descend
+# into an excluded directory, so `!.../build/rom_verify/eth.json` would not have
+# re-included anything -- the same trap the /fpga/haps-sx/ comment above records.
+!/ci/fixtures/**/build/
