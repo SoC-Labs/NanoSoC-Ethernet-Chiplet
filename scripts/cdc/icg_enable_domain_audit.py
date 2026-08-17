@@ -259,10 +259,20 @@ def main(argv=None):
         drv = build_driver_map(instances)
         for cell, inst, conns in icgs:
             walked += 1
-            if name_filter and not name_filter.search(inst):
-                continue
             ck_root = clock_root(conns.get("ck_in"), drv, icg_re)
             enable = (conns.get("enable") or "").strip()
+            # Match the filter against the instance name OR the enable net.
+            # Genus does not always carry the hierarchical prefix onto the ICG
+            # INSTANCE name: on the 20260814 netlist, two of the mailbox gates are
+            # bare `cg_RC_CG_HIER_INST499/500` (inside WlinkGenericFCReplayV2_4)
+            # and others lost it when Wlink was ungrouped. Filtering on instance
+            # name alone returned 16 of the 36 real hits — a 56% under-count that
+            # looks like a clean subset. The ENABLE NET always still names the
+            # mailbox, so matching either is what makes --gate trustworthy.
+            if name_filter and not (
+                name_filter.search(inst) or name_filter.search(enable)
+            ):
+                continue
             srcs = enable_source_flops(enable, drv, icg_re)
             foreign = sorted({(fi, fc) for fi, fc in srcs if fc and fc != ck_root})
             if not foreign:
