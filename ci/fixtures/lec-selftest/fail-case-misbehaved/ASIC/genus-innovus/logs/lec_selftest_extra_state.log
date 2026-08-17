@@ -1,0 +1,546 @@
+// LEC version 22.10-s200 (16-Jun-2022)
+// Check out Conformal_Ultra 22.1 license
+// Check out Conformal_Asic 22.1 license
+// Command: tclmode
+CPU time     : 0.16    seconds
+Elapse time  : 1       seconds
+Memory usage : 67.46   M bytes
+// Command: set_dofile_abort exit
+0
+// Command: set_screen_display -noprogress
+0
+// Command: usage -auto -elapse
+CPU time     : 0.16    seconds
+Elapse time  : 1       seconds
+Memory usage : 67.46   M bytes
+0
+// Command: proc lec_env {name {default ""}} {
+//              global env
+//              if {[info exists env($name)] && [string trim $env($name)] ne ""} {
+//                  return [string trim $env($name)]
+//              }
+//              return $default
+//          }
+// Command: proc lec_v {line} { puts "LEC-VERDICT: $line" }
+// Command: proc lec_preflight_fail {reason} {
+//              lec_v "reason=$reason"
+//              lec_v "RESULT=FAIL"
+//              puts "LEC-PREFLIGHT-FAIL: $reason"
+//              exit 3
+//          }
+// Command: set TOP     [lec_env LEC_TOP]
+lecmini
+// Command: set GOLDEN  [lec_env LEC_GOLDEN]
+/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/golden.v
+// Command: set REVISED [lec_env LEC_REVISED]
+/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/revised_extra.v
+// Command: set LIBS    [lec_env LEC_LIBS]
+/tsmc65pdk/65/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tcbn65lp_220a/tcbn65lpwc.lib /tsmc65pdk/65/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/tphn65lpgv2od3_slwc.lib /research/precompiled_mems/TSMC65/rf_32k/rf_32k_ss_1p08v_1p08v_125c.lib /research/precompiled_mems/TSMC65/rf_16k/rf_16k_ss_1p08v_1p08v_125c.lib /research/precompiled_mems/TSMC65/rf_08k/rf_08k_ss_1p08v_1p08v_125c.lib /research/precompiled_mems/TSMC65/rf_01k/rf_01k_ss_1p08v_1p08v_125c.lib /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/romlibs/cc_rom/rom_via_ss_1p08v_1p08v_125c.lib /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/romlibs/eth_rom/eth_rom_via_ss_1p08v_1p08v_125c.lib /research/precompiled_mems/TSMC65/flash_cache_data/flash_cache_data_ss_1p08v_1p08v_125c.lib /research/precompiled_mems/TSMC65/flash_cache_tag/flash_cache_tag_ss_1p08v_1p08v_125c.lib
+// Command: set NOTRANS [lec_env LEC_NOTRANS]
+rf_01k rf_08k rf_16k rf_32k rom_via eth_rom_via flash_cache_data flash_cache_tag
+// Command: set STUBS   [lec_env LEC_STUBS]
+/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/bondpad_stubs.v
+// Command: set DIALECT [lec_env LEC_DIALECT -VERILOG2K]
+-VERILOG2K
+// Command: set THREADS [lec_env LEC_THREADS 1,4]
+1,4
+// Command: set RPTDIR  [lec_env LEC_REPORT_DIR .]
+/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/reports/lec/selftest_extra_state
+// Command: set TAG     [lec_env LEC_TAG lec]
+selftest_extra_state
+// Command: set DIAG    [lec_env LEC_DIAG 1]
+1
+// Command: set RTLOPTS [lec_env LEC_RTLOPTS ""]
+// Command: set INCDIRS [lec_env LEC_INCDIRS ""]
+// Command: if {$TOP     eq ""} { lec_preflight_fail "LEC_TOP is not set" }
+// Command: if {$GOLDEN  eq ""} { lec_preflight_fail "LEC_GOLDEN is not set" }
+// Command: if {$REVISED eq ""} { lec_preflight_fail "LEC_REVISED is not set" }
+// Command: if {$LIBS    eq ""} { lec_preflight_fail "LEC_LIBS is empty, no cell library would be read" }
+// Command: foreach f [concat [list $GOLDEN $REVISED] $LIBS $STUBS] {
+//              if {![file exists $f]}   { lec_preflight_fail "input does not exist: $f" }
+//              if {[file size $f] == 0} { lec_preflight_fail "input is zero length: $f" }
+//              if {![file readable $f]} { lec_preflight_fail "input is not readable: $f" }
+//          }
+// Command: foreach d $INCDIRS {
+//              if {![file isdirectory $d]} { lec_preflight_fail "include directory does not exist: $d" }
+//          }
+// Command: lec_v "tag=$TAG"
+LEC-VERDICT: tag=selftest_extra_state
+// Command: lec_v "design=$TOP"
+LEC-VERDICT: design=lecmini
+// Command: lec_v "golden=$GOLDEN"
+LEC-VERDICT: golden=/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/golden.v
+// Command: lec_v "revised=$REVISED"
+LEC-VERDICT: revised=/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/revised_extra.v
+// Command: set_mapping_method -sensitive
+0
+// Command: set_parallel_option -threads $THREADS -norelease_license
+// Number of threads is set to 1,4.
+0
+// Command: set_compare_options -threads $THREADS
+Set computing threads of compare to 1,4.
+0
+// Command: set_undefined_cell black_box -noascend -both
+0
+// Command: if {$NOTRANS ne ""} {
+//              eval add_notranslate_modules -library -both $NOTRANS
+//          }
+0
+// Command: set PGPIN [lec_env LEC_PG_PIN both]
+both
+// Command: switch -exact -- $PGPIN {
+//              both {
+//                  eval read_library -liberty -PG_PIN -both $LIBS
+//              }
+//              golden {
+//                  eval read_library -liberty -PG_PIN -golden $LIBS
+//                  eval read_library -liberty          -revised $LIBS
+//              }
+//              revised {
+//                  eval read_library -liberty          -golden $LIBS
+//                  eval read_library -liberty -PG_PIN -revised $LIBS
+//              }
+//              none {
+//                  eval read_library -liberty -both $LIBS
+//              }
+//              default {
+//                  lec_preflight_fail "LEC_PG_PIN must be both|golden|revised|none, got '$PGPIN'"
+//              }
+//          }
+// Parsing file /tsmc65pdk/65/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tcbn65lp_220a/tcbn65lpwc.lib ...
+// Parsing file /tsmc65pdk/65/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/tphn65lpgv2od3_slwc.lib ...
+// Parsing file /research/precompiled_mems/TSMC65/rf_32k/rf_32k_ss_1p08v_1p08v_125c.lib ...
+// Parsing file /research/precompiled_mems/TSMC65/rf_16k/rf_16k_ss_1p08v_1p08v_125c.lib ...
+// Parsing file /research/precompiled_mems/TSMC65/rf_08k/rf_08k_ss_1p08v_1p08v_125c.lib ...
+// Parsing file /research/precompiled_mems/TSMC65/rf_01k/rf_01k_ss_1p08v_1p08v_125c.lib ...
+// Parsing file /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/romlibs/cc_rom/rom_via_ss_1p08v_1p08v_125c.lib ...
+// Parsing file /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/romlibs/eth_rom/eth_rom_via_ss_1p08v_1p08v_125c.lib ...
+// Parsing file /research/precompiled_mems/TSMC65/flash_cache_data/flash_cache_data_ss_1p08v_1p08v_125c.lib ...
+// Parsing file /research/precompiled_mems/TSMC65/flash_cache_tag/flash_cache_tag_ss_1p08v_1p08v_125c.lib ...
+// Warning: (RTL9.16) Duplicated operating_condition, the second one is ignored (occurrence:1)
+// Warning: (RTL9.17) Cell doesn't have any output pins or all output pins are undriven (blackboxed) (occurrence:47)
+// Warning: (RTL9.21) Liberty cell with interface_timing attribute set to true was not an empty cell (occurrence:8)
+// Note: (RTL9.26) Liberty pin with internal_node use default input_map (occurrence:20)
+// Note: (HRC1.2) Module/entity is not translated (blackboxed) (occurrence:8)
+// Note: Read Liberty library successfully
+0
+CPU time     : 1.83    seconds
+Elapse time  : 5       seconds
+Memory usage : 107.51  M bytes
+// Command: lec_v "pg_pin_mode=$PGPIN"
+LEC-VERDICT: pg_pin_mode=both
+// Command: set golden_files {}
+// Command: set revised_files {}
+// Command: foreach f $STUBS { lappend golden_files $f ; lappend revised_files $f }
+// Command: lappend golden_files  $GOLDEN
+/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/bondpad_stubs.v /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/golden.v
+// Command: lappend revised_files $REVISED
+/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/bondpad_stubs.v /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/revised_extra.v
+// Command: proc lec_cmdfile {path incdirs files} {
+//              set fh [open $path w]
+//              foreach d $incdirs { puts $fh "+incdir+$d" }
+//              foreach f $files   { puts $fh $f }
+//              close $fh
+//              return $path
+//          }
+// Command: if {$INCDIRS eq ""} {
+//              eval read_design $DIALECT $RTLOPTS -golden -lastmod -noelab $golden_files
+//          } else {
+//              lec_v "incdirs=[llength $INCDIRS]"
+//              eval read_design $DIALECT $RTLOPTS \
+//                  -file [lec_cmdfile ${RPTDIR}/lec_${TAG}_golden.f $INCDIRS $golden_files] \
+//                  -golden -lastmod -noelab
+//          }
+// Parsing file /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/bondpad_stubs.v ...
+// Parsing file /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/golden.v ...
+0
+// Command: elaborate_design -golden -root $TOP
+// Golden root module is set to 'lecmini'
+// Warning: (HRC3.2a) Module/entity has no I/O ports (occurrence:2)
+// Warning: Total black box modules referenced in Golden = 1
+0
+// Command: if {$INCDIRS eq ""} {
+//              eval read_design $DIALECT $RTLOPTS -revised -lastmod -noelab $revised_files
+//          } else {
+//              eval read_design $DIALECT $RTLOPTS \
+//                  -file [lec_cmdfile ${RPTDIR}/lec_${TAG}_revised.f $INCDIRS $revised_files] \
+//                  -revised -lastmod -noelab
+//          }
+// Parsing file /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/bondpad_stubs.v ...
+// Parsing file /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/selftest/revised_extra.v ...
+0
+// Command: elaborate_design -revised -root $TOP
+// Revised root module is set to 'lecmini'
+// Warning: (HRC3.2a) Module/entity has no I/O ports (occurrence:2)
+// Warning: Total black box modules referenced in Revised = 1
+0
+// Command: report_design_data
+============================================
+Summary           Golden         Revised
+============================================
+Design-modules         1               3
+Library-cells          4               9
+============================================
+Primitives      Golden              Revised
+============================================
+INPUT               44                   44
+OUTPUT     *        33                   34
+INOUT                2                    2
+--------------------------------------------
+BUF        *         0                    3
+DFF        *         1                    2
+INV        *         2                    4
+NAND                 1                    1
+------ word-level --------------------------
+BBOX                 1                    1
+--------------------------------------------
+Total                5                   11
+
+0
+// Command: report_black_box
+SYSTEM: (G R) rf_01k
+0
+// Command: set_flatten_model -seq_constant
+0
+// Command: set_flatten_model -seq_constant_x_to 0
+0
+// Command: set_flatten_model -nodff_to_dlat_zero
+0
+// Command: set_flatten_model -nodff_to_dlat_feedback
+0
+// Command: set_flatten_model -hier_seq_merge
+0
+// Command: set_analyze_option -auto -report_map
+0
+// Command: set_system_mode lec
+// (F56) Ignored 2 power and ground pins in library module rf_01k
+// (F56) Ignored 2 power and ground pins in library module rf_01k
+// Processing Golden ...
+// Modeling Golden ...
+// Processing Revised ...
+// Modeling Revised ...
+// Balanced modeling (auto) mapped 2 out of 3 DFF/DLATs
+// (F39) Added 4 output Z gates
+// (F39) Added 4 output Z gates
+// Warning: Golden and Revised have different numbers of key points:
+// Golden  key points = 91
+// Revised key points = 93
+// Mapping key points ...
+// Warning: Primary output 'y2' in Revised has no correspondence in Golden
+// Warning: Revised has 1 unmapped key points
+================================================================================
+Mapped points: SYSTEM class
+--------------------------------------------------------------------------------
+Mapped points     PI     PO     DFF    Z      BBOX      Total   
+--------------------------------------------------------------------------------
+Golden            48     35     1      4      1         89      
+--------------------------------------------------------------------------------
+Revised           48     35     1      4      1         89      
+================================================================================
+Unmapped points:
+================================================================================
+Golden:
+--------------------------------------------------------------------------------
+Unmapped points   Z         Total   
+--------------------------------------------------------------------------------
+Unreachable       2         2       
+================================================================================
+Revised:
+--------------------------------------------------------------------------------
+Unmapped points   PO     DFF    Z         Total   
+--------------------------------------------------------------------------------
+Extra             1      0      0         1       
+Unreachable       0      0      2         2       
+Not-mapped        0      1      0         1       
+================================================================================
+// Warning: Key point mapping is incomplete
+// Running automatic setup...
+================================================================================
+Mapped points: SYSTEM class
+--------------------------------------------------------------------------------
+Mapped points     PI     PO     DFF    Z      BBOX      Total   
+--------------------------------------------------------------------------------
+Golden            48     35     1      4      1         89      
+--------------------------------------------------------------------------------
+Revised           48     35     1      4      1         89      
+================================================================================
+Unmapped points:
+================================================================================
+Golden:
+--------------------------------------------------------------------------------
+Unmapped points   Z         Total   
+--------------------------------------------------------------------------------
+Unreachable       2         2       
+================================================================================
+Revised:
+--------------------------------------------------------------------------------
+Unmapped points   PO     DFF    Z         Total   
+--------------------------------------------------------------------------------
+Extra             1      0      0         1       
+Unreachable       0      0      2         2       
+Not-mapped        0      1      0         1       
+================================================================================
+// Automatic setup finished.
+0
+// Command: report_unmapped_points -summary
+================================================================================
+Golden:
+--------------------------------------------------------------------------------
+Unmapped points   Z         Total   
+--------------------------------------------------------------------------------
+Unreachable       2         2       
+================================================================================
+Revised:
+--------------------------------------------------------------------------------
+Unmapped points   PO     DFF    Z         Total   
+--------------------------------------------------------------------------------
+Extra             1      0      0         1       
+Unreachable       0      0      2         2       
+Not-mapped        0      1      0         1       
+================================================================================
+0
+// Command: report_unmapped_points -notmapped
+Unmapped point (not-mapped):
+  (R)   86  DFF  /u_ff_extra/U$1
+
+1 unmapped points reported
+================================================================================
+Revised:
+--------------------------------------------------------------------------------
+Unmapped points   DFF       Total   
+--------------------------------------------------------------------------------
+Not-mapped        1         1       
+================================================================================
+0
+// Command: add_compared_points -all
+// Warning: Revised has 1 unmapped key points which will not be compared
+// 37 compared points added to compare list
+0
+// Command: compare
+================================================================================
+Compared points      PO     DFF    BBOX      Total   
+--------------------------------------------------------------------------------
+Equivalent           35     1      1         37      
+================================================================================
+// Warning: (COMP3) There are extra POs in Revised
+0
+// Command: report_compare_data -class nonequivalent -class abort -class notcompared
+0 Non-equivalent point(s) reported
+0 Abort point(s) reported
+0 Not-compared point(s) reported
+0 compared point(s) reported
+================================================================================
+Compared points      PO     DFF    BBOX      Total   
+--------------------------------------------------------------------------------
+Equivalent           35     1      1         37      
+================================================================================
+0
+// Command: report_verification -verbose
+================================================================================
+                            Verification Report
+--------------------------------------------------------------------------------
+Category                                                                  Count
+--------------------------------------------------------------------------------
+1. Non-standard modeling options used:                                      0
+     Tri-stated output:                                        checked
+     Revised X signals set to E:                               yes
+     Floating signals tied to Z:                               yes
+     Command "add clock" for clock-gating:                     not used
+--------------------------------------------------------------------------------
+2. Incomplete verification:                                                 1
+     All primary outputs are mapped:                           no *
+     Not-mapped DFF/DLAT is detected:                          no
+     All mapped points are added as compare points:            yes
+     All compared points are compared:                         yes
+     User added black box:                                     no
+     Black box mapped with different module name:              no
+     Empty module is not black boxed:                          no
+     Command "add ignore outputs" used:                        no
+     Always false constraints detected:                        no
+--------------------------------------------------------------------------------
+3. User modification to design:                                             0
+     Change gate type:                                         no
+     Change wire:                                              no
+     Primary input added by user:                              no
+--------------------------------------------------------------------------------
+4. Conformal Constraint Designer clock domain crossing checks recommended:  0
+     Multiple clocks in the design:                            no
+--------------------------------------------------------------------------------
+5. Design ambiguity:                                                        0
+     Duplicate module definition:                              no
+     Black box due to undefined cells:                         no
+     Golden design has abnormal ratio of unreachable gates:    no
+     Ratio of golden unreachable gates:                        2%
+     Revised design has abnormal ratio of unreachable gates:   no
+     Ratio of revised unreachable gates:                       2%
+     All primary input bus ordering is consistent:             yes
+     All primary output bus ordering is consistent:            yes
+     DFF/DLAT not compared due to disabled clock port(s):        0
+     Always X compared point is detected:                      not checked
+--------------------------------------------------------------------------------
+6. Compare Results:                                             FAIL:INCOMPLETE
+     Number of EQ compare points:                              37
+     Number of NON-EQ compare points:                          0
+     Number of Aborted compare points:                         0
+     Number of Uncompared compare points :                     0
+================================================================================
+incomplete
+// Command: report_statistics
+Mapping and compare statistics
+================================================================================
+                     Compare Result       Golden            Revised
+--------------------------------------------------------------------------------
+Root module name                          lecmini           lecmini           
+
+Primary inputs                                48                 48
+   Mapped                                     48                 48
+
+Tri-state (Z) key points                       6                  6
+   Mapped                                      4                  4
+   Unmapped                                    2                  2
+      Unreachable                              2                  2
+
+Primary outputs                               35                 36
+   Mapped                                     35                 35
+      Equivalent                 35
+   Unmapped                                    0                  1
+      Extra                                    0                  1
+
+Black-box key points                           1                  1
+   Mapped                                      1                  1
+      Equivalent                  1
+
+State key points                               1                  2
+   Mapped                                      1                  1
+      Equivalent                  1
+   Unmapped                                    0                  1
+      Extra                                    0                  1
+================================================================================
+0
+// Command: set n_cp  [get_compare_points -COunt]
+37
+// Command: set n_eq  [get_compare_points -EQuivalent -COunt]
+37
+// Command: set n_inv [get_compare_points -INvequivalent -COunt]
+0
+// Command: set n_neq [get_compare_points -NONequivalent -COunt]
+0
+// Command: set n_ab  [get_compare_points -ABort -COunt]
+0
+// Command: set n_nc  [get_compare_points -NOtcompared -COunt]
+0
+// Command: set n_xg [get_unmap_points -EXTRA       -GOLden  -COunt]
+0
+// Command: set n_xr [get_unmap_points -EXTRA       -REvised -COunt]
+2
+// Command: set n_ug [get_unmap_points -UNReachable -GOLden  -COunt]
+2
+// Command: set n_ur [get_unmap_points -UNReachable -REvised -COunt]
+2
+// Command: set n_ng [get_unmap_points -NOTmapped   -GOLden  -COunt]
+0
+// Command: set n_nr [get_unmap_points -NOTmapped   -REvised -COunt]
+0
+// Command: set n_ug_z [get_unmap_points -UNReachable -Z -GOLden  -COunt]
+2
+// Command: set n_ur_z [get_unmap_points -UNReachable -Z -REvised -COunt]
+2
+// Command: set n_ug_o [expr {$n_ug - $n_ug_z}]
+0
+// Command: set n_ur_o [expr {$n_ur - $n_ur_z}]
+0
+// Command: set n_xg_e [get_unmap_points -EXTRA -E -GOLden  -COunt]
+// Warning: Use '-extra' to report Extra unmapped points. Using '-e' will now report unmapped E gates
+0
+// Command: set n_xr_e [get_unmap_points -EXTRA -E -REvised -COunt]
+// Warning: Use '-extra' to report Extra unmapped points. Using '-e' will now report unmapped E gates
+0
+// Command: set code [get_exit_code]
+// Command: get_exit_code
+8
+// Command: set fails {}
+// Command: if {$n_cp == 0}  { lappend fails "no compare points, nothing was verified" }
+// Command: if {$n_neq > 0}  { lappend fails "$n_neq non-equivalent point(s)" }
+// Command: if {$n_ab  > 0}  { lappend fails "$n_ab abort point(s), proof did not converge" }
+// Command: if {$n_nc  > 0}  { lappend fails "$n_nc not-compared point(s)" }
+// Command: if {$n_cp > 0 && $n_eq == 0 && $n_inv == 0} {
+//              lappend fails "compare produced no equivalent points at all"
+//          }
+// Command: set n_xr_o [expr {$n_xr - $n_xr_e}]
+2
+// Command: set strict_e [lec_env LEC_STRICT_EXTRA_E 0]
+0
+// Command: if {$n_xg + $n_xr_o > 0} {
+//              lappend fails "[expr {$n_xg + $n_xr_o}] extra unmapped point(s) (golden $n_xg / revised $n_xr_o)"
+//          }
+{2 extra unmapped point(s) (golden 0 / revised 2)}
+// Command: if {$strict_e && $n_xr_e > 0} {
+//              lappend fails "LEC_STRICT_EXTRA_E=1 and $n_xr_e extra revised TIE-E point(s) exist"
+//          }
+// Command: if {$n_ng + $n_nr > 0} {
+//              lappend fails "[expr {$n_ng + $n_nr}] not-mapped point(s) (golden $n_ng / revised $n_nr)"
+//          }
+// Command: if {$n_ug_o + $n_ur_o > 0} {
+//              lappend fails "[expr {$n_ug_o + $n_ur_o}] non-tristate unreachable point(s) (golden $n_ug_o / revised $n_ur_o)"
+//          }
+// Command: if {$n_ug_z != $n_ur_z} {
+//              lappend fails "unreachable tristate points differ between sides (golden $n_ug_z / revised $n_ur_z)"
+//          }
+// Command: if {[lec_env LEC_STRICT_UNREACHABLE 0] && ($n_ug + $n_ur > 0)} {
+//              lappend fails "LEC_STRICT_UNREACHABLE=1 and [expr {$n_ug + $n_ur}] unreachable point(s) exist"
+//          }
+// Command: set bits {}
+// Command: if {($code & 0x01) != 0} { lappend bits "internal-error"       ; lappend fails "tool internal-error flag set (exit code $code)" }
+// Command: if {($code & 0x02) != 0} { lappend bits "pre-comparison" }
+// Command: if {($code & 0x04) != 0} { lappend bits "command-error"        ; lappend fails "tool command-error flag set (exit code $code)" }
+// Command: if {($code & 0x08) != 0} { lappend bits "unmapped-or-extra-PO" ; lappend fails "tool unmapped/extra-PO flag set (exit code $code)" }
+{2 extra unmapped point(s) (golden 0 / revised 2)} {tool unmapped/extra-PO flag set (exit code 8)}
+// Command: if {($code & 0x10) != 0} { lappend bits "non-equivalent"       ; lappend fails "tool non-equivalent flag set (exit code $code)" }
+// Command: if {($code & 0x20) != 0} { lappend bits "abort-any-compare"    ; lappend fails "tool abort/uncompared flag set (exit code $code)" }
+// Command: if {($code & 0x40) != 0} { lappend bits "abort-last-compare"   ; lappend fails "tool last-compare abort flag set (exit code $code)" }
+// Command: if {$n_neq > 0 || $n_ab > 0 || $n_nc > 0} {
+//              catch {write_compared_points ${RPTDIR}/lec_${TAG}_noneq_points.tcl \
+//                         -class noneq -class abort -class notcompared -tclmode -replace}
+//              catch {report_test_vector -noneq > ${RPTDIR}/lec_${TAG}_noneq_vectors.rpt}
+//              if {$DIAG} {
+//                  if {[catch {analyze_nonequivalent -source_diagnosis} err]} {
+//                      puts "LEC-NOTE: analyze_nonequivalent failed: $err"
+//                  } else {
+//                      catch {report_nonequivalent_analysis > ${RPTDIR}/lec_${TAG}_noneq_diag.rpt}
+//                  }
+//              }
+//          }
+// Command: if {$n_xg + $n_xr + $n_ug + $n_ur + $n_ng + $n_nr > 0} {
+//              catch {report_unmapped_points -notmapped   > ${RPTDIR}/lec_${TAG}_unmapped_notmapped.rpt}
+//              catch {report_unmapped_points -extra       > ${RPTDIR}/lec_${TAG}_unmapped_extra.rpt}
+//              catch {report_unmapped_points -unreachable > ${RPTDIR}/lec_${TAG}_unmapped_unreachable.rpt}
+//              catch {report_unmapped_points -unreachable -golden  > ${RPTDIR}/lec_${TAG}_unreachable_golden.rpt}
+//              catch {report_unmapped_points -unreachable -revised > ${RPTDIR}/lec_${TAG}_unreachable_revised.rpt}
+//          }
+0
+// Command: lec_v "compare_points=$n_cp equivalent=$n_eq inverted_equivalent=$n_inv nonequivalent=$n_neq abort=$n_ab notcompared=$n_nc"
+LEC-VERDICT: compare_points=37 equivalent=37 inverted_equivalent=0 nonequivalent=0 abort=0 notcompared=0
+// Command: lec_v "unmapped_extra_golden=$n_xg unmapped_extra_revised=$n_xr"
+LEC-VERDICT: unmapped_extra_golden=0 unmapped_extra_revised=2
+// Command: lec_v "unmapped_extra_tie_e_golden=$n_xg_e unmapped_extra_tie_e_revised=$n_xr_e"
+LEC-VERDICT: unmapped_extra_tie_e_golden=0 unmapped_extra_tie_e_revised=0
+// Command: lec_v "unreachable_golden=$n_ug unreachable_revised=$n_ur"
+LEC-VERDICT: unreachable_golden=2 unreachable_revised=2
+// Command: lec_v "unreachable_tristate_golden=$n_ug_z unreachable_tristate_revised=$n_ur_z"
+LEC-VERDICT: unreachable_tristate_golden=2 unreachable_tristate_revised=2
+// Command: lec_v "unreachable_other_golden=$n_ug_o unreachable_other_revised=$n_ur_o"
+LEC-VERDICT: unreachable_other_golden=0 unreachable_other_revised=0
+// Command: lec_v "notmapped_golden=$n_ng notmapped_revised=$n_nr"
+LEC-VERDICT: notmapped_golden=0 notmapped_revised=0
+// Command: lec_v "tool_exit_code=$code flags=[join $bits ,]"
+LEC-VERDICT: tool_exit_code=8 flags=unmapped-or-extra-PO
+// Command: if {[llength $fails] == 0} {
+//              lec_v "RESULT=PASS"
+//              exit 0
+//          }
+// Command: foreach f $fails { lec_v "reason=$f" }
+LEC-VERDICT: reason=2 extra unmapped point(s) (golden 0 / revised 2)
+LEC-VERDICT: reason=tool unmapped/extra-PO flag set (exit code 8)
+// Command: lec_v "RESULT=FAIL"
+LEC-VERDICT: RESULT=FAIL
+// Command: exit 1

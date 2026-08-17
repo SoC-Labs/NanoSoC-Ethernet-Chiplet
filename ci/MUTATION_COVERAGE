@@ -52,19 +52,26 @@
 
 
 # === BLOCKING STAGES WITH NO PROOF THEY CAN FAIL ===========================
-# These decide whether the chip is signed off, and their entire verdict is a
-# process exit status. Closing these is the highest-value work available.
+# NONE, as of 2026-08-18. Every `gate: block` stage now re-reads its evidence
+# and is pinned by at least one planted fault it must reject.
 #
-#   lec-selftest   ASIC/genus-innovus lec-selftest. Ironic: it is itself a
-#                  mutation harness for the LEC gate, and nothing checks that it
-#                  ran its case list. A selftest that silently executes ZERO
-#                  cases exits 0 — precisely the hole rom-selftest's `check:`
-#                  was added to close, still open here. It needs the same
-#                  treatment: assert the case count from the artefact.
-#   lec-pnr        holds a Conformal seat for up to six hours, and its log is
-#                  not re-read. A stale logs/lec_pnr.log from a previous run
-#                  satisfies nothing and is contradicted by nothing.
-blocking-unproven       2
+# The last two closed were lec-selftest and lec-pnr, and they are worth naming
+# because of what they were:
+#
+#   lec-selftest   itself a mutation harness for the LEC gate, and nothing
+#                  checked that it ran its case list. A selftest that executes
+#                  ZERO cases exits 0. Now asserts the exact count (4) AND
+#                  re-derives the discrimination from the per-case transcripts,
+#                  because a harness whose comparison has gone blind still
+#                  prints "all 4 cases behaved as declared" if its expectation
+#                  table drifted with it. That is fail-harness-blind.
+#   lec-pnr        held a Conformal seat for up to six hours and reported on an
+#                  exit status the Makefile recipe discards. A STALE
+#                  logs/lec_pnr.log from an earlier run satisfied it and was
+#                  contradicted by nothing — and this is the only comparison in
+#                  the pipeline that can see what place/CTS/route did to the
+#                  logic.
+blocking-unproven       0
 
 # === REPORT-ONLY STAGES WITH NO PROOF THEY CAN FAIL ========================
 #   cdc             gate: report by design (findings not yet triaged to zero).
@@ -93,7 +100,14 @@ regress                 4
 rom-selftest            3
 rom-content             4
 rom-gds                 4
-lec                     3
+# 3 -> 4 on 2026-08-18: rewritten against the first REAL Conformal transcripts
+# to reach this repo. fail-different-key-points was DELETED — it asserted a
+# string Conformal does not emit in either direction, so the clause it pinned
+# was dead code. Replaced by fail-nonequivalent (a trimmed extract of the real
+# FAIL:NONEQ transcript) and fail-abort-points (the census clause, isolated).
+lec                     4
+lec-selftest            4
+lec-pnr                 2
 # 3 -> 4 on 2026-08-17: fail-waiver-stale, added by a concurrent session and
 # read before this number was moved. The other three are fail-design-results,
 # fail-saturated-cap and fail-no-summary.
@@ -102,21 +116,20 @@ drc                     4
 # Total across the proven gates. `signoff.py prove` reports its own case count
 # (must_pass + must_fail); this is the must_fail half, which is the half that
 # demonstrates a gate can FAIL.
-must-fail-cases-total   40
+must-fail-cases-total   47
 
 # Stages carrying a `check:` AND a complete proof (a must_pass plus at least one
 # must_fail, every fixture present on disk). Cross-checked against the manifest
 # so that adding a gate without a proof, or a proof without a gate, is visible
 # here and not only in a transient prove run.
-stages-with-check      10
+stages-with-check      12
 
 
 # === PENDING — OWNED BY ANOTHER SESSION, REPORTED BUT NOT GATED ============
 # ir-drop and ir-drop-selftest were added to the manifest by a concurrent
-# session while this ledger was being written. ir-drop-selftest is complete and
-# green; ir-drop declares six must_fail fixtures that do not yet exist on disk,
-# so `prove` reports NO FIXTURE for all seven of its cases and the stage is NOT
-# proven.
+# session while this ledger was being written. Both are now complete and green
+# (ir-drop 6 must_fail cases, ir-drop-selftest 3) — they were NOT when this block
+# was first written, which is itself the point: a pending row moves under you.
 #
 # They are listed here rather than given rows because a row is a claim this
 # ledger stands behind, and these are somebody else's work in flight. The

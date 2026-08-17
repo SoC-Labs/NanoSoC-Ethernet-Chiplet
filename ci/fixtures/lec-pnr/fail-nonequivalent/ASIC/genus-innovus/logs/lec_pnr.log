@@ -7,14 +7,23 @@
 ================================================================================
 Compared points      PO     DFF    BBOX      Total   
 --------------------------------------------------------------------------------
-Equivalent           35     1      1         37      
+Equivalent           35     0      1         36      
+--------------------------------------------------------------------------------
+Non-equivalent       0      1      0         1       
 ================================================================================
 0
 // Command: report_compare_data -class nonequivalent -class abort -class notcompared
-0 Non-equivalent point(s) reported
+Compared points are: Non-equivalent (reachable)
+  + 84  DFF  /u_ff/U$1              + 84  DFF  /u_ff/U$1              
+Due to these Non-equivalent points:
+[DATA]
+  + 210 NAND /u_nd/U$1              + 213 BUF  /u_hold_1/U$1          
+
+1 Non-equivalent point(s) reported
 0 Abort point(s) reported
 0 Not-compared point(s) reported
 ...
-     Number of EQ compare points:                              37
-     Number of NON-EQ compare points:                          0
+6. Compare Results:                                                  FAIL:NONEQ
+     Number of EQ compare points:                              36
+     Number of NON-EQ compare points:                          1
      Number of Aborted compare points:                         0

@@ -83,7 +83,7 @@ believe the tool prints" into evidence.
 | `elab-strict/` | the documented behaviour of HAL 22.03 in `verif/elab_strict/run.sh`, plus direct measurement of three real HAL logs on this host (see the correction below) | medium — see `pass`, whose tally shape is wrong |
 | `drc/` | **rebuilt 2026-08-17 from 24 real Calibre v2023.1 summaries** under `ASIC/genus-innovus/calibre_runs/` (see the correction below) | high |
 | `rom-content/`, `rom-gds/`, `rom-selftest/` | the row format of `make -C ASIC -f common.mk rom-vars`, checked against its real output; the JSON keys the check actually reads | **interface high, values synthetic — and the values are now known to be wrong in two places, see below** |
-| `lec/` | **inference only — no Conformal transcript was available** | **low, see below** |
+| `lec/`, `lec-pnr/`, `lec-selftest/` | **RE-DERIVED 2026-08-18 from real Conformal 22.10-s200 transcripts** — `ASIC/genus-innovus/logs/lec_selftest_{equivalent,nonequivalent,extra_state}.log`, one per direction, left by `make lec-selftest` | high — captures, one labelled exception |
 | `ir-drop/` | **cut down from the real artefacts of the fp1505 rail run** (Voltus 21.11 under Innovus, 2026-08-17): the `.iv` header and row format, both `*.main.rpt` summaries and the per-rail table of the implementation run's own `imp_power.rep` are the tool's own bytes | high — captures, with two documented edits, below |
 | `ir-drop-selftest/` | `pass` supplies **no file at all**, so the positive control is the real battery; the three failure arms are stubs that print a tally shape and nothing else | high — the stubs are the fixture's whole subject |
 
@@ -161,6 +161,38 @@ immediately after the tally block. The elab-strict invocation differs
 for that mode; it does mean the claim is unverified for it, and that a stronger
 completion marker may exist. **No completed elab-strict log exists on this host
 to settle it** — every one measured was aborted or killed.
+
+**`lec/` was the declared weak spot, and re-deriving it found the defect this
+file predicted — pointing the other way.** The note here used to read *"inference
+only — no Conformal transcript was available"*, and asked whoever produced the
+first real `logs/lec.log` to rebuild the family. `make lec-selftest` had by then
+left three real transcripts on disk, one per direction. Measured across all three:
+
+| marker | equivalent | nonequivalent | extra_state |
+|---|---|---|---|
+| `Different Key Points` | 0 | 0 | 0 |
+| `Abort Points` | 0 | 0 | 0 |
+| `Unknown Key Points` | 0 | 0 | 0 |
+| `Compare Results:  PASS` | **1** | 0 | 0 |
+
+The fear recorded here — that those three strings are row labels printed on every
+run, so the gate **could never pass** — is refuted: the passing transcript
+contains none of them and does carry the verdict line. But the opposite was true
+and nobody had asked. **Conformal emits none of those three strings in either
+direction, so the entire negative-grep clause was dead code**: it could never
+fire, on any real log. Only the `Compare Results: PASS` clause was doing work —
+the same shape as the `|Equivalent` clause that was removed for being vacuous,
+one line below it, undetected because `fail-different-key-points` was hand-written
+to contain a string the tool does not print. A fixture invented alongside its
+check will agree with it forever.
+
+What Conformal really prints is a verdict line plus a point census
+(`6. Compare Results: PASS` / `FAIL:NONEQ`, and `N Non-equivalent / Abort /
+Not-compared point(s) reported`), and that is what the three LEC gates now read.
+`lec/fail-abort-points` is the one fixture in these families **not** taken from a
+log, and is labelled as such in the manifest: it asserts PASS over a non-zero
+abort census, a shape Conformal does not currently produce, so that a future
+version which did could not walk through.
 
 One more, recorded because it wasted an hour and will waste someone else's:
 `verif/elab_strict/build/xrun_hal.log` and `verif/g2_soc_pair/results.xml` are

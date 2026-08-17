@@ -12,9 +12,10 @@ Equivalent           35     1      1         37
 0
 // Command: report_compare_data -class nonequivalent -class abort -class notcompared
 0 Non-equivalent point(s) reported
-0 Abort point(s) reported
+1 Abort point(s) reported
 0 Not-compared point(s) reported
 ...
+6. Compare Results:                                                        PASS
      Number of EQ compare points:                              37
      Number of NON-EQ compare points:                          0
-     Number of Aborted compare points:                         0
+     Number of Aborted compare points:                         1
