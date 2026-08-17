@@ -168,3 +168,17 @@ ASIC/tech_wrappers/tsmc65/generated/
 # construction rather than by everyone remembering.
 ASIC/tech_wrappers/tsmc65/local_overrides/*.lef
 ASIC/tech_wrappers/tsmc65/local_overrides/*.map
+
+# VC Static (`vcst`) droppings. Same family as the genus.log*/innovus.log* rules
+# above and treated the same way: nothing in this repository invokes vcst, so
+# these only ever appear from an ad-hoc probe, and they land in whatever
+# directory that probe was launched from -- ASIC/ on 2026-08-17, where the
+# session log was a one-line "unknown option '-version'" and the preference file
+# was six empty keys. Neither is design data and neither is reproducible input.
+#
+# UNANCHORED, deliberately, for the reason set out beside the Genus/Innovus
+# rules: anchoring to the directory it happened to be run from once just means
+# the same pair reappears somewhere else next week. No tracked file has either
+# name (`git ls-files | grep vcst` is empty), so nothing is being hidden.
+.vcstPref
+vcst_session.log
