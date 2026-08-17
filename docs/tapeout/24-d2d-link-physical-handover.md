@@ -225,9 +225,33 @@ marginal enable resolves per-flop and cannot produce a partial clock edge. This 
 **Your options, in preference order:**
 1. **Preferred: let the RTL fix land** — driving the mailbox slot-select from the *synchronised* `rptr`
    removes the async signal from the ICG enable at source. Requested in the TideLink RTL handover.
-2. **Interim, synthesis-side:** exclude the `WavMultibitSync` register banks from clock gating
-   (a targeted `set_clock_gating_style` exclusion or `set_dont_touch` on those instances) so the
-   enable reverts to a mux on the D pin. Cheap, local, and reversible.
+2. **Interim, synthesis-side:** exclude the `WavMultibitSync` register banks from clock gating so
+   the enable reverts to a mux on the D pin. Cheap, local, and reversible.
+
+   **Corrected 2026-08-17 — this step previously named the wrong command, and following it as
+   written would have cost a day.** It is neither `set_clock_gating_style` (a Design Compiler
+   command; this flow is Genus) nor `set_dont_touch` (which preserves an ICG that is already there
+   rather than preventing its insertion). The Genus attribute is **`lp_clock_gating_exclude`**, and
+   the **module** form is the one to use — it applies to all instances of the module and sidesteps
+   the `dedicate_module` trap the `inst`/`hinst` forms carry. Set it after `elaborate` and before
+   `syn_generic`, alongside the existing `lp_clock_gating_min_flops` block.
+
+   Measured cost: **174 of 50,754 gated flops, 0.34%**, one re-synthesis, fully reversible. Do
+   **not** reach for `lp_clock_gating_min_flops` instead — raising it would ungate every narrow
+   bank in the design, not just these.
+
+   **Prove the attribute took.** This flow sets no `auto_ungroup`, but the netlist shows heavy
+   ungrouping in exactly this hierarchy, so a module-scoped attribute may bind to a module that no
+   longer exists by the time gating runs. Re-run `scripts/cdc/icg_enable_domain_audit.py --gate`
+   after re-synthesis and confirm the count goes to zero; do not assume it applied.
+
+   **Scope note — the hazard is larger than this document says.** §Above describes one instance on
+   a2l. A gate-level audit of the current tapeout netlist finds **36** `WavMultibitSync` ICGs
+   gating **174** flops, across both directions and four domain pairs, with the enable toggling on
+   every transaction. Separately there are 32 replay-FIFO memory gates whose foreign-domain enable
+   is a quasi-static SWI config register rather than a pointer — a **different and lower-severity
+   class**. Do not bundle those into this fix: it is 4× the cost for a window that may never open.
+   Resolve the firmware question ("is that register written on a live link?") first.
 3. Ensure that whichever path is taken, `wptr_reg` and the `mem_*_reg` bits end up on the **same**
    clock tap. They currently are not — `wptr_reg` is clocked from `FE_OFN1565_phy_link_tx_tx_link_clk`
    with no ICG, while the data bits sit behind the gate on a different replica.
