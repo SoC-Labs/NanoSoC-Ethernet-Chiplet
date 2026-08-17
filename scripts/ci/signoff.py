@@ -19,14 +19,34 @@
 #   so on) and the report prints them as explicit coverage gaps. An auditor needs
 #   the gaps as much as the passes.
 #
+# THREE RESULTS, NOT TWO.
+#   PASS        the check ran and the design satisfied it.
+#   FAIL        the check ran and the design did not satisfy it.
+#   UNVERIFIED  the check DID NOT RUN — no tool on this host, or the
+#               implementation artefacts it reads do not exist.
+#
+#   UNVERIFIED counts as a failure and blocks signoff, exactly as
+#   ASIC/asic-toolkit/ci/lib.sh's `ci_unverified` does ("counts as a failure -
+#   deliberately ... A check whose input it could not read has not passed; it has
+#   not run"). It is a separate WORD because it demands a different action: FAIL
+#   means fix the design, UNVERIFIED means fix the runner or go and build the
+#   thing being checked. Before this existed, a sim host with no PDK reported
+#   `cdc: FAIL (report-only)` for "Calibre is not installed here", which reads as
+#   a CDC defect and is not one.
+#
+#   Never add a code path that turns UNVERIFIED into PASS. Zeroes from a report
+#   nobody read are the best possible result produced from no measurement at all.
+#
 # Usage:
 #   scripts/ci/signoff.py list                 # stages, gates, host requirement
+#   scripts/ci/signoff.py lint                 # manifest self-check + gap refutation
+#   scripts/ci/signoff.py prove [stage ...]    # can each `check:` actually FAIL?
 #   scripts/ci/signoff.py provenance           # record exactly what is being signed off
 #   scripts/ci/signoff.py run <stage> [...]    # run stage(s), collect artefacts
 #   scripts/ci/signoff.py report               # collate everything into one report
 #
 # Exit codes: 0 pass (or a `report`-gated stage that failed), 1 a `block` stage
-# failed, 2 usage/manifest error.
+# failed or was UNVERIFIED, 2 usage/manifest error.
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
@@ -49,6 +69,24 @@ ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "ci" / "signoff.yaml"
 OUT = ROOT / "build" / "signoff"
 
+# The three results. See the header. UNVERIFIED is not a softer FAIL, it is a
+# different question: FAIL indicts the design, UNVERIFIED indicts the run.
+PASS, FAIL, UNVERIFIED = "pass", "fail", "unverified"
+
+# A fixture file with this suffix means "this path must NOT exist in the
+# sandbox" — the only way to prove a check's missing-evidence arm, since an
+# overlay can add files but not take the repo's away. See _sandbox().
+ABSENT_SUFFIX = ".__absent__"
+
+# A fixture file with this name makes its directory EXCLUSIVE: the repo's real
+# contents are not symlinked into it, so the fixture is the only thing there.
+# Needed wherever the check globs rather than naming a file — `drc` takes
+# sorted(*.drc.summary)[0], so on srv03335, where a real drc_run exists, the
+# repo's own summary would leak into the fixture directory and decide the case.
+# A proof that behaves differently on the machine that does the real signoff is
+# not a proof.
+EXCLUSIVE_MARKER = ".__exclusive__"
+
 
 def load():
     if not MANIFEST.exists():
@@ -58,8 +96,13 @@ def load():
     return m, stages
 
 
-def sh(cmd, log_path, env=None, timeout=None):
-    """Run cmd, tee to log_path, return (rc, seconds). Never raises on failure."""
+def sh(cmd, log_path, env=None, timeout=None, cwd=None):
+    """Run cmd, tee to log_path, return (rc, seconds). Never raises on failure.
+
+    `cwd` defaults to the repo root. `prove` overrides it to a fixture sandbox,
+    which is the whole reason a check must address its evidence by repo-relative
+    path and never by an absolute one.
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     with log_path.open("w") as log:
@@ -67,7 +110,7 @@ def sh(cmd, log_path, env=None, timeout=None):
         log.flush()
         try:
             p = subprocess.Popen(
-                cmd, shell=True, cwd=ROOT, stdout=subprocess.PIPE,
+                cmd, shell=True, cwd=str(cwd or ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, errors="replace",
                 env={**os.environ, **(env or {})},
             )
@@ -80,6 +123,30 @@ def sh(cmd, log_path, env=None, timeout=None):
             log.write("\n!! TIMEOUT — killed\n")
             rc = 124
     return rc, round(time.time() - t0, 1)
+
+
+def result_of(row):
+    """The three-state result of a status.json row.
+
+    Derives it from `passed` for rows written before `status` existed, so an
+    artefact bundle from an older run still collates.
+    """
+    return row.get("status") or (PASS if row.get("passed") else FAIL)
+
+
+def verdict_text(status, gate, markdown=False):
+    """One rendering of the three states, used by both `run` and `report`.
+
+    UNVERIFIED never borrows FAIL's wording. Someone scanning a report has to be
+    able to separate "this design has a violation" from "nobody measured".
+    """
+    if status == PASS:
+        return "PASS"
+    if status == UNVERIFIED:
+        s = "UNVERIFIED (not measured)"
+        return f"**{s}**" if markdown and gate == "block" else s
+    s = "FAIL" if gate == "block" else "FAIL (report-only)"
+    return f"**{s}**" if markdown and gate == "block" else s
 
 
 def collect(stage, dest):
@@ -141,9 +208,24 @@ def cmd_list(_args):
               f"{s.get('description','')}")
     uns = m.get("unsupported", [])
     if uns:
+        # No `refuted_by:` command is EXECUTED here — `list` is the one verb that
+        # launches nothing, and the workflow calls it for its plan summary.
+        # `signoff.py lint` runs them.
         print("\nDECLARED COVERAGE GAPS (not checked by this pipeline):")
         for u in uns:
-            print(f"  - {u['id']:<14} {u.get('reason','')}")
+            falsifiable = "  " if u.get("refuted_by") else " !"
+            print(f"  -{falsifiable}{u['id']:<26} {u.get('reason','')}")
+        if any(not u.get("refuted_by") for u in uns):
+            print("\n  ! = no refuted_by: — nothing can notice if this gap closes.")
+        print("  `signoff.py lint` executes each refuted_by and goes red on any "
+              "gap that no longer exists.")
+
+    unproven = [s["id"] for s in m.get("stages", [])
+                if s.get("check") and not s.get("check_proof")]
+    if unproven:
+        print(f"\nCHECKS WITH NO PROOF THEY CAN FAIL: {', '.join(unproven)}")
+        print("  `signoff.py prove` runs each check: against a must-pass and a "
+              "must-fail fixture.")
     return 0
 
 
@@ -206,6 +288,32 @@ def cmd_provenance(_args):
     return 0
 
 
+def missing_implementation(stage):
+    """Which of the stage's declared implementation artefacts are absent.
+
+    `needs_implementation:` is a LIST OF REPO-RELATIVE GLOBS naming what a
+    completed implementation run must have produced before this stage can mean
+    anything — the GDS for drc, work/lec.dofile for lec, and so on.
+
+    It used to be the bare word `true` on four stages and NOTHING IN THIS FILE
+    READ IT. It documented an ordering constraint (asic-gds must run first) to
+    human readers and enforced none of it, which is the same defect class as a
+    `check:` that cannot fail. The bare form is still accepted so an unported
+    manifest is not silently mis-run, but it names no evidence, so it cannot be
+    satisfied — it reports itself as the manifest bug it is.
+    """
+    req = stage.get("needs_implementation")
+    if not req:
+        return []
+    if req is True:
+        return ["<needs_implementation: true declares no artefacts, so nothing "
+                "can be checked — replace it with the list of paths this stage "
+                "reads>"]
+    if isinstance(req, str):
+        req = [req]
+    return [p for p in req if not glob.glob(str(ROOT / p))]
+
+
 def cmd_run(args):
     m, stages = load()
     rc_final = 0
@@ -220,6 +328,26 @@ def cmd_run(args):
 
         print(f"\n{'='*70}\n== signoff stage: {sid}  [gate={gate}]\n== {s.get('description','')}\n{'='*70}")
 
+        def unverified(reason, rc=0, extra=None):
+            """Record the stage as NOT MEASURED. Blocks signoff; is not a FAIL.
+
+            Both callers below are cases where the CHECK NEVER RAN — no tool, or
+            no artefact to read. Scoring them `passed: false` alongside a genuine
+            violation, as this driver did until 2026-08-17, sends someone to
+            debug a design defect that was never reported.
+            """
+            print(f"\n-- {sid}: UNVERIFIED (not measured) — {reason}", file=sys.stderr)
+            rec = {"id": sid, "gate": gate, "rc": rc, "seconds": 0,
+                   "status": UNVERIFIED, "passed": False,
+                   "phase": s.get("phase", "rtl"),
+                   "description": s.get("description", ""),
+                   "unverified_reason": reason,
+                   # Kept under its old name too: docs/tapeout/09-signoff-
+                   # checklist.md and any log scraper predate `status`.
+                   "skipped_reason": reason}
+            rec.update(extra or {})
+            (dest / "status.json").write_text(json.dumps(rec, indent=2))
+
         # Enforce the host capability the stage declares, using the same probe
         # that derives runner labels. A physical stage dispatched onto a host
         # with no PDK must fail in seconds naming what is missing, not hours
@@ -232,16 +360,31 @@ def cmd_run(args):
                 print(f"signoff: {sid} needs '{label}' and this host does not "
                       f"provide it — see {(dest/'preflight.log').relative_to(ROOT)}",
                       file=sys.stderr)
-                (dest / "status.json").write_text(json.dumps(
-                    {"id": sid, "gate": gate, "rc": prc, "seconds": 0,
-                     "passed": False, "phase": s.get("phase", "rtl"),
-                     "description": s.get("description", ""),
-                     "skipped_reason": f"host lacks capability '{label}'"}, indent=2))
+                unverified(f"host lacks capability '{label}'", rc=prc)
                 if gate == "block":
                     rc_final = 1
                     if not args.keep_going:
                         break
                 continue
+
+        # The stage reads what an implementation run BUILT. Without those inputs
+        # it cannot produce a verdict about anything, and several of these hold a
+        # Conformal or Calibre seat for hours before discovering that.
+        absent = missing_implementation(s)
+        if absent and not args.skip_needs_implementation:
+            print(f"signoff: {sid} declares implementation artefacts that do not "
+                  f"exist: {', '.join(absent)}", file=sys.stderr)
+            print(f"signoff: run the implementation flow (.github/workflows/"
+                  f"asic-gds.yml, or `make asic-*`) before the physical phase.",
+                  file=sys.stderr)
+            unverified("implementation artefacts absent: " + ", ".join(absent),
+                       extra={"missing_implementation": absent})
+            if gate == "block":
+                rc_final = 1
+                if not args.keep_going:
+                    break
+            continue
+
         for pre in s.get("pre", []):
             prc, _ = sh(pre, dest / "pre.log")
             if prc != 0:
@@ -270,12 +413,13 @@ def cmd_run(args):
         copied, missing = collect(s, dest)
 
         status = {"id": sid, "gate": gate, "rc": rc, "seconds": secs,
+                  "status": PASS if rc == 0 else FAIL,
                   "passed": rc == 0, "phase": s.get("phase", "rtl"),
                   "description": s.get("description", ""),
                   "artifacts_copied": len(copied), "artifacts_missing": missing}
         (dest / "status.json").write_text(json.dumps(status, indent=2))
 
-        verdict = "PASS" if rc == 0 else ("FAIL" if gate == "block" else "FAIL (report-only)")
+        verdict = verdict_text(status["status"], gate)
         print(f"\n-- {sid}: {verdict}  rc={rc}  {secs}s  artefacts={len(copied)}")
         if missing:
             print(f"-- {sid}: artefact patterns with no match: {', '.join(missing)}")
@@ -288,7 +432,7 @@ def cmd_run(args):
 
 def cmd_report(_args):
     m, _ = load()
-    rows, blocking = [], 0
+    rows, blocking, unmeasured = [], 0, 0
     for st in sorted(OUT.glob("*/status.json")):
         rows.append(json.loads(st.read_text()))
     prov_p = OUT / "provenance" / "provenance.json"
@@ -299,12 +443,30 @@ def cmd_report(_args):
         md += [f"**Commit** `{prov.get('repo_sha','?')[:12]}`"
                f"{' — WORKING TREE DIRTY' if prov.get('repo_dirty') else ''}"
                f" · **Host** {prov.get('host','?')} · **{prov.get('utc','?')}**", ""]
-    md += ["| stage | phase | gate | result | time |", "|---|---|---|---|---|"]
+    md += ["| stage | phase | gate | result | time | why |",
+           "|---|---|---|---|---|---|"]
     for r in rows:
-        mark = "PASS" if r["passed"] else ("**FAIL**" if r["gate"] == "block" else "FAIL (report-only)")
-        if not r["passed"] and r["gate"] == "block":
+        res = result_of(r)
+        mark = verdict_text(res, r["gate"], markdown=True)
+        # UNVERIFIED is counted apart from FAIL. Both block, but a reader who
+        # cannot tell them apart cannot tell "fix the design" from "fix the run".
+        if res == UNVERIFIED:
+            unmeasured += 1
+        elif res == FAIL and r["gate"] == "block":
             blocking += 1
-        md.append(f"| {r['id']} | {r['phase']} | {r['gate']} | {mark} | {r['seconds']}s |")
+        why = r.get("unverified_reason", "") if res == UNVERIFIED else ""
+        md.append(f"| {r['id']} | {r['phase']} | {r['gate']} | {mark} | "
+                  f"{r['seconds']}s | {why} |")
+
+    unv_block = [r for r in rows
+                 if result_of(r) == UNVERIFIED and r["gate"] == "block"]
+    if unv_block:
+        md += ["", "## Blocking stages that were NOT MEASURED", "",
+               "These did not run — no tool on this host, or no implementation "
+               "artefact to read. **They are not passes**, and they are not "
+               "design failures either; nothing was checked:", ""]
+        md += [f"- `{r['id']}` — {r.get('unverified_reason','(no reason recorded)')}"
+               for r in unv_block]
 
     ran = {r["id"] for r in rows}
     notrun = [s["id"] for s in m.get("stages", []) if s["id"] not in ran]
@@ -316,13 +478,32 @@ def cmd_report(_args):
     uns = m.get("unsupported", [])
     if uns:
         md += ["", "## Declared coverage gaps", "",
-               "Checks a full ASIC signoff would include that this pipeline does **not** perform:", "",
-               "| check | why |", "|---|---|"]
-        md += [f"| {u['id']} | {u.get('reason','')} |" for u in uns]
+               "Checks a full ASIC signoff would include that this pipeline does **not** perform.",
+               "`signoff.py lint` executes each gap's `refuted_by:` and goes red on any that has "
+               "quietly closed; a gap with no `refuted_by:` is marked below as unfalsifiable and "
+               "is only as current as the last person to read it.", "",
+               "| check | falsifiable | why |", "|---|---|---|"]
+        for u in uns:
+            # Squeeze to one line and escape pipes: several reasons are folded
+            # YAML scalars that keep a trailing newline, which used to break the
+            # table row in half and hide the rest of the gaps from the reader.
+            why = " ".join(str(u.get("reason", "")).split()).replace("|", "\\|")
+            md.append(f"| {u['id']} | {'yes' if u.get('refuted_by') else '**no**'} | {why} |")
 
     md += ["", "## Verdict", ""]
-    if blocking:
-        md += [f"**NOT SIGNED OFF** — {blocking} blocking stage(s) failed."]
+    n_unv_block = len(unv_block)
+    if blocking or n_unv_block:
+        parts = []
+        if blocking:
+            parts.append(f"{blocking} blocking stage(s) FAILED")
+        if n_unv_block:
+            parts.append(f"{n_unv_block} blocking stage(s) were NOT MEASURED")
+        md += ["**NOT SIGNED OFF** — " + " and ".join(parts) + ".",
+               "",
+               "An unmeasured gate is not a lesser failure and not a pass: the "
+               "check did not run, so this report makes no claim about what it "
+               "covers. See ASIC/asic-toolkit/ci/lib.sh for the same rule "
+               "applied inside the flow itself."]
     elif notrun:
         md += ["**PARTIAL** — every stage that ran passed, but the pipeline was not run end to end."]
     else:
@@ -333,10 +514,273 @@ def cmd_report(_args):
     (OUT / "signoff_report.md").write_text("\n".join(md) + "\n")
     (OUT / "signoff_report.json").write_text(json.dumps(
         {"design": m.get("design"), "provenance": prov, "stages": rows,
-         "not_run": notrun, "unsupported": uns, "blocking_failures": blocking}, indent=2))
+         "not_run": notrun, "unsupported": uns,
+         "blocking_failures": blocking,
+         "unverified": unmeasured, "blocking_unverified": n_unv_block}, indent=2))
     print("\n".join(md))
     print(f"\nreport -> {(OUT / 'signoff_report.md').relative_to(ROOT)}")
-    return 1 if blocking else 0
+    return 1 if (blocking or n_unv_block) else 0
+
+
+# -----------------------------------------------------------------------------
+# `prove` — can each `check:` actually FAIL?
+#
+# The manifest already mutation-tests two TOOLS: lec-selftest feeds the LEC
+# harness a one-gate mutation and requires it to go red, rom-selftest does the
+# same for the ROM gate in 22 cases. Its own comment says why: "A check that
+# cannot fail is worth nothing, and this flow has shipped several — elab-strict
+# reported a clean design while its rules never ran."
+#
+# But nothing tested the manifest's OWN `check:` blocks, and they had the same
+# disease. elab-strict asserted a banner HAL never prints (so it could not pass);
+# lec's `|Equivalent` clause matched a table row label printed on every run (so
+# it could not fail); rom-gds exited 0 when the ROM table came back empty. Three
+# blocking gates, three ways of being decorative. This verb extends the doctrine
+# from the tools to the checks.
+#
+# HOW A CHECK IS RUN AGAINST A FIXTURE.
+#   A `check:` reads evidence at repo-relative paths. So build a sandbox that IS
+#   the repo — every top-level entry symlinked — except along the paths the
+#   fixture supplies, which are materialised as real directories holding the
+#   fixture's files. The check then runs with cwd=sandbox, reads scripts/ and
+#   ASIC/ as normal, and sees the fixture's evidence where its real evidence
+#   would be. Nothing is written back: no check in this manifest writes, and the
+#   sandbox's real directories shadow rather than modify.
+#
+# WHAT A SYNTHETIC FIXTURE DOES NOT PROVE.
+#   These are hand-written excerpts, not captures. They prove the check's LOGIC
+#   discriminates — that it says yes to one shape of evidence and no to another.
+#   They do NOT prove the shape matches what the tool emits today, and a tool
+#   upgrade that changes its wording will leave `prove` green while the real gate
+#   goes blind. That is the residual risk, it is not eliminated here, and the
+#   mitigation is to re-derive a fixture from a real log whenever one is to hand.
+#   ci/fixtures/README.md records the provenance of each.
+# -----------------------------------------------------------------------------
+def _rmtree_no_follow(p: Path):
+    """Delete a sandbox without ever descending through a symlink.
+
+    Written out rather than calling shutil.rmtree because the tree is mostly
+    symlinks INTO THE REPOSITORY. shutil.rmtree does not follow them, but that
+    is a property to depend on explicitly when the failure mode is deleting the
+    source tree.
+    """
+    if p.is_symlink() or not p.is_dir():
+        p.unlink(missing_ok=True)
+        return
+    for child in p.iterdir():
+        if child.is_symlink() or not child.is_dir():
+            child.unlink(missing_ok=True)
+        else:
+            _rmtree_no_follow(child)
+    p.rmdir()
+
+
+def _sandbox(fixture: Path, dest: Path):
+    """Mirror ROOT into dest by symlink, then overlay the fixture tree onto it."""
+    files = sorted(p.relative_to(fixture) for p in fixture.rglob("*") if p.is_file())
+
+    # Every ancestor of an overlaid file has to be a REAL directory in the
+    # sandbox: a symlinked one would resolve straight back into the repository
+    # and the fixture would be invisible (or, worse, written into the repo).
+    real_dirs = {Path(".")}
+    for f in files:
+        real_dirs.update(f.parents)
+
+    supplied = {}                      # dir -> names the fixture owns
+    exclusive = set()
+    for f in files:
+        name = f.name
+        if name == EXCLUSIVE_MARKER:
+            exclusive.add(f.parent)
+            continue
+        if name.endswith(ABSENT_SUFFIX):
+            name = name[: -len(ABSENT_SUFFIX)]
+        supplied.setdefault(f.parent, set()).add(name)
+
+    for d in sorted(real_dirs, key=lambda p: len(p.parts)):
+        (dest / d).mkdir(parents=True, exist_ok=True)
+        src_dir = ROOT / d
+        if not src_dir.is_dir() or d in exclusive:
+            continue                   # synthetic, or fixture-only by declaration
+        for entry in sorted(src_dir.iterdir()):
+            rel = d / entry.name if str(d) != "." else Path(entry.name)
+            if rel in real_dirs or entry.name in supplied.get(d, ()):
+                continue               # materialised, or shadowed by the fixture
+            link = dest / rel
+            if not link.exists() and not link.is_symlink():
+                os.symlink(str(entry), str(link))
+
+    for f in files:
+        if f.name.endswith(ABSENT_SUFFIX) or f.name == EXCLUSIVE_MARKER:
+            continue                   # directives, not evidence
+        shutil.copy2(fixture / f, dest / f)
+
+
+def cmd_prove(args):
+    m, stages = load()
+    want = set(args.stages or [])
+    for w in want:
+        if w not in stages:
+            print(f"signoff: unknown stage '{w}'", file=sys.stderr)
+            return 2
+
+    base = OUT / "prove"
+    base.mkdir(parents=True, exist_ok=True)
+    results, bad = [], 0
+
+    for s in m.get("stages", []):
+        sid = s["id"]
+        if want and sid not in want:
+            continue
+        if not s.get("check"):
+            continue                   # nothing to prove: the tool's rc is the gate
+
+        proof = s.get("check_proof")
+        if not proof:
+            # Deliberately an error, not a warning. A blocking `check:` with no
+            # demonstrated failure mode is exactly what this verb exists to find,
+            # and letting it pass quietly would rebuild the hole.
+            results.append((sid, "check_proof", "MISSING",
+                            "the check is blocking and has no fixture proving it can fail"))
+            bad += 1
+            continue
+
+        cases = [(f, True) for f in _as_list(proof.get("must_pass"))]
+        cases += [(f, False) for f in _as_list(proof.get("must_fail"))]
+        if not any(expect for _, expect in cases) or not any(
+                not expect for _, expect in cases):
+            results.append((sid, "check_proof", "MISSING",
+                            "needs BOTH a must_pass and a must_fail fixture — one "
+                            "alone cannot show the check discriminates"))
+            bad += 1
+
+        for rel, expect_pass in cases:
+            fixture = ROOT / rel
+            label = f"{'must_pass' if expect_pass else 'must_fail'}:{Path(rel).name}"
+            if not fixture.is_dir():
+                results.append((sid, label, "NO FIXTURE", str(rel)))
+                bad += 1
+                continue
+            sand = base / sid / Path(rel).name
+            _rmtree_no_follow(sand) if sand.exists() else None
+            sand.mkdir(parents=True, exist_ok=True)
+            _sandbox(fixture, sand)
+            log = base / sid / f"{Path(rel).name}.log"
+            rc, secs = sh(s["check"], log, cwd=sand, timeout=args.timeout)
+            ok = (rc == 0) if expect_pass else (rc != 0)
+            if ok:
+                results.append((sid, label, "ok", f"rc={rc}  {secs}s"))
+                if not args.keep_sandboxes:
+                    _rmtree_no_follow(sand)
+            else:
+                bad += 1
+                why = ("the check PASSED evidence it must reject — this gate "
+                       "cannot fail" if not expect_pass else
+                       "the check REJECTED good evidence — this gate cannot pass")
+                results.append((sid, label, "BROKEN",
+                                f"rc={rc}: {why}  (log: "
+                                f"{log.relative_to(ROOT)}, sandbox kept: "
+                                f"{sand.relative_to(ROOT)})"))
+
+    print(f"\n{'stage':<16}{'case':<44}{'result':<11}detail")
+    print("-" * 110)
+    for sid, case, verdict, detail in results:
+        print(f"{sid:<16}{case:<44}{verdict:<11}{detail}")
+    checks = [s["id"] for s in m.get("stages", []) if s.get("check")]
+    print(f"\n{len(results)} case(s) over {len(checks)} check(s); {bad} problem(s)")
+    if bad:
+        print("\nA `check:` that cannot fail is not a gate. Fix the check, or the "
+              "fixture if the fixture is the thing that is wrong.")
+    return 1 if bad else 0
+
+
+def _as_list(v):
+    if v is None:
+        return []
+    return v if isinstance(v, list) else [v]
+
+
+# -----------------------------------------------------------------------------
+# `lint` — is this manifest still telling the truth?
+# -----------------------------------------------------------------------------
+STAGE_KEYS = {"id", "phase", "gate", "label", "description", "run", "pre",
+              "check", "check_proof", "artifacts", "timeout_s",
+              "needs_implementation"}
+GAP_KEYS = {"id", "reason", "refuted_by"}
+
+
+def cmd_lint(args):
+    m, stages = load()
+    problems, notes = [], []
+
+    seen = set()
+    for s in m.get("stages", []):
+        sid = s.get("id")
+        if not sid:
+            problems.append("a stage has no id")
+            continue
+        if sid in seen:
+            problems.append(f"{sid}: duplicate stage id")
+        seen.add(sid)
+        for k in ("description", "run"):
+            if not s.get(k):
+                problems.append(f"{sid}: no {k}")
+        if s.get("gate", "block") not in ("block", "report"):
+            problems.append(f"{sid}: gate must be block or report, not {s['gate']!r}")
+        unknown = set(s) - STAGE_KEYS
+        if unknown:
+            problems.append(f"{sid}: unknown key(s) {', '.join(sorted(unknown))} — "
+                            f"the driver never reads these, so they declare nothing")
+        if s.get("needs_implementation") is True:
+            problems.append(f"{sid}: `needs_implementation: true` names no artefacts, "
+                            f"so it cannot be enforced — list the paths the stage reads")
+        if s.get("check") and not s.get("check_proof"):
+            problems.append(f"{sid}: has a check: with no check_proof: — nothing "
+                            f"shows this gate can fail (see `signoff.py prove`)")
+        for rel in _as_list(s.get("check_proof", {}).get("must_pass")) + \
+                _as_list(s.get("check_proof", {}).get("must_fail")):
+            if not (ROOT / rel).is_dir():
+                problems.append(f"{sid}: check_proof fixture {rel} does not exist")
+
+    # The gaps. A `reason:` is prose and cannot be checked, so `refuted_by:` is
+    # the executable half: it MUST FAIL for the gap to still be real.
+    print("DECLARED COVERAGE GAPS — is each one still true?\n")
+    for u in m.get("unsupported", []):
+        uid = u.get("id", "<no id>")
+        unknown = set(u) - GAP_KEYS
+        if unknown:
+            problems.append(f"{uid}: unknown key(s) {', '.join(sorted(unknown))}")
+        if not u.get("reason"):
+            problems.append(f"{uid}: no reason")
+        cmd = u.get("refuted_by")
+        if not cmd:
+            print(f"  {uid:<26} UNFALSIFIABLE  no refuted_by — nothing can notice "
+                  f"if this gap closes")
+            notes.append(uid)
+            continue
+        p = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True,
+                           text=True, timeout=args.timeout)
+        if p.returncode == 0:
+            print(f"  {uid:<26} STALE          refuted_by SUCCEEDED — this gap no "
+                  f"longer exists, or its reason is wrong")
+            if p.stdout.strip():
+                print(f"  {'':<26}                {p.stdout.strip().splitlines()[0][:100]}")
+            problems.append(f"{uid}: declared gap is refuted — the manifest is stale")
+        else:
+            print(f"  {uid:<26} still real     (refuted_by exited {p.returncode})")
+
+    print()
+    if notes:
+        print(f"{len(notes)} gap(s) with no refuted_by, reviewable only by hand: "
+              f"{', '.join(notes)}\n")
+    if problems:
+        print("MANIFEST PROBLEMS:")
+        for p_ in problems:
+            print(f"  - {p_}")
+        print(f"\n{len(problems)} problem(s).")
+        return 1
+    print("manifest lint clean: every stage well-formed, every declared gap still real.")
+    return 0
 
 
 def main():
@@ -353,8 +797,25 @@ def main():
                    help="continue after a blocking failure (collect more evidence)")
     r.add_argument("--skip-preflight", action="store_true",
                    help="do not enforce the stage's declared host capability")
+    r.add_argument("--skip-needs-implementation", action="store_true",
+                   help="run the stage even if the implementation artefacts it "
+                        "declares are absent (debugging only — the stage cannot "
+                        "produce a verdict without them)")
     r.set_defaults(fn=cmd_run)
     sub.add_parser("report").set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("prove", help="run every check: against its must-pass and "
+                                     "must-fail fixtures")
+    p.add_argument("stages", nargs="*", help="default: every stage with a check:")
+    p.add_argument("--keep-sandboxes", action="store_true",
+                   help="do not delete the sandbox of a case that behaved")
+    p.add_argument("--timeout", type=int, default=300)
+    p.set_defaults(fn=cmd_prove)
+
+    l = sub.add_parser("lint", help="manifest self-check; runs each gap's refuted_by")
+    l.add_argument("--timeout", type=int, default=120)
+    l.set_defaults(fn=cmd_lint)
+
     args = ap.parse_args()
     return args.fn(args)
 

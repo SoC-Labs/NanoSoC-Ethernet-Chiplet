@@ -577,6 +577,67 @@ is the one remaining ERROR-severity class in the run that touches the timing eng
 
 ## Clean bills
 
+> ### ⚠ SUPERSEDED — the clock set has changed from 9 to 33 (noted 2026-08-17)
+>
+> **The clock-related clean bills below were correct when written and are correct
+> about the run they name. They no longer describe the design.** The audit's
+> reference run is `baseline_2026-08-06`; the current build is
+> `ASIC/eth-chiplet/build/full-20260814/`, and between them the clock set nearly
+> quadrupled.
+>
+> ```sh
+> S=ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_syn.sdc
+> grep -c '^create_clock'            $S     # 4
+> grep -c '^create_generated_clock'  $S     # 29   -> 33 total
+> ```
+>
+> **This is not a case of the audit having been wrong.** The 08-07-era SDC
+> (`ASIC/genus-innovus/runs/20260807T211107Z_route-eval-audit/outputs/`) carries
+> 4 + 5 = **exactly the 9 clocks this section names**. The audit is a faithful
+> dated record. It has been overtaken, and the delta is specific:
+>
+> **+24 generated clocks, all D2D word clocks** — `D2D_RX_WORD_CLK_0..7`,
+> `D2D_RX_WORDN_CLK_0..7`, `D2D_TX_WORD_CLK_0..7` — which entered between
+> 2026-08-07 17:48 and 2026-08-09 19:37 (mtimes of the two `*_syn.sdc`).
+>
+> Sink counts have moved by more than an order of magnitude on the D2D side
+> (`build/full-20260814/reports/cts_clock_trees.rep`, "Clock Sink Summary",
+> posedge-flop column):
+>
+> | Clock | This audit (08-06) | Current (08-14) |
+> |---|---|---|
+> | `clk` | 37,625 | **39,458** |
+> | `D2D_RX_CLK_0` | 528 | **13,452** — ×25 |
+> | `rmii_ref_clk` | 37 | **5,314** — ×144 |
+> | `mii_rx_clk` | 5,281 (shared with `mii_tx_clk`) | **5,278** |
+> | `swdclk` | 326 | **206** |
+> | `QSPI_SCLK` | 433 | split across `clk_generator_for_QSPI_SCLK<1..6>`, 258 posedge + 173 negedge each |
+> | `D2D_RX_WORDN_CLK_0` | *did not exist* | **8,963** |
+> | `D2D_TX_WORD_CLK_0` | *did not exist* | **1,495** |
+>
+> **Do not quote the two clock clean bills below as current.** Specifically:
+>
+> - **"All 9 clocks appear in exactly one group"** — untested against 33. The
+>   grouping was verified against a 9-clock set; 24 clocks have been added since
+>   and their group membership is not established by anything in this document.
+>   The conclusion that drew its force from it — *"no asynchronous crossing is
+>   being timed as synchronous"* — is therefore **unverified for the current
+>   build**, not disproven.
+> - **"All 9 clock definitions are self-consistent"** — the 9 named are still
+>   internally consistent; the 24 word clocks are unexamined here.
+>
+> One further caveat for anyone re-deriving this: only **21 of the 33** clocks
+> get a CTS tree in `cts_clock_trees.rep`. `D2D_RX_WORD_CLK_0..7` and
+> `D2D_TX_WORD_CLK_1..7` appear in the SDC but draw no tree, so a census taken
+> from the CTS report alone will silently miss them — the "none is zero, no clock
+> is defined on a pin with no fanout" check below needs redoing against the SDC,
+> not the CTS report.
+>
+> **R2 in the summary table ("6 of 9 clocks carry zero clock uncertainty") rests
+> on the same stale denominator and needs re-measuring against 33.**
+>
+> Everything below this banner is preserved unaltered as the 2026-08-07 record.
+
 Areas checked and found sound. These are results, not gaps.
 
 **Clock grouping is correct and correctly ordered.** The 5-group
