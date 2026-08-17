@@ -124,17 +124,32 @@ stages:
       #   guard 2  '^halstruct:' absent         -> rules NEVER STARTED
       #   guard 3  rule tally absent            -> rules started and were CUT OFF
       #
-      # They are NOT disjoint, and the overlap is deliberate. Measured on the
-      # fixtures: the aborted case has ZERO tally lines too, so guard 3 would
-      # also reject it — but guard 1 fires first and names the cause, which is
-      # the difference between "raise the timeout" and "fix the RTL". Keep all
-      # three: each one alone lets a different bad run through, and this gate has
-      # now gone false-green twice for two different reasons.
+      # ALL THREE ARE LOAD-BEARING. None is redundant, and guard 1 is the one
+      # most likely to look redundant and get deleted, so: a REAL aborted run
+      # DOES emit the tally block. Measured on a genuine abort — 40 tally lines,
+      # 0 halstruct, 2 abort markers. (An earlier version of this comment said
+      # the opposite. That was measured off a 322-byte hand-written fixture and
+      # was a property of the fixture, not of HAL. Corrected 2026-08-17.)
+      #
+      # The case that proves guard 1 cannot go is an abort AFTER halstruct has
+      # run — which is the shape elab-strict actually has, since it emits
+      # hundreds of thousands of halstruct lines long before it reaches the end:
+      #
+      #     halstruct > 0   -> guard 2 PASSES
+      #     tally present   -> guard 3 PASSES
+      #     abort strings   -> ONLY guard 1 fires
+      #
+      # There, guard 1 is the only thing between an aborted run and a green
+      # blocking gate. It is pinned by fail-aborted-after-halstruct, built from
+      # real tool output rather than hand-written text, precisely because the
+      # hand-written one is what produced the wrong conclusion above.
       #
       # Every arm is pinned by a fixture under ci/fixtures/elab-strict/ and
-      # proven by `signoff.py prove`. fail-killed is the one that pins THIS
-      # guard: halstruct lines present, no abort string, no tally, ending
-      # mid-message exactly as a SIGTERM leaves it.
+      # proven by `signoff.py prove`. Note what that proof does NOT tell you: it
+      # confirms the checks are self-consistent with the fixtures, not that the
+      # fixtures resemble the tool. A green prove run over an unrepresentative
+      # fixture is the same class of false comfort as this gate's own PASS at
+      # 3605.4s. Fixtures earn the same scepticism as the gates.
       grep -aqE '^ *[A-Z]{5,6} \([0-9]+\)' "$L" || {
         echo "HAL was KILLED before it finished — no rule-tally summary in the log."
         echo "The run started and was cut off (probably the timeout cap, see"
@@ -149,6 +164,7 @@ stages:
         - ci/fixtures/elab-strict/fail-halstruct-never-ran
         - ci/fixtures/elab-strict/fail-no-log
         - ci/fixtures/elab-strict/fail-killed
+        - ci/fixtures/elab-strict/fail-aborted-after-halstruct
     artifacts:
       - verif/elab_strict/build/*.log
       - verif/elab_strict/build/*.f

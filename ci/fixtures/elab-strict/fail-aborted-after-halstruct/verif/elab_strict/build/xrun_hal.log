@@ -1,0 +1,342 @@
+halstruct: *W,SHFTNC (${ARM_IP_LIBRARY_PATH}/Cortex-M0-plus/AT590-BU-50000-r0p1-01rel1/logical/cortexm0plus/verilog/cm0p_dbg_dwt.v,246|0): Shift by non-constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/ethernet-mac-ahb/src/rtl/ha1588_patches/ptp_parser.v,230|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_network_core.u_ethmac_0.u_inner.u_ha1588.u_rx_tsu.parser.ptp_msgid_mask' is potentially outside of the defined range.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/crc_checker/eth_crc_checker.v,118|0): Shift by non-constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/perf_probe/ahb_perf_probe_regs.v,129|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_network_core.u_eth_ss_perf_probe_0.u_eth_ss_perf_probe_0.grant_lost_bus' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/perf_probe/ahb_perf_probe_regs.v,129|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_network_core.u_eth_ss_perf_probe_0.u_eth_ss_perf_probe_0.busy_max_bus' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/perf_probe/ahb_perf_probe_regs.v,129|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_network_core.u_eth_ss_perf_probe_0.u_eth_ss_perf_probe_0.wait_bus' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/perf_probe/ahb_perf_probe_regs.v,129|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_network_core.u_eth_ss_perf_probe_0.u_eth_ss_perf_probe_0.xfer_wr_bus' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/perf_probe/ahb_perf_probe_regs.v,129|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_network_core.u_eth_ss_perf_probe_0.u_eth_ss_perf_probe_0.xfer_rd_bus' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/perf_probe/ahb_perf_probe_regs.v,129|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_network_core.u_eth_ss_perf_probe_0.u_eth_ss_perf_probe_0.cyc_bus' is potentially outside of the defined range.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_ctrl_CFG_MIN/verilog/dma250_ctrl_apb_CFG_MIN.sv,197|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_ctrl_CFG_MIN/verilog/dma250_ctrl_apb_CFG_MIN.sv,196|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_ctrl_CFG_MIN/verilog/dma250_ctrl_regclr_CFG_MIN.sv,286|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_ctrl_CFG_MIN/verilog/dma250_ctrl_regclr_CFG_MIN.sv,229|0): Case item expression is not a constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_fifo_core_CFG_MIN.sv,170|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_soc.u_dmac_0.u_dma250.u_data_biu.g_data_biu.u_fifo.u_fifo_core.mem' is potentially outside of the defined range.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_fifo_CFG_MIN.sv,85|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_fifo_CFG_MIN.sv,72|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_fifo_CFG_MIN.sv,70|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_fifo_CFG_MIN.sv,68|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_fifo_CFG_MIN.sv,74|0): Shift by non-constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_CFG_MIN.sv,358|0): Case item expression is not a constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_biu_CFG_MIN/verilog/dma250_biu_CFG_MIN.sv,473|0): Shift by non-constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,214|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,438|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,216|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,215|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,217|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,441|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,442|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,220|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,219|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,440|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_qctrl_CFG_MIN/verilog/dma250_qctrl_CFG_MIN.sv,439|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,684|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,592|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,588|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,601|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,590|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,591|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,325|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,685|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,596|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,595|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,594|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,593|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,589|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,324|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,598|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_vch_CFG_MIN/verilog/dma250_vch_CFG_MIN.sv,599|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_ctx_fsm_CFG_MIN.sv,95|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_ctx_fsm_CFG_MIN.sv,72|0): Case item expression is not a constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,478|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,750|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,712|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,595|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,487|0): Shift by non-constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,542|0): Case item expression is not a constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,488|0): Shift by non-constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,499|0): Case item expression is not a constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,499|0): Shift by non-constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,283|0): Case item expression is not a constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,322|0): Shift by non-constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,681|0): Case item expression is not a constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,681|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,485|0): Shift by non-constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,817|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_rw_ctrl_CFG_MIN.sv,807|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_ctrl_fsm_CFG_MIN.sv,192|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_ctrl_fsm_CFG_MIN.sv,367|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_ctrl_fsm_CFG_MIN.sv,472|0): Case item expression is not a constant.
+halstruct: *W,CNSTCI (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/logical/dma250_pch_CFG_MIN/verilog/dma250_pch_ctrl_fsm_CFG_MIN.sv,423|0): Case item expression is not a constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/socdebug_tech/controller/verilog/socdebug_adp_control.v,466|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_slv/logical/xhb500_ahb_to_axi_bridge_chiplet_slv/verilog/xhb500_ahb_to_axi_bridge_chiplet_slv_strb.sv,53|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_strbgen.sv,47|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_strbgen.sv,34|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,190|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,189|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,192|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,195|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,168|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,172|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,145|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,149|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,136|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,140|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/xhb500/generated/xhb_chiplet_mst/logical/xhb500_axi_to_ahb_bridge_chiplet_mst/verilog/xhb500_axi_to_ahb_bridge_chiplet_mst_core_xin.sv,110|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/bridges/mkaxi2axil_bridge.v,1215|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/bridges/mkaxi2axil_bridge.v,1218|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/bridges/mkaxi2axil_bridge.v,1214|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/bridges/mkaxi2axil_bridge.v,1216|0): Shift by non-constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/i2c_master.v,305|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_i2c_master.i2c_master_inst.data_reg' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/i2c_master.v,305|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_i2c_master.i2c_master_inst.addr_reg' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/i2c/rtl/i2c_slave_axil_master.v,282|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_i2c_slave.data_reg' is potentially outside of the defined range.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_0._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_1._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_2._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_3._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_4._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_5._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_6._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,IDXTSM (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpioRx_v2.v,557|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiorx_7._link_data_rep' is too small to access its defined range completely.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WlinkTxLinkLayer.v,67|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM.v,506|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM.v,280|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM.v,279|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_1.v,484|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_1.v,279|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_1.v,278|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_2.v,484|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_2.v,279|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_2.v,278|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_3.v,484|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_3.v,279|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_3.v,278|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_4.v,484|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_4.v,279|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_4.v,278|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCSM_5.v,394|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCSM_5.v,231|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WlinkGenericFCSM_5.v,230|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_6.v,889|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_6.v,590|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGenericFCSM_6.v,589|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/Wlink.v,1226|0): Shift by non-constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_crossbar.sv,150|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_crossbar.enum_rx_pending' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_crossbar.sv,151|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_crossbar.tc_axis_rx_tdata' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_crossbar.sv,270|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_crossbar.elect_tx_valid' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_crossbar.sv,270|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_crossbar.tc_axis_tx_tready' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_crossbar.sv,160|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_crossbar.agent_rx_pending' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_crossbar.sv,161|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_crossbar.tc_axis_rx_tdata' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_election_fsm.sv,177|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_election.claim_rx_data' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_election_fsm.sv,176|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_election.claim_rx_valid' is potentially outside of the defined range.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_election_fsm.sv,141|0): Shift by non-constant.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,566|0): Shift by non-constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1503|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.link_active' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1503|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_uplink_arr' is potentially outside of the defined range.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,820|0): Shift by non-constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,942|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_parent_id' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,942|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_hop_count_arr' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,875|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_parent_id' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1177|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_parent_id' is potentially outside of the defined range.
+halstruct: *W,SHFTNC (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1177|0): Shift by non-constant.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1416|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_hop_count_arr' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1505|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_egress' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1451|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_egress' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_enum_fsm.sv,1452|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_enum.root_hop_count_arr' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,108|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.route_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,109|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.hop_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,110|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.secure_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,111|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.valid_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,114|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.hop_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,117|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.route_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,118|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.hop_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,119|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.valid_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,123|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.route_table' is potentially outside of the defined range.
+halstruct: *W,POOBID (${CHIPLET_HOME}/tidechart/src/rtl/tidechart_route_table.sv,124|0): Variable index/range selection of 'nanosoc_eth_chiplet.u_tidechart.u_tidechart_controller.u_route_table.valid_table' is potentially outside of the defined range.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'sys_poresetn' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'sys_hclk' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'sys_hresetn' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'eth_ss_0_hrdata' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Combinatorial path crossing multiple units drives 'eth_ss_0_hrdata'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515): in instance 'nanosoc_eth_chiplet', output 'eth_ss_0_hrdata' of instance 'u_soc' drives 'eth_ss_0_hrdata'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv,859): in instance 'nanosoc_eth_chiplet.u_soc', output 'eth_ss_1_hrdata' of instance 'u_network_core' drives 'eth_ss_0_hrdata'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/ethernet_ss_ahb_rmii.sv,779): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core', output 'eth_ss_1_hrdata' of instance 'u_interconnect' drives 'eth_ss_1_hrdata'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_interconnect.sv,248): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect', output 'HRDATA_ETH_SS_1' of instance 'u_busmatrix' drives 'eth_ss_1_hrdata'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect_lite.v,821): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix', output 'HRDATA_ETH_SS_1' of instance 'ueth_ss_ahb_interconnect' drives 'HRDATA_ETH_SS_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1494): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', output 'HRDATAS' of instance 'u_eth_ss_matrix_decode_eth_ss_1' drives 'HRDATA_ETH_SS_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_matrix_decode_ETH_SS_1.v,681): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect.u_eth_ss_matrix_decode_eth_ss_1', combinatorial function of input 'rdata_dec1' drives 'HRDATAS'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1494): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', input 'HRDATA_IMEM_0' drives input 'rdata_dec1' of instance 'u_eth_ss_matrix_decode_eth_ss_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect_lite.v,821): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix', input 'HRDATA_IMEM_0' drives input 'HRDATA_IMEM_0' of instance 'ueth_ss_ahb_interconnect'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_interconnect.sv,248): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect', input 'imem_0_hrdata' drives input 'HRDATA_IMEM_0' of instance 'u_busmatrix'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/ethernet_ss_ahb_rmii.sv,779): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core', 'i_imem_0_hrdata' drives input 'imem_0_hrdata' of instance 'u_interconnect'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/ethernet_ss_ahb_rmii.sv,668): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core', output 'HRDATA' of instance 'u_region_imem_0' drives 'i_imem_0_hrdata'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/src/regions/imem/nanosoc_region_imem.v,69): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_region_imem_0', output 'HRDATA' of instance 'u_mem' drives 'HRDATA'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/ethernet-subsystem-ahb/src/rtl/fpga_lib/sram/sl_ahb_sram.v,46): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_region_imem_0.u_mem', output 'HRDATA[7:0]' of instance 'u_ahb_to_sram' drives 'HRDATA'.
+halstruct: (${ARM_IP_LIBRARY_PATH}/BP210/BP210-BU-00000-r1p1-00rel0/logical/cmsdk_ahb_to_sram/verilog/cmsdk_ahb_to_sram.v,179): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_region_imem_0.u_mem.u_ahb_to_sram', combinatorial function drives 'HRDATA[7:0]'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'eth_ss_0_hready' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Combinatorial path crossing multiple units drives 'eth_ss_0_hready'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515): in instance 'nanosoc_eth_chiplet', output 'eth_ss_0_hready' of instance 'u_soc' drives 'eth_ss_0_hready'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv,859): in instance 'nanosoc_eth_chiplet.u_soc', output 'eth_ss_1_hready' of instance 'u_network_core' drives 'eth_ss_0_hready'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/ethernet_ss_ahb_rmii.sv,779): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core', output 'eth_ss_1_hready' of instance 'u_interconnect' drives 'eth_ss_1_hready'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_interconnect.sv,248): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect', output 'HREADY_ETH_SS_1' of instance 'u_busmatrix' drives 'eth_ss_1_hready'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect_lite.v,821): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix', output 'HREADYOUT_ETH_SS_1' of instance 'ueth_ss_ahb_interconnect' drives 'HREADY_ETH_SS_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1197): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', output 'HREADYOUTS' of instance 'u_eth_ss_inititator_input_3' drives 'HREADYOUT_ETH_SS_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_inititator_input.v,370): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect.u_eth_ss_inititator_input_3', combinatorial function of input 'readyout_ip' drives 'HREADYOUTS'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1197): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', 'i_readyout3' drives input 'readyout_ip' of instance 'u_eth_ss_inititator_input_3'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1494): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', output 'HREADYOUTS' of instance 'u_eth_ss_matrix_decode_eth_ss_1' drives 'i_readyout3'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_matrix_decode_ETH_SS_1.v,618): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect.u_eth_ss_matrix_decode_eth_ss_1', combinatorial function drives 'HREADYOUTS'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'eth_ss_0_hresp' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Combinatorial path crossing multiple units drives 'eth_ss_0_hresp'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515): in instance 'nanosoc_eth_chiplet', output 'eth_ss_0_hresp' of instance 'u_soc' drives 'eth_ss_0_hresp'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv,859): in instance 'nanosoc_eth_chiplet.u_soc', output 'eth_ss_1_hresp' of instance 'u_network_core' drives 'eth_ss_0_hresp'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/ethernet_ss_ahb_rmii.sv,779): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core', output 'eth_ss_1_hresp' of instance 'u_interconnect' drives 'eth_ss_1_hresp'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_interconnect.sv,248): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect', output 'HRESP_ETH_SS_1' of instance 'u_busmatrix' drives 'eth_ss_1_hresp'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect_lite.v,807): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix', 'i_hresp_ETH_SS_1' drives 'HRESP_ETH_SS_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect_lite.v,821): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix', output 'HRESP_ETH_SS_1' of instance 'ueth_ss_ahb_interconnect' drives 'i_hresp_ETH_SS_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1197): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', output 'HRESPS' of instance 'u_eth_ss_inititator_input_3' drives 'HRESP_ETH_SS_1'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_inititator_input.v,371): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect.u_eth_ss_inititator_input_3', combinatorial function of input 'resp_ip' drives 'HRESPS'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1197): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', 'i_resp3' drives input 'resp_ip' of instance 'u_eth_ss_inititator_input_3'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect.v,1494): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect', output 'HRESPS' of instance 'u_eth_ss_matrix_decode_eth_ss_1' drives 'i_resp3'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/eth_ss_ahb_interconnect/eth_ss_ahb_interconnect/eth_ss_matrix_decode_ETH_SS_1.v,650): in instance 'nanosoc_eth_chiplet.u_soc.u_network_core.u_interconnect.u_busmatrix.ueth_ss_ahb_interconnect.u_eth_ss_matrix_decode_eth_ss_1', combinatorial function drives 'HRESPS'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'network_core_txev' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'network_core_lockup' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'chip_core_txev' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'chip_core_lockup' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'dap_swdo' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'dap_swdoen' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'chip_core_wdog_reset' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'rtc_time_ptp_ns' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'eth_irq' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'phc_pps_irq' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'phc_alarm_irq' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'qspi_sclk' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Combinatorial path crossing multiple units drives 'qspi_sclk'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515): in instance 'nanosoc_eth_chiplet', output 'qspi_sclk' of instance 'u_soc' drives 'qspi_sclk'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv,1092): in instance 'nanosoc_eth_chiplet.u_soc', output 'QSPI_SCLK' of instance 'u_qspi_flash_0' drives 'qspi_sclk'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/src/rtl/wrappers/qspi_flash_ahb.v,105): in instance 'nanosoc_eth_chiplet.u_soc.u_qspi_flash_0', output 'QSPI_SCLK' of instance 'u_top_ahb_qspi' drives 'QSPI_SCLK'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/ahb_qspi/logical/top_ahb_qspi/logical/top_ahb_qspi.v,451): in instance 'nanosoc_eth_chiplet.u_soc.u_qspi_flash_0.u_top_ahb_qspi', output 'QSPI_SCLK' of instance 'u_qspi_controller' drives 'QSPI_SCLK'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/ahb_qspi/logical/qspi_controller/logical/qspi_controller.sv,44): in instance 'nanosoc_eth_chiplet.u_soc.u_qspi_flash_0.u_top_ahb_qspi.u_qspi_controller', combinatorial function of input 'QSPI_SCLK_i' drives 'QSPI_SCLK'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/ahb_qspi/logical/top_ahb_qspi/logical/top_ahb_qspi.v,451): in instance 'nanosoc_eth_chiplet.u_soc.u_qspi_flash_0.u_top_ahb_qspi', 'QSPI_SCLK_i' drives input 'QSPI_SCLK_i' of instance 'u_qspi_controller'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/ahb_qspi/logical/top_ahb_qspi/logical/top_ahb_qspi.v,443): in instance 'nanosoc_eth_chiplet.u_soc.u_qspi_flash_0.u_top_ahb_qspi', output 'QSPI_SCLK_i' of instance 'u_qspi_clock_div' drives 'QSPI_SCLK_i'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/ahb_qspi/logical/qspi_controller/logical/qspi_clock_div.v,10): in instance 'nanosoc_eth_chiplet.u_soc.u_qspi_flash_0.u_top_ahb_qspi.u_qspi_clock_div', combinatorial function drives 'QSPI_SCLK_i'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'qspi_csn' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'qspi_io_e' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'spi_ss' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Combinatorial path crossing multiple units drives 'spi_ss'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515): in instance 'nanosoc_eth_chiplet', output 'spi_ss' of instance 'u_soc' drives 'spi_ss'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv,1278): in instance 'nanosoc_eth_chiplet.u_soc', output 'spi_ss_o' of instance 'u_cc_periph_0' drives 'spi_ss'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/src/rtl/wrappers/cc_periph_subsystem.v,201): in instance 'nanosoc_eth_chiplet.u_soc.u_cc_periph_0', output 'spi_ss_o[0]' of instance 'u_spi_pl022' drives 'spi_ss_o'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/src/rtl/wrappers/nanosoc_spi_pl022.v,213): in instance 'nanosoc_eth_chiplet.u_soc.u_cc_periph_0.u_spi_pl022', combinatorial function of 'frame_active' drives 'spi_ss_o[0]'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/src/rtl/wrappers/nanosoc_spi_pl022.v,197): in instance 'nanosoc_eth_chiplet.u_soc.u_cc_periph_0.u_spi_pl022', combinatorial function of 'ssp_fssout' drives 'frame_active'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/src/rtl/wrappers/nanosoc_spi_pl022.v,97): in instance 'nanosoc_eth_chiplet.u_soc.u_cc_periph_0.u_spi_pl022', output 'SSPFSSOUT' of instance 'u_ssp' drives 'ssp_fssout'.
+halstruct: (${ARM_IP_LIBRARY_PATH}/PL022/PL022-BU-00000-r1p4-00rel0/ssp_pl022/verilog/rtl_source/Ssp.v,558): in instance 'nanosoc_eth_chiplet.u_soc.u_cc_periph_0.u_spi_pl022.u_ssp', 'IntSSPFSSOUT' drives 'SSPFSSOUT'.
+halstruct: (${ARM_IP_LIBRARY_PATH}/PL022/PL022-BU-00000-r1p4-00rel0/ssp_pl022/verilog/rtl_source/Ssp.v,750): in instance 'nanosoc_eth_chiplet.u_soc.u_cc_periph_0.u_spi_pl022.u_ssp', output 'IntSSPFSSOUT' of instance 'uSspTest' drives 'IntSSPFSSOUT'.
+halstruct: (${ARM_IP_LIBRARY_PATH}/PL022/PL022-BU-00000-r1p4-00rel0/ssp_pl022/verilog/rtl_source/SspTest.v,335): in instance 'nanosoc_eth_chiplet.u_soc.u_cc_periph_0.u_spi_pl022.u_ssp.uSspTest', combinatorial function drives 'IntSSPFSSOUT'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'hostio4_p1_out' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Combinatorial path crossing multiple units drives 'hostio4_p1_out'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515): in instance 'nanosoc_eth_chiplet', output 'hostio4_p1_out' of instance 'u_soc' drives 'hostio4_p1_out'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv,1590): in instance 'nanosoc_eth_chiplet.u_soc', output 'P1_OUT[3]' of instance 'u_hostio4_0' drives 'hostio4_p1_out'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/src/subsystems/hostio4/nanosoc_ss_hostio4.v,206): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0', combinatorial function of 'iodata4_o' drives 'P1_OUT[3]'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/src/subsystems/hostio4/nanosoc_ss_hostio4.v,147): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0', output 'iodata4_o' of instance 'u_hostio4_controller' drives 'iodata4_o'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/hostio4/soc_rtl/hostio4_controller.v,123): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0.u_hostio4_controller', output 'iodata4_o' of instance 'u_hostio4_controller_fsm' drives 'iodata4_o'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/hostio4/soc_rtl/hostio4_controller_fsm.v,219): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0.u_hostio4_controller.u_hostio4_controller_fsm', combinatorial function drives 'iodata4_o'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Output 'hostio4_p1_outen' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515|0): Combinatorial path crossing multiple units drives 'hostio4_p1_outen'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,515): in instance 'nanosoc_eth_chiplet', output 'hostio4_p1_outen' of instance 'u_soc' drives 'hostio4_p1_outen'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/build_soc/rtl/nanosoc_multicore_soc.sv,1590): in instance 'nanosoc_eth_chiplet.u_soc', output 'P1_OUTEN[3]' of instance 'u_hostio4_0' drives 'hostio4_p1_outen'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/src/subsystems/hostio4/nanosoc_ss_hostio4.v,207): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0', combinatorial function of 'iodata4_e' drives 'P1_OUTEN[3]'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/src/subsystems/hostio4/nanosoc_ss_hostio4.v,147): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0', output 'iodata4_e' of instance 'u_hostio4_controller' drives 'iodata4_e'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/hostio4/soc_rtl/hostio4_controller.v,123): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0.u_hostio4_controller', output 'iodata4_e[0]' of instance 'u_hostio4_controller_fsm' drives 'iodata4_e'.
+halstruct: (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/rtl/hostio4/soc_rtl/hostio4_controller_fsm.v,225): in instance 'nanosoc_eth_chiplet.u_soc.u_hostio4_0.u_hostio4_controller.u_hostio4_controller_fsm', combinatorial function drives 'iodata4_e[0]'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Output 'pad_clk_tx' of top-level module is not a register.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Combinatorial path crossing multiple units drives 'pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760): in instance 'nanosoc_eth_chiplet', output 'pad_clk_tx' of instance 'u_tidelink' drives 'pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/tidelink_top.sv,2814): in instance 'nanosoc_eth_chiplet.u_tidelink', output 'pad_clk_tx' of instance 'u_chiplet_controller' drives 'pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/axi_chiplet_controller.sv,6521): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller', output 'pad_clk_tx' of instance 'u_wlink' drives 'pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/Wlink.v,2101): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink', 'phy_pad_clk_tx' drives 'pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/Wlink.v,1389): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink', output 'pad_clk_tx' of instance 'phy' drives 'phy_pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGPIOPHY_v2.v,334): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy', 'gpio_io_pad_clk_tx' drives 'pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WlinkGPIOPHY_v2.v,248): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy', output 'io_pad_clk_tx' of instance 'gpio' drives 'gpio_io_pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpio_v2.v,1966): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio', 'gpiotx_0_io_pad_clk' drives 'io_pad_clk_tx'.
+halstruct: (${CHIPLET_HOME}/tidelink/src/rtl/local_overrides/WavD2DGpio_v2.v,1553): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio', output 'io_pad_clk' of instance 'gpiotx_0' drives 'gpiotx_0_io_pad_clk'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/tidelink-phy/rtl/wav/WavD2DGpioTx.v,503): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0', 'hs_clk_gated_wcg_io_clk_out' drives 'io_pad_clk'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/tidelink-phy/rtl/wav/WavD2DGpioTx.v,438): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0', output 'io_clk_out' of instance 'hs_clk_gated_wcg' drives 'hs_clk_gated_wcg_io_clk_out'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavClockGate.v,29): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg', 'io_clk_out_wand_io_o_z' drives 'io_clk_out'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavClockGate.v,24): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg', output 'io_o_z' of instance 'io_clk_out_wand' drives 'io_clk_out_wand_io_o_z'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavAnd.v,6): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg.io_clk_out_wand', combinatorial function of input 'io_i_a' drives 'io_o_z'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavClockGate.v,24): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg', 'io_clk_out_wand_io_i_a' drives input 'io_i_a' of instance 'io_clk_out_wand'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavClockGate.v,33): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg', 'latch_o_q' drives 'io_clk_out_wand_io_i_a'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavClockGate.v,19): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg', output 'o_q' of instance 'latch' drives 'latch_o_q'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/wav_latch_model.sv,8): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg.latch', combinatorial function of input 'i_d' drives 'o_q'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavClockGate.v,19): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg', 'latch_i_d' drives input 'i_d' of instance 'latch'.
+halstruct: (${CHIPLET_HOME}/tidelink/deps/axi-chiplet-controller/logical/wlink/WavClockGate.v,32): in instance 'nanosoc_eth_chiplet.u_tidelink.u_chiplet_controller.u_wlink.phy.gpio.gpiotx_0.hs_clk_gated_wcg', combinatorial function drives 'latch_i_d'.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Output 'i2c_scl_o' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Output 'i2c_scl_t' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Output 'i2c_sda_o' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Output 'i2c_sda_t' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Output 'scan_out' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,760|0): Output 'role_is_master_o' of top-level module is not a register.
+halstruct: *W,TPOUNR (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,497|0): Output 'tidechart_irq_o' of top-level module is not a register.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.sys_testmode' and top-level output 'nanosoc_eth_chiplet.sys_poresetn'.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.sys_fclk' and top-level output 'nanosoc_eth_chiplet.sys_hclk'.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.sys_testmode' and top-level output 'nanosoc_eth_chiplet.sys_hresetn'.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.sys_fclk' and top-level output 'nanosoc_eth_chiplet.qspi_sclk'.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.scan_mode' and top-level output 'nanosoc_eth_chiplet.pad_clk_tx'.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.scan_clk' and top-level output 'nanosoc_eth_chiplet.pad_clk_tx'.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.user_ref_clk' and top-level output 'nanosoc_eth_chiplet.pad_clk_tx'.
+halstruct: *W,IOCOMB (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,39|0): Combinational path detected between top-level input 'nanosoc_eth_chiplet.role_strap_i' and top-level output 'nanosoc_eth_chiplet.role_is_master_o'.
+halstruct: *W,DALIAS (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,1027|0): Aliased constructs found. Wires 'd2d_irq[14]' and 'tidechart_irq_o' have same drivers.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,497): tidechart_irq_o.
+halstruct: *N,FFASRT (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,318|0): Flip-flop 'peer_wr_r' has an asynchronous reset 'sys_hresetn'.
+halstruct: *W,OLDALW (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,311|0): Old coding style for always block is found in module 'nanosoc_eth_chiplet', use 'always_ff' instead.
+halstruct: *W,RSTINP (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,318|0): In module 'nanosoc_eth_chiplet', reset signal 'sys_hresetn', for flip-flop 'peer_wr_r', is not an input.
+halstruct: *W,RSTGNH (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,318|0): The generation logic for reset 'nanosoc_eth_chiplet.sys_hresetn' is not at the same or a higher hierarchical level as the module/design-unit to which the reset applies.
+halstruct: *W,DIFCLK (${CHIPLET_HOME}/nanosoc-multicore-system/nanosoc_arch_tech/nanosoc_gen/rtl/soc_glue/soc_glue_passthrough.sv,15|0): Clock 'in' is being renamed to 'out'.
+halstruct: *N,CLKINF (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,56|0): Signal 'nanosoc_eth_chiplet.sys_fclk' was inferred as clock.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,56): Clock source is signal 'nanosoc_eth_chiplet.sys_fclk'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,318): Drives the flip-flop 'nanosoc_eth_chiplet.peer_wr_r'.
+halstruct: *E,CBPAHI (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,318|0): Combinatorial path crossing multiple units drives 'nanosoc_eth_chiplet.peer_wr_r'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,318): in instance 'nanosoc_eth_chiplet', combinatorial function of 'hsel_peer' drives 'peer_wr_r'.
+halstruct: (${CHIPLET_HOME}/src/rtl/nanosoc_eth_chiplet.sv,652): in instance 'nanosoc_eth_chiplet', output 'hsel_peer' of instance 'u_d2d_decode' drives 'hsel_peer'.
+  BLDSTP (1)      METAEQ (2)      MUSOMR (4)      OUTRNG (8)     
+  RTLINI (153)    SIZMIS (10)     TERMST (3)      UNRCHS (8)     
+  VERCAS (3)     
+  BADFSM (4)      BADSYS (384)    BBXSIG (4)      BITUNS (2475)  
+  BITUSD (53)     BLKSQB (190)    BOUINC (151)    BSINTT (2)     
+  CASEZU (2)      CDEFCV (234)    CDWARN (2633)   CEXPOR (1)     
+  CLKFST (326)    CNSTLT (12)     CONSBS (43)     CONSTC (164)   
+  CSTBWD (3)      CSTEXP (2)      CSTLOA (2)      CTLCHR (2095)  
+  CUVMPW (10)     CUVWSI (1)      CUVWSP (11)     DBCASX (10)    
+  DCLSCP (11)     DIFFMN (9)      DIRRNG (2)      DLNBLK (1003)  
+  DNGLEL (14)     DNSTIF (11)     DSEMEL (1)      DUPBWO (1)     
+  EMPBLK (66)     EMPSTM (206)    ENUMAW (13)     EXPIPC (71)    
+  EXTFSM (3)      EXTSEQ (1)      FTNEXT (2)      FUSEGV (2)     
+  HASUPC (5)      IFDDEF (48)     IFSMCD (40)     IGNDLY (966)   
+  IMPDTC (90)     IMPNET (34)     IMPTYP (67)     INDXOP (17)    
+  INIMEM (4)      INTTOB (20)     IPRTEX (390)    IPSFOU (8)     
+  IPUFSE (10)     KEYWOD (13)     LCVARN (10731)  LEXPGM (5)     
+  LOGAND (1020)   LOGNEG (745)    LOGORP (340)    LOOPTM (2)     
+  LRGOPR (1185)   MAXLEN (14462)  MAXWRN (1)      MEMSIZ (4)     
+  MICAWS (26)     MPCMPE (172)    MULNBA (3)      MULOPR (28)    
+  MULTMF (3)      MULTMS (1)      MXUANS (39)     NAUTOF (25)    
+  NBCOMB (1)      NBGEND (3954)   NCASEX (1)      NEQPRM (1)     
+  NOBLKN (1624)   NODEFD (629)    NOLOCL (2)      NOUNDF (488)   
+  NSCOLL (1)      NSTIFD (47)     NUMSUF (6211)   OBMEMI (5)     
+  ONPNSG (251)    OPLVNC (1)      OPRCAT (5)      OPRNUM (1)     
+  PADMSB (146)    POIASG (506)    PRMBSE (298)    PRMEXP (8)     
+  PRMFSM (1)      PRMNAM (49)     PRMSZM (1)      PRMVAL (781)   
+  RDBFAS (636)    RDOPND (35)     REDOPR (38)     REVROP (770)   
+  RPTVAR (13)     SEPLIN (901)    SGNUSG (1)      SHFTOF (14)    
+  SIGLEN (394)    SLVUSE (2)      SPDUSD (9)      STYVAL (15823) 
+  SYNTXZ (27)     TDOPKG (34)     TFARGT (1)      TPRUSD (36)    
+  TRNMBT (11)     TROPCC (7)      TROPCZ (1)      TRUNCZ (97)    
+  TSETGV (13)     UASREG (34)     UCCONN (388)    UEASPD (18)    
+  UEASTR (102)    UELCIT (24)     UELOPR (227)    ULCMPE (25)    
+  ULRELE (49)     UNCONN (206)    UNMGEN (7)      URAREG (5)     
+  URAWIR (40)     URDREG (102)    URDWIR (681)    USEFTN (35)    
+  USEMAC (21)     USEPAR (189)    USEPRT (2246)   VARUAW (130)   
+  VERREP (3)      VLGMEM (6)     
+  ALOWID (979)    AUTOBX (1)      CDNOTE (294)    DECLIN (29)    
+  DUPMCR (17)     FSMIDN (63)     IDLENG (2341)   PRTCNT (527)   
+hal: *E,BLDSTP: Further processing stopped because of synthesizability errors.
+Analysis failed.
