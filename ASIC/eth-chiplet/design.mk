@@ -250,7 +250,7 @@ OVERRIDES_DIR ?= $(ETH_CHIPLET_ASIC_DIR)/overrides
 # No scan chain is bonded on this tapeout. TEST and SE are strapped and excluded
 # by set_case_analysis in the live constraints, which is the right instrument -
 # turning DFT off does not stop the timer walking the scan mux inside every SDF*
-# flop. Source: ../genus-innovus/scripts/config.tcl:136  `set DFT 0`
+# flop. Source: ../genus-innovus/scripts/config.tcl:166  `set DFT 0`
 DFT_SETUP_TCL ?=
 
 
@@ -423,12 +423,32 @@ DRC_DENSITY_BUDGET ?= 0
 
 # The project's own runners, so `make drc` / `make lvs` here dispatch to the
 # flows that have actually been run rather than to the toolkit's untried ones.
-# NOTE, and it is a real gap: the toolkit's `drc-project` recipe passes only
-# DRC_GDS / DRC_RUNDIR / DRC_CPUS / DRC_DECK / BLOCK, while this project's
-# run_drc.sh also needs FOUNDRY_DECK and the four DIE_* values to assemble its
-# spliced deck. Until that is reconciled, use `make -C ASIC/genus-innovus drc`.
 DRC_SCRIPT ?= $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh
 LVS_SCRIPT ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/lvs-flow/run_lvs.sh
+
+# ── WHY DRC_DECK IS DELIBERATELY EMPTY ──────────────────────────────────────
+# [2026-08-17] This is what reconciles the toolkit's drc-project recipe with
+# this project's run_drc.sh. The recipe passes exactly five things -- DRC_GDS,
+# DRC_RUNDIR, DRC_CPUS, DRC_DECK, BLOCK -- and run_drc.sh branches on DRC_DECK:
+#
+#   DRC_DECK non-empty -> run THAT deck verbatim  (the wrapper/A-B path)
+#   DRC_DECK empty     -> ASSEMBLE the project deck via make_project_deck.sh
+#                         (derived header + verbatim foundry body: the SIGNOFF
+#                         path, and the only form that can clear
+#                         WLCSP_SEALRING and set the real xLB/yLB/xRT/yRT)
+#
+# mk/flow.mk defaults DRC_DECK to $(ASIC_DIR)/calibre/$(BLOCK).drc.rules, which
+# on THIS project does not exist -- there is no ASIC/eth-chiplet/calibre/ at
+# all, the decks live beside their assembler in ../genus-innovus/scripts/calibre.
+# The result was `make drc` dying with "DRC_DECK unreadable" before Calibre ever
+# started. Emptying it here selects the assembling branch instead.
+#
+# `:=` AND IT MUST BE ABOVE THE include BELOW. flow.mk uses `?=`, which tests
+# whether a variable is DEFINED, not whether it is non-empty -- so an empty
+# definition made first wins, and one made afterwards would be silently
+# discarded. Setting it to a real deck path (command line or here) still gets
+# the verbatim path, unchanged.
+DRC_DECK :=
 
 
 # ── 10. THE ENGINE ──────────────────────────────────────────────────────────
@@ -444,6 +464,30 @@ include $(ASIC_FLOW_DIR)/mk/flow.mk
 # contract variable - a `?=` after the engine would be discarded, and a `:=`
 # would be worse.
 #-----------------------------------------------------------------------------
+
+# ── THE FIVE VALUES make_project_deck.sh REQUIRES FROM THE ENVIRONMENT ──────
+# [2026-08-17] The other half of the DRC_DECK note above. Having selected the
+# assembling branch, run_drc.sh execs make_project_deck.sh, which takes BLOCK,
+# DIE_XLB/YLB/XRT/YRT and FOUNDRY_DECK from the ENVIRONMENT and has no default
+# for any of them on purpose (a default would be a second, uncross-checked copy
+# of the design's identity). The toolkit's drc-project recipe passes BLOCK and
+# nothing else, so the remaining five are exported here.
+#
+# These are RENAMES, not new facts: every value is the toolkit's own, computed
+# in mk/drc.mk. DIE_* come from $(DRC_DIE_*), which mk/drc.mk derives by
+# reading `create_floorplan ... -die_size` straight out of $(FLOORPLAN_TCL) --
+# identical derivation, identical source file, as ../genus-innovus/drc_project.mk.
+# So the die box the deck checks still cannot drift from the die P&R built.
+#
+# BELOW THE include, AND THAT IS LOAD-BEARING: mk/drc.mk is included by
+# mk/flow.mk LAST, so DRC_DIE_* and DRC_FOUNDRY_DECK do not exist until the line
+# above has run. `export NAME = value` is recursively expanded and evaluated
+# when a recipe runs, so this places no ordering demand of its own.
+export DIE_XLB      = $(DRC_DIE_XLB)
+export DIE_YLB      = $(DRC_DIE_YLB)
+export DIE_XRT      = $(DRC_DIE_XRT)
+export DIE_YRT      = $(DRC_DIE_YRT)
+export FOUNDRY_DECK = $(DRC_FOUNDRY_DECK)
 
 # ── THIS RUN'S BOOT ROM DIRECTORY ──────────────────────────────────────────
 # The macros are compiled per run into $(RUN_DIR)/romlibs and the run is pinned
@@ -469,12 +513,57 @@ export ROMLIBS_DIR  = $(ROM_RUN_DIR)
 
 .PHONY: legacy-paths asic-flist romlibs-check rom-ensure cpf-patch
 
-# STAGES RUN IN ORDER, ALWAYS. `all: syn place cts route` has no ordering
-# barrier, so `make -j all` is free to start place while syn is still elaborating
-# - and `place` depends on `cpf-patch`, which reads a file `syn` has not written
-# yet. The stages share one database and cannot be parallel anyway, so there is
-# nothing to lose.
-.NOTPARALLEL:
+# ── WHERE THE `.NOTPARALLEL` WENT (removed 2026-08-17) ──────────────────────
+#
+# There was a bare `.NOTPARALLEL:` here, and it was correct when it was written.
+# The toolkit's `all` was `all: syn place cts route` -- four prerequisites and NO
+# ordering between them. Serial make happens to run a prerequisite list left to
+# right, so it looked right until somebody passed -j; under `make -j all` make
+# was free to start `place` while `syn` was still elaborating, and `place`
+# depends on `cpf-patch` below, which reads a CPF that `syn` has not written yet.
+# A bare `.NOTPARALLEL` was the only fix available: the SCOPED form that names
+# its targets is GNU Make 4.4, and the sites this flow runs on are 4.2.1, where
+# the directive takes no arguments and serialises THE ENTIRE MAKEFILE.
+#
+# STAGE ORDERING IS NOW THE TOOLKIT'S JOB, AND IT IS STRUCTURAL RATHER THAN
+# DECLARED. `all` in ../asic-toolkit/mk/flow.mk is no longer a prerequisite list
+# at all; it is a RECIPE of four sequential sub-makes:
+#
+#     all:
+#             @$(MAKE) syn
+#             @$(MAKE) place
+#             @$(MAKE) cts
+#             @$(MAKE) route
+#
+# Recipe lines run in sequence by definition, in every make, at every -j -- so
+# the ordering no longer depends on a directive this project has to remember to
+# set, and every unrelated target here keeps its parallelism. See the commentary
+# above that target (flow.mk, `## THE ORDER IS IN THE RECIPE`) for the full
+# argument. The resume model is unaffected: `make cts IN_RUN_TAG=...` still runs
+# cts alone, because no stage was ever a prerequisite of another.
+#
+# WHAT THE BARE DIRECTIVE WAS ALSO COVERING, INCIDENTALLY. Serialising the whole
+# makefile also serialised the prerequisites WITHIN one stage, and `syn` carries
+# two that overlap: `rom-ensure` and `romlibs-check` (both below) can each reach
+# `rom-run`, writing the same $(ROM_RUN_DIR) and the same .rom_pin.json. They are
+# unordered siblings, so on a COLD run -- no staged ROMs -- `make -j syn` can
+# start both. Ordered, they are merely redundant; concurrent, they are a
+# write-write race. `make all` is ordered by construction, so this was written up
+# as a hazard for whoever first adds -j rather than a live defect.
+#
+# THE BARRIER IS NOW APPLIED (see `romlibs-check: | rom-ensure` beside the stage
+# prerequisites below) rather than left as a note, for two reasons. It costs
+# exactly nothing serially -- an order-only prerequisite adds no work and no
+# rebuild -- so there is no trade to weigh. And the condition the note deferred
+# to has effectively arrived: removing the bare directive is what makes `-j`
+# usable here at all, so the gap between "not a live defect" and "a live defect"
+# is now one person typing -j on a cold tree.
+#
+# What that race would cost is the reason it is not being left to that person:
+# the contended file is mask-programmed ROM content, and this project has already
+# taped out random data into one ROM once (docs, and scripts/ci/rom_gds_bits.py,
+# which exists because of it). A corrupted .rom_pin.json is not a failed build --
+# it is a build that succeeds carrying the wrong bits into a reticle.
 
 # ── THE LEGACY-PATH BRIDGE ──────────────────────────────────────────────────
 #
@@ -658,6 +747,12 @@ syn place cts route: legacy-paths pad-lef rom-ensure
 syn:   asic-flist romlibs-check
 place: cpf-patch
 
+# The order-only barrier argued for above. `|` makes rom-ensure a prerequisite
+# for ORDERING only: romlibs-check is not rebuilt when rom-ensure runs, so this
+# adds no work on any path, serial or parallel. It exists solely so that the two
+# routes to `rom-run` cannot both open $(ROM_RUN_DIR) under `make -j syn`.
+romlibs-check: | rom-ensure
+
 # ── CTS derate ──────────────────────────────────────────────────────────────
 # The toolkit defaults CTS_DERATE to 0 and warns when it is off. The production
 # flow applies all four derate arms UNCONDITIONALLY
@@ -694,11 +789,28 @@ export CTS_DERATE ?= 1
 #                 the chip has ONE core power domain (docs/tapeout/
 #                 11-known-issues.md (d)). It is not a defect to fix here, it is
 #                 a consequence of a single-domain design.
+#   TCLCMD-917    Added 2026-08-14. 71 instances, one class, all of the form
+#                 "Cannot find 'pins' that match 'uPAD_VDDIO_B_0/VDDPST'" from
+#                 _syn.sdc:789 -- a set_multicycle_path (-setup -end 2) applied
+#                 to pad SUPPLY pins (VDDPST / VSS). A supply pin is not a timing
+#                 pin, so the exception has no object to attach to and can never
+#                 apply; timing is unaffected either way. Recorded benign in
+#                 docs/tapeout/16-open-defects.md item 5. It stopped the
+#                 2026-08-14 full run at the post-place message census, after
+#                 placement itself had already succeeded.
 #
-# NEITHER is a licence or an environment artefact -- both are properties of this
-# design's collateral, and both would recur on every run forever. Anything NOT
-# on this list still fails the stage, which is the point.
-export PLACE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
+#                 THIS ONE IS TRACKED DEBT, NOT A PERMANENT STATE. The exemption
+#                 tolerates a symptom; the defect is upstream, in whichever input
+#                 constraint emits timing exceptions against supply pins. Fixing
+#                 it there removes all 71 rather than excusing them, and reclaims
+#                 the message budget doc 16 item 5 notes these consume -- the
+#                 budget that would otherwise report a genuine failure. Remove
+#                 this line when the constraints stop naming supply pins.
+#
+# The first two are neither a licence nor an environment artefact -- both are
+# properties of this design's collateral, and both would recur on every run
+# forever. Anything NOT on this list still fails the stage, which is the point.
+export PLACE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501 TCLCMD-917
 # CTS adds six more, and every one is a state this design chose:
 #   CHKCTS-18/19/20  buffer / inverter / clock-gating cells "not specified".
 #                    PERMANENT and INTENDED: config/design_config.tcl withdraws
@@ -722,3 +834,191 @@ export CTS_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501 \
                                 CHKCTS-18 CHKCTS-19 CHKCTS-20 \
                                 CHKCTS-1 CHKCTS-2 CHKCTS-9
 export ROUTE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
+
+
+# ── 11. THE COUNTS THIS DIE IS, AND THE RATCHETS THAT HOLD THEM ─────────────
+#
+# Everything below is DESIGN DATA, not toolkit policy: a pin map's pad counts and
+# a power plan's measured geometry. The toolkit defaults every one of these to
+# "do not gate", and that default is why the numbers below were never checked.
+#
+# ── 11a. THE PAD RING ───────────────────────────────────────────────────────
+#
+# READ THIS BEFORE CHANGING A NUMBER HERE.
+#
+# `read_io_file` handed an IO file naming instances the netlist does not contain
+# DOES NOT FAIL. It emits `**WARN: (IMPFP-53): Failed to find instance
+# 'uPAD_VDDIO_T_0'` once per instance, places the rest, and returns. On this
+# design that was 34 warnings - EVERY SUPPLY PAD ON THE DIE - and the resulting
+# database went through place, CTS, route and stream with every gate green, three
+# builds running. The counts are still in the logs:
+#
+#     build/default/work/innovus.log        34 x IMPFP-53
+#     build/m5off5, build/m5off6            34 x IMPFP-53
+#     build/full-20260814                    0
+#
+# and the run with the pads got a WORSE score than the runs without them, because
+# the only gate that could see the difference - unrouted PG nets - was an upper
+# bound and losing the pads made the count go DOWN (2 with pads, 0 without).
+#
+# Counted from scripts/nanosoc_eth_chiplet_pads.io, which is the file
+# read_io_file reads: 12 VDDIO, 12 VSSIO, 6 VDD, 4 VSS = 34 supply pads, in a
+# ring of 86 instances (82 IO + 4 corners).
+export PLACE_EXPECT_PADS      ?= VDDIO=12 VSSIO=12 VDD=6 VSS=4
+export PLACE_EXPECT_PAD_INSTS ?= 86
+
+# MIND THE SEPARATOR - measured, not theorised. Against this design's 86 pad
+# names:
+#     uPAD_%RAIL%_*   VDD -> 6    VSS -> 4     correct
+#     uPAD_%RAIL%*    VDD -> 18   VSS -> 16    VDDIO and VSSIO swallowed
+# The second spelling double-counts, agrees with the expected TOTAL, and
+# describes a different set of pads. The engine now refuses a pattern whose rails
+# overlap rather than trusting either. Left at the toolkit default deliberately -
+# this line is here to name the trap, not to change the value.
+# export PLACE_PAD_PATTERN ?= uPAD_%RAIL%_*
+
+# ── 11b. THE PG RATCHETS, FROM MEASURED VALUES ──────────────────────────────
+#
+# BOTH OF THESE DEFAULT TO -1 IN THE TOOLKIT, WHICH MEANS DO NOT GATE, and both
+# have defaulted to -1 for the whole life of this project. They are ratchets and
+# nobody ratcheted them.
+#
+# THE MEASUREMENT SET IS PAD-CORRECT RUNS ONLY. Five other runs in build/ report
+# these same quantities and are excluded, because three of them are the 34-x-
+# IMPFP-53 runs above - a die with no supply pads has a different power grid, and
+# pooling its geometry with a correct one is the mistake the new provenance block
+# exists to stop - and one (build/macro-move) aborted before its power plan.
+#
+#   rv_vias_to_AP   7 on all ten pad-correct runs: the eight
+#                   runs/20260814T072716Z_lef-patch-replacement arms, the
+#                   20260811T121335Z fill-verify run, and build/full-20260814.
+#                   FLOOR 6, one below the measured value. The failure mode of
+#                   this number is collapse toward zero (this project's own
+#                   record is 14 -> 9 -> 7 across power-plan configurations), so
+#                   a floor AT 7 would fire on a legal one-via change while a
+#                   floor of 6 still fires on any real loss. There is no IR-drop
+#                   analysis in this flow; this count is the only thing standing
+#                   in for one.
+#   m5_fragments    3399 on the nine 08-14 pad-correct runs, 3376 on 08-11.
+#                   Max 3399, spread 23 (0.68%). CEILING 3570 = +5%, which is
+#                   seven times the spread between two pad-correct runs and twice
+#                   the spread across every run in the archive including the
+#                   pad-less ones (3362..3450, 2.6%). The documented failure -
+#                   the grid coming apart - is a third more fragments, so it is
+#                   caught with a factor of six in hand.
+#
+# WHAT THESE DO NOT SAY. A ratchet set from today's number can report a
+# REGRESSION and nothing else. It does not say 3399 fragments is an acceptable
+# number: it is roughly 2.3x the ceiling this grid was suggested to have, and the
+# structural cure named in power_plan.tcl - one M5 ladder over the whole core
+# instead of one per row region - is still not done. Do not read a green here as
+# a verdict on the grid.
+export PLACE_MIN_PG_VIAS  ?= 6
+export PLACE_MAX_PG_FRAGS ?= 3570
+
+# ── 11c. NETS WITH NO ROUTING AT ALL ────────────────────────────────────────
+#
+# MEASURED 2 on the pad-correct runs (build/full-20260814/reports/route_manifest
+# .txt, and runs/20260808T223829Z_stage1b-route), 0 on the runs whose supply pads
+# had been deleted. That inversion is the whole reason this knob is now an
+# EQUALITY in the toolkit rather than a ceiling: the broken database was the
+# quiet one, and a ceiling cannot see quiet.
+#
+# The two are supplies distributed by ABUTMENT through the pad-ring fillers.
+# check_connectivity gives up on a net with no routing at all, so nothing in this
+# flow verifies that bus is continuous - and that has always been true. What is
+# new is that a run which loses them now fails instead of passing.
+export ROUTE_EXPECT_UNROUTED ?= 2
+
+# ── 11d. PG STRIPES INSIDE MACRO FOOTPRINTS ─────────────────────────────────
+#
+# EXPECT THE FIRST RUN AFTER THIS LANDS TO FAIL HERE, AND READ THE REPORT RATHER
+# THAN RAISING THE KNOB. This is a new measurement of a state this design has
+# always been in, not a regression, and the count it prints is a defect list.
+#
+# The mechanism is written down in this project's own power_plan.tcl, above the
+# M5 pass:
+#
+#     `split_row -selected` above gives every macro its own row region, and
+#     add_stripes re-anchors PER REGION. So `-start_offset 8` does not mean
+#     "8um up from the core"; it means EVERY MACRO gets M5 straps buried
+#     8.0-9.0 and 9.5-10.5um INSIDE ITS OWN FOOTPRINT, repeating every 15um.
+#
+# and its consequence is written down twenty lines further on: two macros side by
+# side anchor two ladders that alias, and a 2.72 um macro move against 2.70 um of
+# clearance overshot by 20 NANOMETRES and produced four VDD-VSS rail shorts. Four
+# more macro pairs sit 0.41-0.45 um from the same window. Until 2026-08-17
+# NOTHING IN THIS FLOW ASKED WHETHER A STRIPE WAS INSIDE A MACRO AT ALL; the
+# shorts were found by check_drc, at the route stage, hours later, inside a
+# budgeted total that the same floorplan change had simultaneously reduced.
+#
+# THREE HONEST RESPONSES, in order of preference:
+#   1. the structural fix power_plan.tcl already names - one M5 ladder over the
+#      whole core instead of one per row region. It closes this AND the
+#      macro-blockage DRC class, and it is the only one that removes the hazard.
+#   2. ratchet PLACE_MAX_MACRO_STRIPES to the measured count, WITH the count and
+#      this defect named beside it. That buys a regression detector and nothing
+#      more; it does not make the grid safe.
+#   3. set PLACE_MACRO_PG_CHECK=0. Only with a written reason. It is the option
+#      that returns this design to the state it was in when the shorts arrived.
+#
+# Left at the toolkit default of 0 deliberately. Naming the knob here without
+# setting it is the point: `-1` and an unratcheted ceiling are how
+# PLACE_MIN_PG_VIAS and PLACE_MAX_PG_FRAGS above sat inert for the life of this
+# project.
+# export PLACE_MAX_MACRO_STRIPES ?= <measured count>   # see 1/2/3 above
+#
+# The NEAR-MISS arm stays ungated until it has been measured once on this design:
+# the clearances quoted above (0.41, 0.45 um) come from the aliasing arithmetic in
+# power_plan.tcl, not from this census, and a floor set from a number a different
+# instrument produced is not a ratchet. The census reports the value every run and
+# the manifest carries it, so a CHANGE is visible meanwhile.
+# export PLACE_MIN_MACRO_PG_GAP ?= <measured min, less a stated margin>
+
+# ── 11e. MISSING POWER VIAS, OVER THE WHOLE STACK ───────────────────────────
+#
+# Same shape, same instruction. The toolkit now asks check_power_vias about
+# routing_layer_bottom..top_metal_layer instead of the coarse stripe layer, and
+# PARSES the answer - the report has been written into reports/ for months and
+# read by no gate, no manifest line and no person.
+#
+# What the two ranges say about ONE database, four minutes apart
+# (runs/20260812T144334Z_route-baseline-gds-nonstrict vs build/full-20260814):
+#
+#     {coarse stripe .. top}      4 missing
+#     {bottom .. top-1}         556 missing - 452 of them in a single mid-stack
+#                               layer pair, 357 on one rail and 199 on the other
+#
+# The full-stack range has never been run to the TOP layer here, so the true
+# number is 556 plus whatever the last interface adds (4 in the run above). Do
+# not write a budget from arithmetic on those two: run it once, then ratchet with
+# the per-layer-pair split recorded beside it.
+# export ROUTE_BUDGET_PG_VIAS ?= <measured count>   # with pg_via_by_pair quoted
+
+# ── 11f. METAL DENSITY IS THE FOUNDRY'S ─────────────────────────────────────
+#
+# This die goes out as a mini@sic shuttle submission through eptsmc@imec.be, and
+# the broker fills the frame after it merges the standard-cell and IO layouts in.
+# Filling here first would hand over metal that is about to be filled again, so
+# ROUTE_METAL_FILL stays 0 and that is the CORRECT setting rather than a gap.
+#
+# What this line changes is not what the run does, but what the run is allowed
+# to conclude. Until the toolkit had METAL_FILL_OWNER, an unfilled design failed
+# the density check by construction and every failing window landed in the route
+# stage's HARD list. Measured on build/full-20260814: 13 hard failures, ALL of
+# them density, on an obligation already contracted out - and underneath them
+# eight signoff budgets that ARE ours (68 check_drc including 4 shorts, 65 PG
+# opens, 886 dangling PG wires, setup FEP 1429 at WNS -0.715, hold FEP 7). The
+# gate could not go green, and the 13 buried the 8.
+#
+# Setting the owner does NOT stop the measurement, does NOT waive anything, and
+# does NOT cover a density report that could not be parsed - that stays hard
+# under either owner, because "who inserts the metal" and "did anyone look" are
+# different questions. The count still reaches the manifest as density_windows,
+# alongside metal_fill_owner, and the verdict still lists it under DECLARED
+# ELSEWHERE. The console status line reads "OK, WITH n ITEM(S) DECLARED
+# ELSEWHERE" rather than OK, deliberately.
+#
+# THE HANDOFF IS THE THING THIS DEPENDS ON, and nothing in this flow re-checks
+# it. It is in the submission correspondence; keep it there.
+export METAL_FILL_OWNER ?= foundry
