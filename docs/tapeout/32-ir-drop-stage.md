@@ -589,6 +589,53 @@ single `power-signoff` entry, which this stage closed.
 
 ---
 
+## 7b. The redaction, and its acceptance test
+
+Six files in `rail/` each carried the same line —
+
+```tcl
+set QRC /<the site's PDK mount>/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile
+```
+
+— and one (`pgcap.tcl`) also wrote out an Arm release identifier and this
+checkout's absolute path. That is a site constant copied six times into a
+public repository, and the repo's own vendor gate says exactly why it must not
+be: *"THE PDK MOUNT IS INHERITED, NOT NAMED HERE … a default spelled here would
+be a second copy of a site constant, and the kind of copy this very script
+exists to find."*
+
+All of it now resolves in one place, `rail_env.tcl`, from `TSMC_65_HOME` and
+`PHYS_IP` — which `ASIC/common.mk` exports and which are the only places in this
+repository that name a mount. The Arm release code is resolved **by glob**, and
+`::rail::glob_one` **refuses, naming the candidates, unless exactly one matches**:
+writing the code in reproduces a vendor identifier, and globbing and silently
+taking the first of two would be worse than either.
+
+**The acceptance test is not that a gate went green.** It is that the spelling
+changed and the *selection* did not — every resolved value byte-compared against
+the literal it replaced:
+
+| value | resolves to | identical to the old literal? |
+|---|---|---|
+| extraction deck (`QRC`) | `$TSMC_65_HOME/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile` | **yes** |
+| the legacy scripts' database | archived route-baseline, via `$::RAIL(repo)` | **yes** |
+| repository root | derived from the script's own location | **yes** |
+| Arm `cln65lp arm_tech` | `$PHYS_IP/arm/tsmc/cln65lp/arm_tech/*`, 1 candidate | **yes** |
+| toolkit root | `$::RAIL(repo)/ASIC/asic-toolkit` | **yes** |
+
+The database default matters as much as the vendor paths: the diagnostic scripts
+(`reff`, `padgeom`, `pgcap`, `recon`) still measure exactly what they measured
+before, through `::rail::db_or_default`, so redacting their paths did not quietly
+re-point them at a different design. `RAIL_DB` overrides it. The **stage**
+(`rail_run.tcl`) calls `::rail::require_db` and has no default at all.
+
+The vendor-collateral gate passes on the staged content, and a pre-commit hook
+separately rejected the first attempt for two things worth recording: five
+fixture `.iv` files over the 256 kB threshold (cut to 600 rows, re-proved), and
+one absolute site path still sitting in `31-power-delivery-measured.md`.
+
+---
+
 ## 8. Traps, for whoever runs this next
 
 Every one produces a result that looks fine.
