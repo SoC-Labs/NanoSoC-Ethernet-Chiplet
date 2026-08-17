@@ -24,14 +24,38 @@
 #
 # Read-only. Runs in its own directory so it cannot collide with a live flow.
 ################################################################################
-set db ../runs/20260808T100330Z_route-setupopt/work/nanosoc_eth_chiplet_pads_eval_route
+# [2026-08-17] The database is now selectable, and the DEFAULT has moved to the
+# pad-correct tapeout database. This script had never been run against a
+# database that contains the IO ring: 20260808T100330Z_route-setupopt predates
+# the pad fix, so the A2 abutment block below - the only measurement anywhere of
+# VDDIO/VSSIO continuity - would have been reporting on the wrong pad set.
+# Override with PGPROBE_DB to point it at any other run.
+set db /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/runs/20260812T133501Z_route-baseline-gds/work/nanosoc_eth_chiplet_pads_eval_route
+foreach v {PGPROBE_DB_DEFAULT PGPROBE_DB} {
+    if {[info exists ::env($v)] && [string trim $::env($v)] ne ""} { set db $::env($v) }
+}
 if {![file isdirectory $db]} { puts "FATAL: no DB at $db"; exit 1 }
+
+# The saved database's libs/lef entries are symlinks into the live repository
+# rather than copies, so a later rebuild of a referenced library retroactively
+# trips read_db's consistency check (IMPIMEX-7024). Both ROM LEFs were
+# regenerated after this database was saved. See ASIC/genus-innovus/rail/recon.tcl
+# for the full reasoning and what the override costs.
+set_db read_db_file_check false
 read_db $db
 puts "\n##### PGPROBE-BEGIN #####"
 puts "loaded: [llength [get_db insts]] insts"
 
 # The chunky fragments, from the connectivity report. Padded 2um each way so we
 # catch the cells the fragment is supposed to be feeding, not just the metal.
+#
+# PROVENANCE, and it matters now the default database has changed: these eight
+# rectangles were read off the connectivity report of the 08-08 route-setupopt
+# run. They are that run's fragments. Against any other database the A1 block
+# below is asking "what is at these coordinates", NOT "where are this database's
+# open fragments" - so an all-clear from A1 on a different run is not evidence
+# about that run. A2, the IO-ring abutment scan, derives everything it uses from
+# the loaded database and is valid wherever it is pointed.
 set channels {
     {865.90 489.87 910.90 491.85}   {1034.50 413.95 1058.90 423.01}
     {1030.90 365.67 1058.90 371.94} {1034.50 423.26 1059.06 429.54}
