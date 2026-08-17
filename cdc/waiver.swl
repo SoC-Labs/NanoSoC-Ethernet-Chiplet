@@ -1,0 +1,116 @@
+#-----------------------------------------------------------------------------
+# nanosoc_eth_chiplet — SpyGlass CDC Waivers
+#
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+# license.
+#
+# Contributors
+#
+# David Mapstone (d.a.mapstone@soton.ac.uk)
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+#
+#                    THIS FILE IS EMPTY ON PURPOSE.
+#
+# It is empty because the integration boundary has NEVER been analysed, and you
+# cannot waive findings you have not seen. Everything below is an explanation of
+# what must not be added to it and why — not a to-do list.
+#
+#-----------------------------------------------------------------------------
+# 1. WHY THE BLOCK-LEVEL WAIVERS WERE NOT PORTED WHOLESALE
+#-----------------------------------------------------------------------------
+# Nine blocks below this level ship waiver files. Copying them in would produce
+# a first run that looks clean, and a blanket waiver is precisely how a real
+# crossing hides. Three concrete reasons, each verified rather than assumed:
+#
+# (a) The vendor-IP justification does not hold for this build.
+#     tidelink/cdc/waiver.swl:43-45 and :51 waive `-du "Wlink"`,
+#     `-du "Wav*" -regexp`, `-du "Wlink*" -regexp` and `-du "wlink_*" -regexp`,
+#     justified in-file as covering untouched Chisel-generated vendor IP. That
+#     justification is FALSE here:
+#     tidelink/src/rtl/local_overrides/ contains 33 locally-modified module
+#     copies, and 24 of them match those patterns. Among the waived-but-modified:
+#         wlink_wlink_ptp_tl_a2l_48x4.v      the a2l mailbox itself
+#         WlinkGenericFCReplayV2_12.v / _13.v carry the a2l CDC fix that was
+#                                             never ported to the AW/W/B siblings
+#                                             — which those patterns ALSO waive
+#         WavMultibitSync_18.v               a locally-modified SYNCHRONISER
+#                                             PRIMITIVE, waived as a "verified
+#                                             CDC cell"
+#     So the blanket patterns suppress locally-modified logic sitting on the
+#     exact path with a known open bug. Nothing matching Wlink*/Wav*/wlink_* is
+#     carried forward. If vendor IP has to be scoped out later, waive by
+#     EXPLICIT MODULE NAME and list in the comment which of those names are
+#     local overrides and therefore not vendor IP at all.
+#
+# (b) The legitimate synchronisers should come back as RESULTS, not silence.
+#     This design contains real, correct 2-flop synchronisers, and the value of
+#     a first CDC run is that the tool RECOGNISES them and says so. Waiving them
+#     up front throws away the only evidence that they are there and connected:
+#         WavMultibitSync / WavDemetReset* / WavDemetSet
+#           tidelink/deps/axi-chiplet-controller/logical/wlink/
+#           (WavMultibitSync.v, WavDemetSet.v, WavDemetReset_107/_124/_129.v)
+#           — mostly inside the black-boxed controller for now; they become
+#             visible when B8 removes that stop_module.
+#         OpenCores MAC wishbone syncs
+#           .../ethernet-mac-ahb/src/rtl/ethmac_patches/eth_wishbone.v:458-460
+#           (TxRetrySync1, TxAbortSync1, TxDoneSync1), :770-788
+#           (BlockingTxStatusWrite_sync1/_sync2), :1215-1254 (TxStartFrm_sync1)
+#         eth_rx_cksum MII<->fabric chains
+#           .../ethernet-mac-ahb/src/rtl/eth_rx_cksum.v:409-417
+#           (rptr_gray_mrx_s0/_s1, mode_mrx_s0/_s1) and :482-491, :512-515
+#           (ovf_tog_pclk_s0/_s1/_s2, push_tog_pclk_s0/_s1/_s2)
+#         CM0+ DAP CDC cells
+#           cm0p_dap_ap_cdc.v, cm0p_dap_dp_cdc.v, cm0p_dap_cdc_capt_sync.v
+#           — deliberately NOT black-boxed (see cdc/nanosoc_eth_chiplet.prj)
+#     Expect these as Ac_sync* / informational lines. If any of them shows up as
+#     UNSYNCHRONISED instead, that is a finding, not a waiver candidate.
+#
+# (c) Block waivers are scoped to block tops that are not what this chip builds.
+#     nanosoc-multicore-system/ethernet-subsystem-ahb/cdc/ethernet_ss_ahb.sgdc:19
+#     says `current_design ethernet_ss_ahb`, but the SoC instantiates
+#     ethernet_ss_ahb_rmii (nanosoc_multicore_soc.sv:834). Its waivers apply to a
+#     top this chip does not contain.
+#
+#-----------------------------------------------------------------------------
+# 2. checkSGDC_05 MUST STAY ACTIVE — DO NOT WAIVE IT HERE
+#-----------------------------------------------------------------------------
+# tidelink/cdc/waiver.swl:133-134 carries a GLOBAL, UNSCOPED waiver:
+#
+#     waive -rule checkSGDC_05    \
+#           -comment "abstract_port auto-migrated for stop_module'd subblocks"
+#
+# checkSGDC_05 is the UNMATCHED-abstract_port detector. It is the tree's only
+# automatic guard against the exact failure this whole setup is written to
+# avoid: a port gets renamed, the SGDC name no longer matches, SpyGlass drops
+# the constraint, DEFAULTS the port to some other clock, and reports crossings
+# that do not exist — or worse, stops reporting ones that do.
+#
+# That waiver switches off the alarm for the failure mode. It is not carried
+# forward, and nothing in this file may waive checkSGDC_05, SGDC_abstract_port02
+# or checkSGDC_01. If one of them fires, a port name in
+# cdc/nanosoc_eth_chiplet.sgdc has drifted from the RTL and the fix is to
+# correct the name, not to silence the check.
+#
+# The port lists in the SGDC were validated against the RTL when written (all
+# 111 chiplet ports, and all axi_chiplet_controller ports, matched in both
+# directions). These rules are what keeps that true after the next RTL change.
+#
+#-----------------------------------------------------------------------------
+# 3. HOW TO ADD A WAIVER HERE, IF ONE IS EVER JUSTIFIED
+#-----------------------------------------------------------------------------
+#   * Never `-du` a module that has a local override in
+#     tidelink/src/rtl/local_overrides/ or src/rtl/local_overrides/ — it is not
+#     vendor IP, whatever its name looks like.
+#   * Never waive a whole rule globally. Scope it: -du <exact name>, or
+#     -file, or -from/-to.
+#   * Prefer fixing the CONSTRAINT over waiving the finding. Most first-run
+#     noise at an integration boundary is a missing abstract_port, not a real
+#     crossing — and a missing constraint over-reports, which is safe. A waiver
+#     is the opposite: it removes evidence.
+#   * State what makes the crossing safe, with file:line. "Pre-verified IP" is
+#     not a justification; it is a claim, and (a) above is what happens when
+#     nobody rechecks it.
+#
+# (No waivers. Intentionally.)

@@ -1,0 +1,948 @@
+#-----------------------------------------------------------------------------
+# nanosoc_eth_chiplet — SpyGlass CDC Design Constraints (chiplet integration top)
+#
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+# license.
+#
+# Contributors
+#
+# David Mapstone (d.a.mapstone@soton.ac.uk)
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+# WHY THIS FILE EXISTS
+#
+# Nine blocks below this level each ship a `.sgdc` + `waiver.swl`. The INTEGRATED
+# chiplet shipped none. The crossings this repository actually OWNS are the ones
+# at the seams between those nine blocks — SoC fabric <-> D2D link, SoC fabric
+# <-> RTC/PTP, SoC fabric <-> RMII/MII, SoC fabric <-> QSPI, SoC fabric <-> SWD —
+# and until this file existed none of them had ever been looked at by a tool that
+# understands asynchronous clock relationships. The block files cannot see them:
+# every one of them stops at its own port list.
+#
+# This is a STARTING POINT, in the same sense as
+# constraints/nanosoc_eth_chiplet_cdc.sdc. It is written to be reviewed before it
+# is believed. Read cdc/README.md first — in particular the list of inconsistencies
+# between the block-level files that this reconciliation had to resolve, and the
+# list of what it still does not cover.
+#
+# TOP CHOICE: nanosoc_eth_chiplet, NOT nanosoc_eth_chiplet_chip. Rationale in
+# cdc/README.md §1. The short version: the generated chip wrapper ALIASES
+# rtc_clk and user_ref_clk onto sys_fclk
+# (build/chip/rtl/nanosoc_eth_chiplet_chip.v:102-103), which collapses three of
+# the domains this analysis exists to examine into one and would report a false
+# clean. It also leaves role_locked_o open (:175), so the reset declaration in
+# §3 below has nothing to bind to.
+#
+# EVERY port name in this file was checked against
+# src/rtl/nanosoc_eth_chiplet.sv:48-213 (111 ports). Every hierarchical name was
+# checked against the RTL it names, with file:line cited. Nothing here is
+# inferred from a sibling file — that is exactly the mistake documented at
+# tidelink/cdc/axi_chiplet_controller.sgdc:60-81, where three renamed ports were
+# silently dropped, DEFAULTED to user_ref_clk, and manufactured two crossings
+# that do not exist.
+#
+# THE RULE THIS FILE IS WRITTEN TO, and the reason several declarations below
+# are absent rather than approximate:
+#
+#     AN ABSENT DECLARATION OVER-REPORTS. A WRONG DECLARATION MASKS.
+#
+# A port left unconstrained gets a virtual clock and shows up as a crossing you
+# then have to explain — noisy, but every real crossing is still in the report.
+# A port bound to the wrong clock is silently made same-domain, and a real
+# crossing disappears from the report entirely. The two failure modes are not
+# symmetric and must not be traded off as if they were. Where the launch clock
+# of a port could not be established from the RTL, it is left in the explicit
+# "not yet constrained" block (§6) or carries a TODO(cdc) — never a guess.
+#-----------------------------------------------------------------------------
+
+current_design nanosoc_eth_chiplet
+
+# =============================================================================
+# 1. CLOCK DEFINITIONS
+# =============================================================================
+# PERIOD SET: the ASIC chip SDC (ASIC/genus-innovus/inputs/*.sdc with
+# CLK_PERIOD=10.0 from ASIC/common.mk:183). The block-level .sgdc files disagree
+# with each other AND with the chip — see cdc/README.md §3 for the full
+# three-column reconciliation. Structural CDC (cdc_verify) does not use the
+# period to decide whether a crossing exists, but a single self-consistent set
+# is required so that (a) the domain names mean the same thing they mean in
+# synthesis, and (b) the frequency-ratio-sensitive rules (Ac_conv, data-hold)
+# are not fed contradictory numbers.
+#
+# The two numbers below that are NOT from the chip SDC are marked [OWNER],
+# following the convention in constraints/nanosoc_eth_chiplet_cdc.sdc: the chip
+# SDC does not create them at all, because the pad-level wrapper aliases both
+# onto the system clock.
+
+# --- Fabric ------------------------------------------------------------------
+# sys_fclk: free-running SoC clock, chiplet input port.
+#   ASIC/genus-innovus/inputs/constraints.sdc:61 (create_clock "clk" on pad CLK)
+#   ASIC/common.mk:183                          (CLK_PERIOD ?= 10.0)
+clock -name sys_fclk  -domain sys_fclk_domain -period 10.0
+
+# sys_hclk: the AHB fabric clock. It is an OUTPUT PORT of this top
+# (src/rtl/nanosoc_eth_chiplet.sv:59) generated inside the SoC's PRMU and routed
+# back out (nanosoc_multicore_soc.sv:619-622). It clocks essentially the whole
+# integration wrapper: u_d2d_decode (:653), u_tlapb_bridge, u_tcapb_bridge,
+# u_tidelink.hclk (:762) and u_tidechart.clk (:971). Declaring it is not
+# optional — leave it out and every flop in this file's own logic lands in a
+# virtual domain.
+#
+# SAME DOMAIN as sys_fclk deliberately. sys_hclk is synchronous to sys_fclk (it
+# is derived from it inside the PRMU); the exact divide ratio is the same
+# [OWNER] item the integration SDC records at
+# constraints/nanosoc_eth_chiplet_cdc.sdc:65-71. For CDC the DOMAIN is what
+# matters and the domain is not in doubt. If the ratio ever turns out to be
+# something other than an integer divide with a deterministic phase, this line
+# is the one to revisit.
+clock -name sys_hclk  -domain sys_fclk_domain -period 10.0
+
+# --- Ethernet ----------------------------------------------------------------
+# rmii_ref_clk: 50 MHz RMII reference from the PHY. Chiplet input port.
+#   ASIC/genus-innovus/inputs/ethernet_constraints.sdc:19,23
+clock -name rmii_ref_clk -domain rmii_domain -period 20.0
+
+# THE TWO MII CLOCKS. These are the domains the existing integration SDC misses
+# entirely (constraints/nanosoc_eth_chiplet_cdc.sdc declares rmii_ref_clk and
+# stops). They are NOT ports at any level — u_rmii_to_mii generates them by
+# toggling two output registers, so they are rmii_ref_clk / 2 = 25 MHz.
+#
+# Everything downstream of them is a genuine asynchronous domain against the
+# FABRIC: the OpenCores MAC core, the RX checksum snoop (eth_rx_cksum) and both
+# PTP event detectors run here while their register sides run on sys_hclk. That
+# fabric<->MII boundary is the crossing worth finding.
+#
+# BUT THEY ARE ONE DOMAIN, NOT TWO — AND THAT DOMAIN IS rmii_domain.
+# Every block-level file in the tree declares a separate mtx_domain and
+# mrx_domain (ethmac_ahb.sgdc:27-30, ethmac_subsystem_apb.sgdc:28-31,
+# ethernet_ss_ahb.sgdc:32-35, nanosoc_multicore_soc.sgdc:44-45). That is CORRECT
+# at their scope — ethmac_ahb takes mtx_clk_pad_i / mrx_clk_pad_i as ports from
+# a real MII PHY, which sources two genuinely independent clocks. It is WRONG
+# here. This chiplet is RMII: one 50 MHz reference generates both halves.
+#
+# Verified directly in the source this build compiles
+# (nanosoc-multicore-system/ethernet-subsystem-ahb/ethernet-mac-ahb/
+#  amba_wb_bridges/src/rtl/rmii_to_mii.v, per build/chip/flist/soc.flist:163):
+#     :277-283  always @(posedge rmii_ref_clk or negedge rstn_sync)
+#                   mrx_clk <= 1'b0 / ~mrx_clk   under `if (tick)`
+#     :320-326  always @(posedge rmii_ref_clk or negedge rstn_sync)
+#                   mtx_clk <= 1'b0 / ~mtx_clk   under `if (tick)`
+# Same launch edge, same async reset (rstn_sync), same enable (`tick`, :152),
+# same reset value. The two waveforms are bit-identical by construction — they
+# cannot drift, cannot skew relative to each other, and cannot present a
+# metastability window to one another. Declaring them as separate asynchronous
+# domains would MANUFACTURE mtx<->mrx crossings that are physically impossible,
+# and would bury the real fabric<->MII findings under them.
+#
+# They are likewise synchronous to rmii_ref_clk itself (deterministic /2 off the
+# same edge), so all three sit in rmii_domain. This matches how the chip SDC
+# groups them: `-group [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}]`
+# (ASIC/genus-innovus/inputs/constraints.sdc:192) — one async group, i.e. one
+# CDC domain.
+#
+# They are still declared as CLOCK OBJECTS (not folded away) because the flops
+# they drive genuinely toggle at 25 MHz, and the fabric<->MII crossings must be
+# attributed to the right launch clock.
+#
+# Hierarchical anchor verified:
+#   nanosoc_eth_chiplet.u_soc                (src/rtl/nanosoc_eth_chiplet.sv:515)
+#     -> nanosoc_multicore_soc.u_network_core (nanosoc_multicore_soc.sv:859)
+#       -> ethernet_ss_ahb_rmii.u_rmii_to_mii (ethernet_ss_ahb_rmii.sv:555)
+#          output pins .mtx_clk / .mrx_clk    (ethernet_ss_ahb_rmii.sv:563,567)
+# Same anchor the chip SDC uses, with the pad-ring prefix stripped:
+#   ASIC/genus-innovus/inputs/ethernet_constraints.sdc:20-21,41-42
+# If SpyGlass cannot bind a pin name here, the driving NETS one level up are
+# u_soc/u_network_core/mtx_clk_w and .../mrx_clk_w (ethernet_ss_ahb_rmii.sv:563,567).
+clock -name "u_soc/u_network_core/u_rmii_to_mii/mtx_clk" -domain rmii_domain -period 40.0
+clock -name "u_soc/u_network_core/u_rmii_to_mii/mrx_clk" -domain rmii_domain -period 40.0
+
+# --- RTC / PTP ---------------------------------------------------------------
+# rtc_clk: HA1588 PTP time-base reference. Chiplet input port, asynchronous to
+# the fabric. [OWNER] period — the chip SDC creates NO clock for this because
+# the pad wrapper aliases rtc_clk onto sys_fclk
+# (build/chip/rtl/nanosoc_eth_chiplet_chip.v:102). 30.518 ns is the value the
+# integration SDC carries (constraints/nanosoc_eth_chiplet_cdc.sdc:42).
+clock -name rtc_clk -domain rtc_domain -period 30.518
+
+# --- QSPI --------------------------------------------------------------------
+# QSPI serial clock. Generated INSIDE the SoC by ahb_qspi's divider and brought
+# out on the qspi_sclk chiplet output port (src/rtl/nanosoc_eth_chiplet.sv:133).
+#
+# Declared at the top-level OUTPUT PORT, following the house precedent at
+# nanosoc-multicore-system/cdc/nanosoc_multicore_soc.sgdc:55-60. If domain
+# propagation back to the divider fails, swap this line for the verified
+# hierarchical anchor (the chip SDC's, with the pad-ring prefix stripped):
+#   u_soc/u_qspi_flash_0/u_top_ahb_qspi/u_qspi_clock_div/QSPI_SCLK_i
+#   (nanosoc_multicore_soc.sv:1092; src/rtl/wrappers/qspi_flash_ahb.v:105;
+#    ahb_qspi/logical/top_ahb_qspi/logical/top_ahb_qspi.v:443,447;
+#    ASIC/genus-innovus/inputs/qspi_constraints.sdc:2)
+# Period 20.0 = clk / 2, the divide the chip SDC declares.
+#
+# ---- B7-ROUND2 CORRECTION: sys_fclk_domain, NOT a separate qspi_domain ------
+# The first run declared this `-domain qspi_domain`, on the reasoning that "the
+# divider is programmable, so the phase relationship to the fabric is not
+# guaranteed". That reasoning is wrong, and it MANUFACTURED four crossings
+# (B7 baseline §6 group B, findings 31/37/47/48). The divider RTL is
+# nanosoc-multicore-system/ahb_qspi/logical/qspi_controller/logical/qspi_clock_div.v:
+#
+#   :10  assign QSPI_SCLK_i = (QSPI_CLK_DIV==5'h00) ? HCLK : QSPI_SCLK_reg;
+#   :13  always @(posedge HCLK or negedge HRESETn) ...
+#   :19,23   QSPI_SCLK_reg <= ~QSPI_SCLK_reg;
+#
+# Both arms of that mux are HCLK: either HCLK itself, or a register that only
+# ever toggles on a posedge of HCLK. Every QSPI_SCLK edge is therefore an HCLK
+# edge. A programmable INTEGER divide off a single launch edge changes the
+# frequency; it does not create an independent oscillator and cannot present a
+# metastability window to the fabric. This is a synchronously-derived clock and
+# it belongs in sys_fclk_domain — which is exactly what the chip SDC already
+# says (ASIC/genus-innovus/inputs/qspi_constraints.sdc:2, QSPI_SCLK = clk / 2,
+# a create_generated_clock, not a create_clock).
+#
+# It stays a declared CLOCK OBJECT rather than being folded away, so that the
+# flops it launches are still attributed to it and STA still owns the divided
+# path. Only the DOMAIN changes.
+#
+# WHAT THIS DOES NOT CLAIM: it says nothing about setup/hold on the divided
+# path, and nothing about the qspi_io_i pad RETURN path being fast enough. Both
+# are STA questions and the chip SDC owns them. See also §5, where the four
+# qspi_* pads are declared against this clock.
+clock -name qspi_sclk -domain sys_fclk_domain -period 20.0
+
+# --- Debug -------------------------------------------------------------------
+# dap_swclktck: SWJ-DP SWCLK/TCK, driven by an external probe. Asynchronous by
+# specification. 40.0 = 4 x CLK_PERIOD
+# (ASIC/genus-innovus/inputs/constraints.sdc:20,62).
+clock -name dap_swclktck -domain swclktck_domain -period 40.0
+
+# --- Die-to-die link ---------------------------------------------------------
+# user_ref_clk: the Wlink PLL reference. Chiplet input port, asynchronous to the
+# fabric. [OWNER] period — as with rtc_clk the chip SDC creates no clock here
+# (the pad wrapper aliases it onto sys_fclk,
+# build/chip/rtl/nanosoc_eth_chiplet_chip.v:103, which is exactly the aliasing
+# that makes `_chip` the wrong top for this analysis). 8.0 ns is the value the
+# integration SDC carries (constraints/nanosoc_eth_chiplet_cdc.sdc:32).
+clock -name user_ref_clk -domain wlink_ref_domain -period 8.0
+
+# pad_clk_rx: the FAR die's forwarded transmit clock, recovered at our RX pads.
+# A real primary clock and asynchronous to EVERYTHING on this die — it only
+# toggles when the other die is powered and transmitting (docs/RESET_ORDERING.md
+# §2; tidelink_top.sv:235). Period from the chip SDC's D2D_RX_CLK_0, which is
+# $EXTCLK_PERIOD by the mesochronous-shared-source argument at
+# ASIC/genus-innovus/inputs/tidelink_constraints.sdc:1-38.
+clock -name pad_clk_rx -domain phy_rx_domain -period 10.0
+
+# pad_clk_tx: our own forwarded TX clock, divide-by-1 off user_ref_clk
+# (ASIC/genus-innovus/inputs/tidelink_constraints.sdc:43). Same domain as its
+# source — this is a source-synchronous forward, not an independent clock.
+clock -name pad_clk_tx -domain wlink_ref_domain -period 8.0
+
+# idelay_ref_clk: 200 MHz IDELAYCTRL reference. FPGA target only — the ASIC
+# build ties this to 0 (build/chip/rtl/nanosoc_eth_chiplet_chip.v:101,
+# USE_IDELAY=0). Declared as a clock in its own domain anyway, matching
+# tidelink/cdc/tidelink_top.sgdc:101-103, because a declared clock produces
+# crossings to examine while a tied constant produces silence. On an ASIC-only
+# run this domain will simply be empty.
+clock -name idelay_ref_clk -domain idelay_domain -period 5.0
+
+# =============================================================================
+# 2. RESET DEFINITIONS
+# =============================================================================
+# NAMING NOTE. The three reset regimes TideLink distinguishes (poresetn,
+# hresetn, and the role_locked bring-up gate — docs/RESET_ORDERING.md §1) do NOT
+# appear at this boundary under those names. At this level:
+#   tidelink_top.hresetn    <- sys_hresetn   (nanosoc_eth_chiplet.sv:763)
+#   tidelink_top.poresetn   <- sys_poresetn  (nanosoc_eth_chiplet.sv:764)
+#   tidelink_top.phc_resetn <- sys_hresetn   (nanosoc_eth_chiplet.sv:766)
+# so there is no distinct `phc_resetn` object to declare here at all: the PHC
+# shares the AHB reset (and the AHB clock, :765) in this build. That is a real
+# difference from tidelink/cdc/tidelink_top.sgdc, which declares phc_resetn and
+# a separate phc_clk domain because standalone TideLink has them as ports.
+
+# Chiplet reset input.
+reset -name sys_sysresetn -value 0
+
+# PRMU-derived resets. Both are OUTPUT PORTS of this top
+# (src/rtl/nanosoc_eth_chiplet.sv:58,60) driven from inside u_soc, and both are
+# consumed by this file's own integration logic — so they must be declared here,
+# not left to propagate from wherever SpyGlass finds them.
+reset -name sys_poresetn  -value 0
+reset -name sys_hresetn   -value 0
+
+# Debug reset inputs.
+reset -name dap_ntrst   -value 0
+reset -name dap_npotrst -value 0
+
+# --- role_locked_o AS A RESET ------------------------------------------------
+# This is the non-obvious one, and it is load-bearing. role_locked_o is an
+# OUTPUT of this top (src/rtl/nanosoc_eth_chiplet.sv:209) — a status bit by its
+# name — but functionally it is the third reset regime of the D2D link, and
+# declaring it as a reset is what tidelink/cdc/tidelink_top.sgdc:47-50 does.
+#
+# It gates BOTH reset domains of the a2l (app-to-link) replay ACK-pointer CDC,
+# so that the app side and the link side release on the SAME bring-up event
+# instead of on their own resets (docs/RESET_ORDERING.md §1):
+#     axi_chiplet_controller.sv:2681  wire wlink_por_reset = ~poresetn | ~role_locked;
+#     axi_chiplet_controller.sv:2686  assign app_clk_reset = ~hresetn  | ~role_locked;
+# Without the ~role_locked term the two sides leave reset at different times and
+# the gray ACK-pointer synchroniser desyncs — the asymmetric reset-RELEASE skew
+# the fix at :443-449 exists to close.
+#
+# It is ALSO the only release path for the entire recovered-RX-clock domain:
+# async-asserted and sync-deasserted into the recovered clock at
+# axi_chiplet_controller.sv:3542, and wired straight (no inverter) into the
+# gpio-phy register slave at tidelink_top.sv:981,919-921.
+#
+# If SpyGlass does not know this is a reset, every flop in the recovered-RX
+# domain and both halves of the a2l CDC are analysed as if they were released by
+# their local resets, which is precisely the wrong model.
+reset -name role_locked_o -value 0
+
+# =============================================================================
+# 3. DFT CONSTANTS
+# =============================================================================
+# All seven are TIED in this build — they are constants, not slow-moving
+# signals. build/chip/rtl/nanosoc_eth_chiplet_chip.v:119-123 ties scan_mode,
+# scan_asyncrst_ctrl, scan_clk, scan_shift and scan_in to 0; :40-41,83-84 bond
+# sys_scanenable and sys_testmode to pads that are strapped inactive in mission
+# mode.
+#
+# set_case_analysis, NOT quasi_static. Case analysis propagates the constant and
+# DELETES the scan-only logic from the analysis; quasi_static merely says "this
+# does not change often", which leaves the scan muxes in the netlist and lets
+# them carry paths between domains that mission mode can never take.
+#
+# RESOLVED INCONSISTENCY: the ethernet subsystem declares two of these
+# quasi_static instead —
+#   nanosoc-multicore-system/ethernet-subsystem-ahb/cdc/ethernet_ss_ahb.sgdc:54-55
+#     quasi_static -name sys_testmode
+#     quasi_static -name sys_scanenable
+# with the comment that without them SpyGlass heuristically assigns the ports to
+# mrx_clk_i and reports three false unsync crossings into the M0+ PRMU clock-
+# enable logic. That symptom is real; the cure is under-strength. Case analysis
+# fixes the same three and additionally removes the scan-mux paths. The SoC-level
+# file already reached the same conclusion for these two ports
+# (nanosoc-multicore-system/cdc/nanosoc_multicore_soc.sgdc:80-81). See
+# cdc/README.md §4.
+set_case_analysis -name scan_mode          -value 0
+set_case_analysis -name scan_asyncrst_ctrl -value 0
+set_case_analysis -name scan_clk           -value 0
+set_case_analysis -name scan_shift         -value 0
+set_case_analysis -name scan_in            -value 0
+set_case_analysis -name sys_scanenable     -value 0
+set_case_analysis -name sys_testmode       -value 0
+
+# =============================================================================
+# 4. QUASI-STATIC STRAPS
+# =============================================================================
+# Genuine straps: pad-ring or OTP values, stable before reset deassertion and
+# never re-driven during functional operation. Unlike the DFT pins above these
+# are NOT tied in RTL — a real pad ring chooses them per die — so a constant is
+# the wrong model and quasi_static is the right one.
+
+# Link role strap. Also overloaded as TideChart's root-election tie-break
+# (src/rtl/nanosoc_eth_chiplet.sv:994).
+quasi_static -name "role_strap_i"
+
+# PUF seed + auto-negotiation priority. Sourced from OTP or a die UID; the
+# per-die tiebreak the auto-neg root election needs (docs/RESET_ORDERING.md §3.4).
+quasi_static -name "puf_seed*"
+quasi_static -name "nego_priority_i*"
+
+# Bring-up straps that open the software-driven role-lock path
+# (src/rtl/nanosoc_eth_chiplet.sv:176-180).
+quasi_static -name "mask_hs_bypass_i"
+
+# I2C sideband pads. Truly asynchronous external signals; synchronised inside
+# the chiplet-controller black box by dedicated WavDemetReset cells (the
+# i2c_*_sync blocks at the top of axi_chiplet_controller.sv). quasi_static here
+# says "do not invent a launch domain for these", not "do not check them".
+quasi_static -name "i2c_scl_i"
+quasi_static -name "i2c_sda_i"
+
+# SWJ-DP enable. Tied 1 in this single-chiplet build
+# (build/chip/rtl/nanosoc_eth_chiplet_chip.v:106); a multi-chiplet package would
+# pin it 0 on inactive dies to quiesce the SWD line.
+#
+# DELIBERATE DIVERGENCE from nanosoc-multicore-system/cdc/nanosoc_multicore_soc.sgdc:86,
+# which uses `set_case_analysis -name dap_swj_enable -value 1`. Case analysis
+# would constant-propagate the SWD path permanently ON and remove the muxing
+# that a multi-chiplet build relies on. It is a configuration strap, not a DFT
+# tie, so it belongs here. Noted in cdc/README.md §4.
+quasi_static -name "dap_swj_enable"
+
+# --- Additions beyond the required set, argued individually ------------------
+# sys_sysresetreq: a pulse from an external manager, held 0 and pulsed to
+# request a reset; tied 0 in this build
+# (build/chip/rtl/nanosoc_eth_chiplet_chip.v:104). Same treatment and same
+# reasoning as nanosoc-multicore-system/cdc/nanosoc_multicore_soc.sgdc:155.
+quasi_static -name "sys_sysresetreq"
+
+# apb_debug_unlock_i / puf_ready: pad straps at THIS boundary
+# (src/rtl/nanosoc_eth_chiplet.sv:184,186), tied 0 in the chip wrapper (:115,128).
+#
+# DELIBERATE DIVERGENCE from tidelink/cdc/tidelink_top.sgdc:98-99 and
+# tidelink/cdc/axi_chiplet_controller.sgdc:83-84, both of which declare these
+# hclk-launched. That is correct in standalone TideLink, where the bench drives
+# them from SoC-clocked logic. It is NOT correct here: at the chiplet boundary
+# they arrive from the pad ring with no launch clock at all, and claiming an
+# hclk launch would assert a synchronous relationship that the package does not
+# provide. Noted in cdc/README.md §4.
+quasi_static -name "apb_debug_unlock_i"
+quasi_static -name "puf_ready"
+
+# =============================================================================
+# 5. BOUNDARY PORT CENSUS  (abstract_port)
+# =============================================================================
+# THE HIGHEST-RISK SECTION IN THIS FILE, and the reason it is a census rather
+# than a list. tidelink/cdc/axi_chiplet_controller.sgdc:60-81 records what
+# happens when a boundary port list drifts from the RTL: names that no longer
+# exist are FATAL (SGDC_abstract_port02 -> exit 7 -> the "0 clocks / 0 crossings"
+# early termination), and names that were never added are silently DEFAULTED to
+# whichever clock SpyGlass picks, manufacturing crossings that do not exist. Two
+# spurious Ac_unsync01 violations came from exactly that omission.
+#
+# So: all 111 ports of src/rtl/nanosoc_eth_chiplet.sv:48-213 are accounted for
+# below. Ports handled by §1-§4 (clocks, resets, DFT constants, straps) are
+# named in comments where they fall, so a reviewer can tick off the whole port
+# list without cross-referencing. Nothing is silently absent.
+
+# --- System / fabric ---------------------------------------------------------
+#   sys_fclk        -> §1 clock         sys_sysresetn -> §2 reset
+#   sys_hclk        -> §1 clock         sys_poresetn  -> §2 reset
+#   sys_hresetn     -> §2 reset         sys_scanenable/sys_testmode -> §3
+#   sys_sysresetreq -> §4 quasi_static
+
+# --- External ethernet-subsystem AHB slave (11 ports) ------------------------
+# Testbench / external-manager access into the eth-ss. Driven externally in the
+# fabric domain; tied inactive in the chip wrapper
+# (build/chip/rtl/nanosoc_eth_chiplet_chip.v:129-136) but a real port here.
+abstract_port -ports "eth_ss_0_haddr[*]"    -clock sys_hclk
+abstract_port -ports "eth_ss_0_htrans[*]"   -clock sys_hclk
+abstract_port -ports "eth_ss_0_hwrite"      -clock sys_hclk
+abstract_port -ports "eth_ss_0_hsize[*]"    -clock sys_hclk
+abstract_port -ports "eth_ss_0_hburst[*]"   -clock sys_hclk
+abstract_port -ports "eth_ss_0_hprot[*]"    -clock sys_hclk
+abstract_port -ports "eth_ss_0_hwdata[*]"   -clock sys_hclk
+abstract_port -ports "eth_ss_0_hmastlock"   -clock sys_hclk
+abstract_port -ports "eth_ss_0_hrdata[*]"   -clock sys_hclk
+abstract_port -ports "eth_ss_0_hready"      -clock sys_hclk
+abstract_port -ports "eth_ss_0_hresp"       -clock sys_hclk
+
+# --- CPU sideband (16 ports) -------------------------------------------------
+# Both cores run on sys_hclk (the PRMU-divided fabric clock), so these are
+# fabric-domain in and out. NOTE the port names here are network_core_* /
+# chip_core_*, NOT the cpu_0_* / cpu_1_* that
+# nanosoc-multicore-system/cdc/nanosoc_multicore_soc.sgdc:98-103 uses — see
+# cdc/README.md §4, those SoC-level names do not exist on the SoC top either.
+abstract_port -ports "network_core_pmuenable"    -clock sys_hclk
+abstract_port -ports "chip_core_pmuenable"       -clock sys_hclk
+abstract_port -ports "network_core_nmi"          -clock sys_hclk
+abstract_port -ports "network_core_txev"         -clock sys_hclk
+abstract_port -ports "network_core_rxev"         -clock sys_hclk
+abstract_port -ports "network_core_lockup"       -clock sys_hclk
+abstract_port -ports "network_core_sysresetreq"  -clock sys_hclk
+abstract_port -ports "network_core_sleeping"     -clock sys_hclk
+abstract_port -ports "network_core_sleepdeep"    -clock sys_hclk
+abstract_port -ports "chip_core_nmi"             -clock sys_hclk
+abstract_port -ports "chip_core_txev"            -clock sys_hclk
+abstract_port -ports "chip_core_rxev"            -clock sys_hclk
+abstract_port -ports "chip_core_lockup"          -clock sys_hclk
+abstract_port -ports "chip_core_sysresetreq"     -clock sys_hclk
+abstract_port -ports "chip_core_sleeping"        -clock sys_hclk
+abstract_port -ports "chip_core_sleepdeep"       -clock sys_hclk
+
+# --- Debug access port (SWJ-DP / JTAG) ---------------------------------------
+#   dap_swclktck -> §1 clock   dap_ntrst / dap_npotrst -> §2 resets
+#   dap_swj_enable -> §4 quasi_static
+# The remaining six are the serial-wire / JTAG pins, launched and captured by
+# the probe clock. This is the domain boundary the DAP's own CDC cells
+# (cm0p_dap_dp_cdc.v, cm0p_dap_ap_cdc.v, cm0p_dap_cdc_capt_sync.v) exist to
+# cross; they are NOT black-boxed here, so those should return as recognised
+# synchronisers rather than as violations.
+abstract_port -ports "dap_swditms"  -clock dap_swclktck
+abstract_port -ports "dap_swdo"     -clock dap_swclktck
+abstract_port -ports "dap_swdoen"   -clock dap_swclktck
+abstract_port -ports "dap_tdi"      -clock dap_swclktck
+abstract_port -ports "dap_tdo"      -clock dap_swclktck
+abstract_port -ports "dap_ntdoen"   -clock dap_swclktck
+
+# --- RMII PHY ----------------------------------------------------------------
+#   rmii_ref_clk -> §1 clock
+# RMII is source-synchronous to the reference clock in both directions, so all
+# four data/control pins belong to it. They are NOT in the MII domains: the
+# rmii_to_mii bridge is the boundary, and it sits INSIDE u_network_core.
+abstract_port -ports "rmii_txd[*]"   -clock rmii_ref_clk
+abstract_port -ports "rmii_tx_en"    -clock rmii_ref_clk
+abstract_port -ports "rmii_rxd[*]"   -clock rmii_ref_clk
+abstract_port -ports "rmii_crs_dv"   -clock rmii_ref_clk
+
+# --- MDIO --------------------------------------------------------------------
+# MDC is generated by the MAC from the fabric clock and the PHY returns MDIO
+# synchronous to the MDC we ourselves drive, so the whole group is fabric-domain.
+# (nanosoc-multicore-system/cdc/nanosoc_multicore_soc.sgdc:141-147 reaches the
+# same conclusion.)
+abstract_port -ports "md_pad_i"    -clock sys_hclk
+abstract_port -ports "mdc_pad_o"   -clock sys_hclk
+abstract_port -ports "md_pad_o"    -clock sys_hclk
+abstract_port -ports "md_padoe_o"  -clock sys_hclk
+
+# --- UART / watchdog ---------------------------------------------------------
+# Transmit sides and the watchdog reset are fabric-launched.
+abstract_port -ports "uart_txd"             -clock sys_hclk
+abstract_port -ports "chip_core_uart_txd"   -clock sys_hclk
+abstract_port -ports "chip_core_wdog_reset" -clock sys_hclk
+
+# --- RTC / PTP outputs -------------------------------------------------------
+#   rtc_clk -> §1 clock
+# The three rtc_time_* outputs come from the HA1588 RTC, which is clocked by
+# rtc_clk (ethernet_ss_ahb_rmii.sv:515-518). This IS the rtc_domain -> fabric
+# crossing the integration owns.
+abstract_port -ports "rtc_time_ptp_ns[*]"   -clock rtc_clk
+abstract_port -ports "rtc_time_ptp_sec[*]"  -clock rtc_clk
+abstract_port -ports "rtc_time_one_pps"     -clock rtc_clk
+
+# --- Ethernet / PHC interrupts + status --------------------------------------
+# CORRECTION TO THE SoC-LEVEL FILE. nanosoc_multicore_soc.sgdc:125-127 puts
+# phc_pps_out, phc_pps_irq and phc_alarm_irq in rtc_clk. They are not: the PHC
+# is instantiated as phc_ahb with .HCLK(u_network_core_sys_hclk)
+# (nanosoc_multicore_soc.sv:1036-1038) and pps_out is its output (:1074). The
+# PHC is a single-clock design on the fabric clock — that is what its own block
+# file says too (ptp-hardware-clock-ahb/cdc/phc_ahb.sgdc:24, "all logic runs on
+# hclk"). Declaring them rtc_clk here would invent a crossing into
+# u_tidelink.phc_pps (src/rtl/nanosoc_eth_chiplet.sv:855) that does not exist,
+# and would hide the fact that the real rtc->fabric crossing is upstream, inside
+# the HA1588 servo. See cdc/README.md §4.
+abstract_port -ports "eth_irq"        -clock sys_hclk
+abstract_port -ports "phc_pps_out"    -clock sys_hclk
+abstract_port -ports "phc_pps_irq"    -clock sys_hclk
+abstract_port -ports "phc_alarm_irq"  -clock sys_hclk
+# ha1588_servo_locked: driven by u_ha1588_servo, which is clocked by pclk
+# (ethmac_subsystem_apb.v:620-623,653) and pclk is the fabric clock in this
+# build. Fabric-domain, despite the HA1588 name.
+abstract_port -ports "ha1588_servo_locked" -clock sys_hclk
+
+# --- QSPI flash --------------------------------------------------------------
+#   qspi_sclk -> §1 clock
+# The pads are launched/captured by the generated serial clock.
+abstract_port -ports "qspi_csn"     -clock qspi_sclk
+abstract_port -ports "qspi_io_o[*]" -clock qspi_sclk
+abstract_port -ports "qspi_io_i[*]" -clock qspi_sclk
+abstract_port -ports "qspi_io_e[*]" -clock qspi_sclk
+
+# --- PL022 SPI ---------------------------------------------------------------
+# KNOWN LIMITATION, stated rather than hidden. The PL022 divides the fabric
+# clock down to SSPCLKOUT internally; the correct model is a generated clock on
+# that divider output, exactly as QSPI gets above. That anchor has NOT been
+# verified in the RTL, so it is not declared — guessing a hierarchical pin is
+# how the trap at the top of this section starts. Declaring the group
+# fabric-domain is the conservative interim: it will NOT report the
+# fabric<->SSPCLKOUT crossing, so do not read a clean SPI result as coverage.
+# None of these four is bonded on the current chip wrapper
+# (nanosoc_eth_chiplet_chip.v:145-147 leave three open, spi_miso tied at :126).
+# TODO(cdc): declare the PL022 SSPCLKOUT divider as a generated clock and move
+#            these four into it. Tracked in cdc/README.md §7.
+abstract_port -ports "spi_sclk"   -clock sys_hclk
+abstract_port -ports "spi_mosi"   -clock sys_hclk
+abstract_port -ports "spi_ss[*]"  -clock sys_hclk
+
+# --- HOSTIO4 P1 --------------------------------------------------------------
+# GPIO. Outputs are fabric-launched.
+abstract_port -ports "hostio4_p1_out[*]"    -clock sys_hclk
+abstract_port -ports "hostio4_p1_outen[*]"  -clock sys_hclk
+
+# --- TideLink GPIO-PHY pads --------------------------------------------------
+#   pad_clk_tx / pad_clk_rx / user_ref_clk / idelay_ref_clk -> §1 clocks
+# TX data is launched by our forwarded clock; RX data is recovered against the
+# far die's forwarded clock. These two lines are the D2D data plane.
+abstract_port -ports "pad_tx[*]"  -clock pad_clk_tx
+abstract_port -ports "pad_rx[*]"  -clock pad_clk_rx
+
+# --- TideLink I2C sideband ---------------------------------------------------
+#   i2c_scl_i / i2c_sda_i -> §4 quasi_static (truly asynchronous inputs)
+# The drive and output-enable sides are launched by the I2C controller inside
+# the chiplet-controller black box, which runs on app_clk = sys_hclk.
+abstract_port -ports "i2c_scl_o"  -clock sys_hclk
+abstract_port -ports "i2c_scl_t"  -clock sys_hclk
+abstract_port -ports "i2c_sda_o"  -clock sys_hclk
+abstract_port -ports "i2c_sda_t"  -clock sys_hclk
+
+# --- Link bring-up straps ----------------------------------------------------
+#   role_strap_i, nego_priority_i, mask_hs_bypass_i, apb_debug_unlock_i,
+#   puf_seed, puf_ready -> §4 quasi_static
+
+# --- DFT ---------------------------------------------------------------------
+#   scan_mode, scan_asyncrst_ctrl, scan_clk, scan_shift, scan_in -> §3 constants
+# scan_out is the capture end of the chain. With the scan inputs case-analysed
+# to 0 it carries no functional path; declared fabric-domain so it is not left
+# to a default.
+abstract_port -ports "scan_out" -clock sys_hclk
+
+# --- Link status / observability ---------------------------------------------
+#   role_locked_o -> §2 reset (see the argument there)
+# link_active_o is tc_link_active (nanosoc_eth_chiplet.sv:496), which is
+# tidelink_top.link_active — app-clk domain. role_is_master_o, d2d_reset_o,
+# servo_locked_o and tl_ewma_credit_o likewise leave TideLink on hclk; the
+# chiplet-controller boundary constraints in §7 pin the ones that come through
+# the black box. tidechart_irq_o is tc_tidechart_irq from u_tidechart, clocked
+# .clk(sys_hclk) (nanosoc_eth_chiplet.sv:971).
+abstract_port -ports "link_active_o"      -clock sys_hclk
+abstract_port -ports "d2d_reset_o"        -clock sys_hclk
+abstract_port -ports "role_is_master_o"   -clock sys_hclk
+abstract_port -ports "servo_locked_o"     -clock sys_hclk
+abstract_port -ports "tl_ewma_credit_o[*]" -clock sys_hclk
+abstract_port -ports "tidechart_irq_o"    -clock sys_hclk
+
+# =============================================================================
+# 6. DELIBERATELY NOT abstract_port'd — genuinely asynchronous pads
+# =============================================================================
+# These four are the only boundary ports with NO launch clock at all. Binding
+# them to sys_hclk would make them same-domain, SpyGlass would report nothing,
+# and a real crossing would be hidden behind a constraint rather than closed by
+# a synchroniser. Left undeclared on purpose: SpyGlass assigns each a virtual
+# clock (SG_VCLK_*) and reports the crossing, which the receiving IP's existing
+# 2-flop synchroniser should then answer as RECOGNISED.
+#
+#   uart_rxd            serial RX into cmsdk_apb_uart; 2-FF sync at
+#                       BP210 .../cmsdk_apb_uart/verilog/cmsdk_apb_uart.v:499
+#                       (rxd_sync_1 <= RXD). Tied 1 in the chip wrapper (:124).
+#   chip_core_uart_rxd  same cell, CPU1's UART. Tied 1 (:125).
+#   spi_miso            PL022 receive pin. Sampled against the PL022's own
+#                       SSPCLKOUT, which is not declared (see the SPI note in
+#                       §5); until it is, this is honestly asynchronous.
+#                       Tied 0 (:126).
+#   hostio4_p1_in[*]    GPIO inputs, driven by whatever is on the board.
+#
+# If the first run buries the real findings under noise from these four, the fix
+# is to declare the PL022 clock and confirm the UART synchronisers are
+# recognised — NOT to bind them to the fabric clock.
+
+# =============================================================================
+# 7. BLACK-BOXED IP — PORT-LEVEL CLOCK DOMAINS
+# =============================================================================
+# Modules listed in `set_option stop_module` in cdc/nanosoc_eth_chiplet.prj.
+# Every port of a stopped module needs a domain or SpyGlass defaults it. These
+# sections are kept in THIS file rather than read from tidelink/cdc/*.sgdc so
+# that (a) there is one period set, not two, and (b) the port lists could be
+# re-verified against the RTL this build actually compiles — which turned up
+# eleven ports the TideLink block file has since fallen behind on. See
+# cdc/README.md §4.
+
+# -----------------------------------------------------------------------------
+# 7a. axi_chiplet_controller  (TideLink's Wlink-based D2D controller)
+# -----------------------------------------------------------------------------
+# Source compiled by this build:
+#   tidelink/src/rtl/local_overrides/axi_chiplet_controller.sv
+#   (build/chip/flist/tidelink_asic.flist:187 — the LOCAL OVERRIDE, not the deps
+#    copy; see flist/nanosoc_eth_chiplet_asic.flist for why that distinction is
+#    load-bearing.)
+#
+# Port list re-derived from that file's module header, not copied from
+# tidelink/cdc/axi_chiplet_controller.sgdc. Ports marked [+] are ones the
+# TideLink block file does not enumerate; each would otherwise be DEFAULTED and
+# could manufacture a crossing, which is the exact defect that file's own
+# comment at :60-81 describes.
+current_design axi_chiplet_controller
+
+# Clocks at the black-box boundary. Both apb_clk and app_clk are tied to hclk at
+# the instantiation (tidelink_top.sv:2815-2816) and user_hsclk to user_ref_clk
+# (:2817), so one app_clk object in the fabric domain models both.
+clock -name app_clk -domain sys_fclk_domain -period 10.0
+
+# The recovered RX WORD clock. Generated inside the controller as pad_clk_rx
+# divided by 16 and exposed on link_rx_clk_o (axi_chiplet_controller.sv:3530;
+# consumed at tidelink_top.sv:3091). Named after the output port so the alias
+# resolves inside the black box, exactly as
+# tidelink/cdc/axi_chiplet_controller.sgdc:24-30 does it.
+#
+# Period 160.0 = 16 x 10.0, matching the chip SDC's D2D_RX_WORD_CLK_n
+# (ASIC/genus-innovus/inputs/tidelink_constraints.sdc:124-125, -divide_by 16 off
+# D2D_RX_CLK_0). The TideLink block file says 64.0 because it is working from a
+# 4.0 ns hclk; same divide, different base. This is one of the period
+# disagreements cdc/README.md §3 reconciles.
+clock -name link_rx_clk_o -domain link_rx_domain -period 160.0
+
+# --- app_clk (= sys_hclk) domain ---------------------------------------------
+# TideLink datapath and PTP words.
+abstract_port -ports "tidelink_out[*]"      -clock app_clk
+abstract_port -ports "tidelink_in[*]"       -clock app_clk
+abstract_port -ports "ptp_out[*]"           -clock app_clk
+abstract_port -ports "ptp_in[*]"            -clock app_clk
+abstract_port -ports "tx_link_idle"         -clock app_clk
+
+# AXI initiator / target.
+abstract_port -ports "axi_ini_0_*"          -clock app_clk
+abstract_port -ports "axi_tgt_0_*"          -clock app_clk
+
+# APB register port.
+abstract_port -ports "apb_psel"             -clock app_clk
+abstract_port -ports "apb_paddr[*]"         -clock app_clk
+abstract_port -ports "apb_penable"          -clock app_clk
+abstract_port -ports "apb_pprot[*]"         -clock app_clk
+abstract_port -ports "apb_pstrb[*]"         -clock app_clk
+abstract_port -ports "apb_pwrite"           -clock app_clk
+abstract_port -ports "apb_pwdata[*]"        -clock app_clk
+abstract_port -ports "apb_prdata[*]"        -clock app_clk
+abstract_port -ports "apb_pready"           -clock app_clk
+abstract_port -ports "apb_pslverr"          -clock app_clk
+
+# Control-register side-channel. The apb_ prefix on write/addr/wdata is the
+# integ override's rename that the TideLink file documents at :60-65.
+abstract_port -ports "apb_ctrl_reg_write"    -clock app_clk
+abstract_port -ports "apb_ctrl_reg_addr[*]"  -clock app_clk
+abstract_port -ports "apb_ctrl_reg_wdata[*]" -clock app_clk
+abstract_port -ports "apb_ctrl_reg_r10"      -clock app_clk
+abstract_port -ports "apb_ctrl_reg_rd"       -clock app_clk
+# [+] apb_ctrl_reg_rf — AXI data-node OBS Region-F select. Port declared at
+#     axi_chiplet_controller.sv:254, immediately after its r10 (:242) and rd
+#     (:247) siblings and "exactly mirroring" them per the RTL comment at :251.
+#     Driven from u_tidelink_fifo's ctrl_reg_rf output (tidelink_top.sv:2017),
+#     that instance is clocked .hclk(hclk), so it is an hclk-domain sibling of
+#     the write/addr/wdata strobes. NOT enumerated in the TideLink block file:
+#     the identical omission that produced the two spurious Ac_unsync01
+#     crossings recorded there at :69-79, recurring on a third port.
+abstract_port -ports "apb_ctrl_reg_rf"       -clock app_clk
+abstract_port -ports "ctrl_reg_rdata[*]"     -clock app_clk
+
+# General bus.
+abstract_port -ports "generalbus_out[*]"     -clock app_clk
+# [+] generalbus_in — tied 32'h0 at the instantiation (tidelink_top.sv:2971),
+#     so harmless today, but an unbound input on a stopped module is still a
+#     default waiting to happen.
+abstract_port -ports "generalbus_in[*]"      -clock app_clk
+
+# Sideband reset / wake.
+abstract_port -ports "sb_reset_out"          -clock app_clk
+# [+] sb_reset_in  — tied 1'b0 (tidelink_top.sv:2822).
+# [+] sb_wake      — left open (tidelink_top.sv:2824).
+abstract_port -ports "sb_reset_in"           -clock app_clk
+abstract_port -ports "sb_wake"               -clock app_clk
+
+# Role resolution.
+abstract_port -ports "role_is_master_o"      -clock app_clk
+abstract_port -ports "role_locked_o"         -clock app_clk
+
+# Interrupts.
+abstract_port -ports "i2c_nbsy_irq"          -clock app_clk
+abstract_port -ports "i2c_nrd_empty_irq"     -clock app_clk
+
+# --- B7-ROUND2 ADDITION: the four I2C drive/enable pins ----------------------
+# [+] The first run declared i2c_nbsy_irq above but NOT these four. With no
+#     abstract_port SpyGlass DEFAULTED them to user_ref_clk, while §5 declares
+#     the matching chiplet ports sys_hclk — so the tool reported a
+#     user_ref_clk -> sys_hclk crossing on four wires that carry no logic at all
+#     between the two ends. B7 baseline §6 group A, findings 2-5. This is the
+#     THIRD recurrence of the defect recorded at
+#     tidelink/cdc/axi_chiplet_controller.sgdc:60-81.
+#
+# DOMAIN VERIFIED apb_clk (= app_clk = hclk), not guessed:
+#   axi_chiplet_controller.sv:3378  i2c_master_axil u_i2c_master ( .clk(apb_clk)
+#   axi_chiplet_controller.sv:3443  i2c_slave_axil_master u_i2c_slave ( .clk(apb_clk)
+#   axi_chiplet_controller.sv:3542,3549,3550,3551
+#         assign i2c_scl_o = role_is_master ? mst_scl_o : slv_scl_o;   (and _t, sda_*)
+# Both cores that drive the mux inputs run on apb_clk, and the mux select
+# role_is_master is itself apb_clk-domain (:676-679, from role_locked /
+# role_cfg_reg). apb_clk is tied to hclk at the instance
+# (tidelink_top.sv:2815), so app_clk models it — the same single-object
+# modelling the clock block at the top of §7a already relies on.
+# The pins then pass STRAIGHT THROUGH tidelink_top to the chiplet ports with no
+# intervening logic (tidelink_top.sv:3028-3032), so this declaration agrees with
+# §5 rather than contradicting it.
+abstract_port -ports "i2c_scl_o"             -clock app_clk
+abstract_port -ports "i2c_scl_t"             -clock app_clk
+abstract_port -ports "i2c_sda_o"             -clock app_clk
+abstract_port -ports "i2c_sda_t"             -clock app_clk
+# [+] nego_error_irq / train_fail_irq_o — auto-negotiation status interrupts,
+#     both routed into the d2d_irq vector (src/rtl/nanosoc_eth_chiplet.sv:1033-1034).
+abstract_port -ports "nego_error_irq"        -clock app_clk
+abstract_port -ports "train_fail_irq_o"      -clock app_clk
+# [+] interrupt — the Wlink interrupt, tidelink_top.sv:3043 -> wlink_irq -> d2d_irq[8].
+abstract_port -ports "interrupt"             -clock app_clk
+
+# I2C sideband AXI slave.
+abstract_port -ports "s_i2c_axi_*"           -clock app_clk
+
+# [+] data_mode_o — the FCSM>=4 strobe that gates TideChart's root election
+#     (src/rtl/nanosoc_eth_chiplet.sv:897,985). Domain VERIFIED apb_clk, not
+#     link: it is driven from sync_obs_fcsm_state_1
+#     (axi_chiplet_controller.sv:6404), the far side of an apb_clk 2-FF sync
+#     (:1985), and the port comment states the domain outright (:504). This one
+#     mattered: if it were link-domain, the path into u_tidechart would be an
+#     unsynchronised crossing and declaring it app_clk would have hidden it.
+abstract_port -ports "data_mode_o"           -clock app_clk
+
+# [+] The four Bug-A FCSM observation taps. All four are the far side of the
+#     same apb_clk 2-FF sync chain (axi_chiplet_controller.sv:6394-6398,
+#     sync_obs_* registers). They are dangling in this build — tidelink_top.sv:
+#     805-809 declares the receiving wires and nothing reads them — so the
+#     domain cannot mask a crossing either way; declared for completeness.
+abstract_port -ports "obs_a2l_replay_link_valid_o" -clock app_clk
+abstract_port -ports "obs_fe_rx_credit_max_o[*]"   -clock app_clk
+abstract_port -ports "obs_fe_rx_is_full_o"         -clock app_clk
+abstract_port -ports "obs_a2l_replay_app_valid_o"  -clock app_clk
+
+# IDELAY control and the v2 eye-visibility surface — all driven from / returned
+# to hclk-domain register blocks at tidelink_top.
+abstract_port -ports "idelay_rst"                -clock app_clk
+abstract_port -ports "swi_eye_lane_sel_i[*]"     -clock app_clk
+abstract_port -ports "swi_eye_dwell_us_i[*]"     -clock app_clk
+abstract_port -ports "swi_eye_ctrl_i[*]"         -clock app_clk
+abstract_port -ports "eye_score_idx_i[*]"        -clock app_clk
+abstract_port -ports "eye_status_o[*]"           -clock app_clk
+abstract_port -ports "eye_score_data_o[*]"       -clock app_clk
+abstract_port -ports "eye_score_lane_passed_o"   -clock app_clk
+abstract_port -ports "eye_score_best_o[*]"       -clock app_clk
+abstract_port -ports "eye_score_best_slip_o[*]"  -clock app_clk
+abstract_port -ports "eye_score_best_phase_o[*]" -clock app_clk
+abstract_port -ports "eye_last_slip_o[*]"        -clock app_clk
+abstract_port -ports "eye_last_lane_fault_o[*]"  -clock app_clk
+
+# --- link_rx_clk_o (recovered RX word) domain --------------------------------
+# The lane checker lives entirely in the recovered-RX-clock domain. The two
+# control inputs are CONSUMED there — they are the outputs of the 2-FF/3-FF
+# synchroniser chains inside u_gpio_phy_apb_regs that already run on
+# link_rx_clk — so declaring them app_clk would invent a crossing at this
+# boundary that the synchronisers have already closed.
+abstract_port -ports "lane_lock_thresh_i[*]"    -clock link_rx_clk_o
+abstract_port -ports "lane_clear_noise_i"       -clock link_rx_clk_o
+abstract_port -ports "lane_mismatch_pulse_o[*]" -clock link_rx_clk_o
+abstract_port -ports "lane_wire_status_o[*]"    -clock link_rx_clk_o
+abstract_port -ports "lane_dist_raw_o[*]"       -clock link_rx_clk_o
+abstract_port -ports "lane_dist_voted_o[*]"     -clock link_rx_clk_o
+abstract_port -ports "lane_dwell_min_dist_o[*]" -clock link_rx_clk_o
+abstract_port -ports "lane_noise_min_o[*]"      -clock link_rx_clk_o
+abstract_port -ports "lane_noise_max_o[*]"      -clock link_rx_clk_o
+abstract_port -ports "lane_noise_mean_o[*]"     -clock link_rx_clk_o
+abstract_port -ports "lane_noise_current_o[*]"  -clock link_rx_clk_o
+abstract_port -ports "lane_canary_pass_o[*]"    -clock link_rx_clk_o
+abstract_port -ports "lane_canary_valid_o[*]"   -clock link_rx_clk_o
+
+# --- BUILD-CONDITIONAL PORTS — READ THIS BEFORE CHANGING FLISTS --------------
+# The three ports below exist ONLY when TIDELINK_PHY_V2 is defined
+# (axi_chiplet_controller.sv:522-534, an `ifdef arm inside the module header).
+# The ASIC filelist this setup defaults to defines it:
+#   build/chip/flist/tidelink_asic.flist:3   +define+TIDELINK_PHY_V2
+# Point this .prj at a V1 filelist and these three become unmatched names, which
+# is SGDC_abstract_port02 FATAL -> exit code 7 -> a run that reports "0 clocks /
+# 0 crossings" and looks like a tool problem. DELETE THIS BLOCK if you do that.
+#
+# obs_epoch_anchored_o / obs_epoch_span_o are link_rx-domain pass-throughs from
+# Wlink's deskew; the receiving APB slave 2-FF-syncs them into apb_clk itself
+# (axi_chiplet_controller.sv:4692-4702 and the port comment at :526-528), so the
+# link_rx_clk_o domain is the correct declaration and the sync is the thing the
+# report should recognise.
+abstract_port -ports "obs_epoch_anchored_o" -clock link_rx_clk_o
+abstract_port -ports "obs_epoch_span_o[*]"  -clock link_rx_clk_o
+# xhb_sub_obs_word_i is driven from tidelink_top's hclk-domain XHB500 ahb_sub
+# witness word (tidelink_top.sv:1749,3112).
+abstract_port -ports "xhb_sub_obs_word_i[*]" -clock app_clk
+
+# --- B7-ROUND2 ADDITION: scan_out --------------------------------------------
+# [+] scan_out was in the "deliberately not declared" list below, on the grounds
+#     that DFT is case-analysed at the top level. That is true of the scan
+#     INPUTS (§3 pins scan_mode / scan_shift / scan_clk / scan_in to 0). It does
+#     NOT reach a black-box OUTPUT: SpyGlass has no model inside the stopped
+#     module through which to propagate the constant, so it defaulted the pin to
+#     user_ref_clk and reported a user_ref_clk -> sys_hclk crossing against the
+#     §5 declaration of the chiplet scan_out port. B7 baseline §6 group A,
+#     finding 1.
+#
+# WHAT IS AND IS NOT CLAIMED HERE. This does NOT claim to know which internal
+# flop terminates the controller's scan chain — the module is stopped, so that
+# cannot be established from this run, and the chain's last stage could sit in
+# any of the controller's internal domains. What it does claim is narrower and
+# checkable:
+#   (a) The pin is a PURE FEEDTHROUGH from here to a chiplet primary output —
+#       axi_chiplet_controller.scan_out -> tidelink_top.sv:3040 -> the chiplet
+#       scan_out port. No flop, no gate, nothing to be metastable.
+#   (b) With scan_shift / scan_mode / scan_clk / scan_in all case-analysed to 0
+#       (§3), no functional path exists on it in mission mode.
+# So the two ends of one logic-free wire had contradictory domains, and the
+# report was measuring the contradiction, not the design. Making them agree
+# retires the artefact without hiding anything, because there is nothing on the
+# path to hide.
+#
+# REVISIT IF the DFT case analysis in §3 is ever removed, or if the controller
+# is un-black-boxed (B8) — at that point the chain's real terminal domain
+# becomes visible and this line should be replaced by it, not kept.
+abstract_port -ports "scan_out"              -clock app_clk
+
+# --- Deliberately NOT declared on this black box -----------------------------
+# Listed so the omission is a decision, not an oversight:
+#   apb_clk, app_clk, user_hsclk   clocks (app_clk declared above; the other two
+#                                  alias to it / to user_ref_clk at the instance)
+#   scan_mode, scan_asyncrst_ctrl, scan_clk, scan_shift, scan_in
+#                                  DFT, case-analysed at the top level
+#
+#   poresetn, hresetn              resets, declared at the top level.
+#       READ THIS BEFORE "FIXING" IT. These two pins are ALSO silently defaulted
+#       to user_ref_clk, by exactly the mechanism group A above describes — and
+#       they are the source of TWO of the five findings the B7 baseline classed
+#       REAL (findings 32/33, §5 rows 32-33):
+#         u_soc.u_chip_core.u_cpu_0.u_core_prmu.u_rstctrl.u_sys_hresetn_sync.rst_sync2_n
+#           [sys_fclk] -> u_tidelink.u_chiplet_controller(.../hresetn) [user_ref_clk]
+#         ...u_sys_poresetn_sync.rst_sync2_n
+#           [sys_fclk] -> u_tidelink.u_chiplet_controller(.../poresetn) [user_ref_clk]
+#       It is tempting to add `abstract_port -ports "hresetn" -clock app_clk`
+#       here and watch two more findings vanish. DO NOT. Unlike the four I2C
+#       pins, these are INPUTS that fan out to MORE THAN ONE internal domain
+#       inside the stopped module: §2 of this file records that hresetn feeds
+#       app_clk_reset (axi_chiplet_controller.sv:2686) while poresetn feeds
+#       wlink_por_reset (:2681), and the role_locked argument in §2 shows a
+#       third, recovered-RX regime. Declaring either one app_clk would collapse
+#       a real multi-domain reset-distribution question into "same domain" and
+#       delete it from the report.
+#       The user_ref_clk default is arbitrary — but it errs toward
+#       OVER-reporting, which is the safe direction, and it lands these two in
+#       the same group H reset-distribution bucket as finding 30 where they
+#       belong. Resolving them properly needs the controller's internal reset
+#       domains, i.e. B8. Left defaulted ON PURPOSE.
+#   pad_clk_tx, pad_tx, pad_clk_rx, pad_rx, idelay_ref_clk
+#                                  chiplet pads, declared at the top level and
+#                                  propagated straight through tidelink_top
+#   role_strap_i, nego_priority_i, puf_seed, puf_ready, mask_hs_bypass_i,
+#   apb_debug_unlock_i             straps, quasi_static at the top level (§4)
+
+# -----------------------------------------------------------------------------
+# 7b. XHB500 AHB<->AXI bridges
+# -----------------------------------------------------------------------------
+# Both variants are single-clock designs: one `clk` input
+# (xhb500_ahb_to_axi_bridge_chiplet_slv.sv:26,
+#  xhb500_axi_to_ahb_bridge_chiplet_mst.sv:28) and everything else synchronous
+# to it. Instantiated at tidelink_top.sv:2477 (u_xhb_sub) and :2564 (u_xhb_mng),
+# both on hclk. Wildcarding all ports onto that one clock is safe precisely
+# because there is only one clock — it is NOT safe for a multi-domain block, and
+# that is why the DAP is not treated this way (see cdc/README.md §5).
+current_design xhb500_ahb_to_axi_bridge_chiplet_slv
+clock -name clk -domain sys_fclk_domain -period 10.0
+abstract_port -ports "*" -clock clk
+
+current_design xhb500_axi_to_ahb_bridge_chiplet_mst
+clock -name clk -domain sys_fclk_domain -period 10.0
+abstract_port -ports "*" -clock clk
+
+# -----------------------------------------------------------------------------
+# 7c. Compiled memory macros
+# -----------------------------------------------------------------------------
+# rf_01k / rf_08k / rf_16k / rf_32k are the TSMC65 compiled single-port register
+# files (sl_sram.v:57,77,97,117,154; ethmac_sram.v:51). Their Verilog models are
+# NOT in any filelist this build reads — Genus takes them from .lib — so
+# SpyGlass already sees them as undefined modules, i.e. implicit black boxes.
+# The stop_module entry in the .prj makes that explicit and keeps the behaviour
+# stable if someone ever adds the models.
+#
+# Port set verified against /research/precompiled_mems/TSMC65/rf_01k/rf_01k.v:83
+#   rf_01k (VDD, VSS, Q, CLK, CEN, WEN, A, D, EMA, EMAW, GWEN, RET1N)
+# Single CLK, everything else synchronous to it.
+#
+# NOT CONSTRAINED HERE, deliberately. `current_design` on a module SpyGlass has
+# never read is not something to assert without testing, and the memories are
+# single-clock so an unbound black box cannot create a cross-domain path through
+# one. If the first run reports crossings AT a memory boundary, the fix is four
+# blocks of the form:
+#     current_design rf_01k
+#     clock -name CLK -domain sys_fclk_domain -period 10.0
+#     abstract_port -ports "*" -clock CLK
+# with the domain set per instance-site rather than globally — the ethmac RX FIFO
+# memories sit in the MII domains, not the fabric.
+# TODO(cdc): confirm on the first run; see cdc/README.md §7.

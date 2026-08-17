@@ -1,0 +1,158 @@
+##-----------------------------------------------------------------------------
+## nanosoc_eth_chiplet — SpyGlass CDC Project File (chiplet integration top)
+##
+## A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+## license.
+##
+## Contributors
+##
+## David Mapstone (d.a.mapstone@soton.ac.uk)
+##
+## Copyright 2026, SoC Labs (www.soclabs.org)
+##-----------------------------------------------------------------------------
+## Modelled on tidelink/cdc/tidelink_top.prj, which is a working driver.
+##
+## Invocation (see cdc/README.md §2 for the full environment):
+##   $SPYGLASS_HOME/bin/spyglass -batch \
+##       -project $CHIPLET/cdc/nanosoc_eth_chiplet.prj \
+##       -goals "cdc/cdc_verify" < /dev/null
+##
+## The `< /dev/null` is not decorative — Genus, Innovus and the SpyGlass shell
+## all hold a licence seat at an interactive prompt if stdin stays open.
+##
+## Environment consumed (all set by the README's export block):
+##   FLIST   filelist to read
+##   SG_TOP  elaboration top
+##   SGDC    constraints file
+##   SWL     waiver file
+##-----------------------------------------------------------------------------
+
+## -- Design read --------------------------------------------------------------
+
+# The integration RTL is SystemVerilog-2009; the SoC and the CMSDK/XHB500
+# collateral are mixed Verilog/SV.
+set_option enableSV09 yes
+set_option language_mode mixed
+set_option designread_enable_synthesis no
+
+# The chiplet is substantially larger than tidelink_top alone (two Cortex-M0+
+# cores, the DAP, DMA-230, the MAC, the HA1588 PTP unit and the whole D2D link).
+# tidelink_top.prj uses 50000; raised here so elaboration does not truncate.
+set_option mthresh 200000
+
+# PREREQUISITE: the filelist below `-f`-includes two GENERATED sub-flists,
+#   build/chip/flist/soc.flist
+#   build/chip/flist/tidelink_asic.flist
+# and the generated wrapper build/chip/rtl/nanosoc_eth_chiplet_chip.v. Render
+# them first (see cdc/README.md §2) or the read fails on a missing file rather
+# than on anything to do with CDC.
+#
+# It also carries `+define+TIDELINK_PHY_V2`
+# (build/chip/flist/tidelink_asic.flist:3), which the SGDC depends on — three
+# axi_chiplet_controller ports exist only under that define. See the
+# BUILD-CONDITIONAL PORTS block in cdc/nanosoc_eth_chiplet.sgdc §7a before
+# pointing this at a different filelist.
+read_file -type sourcelist $::env(FLIST)
+
+## -- Elaboration --------------------------------------------------------------
+
+# Default nanosoc_eth_chiplet — the INNER top, where the clocks are still
+# distinct ports. Not nanosoc_eth_chiplet_chip: that wrapper aliases rtc_clk and
+# user_ref_clk onto sys_fclk and leaves role_locked_o open. Full argument in
+# cdc/README.md §1.
+set_option top $::env(SG_TOP)
+
+## -- Constraints --------------------------------------------------------------
+# ONE file, deliberately. tidelink_top.prj reads three SGDCs (its own plus
+# axi_chiplet_controller.sgdc and xhb500.sgdc); this project keeps the
+# black-box port constraints inside the single chiplet SGDC instead, because
+# those two TideLink files carry TideLink's own period set (hclk 4.0,
+# link_rx_clk_o 64.0) and reading them here would put two contradictory sets of
+# clock periods into one run. Their port lists had also fallen eleven ports
+# behind the RTL this build compiles — see cdc/README.md §4.
+read_file -type sgdc $::env(SGDC)
+
+## -- Waivers ------------------------------------------------------------------
+# Nearly empty on purpose. Read cdc/waiver.swl before adding anything to it.
+read_file -type waiver $::env(SWL)
+
+## -- Black-boxed IP -----------------------------------------------------------
+# stop_module prevents SpyGlass from tracing INTO these modules, so CDC analysis
+# sees only their port-level constraints (the abstract_port blocks in
+# cdc/nanosoc_eth_chiplet.sgdc §7).
+#
+# THE COST OF THIS OPTION IS NOT ZERO. Every port of a stopped module that has
+# no abstract_port gets a DEFAULT domain, and a defaulted port on a black box is
+# how you manufacture a crossing that does not exist
+# (tidelink/cdc/axi_chiplet_controller.sgdc:69-79 records two of them). So a
+# module goes on this list only when its full port set has been enumerated
+# against the RTL, or when it is single-clock and can be wildcarded honestly.
+#
+#   axi_chiplet_controller
+#       TideLink's Wlink-based D2D controller. Ports enumerated and verified
+#       against tidelink/src/rtl/local_overrides/axi_chiplet_controller.sv
+#       (the copy build/chip/flist/tidelink_asic.flist:187 actually compiles).
+#
+#       ---- B8: REMOVING THIS IS A ONE-LINE CHANGE -------------------------
+#       The plan un-black-boxes this module as a SEPARATE, LATER step, once the
+#       baseline with it stopped is established and understood. To do it:
+#       delete the token `axi_chiplet_controller` from the stop_module line
+#       below. Nothing else changes — the §7a abstract_port block becomes inert
+#       (SpyGlass applies port constraints only to stopped/undefined units) and
+#       the controller's ~6800 lines, including the a2l replay CDC and the
+#       recovered-RX-clock domain, enter the analysis.
+#       Expect the run to get substantially longer and the report to grow. Do
+#       NOT do it in the same change as anything else, or you will not know
+#       which findings are new crossings and which are new constraints.
+#       ---------------------------------------------------------------------
+#
+#   xhb500_ahb_to_axi_bridge_chiplet_slv / xhb500_axi_to_ahb_bridge_chiplet_mst
+#       Arm XHB500. Single-clock (`clk`), so `abstract_port -ports "*"` onto one
+#       domain is honest rather than a shortcut.
+#
+#   rf_01k / rf_08k / rf_16k / rf_32k
+#       TSMC65 compiled register files. Their Verilog models are in no filelist
+#       this build reads, so SpyGlass already treats them as undefined modules;
+#       listing them makes that explicit and stable.
+set_option stop_module {axi_chiplet_controller \
+                        xhb500_ahb_to_axi_bridge_chiplet_slv \
+                        xhb500_axi_to_ahb_bridge_chiplet_mst \
+                        rf_01k rf_08k rf_16k rf_32k}
+
+## -- NOT black-boxed, and why -------------------------------------------------
+# The brief for this setup named "Arm CMSDK/CoreSight" as black-box candidates
+# alongside XHB500 and the memories. They are deliberately LEFT ELABORATED, and
+# this is the one place this project departs from that instruction.
+#
+# The reason is the asymmetry stated at the top of the SGDC: a wrong constraint
+# masks, an absent one only over-reports. Stopping a module obliges you to
+# constrain every one of its ports, and the two candidates here cannot be
+# wildcarded honestly:
+#
+#   CM0PDAP (cm0p_dap_top.v / CM0PDAP.v) is a genuinely TWO-DOMAIN block — SWD
+#   probe clock on one side, fabric clock on the other. `abstract_port -ports
+#   "*" -clock <one clock>` would collapse the swclktck<->sys_hclk boundary into
+#   a single domain and DELETE the most important debug-path crossing in the
+#   design from the report. Its port list has not been enumerated, so the
+#   alternative — a verified per-port split — is not available yet either.
+#
+#   CORTEXM0PLUS has FCLK/HCLK/DCLK/SCLK plus debug-side pins whose domain
+#   membership has not been checked here.
+#
+# Leaving them elaborated costs runtime and produces extra INFO lines. It also
+# means their vendor CDC cells (cm0p_dap_ap_cdc.v, cm0p_dap_dp_cdc.v,
+# cm0p_dap_cdc_capt_sync.v) come back as RECOGNISED synchronisers, which is the
+# result you actually want from a first pass.
+#
+# If the baseline run is intractably slow, the honest fix is to enumerate
+# CM0PDAP's ports and add a verified two-domain block to the SGDC, then add it
+# here. It is NOT to wildcard it onto one clock.
+#
+# The single-clock CMSDK leaf cells (cmsdk_ahb_to_apb, cmsdk_ahb_to_sram,
+# cmsdk_apb_slave_mux) are also left elaborated: they are small, they carry the
+# real APB/AHB paths of the two integration bridges, and black-boxing them would
+# put a defaulted-domain boundary in the middle of this repository's own logic.
+
+## -- Goal ---------------------------------------------------------------------
+# Specified via -goals on the command line, which is required in -batch
+# -project mode. current_goal / run_goal are not used in that flow.
