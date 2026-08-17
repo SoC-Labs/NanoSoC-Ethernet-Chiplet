@@ -123,16 +123,56 @@ set_input_delay 1 -clock [get_clocks "D2D_RX_CLK_0"] [get_ports {TL_RX[*]}]
 # compiled tidelink. Absent, the constraint is skipped with a loud note rather
 # than erroring the flow - a run against a pre-divider tidelink is still valid.
 set _lcd "u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_link_clk_div"
-if {[llength [get_pins -quiet ${_lcd}/div_en_r/Q]]} {
-    set_case_analysis 0 [get_pins ${_lcd}/div_en_r/Q]
-    set_case_analysis 1 [get_pins ${_lcd}/byp_en_r/Q]
-    puts "TIDELINK-SDC: link-clock divider pinned to /1 bypass (div_en_r=0, byp_en_r=1)"
+
+# TWO-LEVEL GUARD, and the levels mean different things.
+#
+# Level 1 - is the divider in this netlist at all? A run against a pre-divider
+# tidelink is legitimate, so absence is a SKIP with a loud note, not an error.
+#
+# Level 2 - if it IS here, the pins MUST bind. Guarding on the module alone was
+# the first version of this block and it was wrong in the way this file exists
+# to prevent: Genus renames flops on map (div_en_r -> div_en_r_reg), so the
+# module check passes, get_pins returns an empty collection, set_case_analysis
+# applies to NOTHING, and the divided leg is unconstrained behind an SDC line
+# that reads as though it were handled. Caught by 08.
+#
+# That is the same failure mode as the RX word-clock anchors above, whose own
+# comment records how 16,653 flops stayed untimed while every run reported
+# success. Same fix: bind or die. The trailing wildcard covers both spellings,
+# because Genus reads THIS file pre-map while Innovus reads the written SDC
+# post-map.
+if {[llength [get_cells -quiet $_lcd]] == 0} {
+    puts "TIDELINK-SDC: NOTE no $_lcd in this netlist - divider case analysis skipped."
+    puts "TIDELINK-SDC:      Legitimate for a pre-divider tidelink. If the divider IS"
+    puts "TIDELINK-SDC:      meant to be compiled, this is a REAL GAP: the divided leg"
+    puts "TIDELINK-SDC:      would be a second, unconstrained clock source."
 } else {
-    puts "TIDELINK-SDC: NOTE no u_link_clk_div in this netlist - divider case analysis skipped."
-    puts "TIDELINK-SDC:      If the divider IS meant to be compiled, this is a REAL GAP:"
-    puts "TIDELINK-SDC:      the divided leg would be a second, unconstrained clock source."
+    set _div_en [get_pins -quiet ${_lcd}/div_en_r*/Q]
+    set _byp_en [get_pins -quiet ${_lcd}/byp_en_r*/Q]
+    if {[llength $_div_en] == 0 || [llength $_byp_en] == 0} {
+        error "tidelink_constraints.sdc: link-clock divider is INSTANTIATED but its\
+ enable pins did not bind (div_en_r*/Q -> [llength $_div_en], byp_en_r*/Q ->\
+ [llength $_byp_en]). The divided leg clkdiv_r is a second clock source into\
+ clk_out and would be left UNCONSTRAINED while this file reads as if it were\
+ handled. Do not waive this by deleting the constraint - find the post-map\
+ spelling. See the RX word-clock anchors above and why 16,653 flops went untimed."
+    }
+    set_case_analysis 0 $_div_en
+    set_case_analysis 1 $_byp_en
+    puts "TIDELINK-SDC: link-clock divider pinned to /1 bypass\
+ (div_en_r=0 on [llength $_div_en] pin(s), byp_en_r=1 on [llength $_byp_en])"
+    unset _div_en _byp_en
 }
 unset _lcd
+
+# SCOPE OF WHAT THIS SIGNS OFF - write this down or it will be misread.
+# With the divider pinned to bypass, STA describes the /1 CONFIGURATION ONLY.
+# That is correct and intended: divided ratios are a bring-up capability to open
+# a marginal receive eye, explicitly not signed off for mission mode. A clean
+# timing run under these constraints says NOTHING about /2, /4, /8 or /16 - at
+# those ratios clk_out is clkdiv_r, a registered divided clock and a genuinely
+# different clock structure. If a divided mode is ever to be signed off rather
+# than merely exercised, it needs its own generated-clock set and its own view.
 
 create_generated_clock -name "D2D_TX_CLK_0" -source [get_pins u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_chiplet_controller/u_wlink/pad_clk_tx] -divide_by 1 [get_ports TL_CLK_TX]
 
