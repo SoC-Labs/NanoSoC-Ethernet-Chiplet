@@ -27,7 +27,20 @@ OUT="$ASIC_DIR/outputs"
 REP="$ASIC_DIR/reports"
 DEST="${1:-$ASIC_DIR/submission}"
 
-GDS="$OUT/$BLOCK.gds"
+# THE SUBMISSION ARTEFACT IS NOT THE SIGNOFF ARTEFACT.
+# The logo is merged as a SEPARATE step from write_stream, deliberately, so that
+# a DRC count can never be quoted against the wrong file: the un-logoed stream
+# stays the signoff artefact and the logoed one is what ships. This script had
+# no way to be pointed at the merged stream, so it always packaged the signoff
+# GDS. That is how the 2026-08-17 16:56 bundle came to carry an un-logoed
+# stream while looking finished.
+#
+#   SUBMIT_GDS=<...>_logo.gds  package the logo-merged stream
+#   unset                      package the signoff stream (previous behaviour)
+#
+# Whichever is chosen, MANIFEST.txt records the path and sha256 of the file that
+# was actually copied, so the bundle states which one it is.
+GDS="${SUBMIT_GDS:-$OUT/$BLOCK.gds}"
 [ -s "$GDS" ] || { echo "FAIL: no GDSII at $GDS — nothing to package." >&2; exit 1; }
 
 SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -40,11 +53,31 @@ STAGE="$DEST/$NAME"
 mkdir -p "$STAGE"
 echo "== staging $NAME =="
 
-for f in "$BLOCK.gds" "${BLOCK}_pnr.v" "${BLOCK}_pnr.sdf" "${BLOCK}_syn.sdc"; do
+MISSING=()
+# The GDS is copied from $GDS, NOT from $OUT/$BLOCK.gds like the rest. Without
+# this, a SUBMIT_GDS override would satisfy the existence check above and then
+# package the signoff stream anyway — an override that silently does nothing is
+# worse than no override, because it reads as done.
+# The staged name is normalised to $BLOCK.gds (a submission desk expects the
+# block name); MANIFEST.txt records the source path and sha256, so the bundle
+# still says which stream it actually carries.
+if [ -s "$GDS" ]; then
+    cp -p "$GDS" "$STAGE/$BLOCK.gds"
+    if [ "$GDS" = "$OUT/$BLOCK.gds" ]; then echo "  + $BLOCK.gds"
+    else echo "  + $BLOCK.gds   <- $GDS"; fi
+else
+    echo "  ! MISSING $BLOCK.gds"; MISSING+=("$BLOCK.gds")
+fi
+for f in "${BLOCK}_pnr.v" "${BLOCK}_pnr.sdf" "${BLOCK}_syn.sdc"; do
     if [ -s "$OUT/$f" ]; then cp -p "$OUT/$f" "$STAGE/"; echo "  + $f"
-    else echo "  ! MISSING $f"; fi
+    else echo "  ! MISSING $f"; MISSING+=("$f"); fi
 done
-[ -d "$REP" ] && cp -rp "$REP" "$STAGE/reports" && echo "  + reports/"
+# reports/ was previously copied by `[ -d "$REP" ] && cp ... && echo`, whose
+# failure is exempt from set -e because it is not the last command of the &&
+# list. An absent reports/ therefore left NO trace at all: not a warning, not a
+# non-zero exit. It is a declared deliverable, so it is tracked like the rest.
+if [ -d "$REP" ]; then cp -rp "$REP" "$STAGE/reports"; echo "  + reports/"
+else echo "  ! MISSING reports/"; MISSING+=("reports/"); fi
 
 # --- manifest ---------------------------------------------------------------
 M="$STAGE/MANIFEST.txt"
@@ -124,3 +157,34 @@ rm -rf "$STAGE"
 Z="$DEST/$NAME.zip"
 echo "== $Z ($(du -h "$Z" | cut -f1)) =="
 echo "$Z"
+
+# ── THE COMPLETENESS GATE ───────────────────────────────────────────────────
+# Until this gate existed the script exited 0 for ANY subset of the
+# deliverables. Measured 2026-08-17 against a directory containing one 7-byte
+# file: it produced a correctly SHA-named 4 KB zip holding that file and a
+# MANIFEST, printed three "! MISSING" lines, and exited 0. Nothing downstream
+# of an exit status could tell that bundle from a complete one.
+#
+# The MANIFEST is scrupulous about declaring what the DESIGN does not have. It
+# cannot declare a file that was never copied, because it only hashes what is
+# in $STAGE — a thinner bundle produces a shorter, still perfectly consistent,
+# manifest. Absence has to be caught here or not at all.
+#
+# SUBMISSION_GATE=report downgrades this to a warning, matching the existing
+# ROM_GDS_GATE=report idiom in ASIC/rom_gate.mk, for the case where a partial
+# bundle is deliberate. The default is to fail.
+if [ ${#MISSING[@]} -gt 0 ]; then
+    {
+        echo ""
+        echo "INCOMPLETE BUNDLE — ${#MISSING[@]} declared deliverable(s) absent:"
+        printf '  - %s\n' "${MISSING[@]}"
+        echo "  The zip WAS written and is listed above; it is not a submission."
+        if [ "${SUBMISSION_GATE:-}" = "report" ]; then
+            echo "  (not failing: SUBMISSION_GATE=report)"
+        else
+            echo "  Run the missing stages, or set SUBMISSION_GATE=report to"
+            echo "  package deliberately partial output."
+        fi
+    } >&2
+    [ "${SUBMISSION_GATE:-}" = "report" ] || exit 1
+fi
