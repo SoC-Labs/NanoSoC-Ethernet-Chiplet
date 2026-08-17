@@ -10,6 +10,7 @@
 [submodule "ASIC/asic-flows"]
 	path = ASIC/asic-flows
 	url = https://github.com/SoC-Labs/ASIC-Flow.git
+	branch = lpddr4-pll
 [submodule "ASIC/asic-toolkit"]
 	path = ASIC/asic-toolkit
 	url = git@github.com:SoC-Labs/nanoSoC-ASIC-Toolkit.git
