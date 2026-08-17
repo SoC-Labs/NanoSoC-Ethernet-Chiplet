@@ -1,0 +1,124 @@
+#-----------------------------------------------------------------------------
+# nanosoc_eth_chiplet — CANDIDATE SpyGlass CDC waivers: compiled hard macros
+#
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+# license.
+#
+# Contributors
+#
+# David Mapstone (d.a.mapstone@soton.ac.uk)
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+#-----------------------------------------------------------------------------
+#
+# STATUS: CANDIDATE. Not read by any flow yet. `cdc/nanosoc_eth_chiplet.prj`
+# still reads `cdc/waiver.swl`, which is empty on purpose and stays that way
+# until someone with the authority signs this file off. To exercise it:
+#
+#     SWL_OVERRIDE=$CHIPLET/cdc/waiver_bbox_macros.swl \
+#         build/cdc/cdcagent-20260817/run0_repro/run.sh
+#
+# WHAT IS WAIVED, AND WHY IT IS NOT A CDC CLAIM
+# ---------------------------------------------
+# Exactly one class: the "this module has no Verilog definition" bookkeeping
+# (`ErrorAnalyzeBBox`) on the COMPILED HARD MACROS.
+# Those macros are undefined by construction, not by mistake — their Verilog
+# models are in no filelist this build reads, because synthesis takes them from
+# `.lib` and P&R from `.lef`/`.gds`. `cdc/nanosoc_eth_chiplet.prj` already
+# states this for the register files on its `set_option stop_module` line.
+#
+# This waives NOTHING about clock domain crossings. It removes ONE BuiltIn
+# bookkeeping rule on eight named macros. Every `Ac_*`, `Ar_*`, `Reset_*` and
+# `Clock_*` finding in the run is untouched, and so is `checkSGDC_05` — see
+# `cdc/waiver.swl` §2 for why that one may never be waived here.
+#
+# The safety argument, per `cdc/waiver.swl` §3 ("state what makes it safe, with
+# file:line"): every macro below is SINGLE-CLOCK, so no path can cross a domain
+# *through* one. Instance sites and port declarations:
+#
+#   rf_01k   ethmac_sram.v:51                     — one `CLK`
+#   rf_08k   sl_sram.v:77                         — one `CLK`
+#   rf_16k   sl_sram.v:97, tidelink_sram.sv:48    — one `CLK`
+#   rf_32k   sl_sram.v:117                        — one `CLK`
+#   flash_cache_data  cache_ram.v:26,45,63,81     — one `CLK`
+#   flash_cache_tag   cache_ram.v:118             — one `CLK`
+#   rom_via           nanosoc_bootrom_chip_core.sv:37 — one `CLK`
+#   eth_rom_via       eth_ss_bootrom.sv:38            — one `CLK`
+#
+# If a future run reports a crossing AT one of these boundaries, that is a
+# finding about the LOGIC EITHER SIDE of the macro and it is still reported —
+# these waivers cannot hide it, because they are scoped to the macro's own
+# design unit and to one non-CDC bookkeeping rule.
+#
+# WHAT IS DELIBERATELY *NOT* WAIVED — the control
+# ----------------------------------------------
+# `tidelink_link_clk_div` is also an undefined black box in this run, and it is
+# NOT waived, because it is a real defect rather than a construction:
+# `tidelink/src/rtl/tidelink_top.sv:2817` instantiates it, the module exists at
+# `tidelink/src/rtl/tidelink_link_clk_div.sv`, and the GENERATED chip flist
+# `build/chip/flist/tidelink_asic.flist` does not list it. It must keep
+# reporting until the generated flist is re-rendered. It is the positive
+# control that proves these waivers are scoped and not blanket: after this file
+# is read, `ErrorAnalyzeBBox` must fall 9 -> 1 and the survivor must be this
+# module.
+#
+# `axi_chiplet_controller` and the two XHB500 bridges are likewise NOT waived.
+# Their `Setup_blackbox01` lines are the evidence that 18 D2D-controller pins
+# (`pad_rx[7:0]`, `pad_tx[7:0]`, `hresetn`, `poresetn`) carry an inferred
+# multi-clock virtual domain instead of a declared one. That is a coverage hole
+# to close with a declaration, never with a waiver.
+#
+# MEASURED, FALSIFIABLE EFFECT (baseline run0_repro: 884 messages, 0 waived)
+# --------------------------------------------------------------------------
+#   ErrorAnalyzeBBox   9 -> 1     (-8;  survivor: tidelink_link_clk_div)
+#   Waived messages    0 -> 8
+#   Total reported   884 -> 876
+#   Every Ac_*/Ar_*/Reset_*/Clock_* count: UNCHANGED  (verified, none moved)
+#   Setup_blackbox01  25 -> 25    (UNWAIVABLE HERE — see the warning below)
+# A run that does not move by exactly this much has not done what this file
+# says. Re-measure with:
+#   python3 scripts/cdc/spyglass_census.py <.../moresimple.rpt>
+# and diff the per-rule table against the baseline run.
+#
+#-----------------------------------------------------------------------------
+# WARNING — A WAIVER THAT MATCHES NOTHING IS SILENT. MEASURED, NOT ASSUMED.
+#-----------------------------------------------------------------------------
+# This file originally also carried eight `Setup_blackbox01` waivers for the
+# same eight macros. TWO spellings were tried and BOTH matched zero findings:
+#
+#   run1_waived        `waive -du "<macro>" -rule Setup_blackbox01`   -> 0 matched
+#   run2_waived_fixed  `waive -rule Setup_blackbox01 -msg "black-box .<macro>."`
+#                                                                     -> 0 matched
+#
+# In both runs the report stayed at exactly 25 `Setup_blackbox01` findings and
+# the header's "Number of Waived Messages" stayed at 8 — the eight that the
+# `ErrorAnalyzeBBox` waivers legitimately removed. SpyGlass emitted NO
+# diagnostic: its thirteen dedicated waiver-hygiene rules (SGDC_waive01..13)
+# all ran in the same goal and reported nothing. An inert waiver is invisible
+# to the tool and can only be caught by predicting the count and checking it.
+#
+# `-du` resolves `Setup_blackbox01` to the design unit that INSTANTIATES the
+# black box (cache_ram, sl_sram, tidelink_top) rather than to the black box
+# named in the message, and `-msg` did not bind either. Rather than ship eight
+# statements that look like coverage and do nothing, they are REMOVED. The 25
+# `Setup_blackbox01` findings stay in the report, where they are harmless Info
+# and where one of them — `axi_chiplet_controller` — is load-bearing evidence
+# of a real coverage hole.
+#-----------------------------------------------------------------------------
+
+# -- compiled TSMC65 register files (single-clock; models come from .lib) ------
+waive -du "rf_01k"  -rule ErrorAnalyzeBBox -comment "compiled RF macro, single-clock; no Verilog model in any flist this build reads (ethmac_sram.v:51)"
+waive -du "rf_08k"  -rule ErrorAnalyzeBBox -comment "compiled RF macro, single-clock; no Verilog model in any flist this build reads (sl_sram.v:77)"
+waive -du "rf_16k"  -rule ErrorAnalyzeBBox -comment "compiled RF macro, single-clock; no Verilog model in any flist this build reads (sl_sram.v:97, tidelink_sram.sv:48)"
+waive -du "rf_32k"  -rule ErrorAnalyzeBBox -comment "compiled RF macro, single-clock; no Verilog model in any flist this build reads (sl_sram.v:117)"
+
+# -- QSPI flash cache RAMs (single-clock) -------------------------------------
+waive -du "flash_cache_data" -rule ErrorAnalyzeBBox -comment "compiled cache RAM, single-clock (cache_ram.v:26,45,63,81)"
+waive -du "flash_cache_tag"  -rule ErrorAnalyzeBBox -comment "compiled cache RAM, single-clock (cache_ram.v:118)"
+
+# -- boot ROM macros (single-clock) -------------------------------------------
+waive -du "rom_via"     -rule ErrorAnalyzeBBox -comment "compiled ROM macro, single-clock (nanosoc_bootrom_chip_core.sv:37)"
+waive -du "eth_rom_via" -rule ErrorAnalyzeBBox -comment "compiled ROM macro, single-clock (eth_ss_bootrom.sv:38)"
+
+# NOT waived, on purpose: tidelink_link_clk_div, axi_chiplet_controller,
+# xhb500_ahb_to_axi_bridge_chiplet_slv, xhb500_axi_to_ahb_bridge_chiplet_mst.
