@@ -1,0 +1,145 @@
+# A submodule pin check that compares SHAs cannot see a dirty submodule
+
+**Found 2026-08-17, pre-launch on `gate1`. It would have shipped a tapeout stream
+containing a module that exists in no commit anywhere.**
+
+---
+
+## 1. The check that passes while being wrong
+
+The obvious pin check reads the gitlink recorded in the superproject commit,
+reads the submodule's checked-out HEAD, and compares them:
+
+```
+  ASIC/asic-toolkit    HEAD=3910c18  want=3910c18   MATCH
+  ASIC/asic-flows      HEAD=c2a46ee  want=c2a46ee   MATCH
+  tidelink             HEAD=9e4a401  want=e21e274   DIFFERS
+```
+
+That found one problem. It is blind to two worse ones, and if the third line had
+also read `MATCH` — which is the normal case — the check would have reported all
+clear while the build compiled something else entirely.
+
+**A SHA comparison cannot see:**
+
+1. **The submodule's own working tree.** A submodule can sit exactly on its pin
+   and still have uncommitted edits, deleted files, and untracked files that the
+   build reads.
+2. **The superproject's `dirty` verdict is computed one level up.** `git status
+   --porcelain` in the superproject was **clean for every path the run reads**.
+   The manifest would have recorded `dirty no` truthfully by its own definition
+   and falsely in fact.
+
+## 2. What was actually in there
+
+```
+M  src/rtl/tidelink_top.sv                <- the ASIC top RTL, 14 code lines
+M  flists/tidelink_top_full_asic.flist    <- the file list itself
+D  deps/xhb500/generated
+?? src/rtl/tidelink_link_clk_div.sv       <- IN ZERO COMMITS, ANYWHERE
+```
+
+The flist edit adds exactly one entry — 182 entries at the pin, 182 at the
+checked-out commit, **183 in the working tree** — and that entry is the untracked
+file. `git log --all -- src/rtl/tidelink_link_clk_div.sv` returns nothing.
+
+So the design under build contained a module present in no commit in any repo.
+Not hard to rebuild: **impossible to rebuild**, by anyone, at any SHA, on any
+machine.
+
+It was not a leaf module either. The uncommitted `tidelink_top.sv` hunk adds a
+new top-level input port and re-routes the D2D PHY high-speed clock through it:
+
+```verilog
++  input wire [2:0] link_clk_div_ratio_i        // new chip-level port
++  tidelink_link_clk_div u_link_clk_div (.clk_in(user_ref_clk), ...)
+-      .user_hsclk (user_ref_clk)
++      .user_hsclk (link_hsclk_w)
+```
+
+A new top-level port is a chip interface change, and this one sits in the clock
+path that the transmit-clock constraints (`D2D_TX_CLK_0`, the eight
+`D2D_TX_WORD_CLK_n`) describe as generated directly from `user_ref_clk`. The SDC
+and the netlist would have disagreed about the clock topology, and the resulting
+`master_clk_edge_not_reaching` would have been read as a constraints bug.
+
+## 3. The one tell
+
+`git submodule status` prefixes a dirty submodule with `+`:
+
+```
+   c2a46eec... ASIC/asic-flows  (heads/lpddr4-pll)
+   3910c18f... ASIC/asic-toolkit (heads/main)
+  +9e4a401c... tidelink          (archive/2026-08-collapse/...)
+  ^
+  this character is the entire warning
+```
+
+One character, in column 1, easy to lose in a wrapped terminal. Note also that
+`+` here means *the checked-out commit differs from the recorded gitlink* — the
+dirty **working tree** is reported separately and only with `--recursive` or by
+running `git status` **inside** the submodule. Do both.
+
+## 4. What to run instead
+
+```bash
+git submodule status --recursive          # read column 1: + or U is a stop
+for m in $(git config -f .gitmodules --get-regexp path | awk '{print $2}'); do
+    n=$(git -C "$m" status --porcelain | wc -l)
+    [ "$n" -eq 0 ] || { echo "DIRTY SUBMODULE: $m ($n entries)"; git -C "$m" status --porcelain; }
+done
+```
+
+And the check that would have caught this one regardless of git state — **ask the
+flist, not the repo**: every file the build compiles must resolve to a commit.
+
+```bash
+# for each entry in the compiled flist, is it tracked in its own repo?
+git -C "$repo" ls-files --error-unmatch "$path" >/dev/null 2>&1 || echo "NOT TRACKED: $path"
+```
+
+An untracked file in a flist is unreproducible whatever the SHAs say. That is the
+strongest form of the check and it does not care how many levels of submodule sit
+between the manifest and the source.
+
+## 5. Also present, and a separate decision
+
+The checked-out commit was 10 commits ahead of the pin and contained it, so the
+N1 read-backstop fix was present. But those commits also carried behavioural RTL
+changes in files that are in the ASIC flist:
+
+| file | raw insertions | code-only (comments stripped) |
+|---|---|---|
+| `WlinkGenericFCSM.v` | 46 | 17 |
+| `axi_chiplet_controller.sv` | 68 | 25 |
+| `WlinkGenericFCSM_{1,2,3,4}.v` | 21 each | — |
+
+The FCSM change adds a watchdog force-clear to the flow-control state-7 exit,
+behind a `TL033_LEGACY_WDOG` guard. Its originating commit describes itself as
+*"safety-commit auto-anchor/TL-033 watchdog RTL edits (uncommitted,
+unreviewed)"*.
+
+Quote the code-only counts when arguing about behaviour and the raw counts when
+arguing about review burden; they differ by roughly 2.5x here and mixing them
+makes two people think they disagree when they do not.
+
+## 6. The general shape
+
+This is the same failure that has recurred all week in different clothing: **a
+correct command answering a different question than the one being asked.**
+
+- `git ls-remote` lists ref *tips*, so a reachable ancestor SHA reads as absent
+- `grep | head -2` stops before the answer and reads as "not present"
+- `git status` letters cannot distinguish staged work from a stale index entry
+- **a submodule SHA comparison cannot see the submodule's working tree**
+
+In each case the instrument was fine and the inference from it was not. When a
+check reports clean, the question to ask is not "do I believe it" but **"what
+would this command do if the thing I fear were true?"** If the answer is "look
+exactly like this", the check has told you nothing.
+
+---
+
+*Written 2026-08-17 after the finding held the `gate1` launch. The launch hold was
+correct: the run would have produced a stream that passed its own `dirty no`
+manifest and that nobody could ever rebuild.*
