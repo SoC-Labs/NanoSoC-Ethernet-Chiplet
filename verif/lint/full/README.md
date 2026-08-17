@@ -40,6 +40,53 @@ question that decides whether a finding is actionable:
   `local_overrides/`. A finding here is an upstream escalation.
 - **`authored`** — SoC Labs RTL. The gate applies here.
 
+### Tiering must survive symlinks
+
+Tiering is a path-prefix test, and Verilator canonicalises symlinks before it
+names a file — as does the resolved filelist. So a vendor tree reached through a
+link arrives spelled in a way that carries none of the prefixes above, tiers
+`authored`, is never black-boxed, and reddens the gate as if it were our RTL.
+
+This is not hypothetical. `tidelink/deps/xhb500/generated` was made a symlink to
+a **second tidelink checkout** (`${TIDELINK_STANDALONE}`, a different
+commit) on 2026-08-10. Arm IP modules stubbed silently fell 191 → 165, and 28
+XHB500 sources were linted verbatim, contributing 24 findings — every one of the
+four regressed `(zone, code)` pairs and the run's only hard `%Error`
+(`BLKANDNBLK`). The `191` quoted above is the number from before that link
+existed, and the number the fixed `zones.py` restores.
+
+Note that `os.path.realpath` on *both sides* does **not** fix this: the link sits
+*below* the prefix directory, so `realpath` of the prefix is unchanged while a
+file under it canonicalises into a different tree. `zones.py` instead expands
+each prefix to the canonical target of every symlink inside it that escapes it.
+In-repo prefixes are scanned at import (local disk, ~10 ms); the `/research` lab
+tree is NFS (~6 s warm, ~2 min cold) and is scanned only if some path matches no
+prefix at all. `LINT_ZONES_NO_SYMLINK_SCAN=1` disables the scan for a dead mount.
+
+The fix is in the zoning, not the symlink — the link may be load-bearing for
+another flow, and the gate must be correct either way.
+
+**Re-validated 2026-08-17 18:44**, after another session replaced the link with a
+real directory: 2626 files, byte-identical to what the link pointed at, minus the
+self-referential `generated/generated`. The pass reproduces the recorded baseline
+exactly — 2 authored findings, both `soc-generated|CMPCONST`, 191 Arm modules
+stubbed, zero `%Error`, zero zoning-gap lines, and no path in the resolved
+filelist naming the second checkout. Baseline unchanged.
+
+The scan is now inert but **not** redundant. `deps/xhb500/generated/` is in
+tidelink's `.gitignore`, yet the symlink is still the *tracked* entry (mode
+120000) at both the submodule's HEAD and the commit the parent pins — the real
+directory is ignored content sitting over a tracked-deleted link. One
+`git checkout` or `git submodule update --force` restores it. Proven still
+functional against a sandbox repo carrying the link: `arm-ip` with the scan,
+`authored` without. Cost is 0.10 s at import (up from 0.042 s: the walk now
+crosses 3041 real entries instead of stopping at one link), against a ~90 s lint.
+
+Its limit is worth stating plainly: it *discovers* links, it does not alias a
+path. With no link present, `${TIDELINK_STANDALONE}/deps/xhb500/...`
+tiers `authored` again — harmless while nothing names that spelling, wrong the
+day a filelist hard-codes the second checkout without a link in between.
+
 ### Why black boxes and not `lint_off -file`
 
 Verilator 4.028 applies a config file's `-file` filter at **parse time only**.

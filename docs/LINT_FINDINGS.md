@@ -23,10 +23,53 @@ and only bit when a transaction ran through it. Lint is the missing gate.
 | Tool | Status | Notes |
 |---|---|---|
 | **Verilator** | **4.028** (2020-02-06) | The pass is built on this. `--lint-only -Wall` gives combinational-loop detection via **UNOPTFLAT**, plus latch/width/undriven/multidriven checks. Old, but adequate. |
-| Cadence **HAL** | **22.03** at `/eda/cadence/xcelium/tools/bin/hal` | Real flist-native structural+CDC lint. License-gated; not wired up here (would be the tool for a full-integration pass — see §5). |
+| Cadence **HAL** | **22.03** at the Cadence Xcelium `hal` binary | Real flist-native structural+CDC lint. License-gated; not wired up here (would be the tool for a full-integration pass — see §5). |
 | verible-verilog-lint | absent | style linter (no comb-loop detection anyway) |
 | slang | absent | |
-| SpyGlass / `sg_shell` | absent | no `which` hit; do not assume it exists |
+| **SpyGlass** | **T-2022.06-SP2**, installed **and licensed** | ~~absent — no `which` hit; do not assume it exists~~ **CORRECTED 2026-08-17 — see §1.1.** `${SPYGLASS_HOME}/bin/`. Off `$PATH`, reached by absolute path. |
+
+### 1.1 Correction 2026-08-17 — SpyGlass was recorded absent on bad evidence
+
+The row above said **absent**, on the evidence "no `which` hit". That was wrong.
+SpyGlass is installed on this host and its CDC licence checks out:
+
+```sh
+ls ${SPYGLASS_HOME}/bin/
+# sg_shell  sg_ame  spyglass  spyglass_main  spyencrypt  sgsat  … (18 entries)
+```
+
+Proven live, not merely present on disk — SpyGlass was run on a deliberately
+planted unsynchronised crossing and caught it:
+
+```
+Technology Summary: CDC( Advance CDC )
+    Unsynchronized crossings= 1
+Ac_unsync01  Error  cdc_probe.v:13  Unsynchronized Crossing: destination flop
+  cdc_probe.q_b, clocked by cdc_probe.clk_b, source flop cdc_probe.d_a_r,
+  clocked by cdc_probe.clk_a. Reason: Qualifier not found
+```
+
+**The methodological error matters more than the row.** `which` searches `$PATH`
+and nothing else, so **a `which` miss is evidence about `$PATH`, not about the
+machine.** Every EDA tool on this host that is invoked by absolute path — which is
+most of them — will fail that test while being perfectly available. Note the
+contrast in the same table: HAL is recorded present *because* its absolute path
+was quoted (the Cadence Xcelium `hal` binary). SpyGlass got the opposite
+verdict from the weaker test.
+
+The repo already contained the refutation. `tidelink/cdc/Makefile:12` is a
+working, checked-in SpyGlass CDC driver that hardcodes the exact install:
+
+```make
+SPYGLASS_HOME ?= ${SPYGLASS_HOME}
+```
+
+**Consequence.** `docs/CDC_FINDINGS.md` carried the same error and used it to
+defer the `CLKDMN` CDC sign-off to another host. That deferral is void — the
+sign-off can run here. See `docs/CDC_FINDINGS.md` §"SpyGlass availability".
+
+Before recording any tool as absent, check the site EDA install trees and
+grep the repo for an absolute path to it. `which` alone does not settle it.
 
 Verilator is the right free tool for *this* job: UNOPTFLAT is exactly a
 combinational-loop finder. Caveats of 4.028 that shaped the harness:

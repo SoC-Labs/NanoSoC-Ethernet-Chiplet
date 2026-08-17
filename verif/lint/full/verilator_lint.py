@@ -221,9 +221,27 @@ def main():
                     help="resolve the flist and write the black boxes, then stop "
                          "(hal_lint.sh consumes the result, so both tools lint "
                          "exactly the same scope)")
+    ap.add_argument("--baseline", default=os.path.join(HERE, "baseline", "verilator.json"),
+                    help="per-(zone, code) ratchet to compare authored findings "
+                         "against; see check_baseline.py")
+    ap.add_argument("--no-baseline", action="store_true",
+                    help="report only, do not apply the ratchet. Leaves the exit "
+                         "status governed by the flow checks alone.")
     a = ap.parse_args()
 
+    # The emitted filelist names the generated black boxes by path, so a RELATIVE
+    # --out produced a filelist that only resolved from the directory the script
+    # happened to be run in. Measured: build/lint/full/verilator/verilator.f
+    # carries 200 relative entries for exactly this reason, which is why
+    # hal_lint.sh cannot safely cd before invoking xrun. Absolutise once, here.
+    a.out = os.path.abspath(a.out)
     os.makedirs(a.out, exist_ok=True)
+
+    # Flow defects make the MEASUREMENT untrustworthy, which is a different
+    # failure from "the design has findings" and gets a different exit code (2 vs
+    # 1). Collected rather than returned at the point of discovery so that one
+    # run reports every flow defect it hit, not just the first.
+    flow_errors = []
     r = Resolver(dict(os.environ))
     r.read(a.flist)
     if r.missing:
@@ -237,6 +255,7 @@ def main():
     keep, dropped, conflicts = dedup_files(r.files)
     for f, ms in conflicts:
         print(f"FLOW ERROR -- partially shadowed file needs a manual split: {f} {ms}")
+        flow_errors.append(f"partially shadowed file: {f}")
 
     # Hard-macro black boxes, regenerated read-only from the vendor models.
     bb = os.path.join(a.out, "bbox")
@@ -245,11 +264,13 @@ def main():
     for mod, src in MACROS:
         if not os.path.exists(src):
             print(f"FLOW ERROR -- macro model missing: {mod} ({src})")
+            flow_errors.append(f"macro model missing: {mod}")
             continue
         rc = subprocess.run([sys.executable, os.path.join(HERE, "gen_macro_bbox.py"),
                              mod, src], capture_output=True, text=True)
         if rc.returncode:
             print(f"FLOW ERROR -- blackbox generation failed for {mod}: {rc.stderr.strip()}")
+            flow_errors.append(f"blackbox generation failed: {mod}")
             continue
         dst = os.path.join(bb, mod + ".v")
         open(dst, "w").write(rc.stdout)
@@ -390,6 +411,31 @@ def main():
         for f in leak[:10]:
             print(f"   {f['sev']}-{f['code']}  {f['file'].replace(REPO+'/','')}:{f['line']}")
 
+    # ZONING INTEGRITY. zone() returns "other" for an AUTHORED-tier file that
+    # matches none of the six known prefixes -- i.e. the map does not recognise
+    # the path. That is nearly always a MIS-TIERED VENDOR FILE rather than real
+    # authored RTL, and it matters because the ratchet then compares it in a
+    # catch-all bucket and reports a design regression for what is actually an
+    # environment defect.
+    #
+    # The live example: tidelink/deps/xhb500/generated is a SYMLINK to a second
+    # tidelink checkout (${TIDELINK_STANDALONE}). Verilator canonicalises
+    # symlinks in its messages, so the Arm XHB500 sources arrive as
+    # ${TIDELINK_STANDALONE}/deps/xhb500/..., which no longer carries
+    # zones.py's ARM_IP prefix {REPO}/tidelink/deps/xhb500/ -- 24 vendor findings
+    # tier as "authored" and the gate reddens for the wrong reason. Reported, not
+    # fatal: whether to re-zone, re-point the symlink or re-record the baseline is
+    # the call of whoever owns zones.py and baseline/.
+    unzoned = [f for f in findings
+               if f["tier"] == "authored" and f.get("zone") == "other"]
+    if unzoned:
+        print(f"\n!! ZONING GAP -- {len(unzoned)} finding(s) tiered 'authored' but "
+              f"matching no known zone.\n   These are counted as authored by the "
+              f"ratchet. Check for a symlinked or duplicate\n   source tree before "
+              f"reading them as a design regression:")
+        for p, n in collections.Counter(f["file"] for f in unzoned).most_common(6):
+            print(f"   {n:5d}  {p}")
+
     if unparsed:
         print(f"\nunparsed %-lines ({len(unparsed)}):")
         for l in unparsed:
@@ -417,6 +463,79 @@ def main():
             why = table[c] if isinstance(table[c], str) else table[c][1]
             print(f"  {name:<7} {n:6d}  {c}")
             print(f"          {why}")
+
+    # ---------------- verdict ----------------
+    # ASSERT ON ARTEFACTS, NEVER ON EXIT STATUS. This function used to end on an
+    # unconditional `return 0`: it wrote findings.json and then reported success
+    # whatever was in it, so verif/lint/full/run.sh -- and every caller above it
+    # -- was green by construction. The ratchet that decides the real verdict
+    # (check_baseline.py) already existed, but was reachable only from
+    # prove_fix.sh and selftest_prove.sh, never from the runner.
+    #
+    # Exit codes are split by WHAT FAILED, because the two mean different things:
+    #   2  the measurement is untrustworthy (flow defect / no baseline / null
+    #      result) -- no verdict can be drawn, in either direction
+    #   1  the measurement is sound and the design REGRESSED
+    #   0  the measurement is sound and no authored (zone, code) grew
+    #
+    # NOTE FOR prove_fix.sh's OWNER: G1 tests this script's exit status and
+    # attributes any non-zero to "verilator lint failed to run", then runs
+    # check_baseline itself with --cu. A regression now surfaces as rc=1 here, so
+    # G1 still FAILS (correctly) but labels the cause imprecisely. Pass
+    # --no-baseline there to restore the exact old split of responsibilities.
+    print("\n" + "=" * W)
+    print("VERDICT")
+    print("=" * W)
+
+    # (a) NULL-RESULT GUARD. A full-hierarchy -Wall pass over ~590 files that
+    # reports nothing at all has not measured a clean design -- it has failed to
+    # run. For scale: Verilator 4.028's own front-end limits alone account for
+    # 417 UNPACKED findings on this netlist. Zero is never a pass here.
+    if not findings:
+        flow_errors.append(
+            f"verilator produced NO findings at all over "
+            f"{len(linted) + len(stubs)} files (verilator exit {p.returncode}) "
+            f"-- the run did not happen")
+
+    if flow_errors:
+        print(f"  FLOW ERROR x{len(flow_errors)} -- the measurement is not")
+        print("  trustworthy, so NO verdict is drawn from it:")
+        for e in flow_errors:
+            print(f"    - {e}")
+        return 2
+
+    if a.no_baseline:
+        print("  --no-baseline: findings reported, ratchet NOT applied.")
+        return 0
+
+    # (b) THE RATCHET -- no NEW authored finding per (zone, code) versus the
+    # baseline. Delegated to check_baseline.py rather than reimplemented here, so
+    # the runner and prove_fix.sh's G1 apply ONE definition of "regression".
+    if not os.path.exists(a.baseline):
+        print(f"  FLOW ERROR -- no baseline at {a.baseline}")
+        print("  Record one:  check_baseline.py --findings <f> --baseline <b> --record")
+        print("  An absent ratchet is an UNMEASURED gate, not a passing one.")
+        return 2
+
+    print(f"  ratchet: authored findings per (zone, code) vs")
+    print(f"           {a.baseline}\n")
+    # FLUSH FIRST. This script's stdout is block-buffered whenever it is piped --
+    # and run.sh always pipes it into `tee` -- while the child writes straight to
+    # the same fd. Without this, check_baseline's regression table appears ABOVE
+    # this function's own output instead of under the VERDICT heading it belongs
+    # to, which is how a red gate ends up looking like it printed nothing.
+    sys.stdout.flush()
+    cb = subprocess.run(
+        [sys.executable, os.path.join(HERE, "check_baseline.py"),
+         "--findings", os.path.join(a.out, "findings.json"),
+         "--baseline", a.baseline, "--tool", "verilator"])
+    if cb.returncode == 1:
+        print("\n  LINT FAILED -- authored findings REGRESSED against the baseline.")
+        return 1
+    if cb.returncode:
+        print(f"\n  FLOW ERROR -- check_baseline exited {cb.returncode}.")
+        return 2
+    print("\n  LINT OK -- no new authored finding in any (zone, code).")
     return 0
 
 

@@ -41,6 +41,10 @@ while [ $# -gt 0 ]; do
     shift
 done
 mkdir -p "$OUT"
+# Absolutise the output directory BEFORE anything is written or handed to xrun:
+# the run cd's into it below, so a relative --out would otherwise re-resolve
+# against the new working directory and point at itself.
+OUT="$(cd "$OUT" && pwd)"
 
 
 # ---------------------------------------------------------------------------
@@ -71,11 +75,28 @@ fi
 
 # HAL flist: timescale preamble first, then files only (incdirs go on the
 # command line), and drop the Verilator .vlt config which HAL cannot read.
+#
+# EVERY PATH IS ABSOLUTISED against CHIPLET_HOME on the way through. WHY:
+# verilator_lint.py wrote the resolved filelist using its --out verbatim, so a
+# RELATIVE --out produced relative entries -- 200 of them in the filelist
+# measured 2026-08-10, all of them the generated black boxes. Those resolve only
+# from the repo root, which is exactly why this script could not cd anywhere and
+# therefore dropped xcelium.d/ and hal.design_facts wherever it was launched.
+# verilator_lint.py now absolutises --out at the source; this keeps a STALE
+# filelist working too, and makes the `cd "$OUT"` below safe either way.
 {
     echo "$CHIPLET_HOME/nanosoc-multicore-system/lint/timescale.v"
-    grep -v -e '^+incdir+' -e '\.vlt$' "$RESOLVED"
+    grep -v -e '^+incdir+' -e '\.vlt$' "$RESOLVED" \
+        | awk -v home="$CHIPLET_HOME" '
+              /^[[:space:]]*$/ { next }          # blank
+              /^[+-]/          { print; next }   # +define+ etc, pass through
+              /^\//            { print; next }   # already absolute
+                               { print home "/" $0 }'
 } > "$OUT/hal.f"
-INCDIRS="$(grep '^+incdir+' "$RESOLVED" | sed 's/^+incdir+/-incdir /' | tr '\n' ' ')"
+INCDIRS="$(grep '^+incdir+' "$RESOLVED" \
+    | sed 's/^+incdir+//' \
+    | awk -v home="$CHIPLET_HOME" '/^\//{print; next} {print home "/" $0}' \
+    | sed 's|^|-incdir |' | tr '\n' ' ')"
 
 LOG="$OUT/xrun_hal.log"
 HAL_ARGS="-BB_NONSYNTH -check ALL_RTL -pragma -lintpragma -file $HERE/hal_rules.tcl"
@@ -103,6 +124,13 @@ if [ -f "$DI" ]; then
 fi
 
 echo "== xrun -hal over $TOP  ($(grep -c . "$OUT/hal.f") files, ~35 min) =="
+# Run FROM the output directory so xrun's droppings -- xcelium.d/,
+# hal.design_facts, *.history -- land beside the log instead of in whatever
+# directory the caller happened to be in. Without this the repo root collects
+# them (confirmed: a stray xcelium.d/ and hal.design_facts sit there now, with
+# timestamps matching this script's own console.log), and two concurrent runs
+# fight over one xcelium.d. Every path handed to xrun below is absolute.
+cd "$OUT"
 set +e
 # shellcheck disable=SC2086
 timeout "$TMO" "$XRUN" -sv -hal -elaborate \
@@ -129,3 +157,81 @@ fi
 
 python3 "$HERE/hal_report.py" "$LOG"
 echo "  xrun exit=$rc   log: $LOG"
+
+# ---------------------------------------------------------------------------
+# VERDICT — ASSERT ON THE ARTEFACT, NEVER ON EXIT STATUS.
+#
+# This script used to END on hal_report.py plus an echo, so it exited 0 whatever
+# HAL found: the report was printed and then discarded as a verdict. The two
+# guards above only proved the ANALYSIS RAN; nothing read its result.
+#
+# hal_report.py writes the zoned findings next to the log, so gate on that
+# artefact rather than re-grepping the 30 MB text log.
+#
+# THE CRITERION: any never-waive rule that fires in AUTHORED RTL fails the run.
+# That set is hal_report.py's NEVER_WAIVE list and the same one SIGNOFF_RULES at
+# the top of this script forbids -nocheck'ing -- so the ruleset cannot waive a
+# rule AND the gate cannot ignore it. Vendor / third-party hits are reported but
+# never gated: they are an IP-owner escalation, not a build break here, which is
+# the line verif/elab_strict/run.sh already draws for MLTDRV.
+FINDINGS="$OUT/hal_findings.json"
+set +e
+python3 - "$FINDINGS" <<'PY'
+import json, sys, collections
+
+path = sys.argv[1]
+NEVER_WAIVE = {"MLTDRV", "CLKDMN", "INSYNC", "SIZMIS", "GLTASR", "LATINF",
+               "NODRIV", "UNCONI", "RSTSCB", "CMBCDC"}
+# In NEVER_WAIVE, but unmeasurable in THIS flow: HAL infers clocks from the
+# netlist and reads no SDC, so it cannot know which domains are asynchronous.
+# Their zero is NOT MEASURED, not clean -- say so rather than bank it as a pass.
+SDC_BLIND = {"CLKDMN", "INSYNC", "CMBCDC", "RSTSCB"}
+
+try:
+    fs = json.load(open(path))
+except Exception as e:                                  # noqa: BLE001
+    print(f"\nFAIL: cannot read the findings artefact {path}: {e}")
+    print("      hal_report.py did not produce a result to judge.")
+    sys.exit(2)
+
+W = 78
+print("\n" + "=" * W)
+print("VERDICT")
+print("=" * W)
+
+authored = [f for f in fs if f.get("tier") == "authored"]
+if not authored:
+    print(f"  FLOW ERROR: {len(fs)} finding(s) parsed, NONE of them in authored")
+    print("  RTL. A full-hierarchy HAL run that says nothing about our own code")
+    print("  has not measured it -- this is a NULL RESULT, not a clean one.")
+    sys.exit(2)
+
+print(f"  parsed          : {len(fs)} finding(s), {len(authored)} in authored RTL")
+print(f"  never-waive set : {' '.join(sorted(NEVER_WAIVE))}")
+print(f"  NOTE            : {' '.join(sorted(SDC_BLIND))} are in that set but")
+print("                    need an SDC this flow does not supply, so their zero")
+print("                    is NOT MEASURED. `make cdc` owns that verdict.")
+
+hits = [f for f in authored if f.get("rule") in NEVER_WAIVE]
+if hits:
+    print(f"\n  FAIL: {len(hits)} never-waive finding(s) in AUTHORED RTL:")
+    for (r, z), n in sorted(collections.Counter(
+            (f["rule"], f["zone"]) for f in hits).items(), key=lambda kv: -kv[1]):
+        print(f"    {n:6d}  {r:<8} {z}")
+    for f in hits[:10]:
+        print(f"      {f['sev']},{f['rule']}  {f['file']}:{f['line']}")
+    sys.exit(1)
+
+other = collections.Counter(f["rule"] for f in fs
+                            if f.get("rule") in NEVER_WAIVE
+                            and f.get("tier") != "authored")
+if other:
+    print("\n  reported, NOT gated (vendor / third-party — not ours to edit):")
+    for r, n in other.most_common():
+        print(f"    {n:6d}  {r}")
+
+print("\n  HAL LINT OK — no never-waive rule fires in authored RTL.")
+PY
+verdict=$?
+set -e
+exit "$verdict"

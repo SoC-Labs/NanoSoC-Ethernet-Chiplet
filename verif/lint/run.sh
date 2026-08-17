@@ -33,6 +33,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "${HERE}/../.." && pwd)"
 RTL="${REPO}/src/rtl"
 BBOX="${REPO}/build/lint/bbox"          # under build/ -> gitignored
+# Per-pass Verilator output, KEPT. These used to be mktemp files that lint_pass
+# deleted on its way out, so the only trace of a verdict was the terminal: an
+# artefact-based gate had no artefact to assert on, and ci/signoff.yaml had to
+# work around it by tee-ing the whole of stdout into build/lint/lint_verdicts.log
+# ("Tee the verdicts or there is no evidence" — that stage's own comment).
+# Durable, under build/ so still gitignored, one file per pass.
+LOGDIR="${REPO}/build/lint/passes"
 GEN="${HERE}/gen_bbox.py"
 PROBE="${HERE}/hready_loop_probe.sv"
 
@@ -59,7 +66,7 @@ if ! command -v "${VERILATOR}" >/dev/null 2>&1; then
     exit 127
 fi
 echo "== $("${VERILATOR}" --version) =="
-mkdir -p "${BBOX}"
+mkdir -p "${BBOX}" "${LOGDIR}"
 
 fail=0
 
@@ -68,7 +75,11 @@ lint_pass() { # $1=label  $2=top  ; remaining args after -- are files/flags
     local label="$1" top="$2"; shift 2
     bold "───────────────────────────────────────────────────────────────"
     bold "PASS: ${label}   (top: ${top})"
-    local log; log="$(mktemp)"
+    # One durable log per pass, named from the label: "1. LEAF  chiplet_d2d_decode"
+    # -> 1_LEAF_chiplet_d2d_decode.log
+    local slug log
+    slug="$(printf '%s' "${label}" | tr -cs 'A-Za-z0-9' '_' | sed 's/^_*//; s/_*$//')"
+    log="${LOGDIR}/${slug}.log"
     "${VERILATOR}" --lint-only -Wall --top-module "${top}" "$@" >"${log}" 2>&1
     # OUR findings only (src/rtl paths); stub findings live under build/lint/bbox.
     grep -E '%(Warning|Error)' "${log}" | grep -E "${RTL}/" || echo "  (no findings in src/rtl)"
@@ -81,7 +92,7 @@ lint_pass() { # $1=label  $2=top  ; remaining args after -- are files/flags
     else
         green "  OK (only waived by-design findings)"
     fi
-    rm -f "${log}"
+    echo "  log: ${log}"
 }
 
 #-----------------------------------------------------------------------------
@@ -149,10 +160,13 @@ fi
 bold "───────────────────────────────────────────────────────────────"
 bold "PASS: 4. SANITY  hready_loop_probe (UNOPTFLAT catches the cycle?)"
 sanity() { # $1=label $2=define  -> echoes 1 if UNOPTFLAT present
+    # Kept, like the lint_pass logs: this sub-verdict feeds the gate, so the
+    # evidence for it has to outlive the run too.
+    local log="${LOGDIR}/4_SANITY_$1.log"
     "${VERILATOR}" --lint-only -Wall -Wno-UNUSED -Wno-SYNCASYNCNET ${2:+"$2"} \
         --top-module hready_loop_probe \
-        "${RTL}/chiplet_d2d_decode.sv" "${PROBE}" 2>&1 \
-      | grep -qE '%Warning-UNOPTFLAT' && echo 1 || echo 0
+        "${RTL}/chiplet_d2d_decode.sv" "${PROBE}" >"${log}" 2>&1 || true
+    grep -qE '%Warning-UNOPTFLAT' "${log}" && echo 1 || echo 0
 }
 bug="$(sanity bug '+define+NO_HREADY_FIX')"
 fix="$(sanity fix '')"
@@ -170,4 +184,5 @@ fi
 bold "═══════════════════════════════════════════════════════════════"
 if [ "${fail}" = 0 ]; then green "LINT OK — no non-waived findings on our RTL; loop detection proven"
 else                       red   "LINT FAILED — see non-waived findings above"; fi
+echo "per-pass logs: ${LOGDIR}"
 exit "${fail}"

@@ -23,13 +23,24 @@
 #   Both consume the SAME resolved filelist and the SAME black boxes, so a
 #   finding from one can be looked for in the other.
 #
+# THE VERDICT IS THE BASELINE RATCHET (verif/lint/full/baseline/verilator.json):
+# no NEW authored finding per (zone, code). check_baseline.py has always
+# implemented it, but until now it was invoked ONLY from prove_fix.sh and
+# selftest_prove.sh -- never from this runner -- so `make`-level callers got a
+# report and an unconditional exit 0. verilator_lint.py now applies the ratchet
+# itself; --baseline below makes the wiring explicit at the call site, and
+# --no-baseline turns the pass back into a report-only run.
+#
 #   usage:  verif/lint/full/run.sh [--verilator-only|--hal-only] [--out DIR]
+#                                  [--baseline FILE] [--no-baseline]
 #-----------------------------------------------------------------------------
 set -eo pipefail
 
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CHIPLET_HOME="$(cd "$HERE/../../.." && pwd)"
 OUT="${CHIPLET_HOME}/build/lint/full"
+BASELINE="$HERE/baseline/verilator.json"
+NO_BASELINE=0
 DO_VERILATOR=1
 DO_HAL=1
 
@@ -38,11 +49,21 @@ while [ $# -gt 0 ]; do
         --verilator-only) DO_HAL=0 ;;
         --hal-only)       DO_VERILATOR=0 ;;
         --out)            OUT="$2"; shift ;;
+        --baseline)       BASELINE="$2"; shift ;;
+        --no-baseline)    NO_BASELINE=1 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
 done
 mkdir -p "$OUT"
+# Absolutise: verilator_lint.py names its generated black boxes by path in the
+# filelist it emits, and hal_lint.sh cd's into its own output directory.
+OUT="$(cd "$OUT" && pwd)"
+
+# Keep the WORST status, do not bitwise-OR it. The two halves return 0 / 1
+# (design regressed) / 2 (measurement untrustworthy); `rc | rc` turned a 1 and a
+# 2 into 3, which is neither, and lost the distinction the codes exist to carry.
+worst() { [ "$2" -gt "$1" ] && printf '%s' "$2" || printf '%s' "$1"; }
 
 # The ASIC flist is the SHIP configuration (TideLink V2 PHY, tech memories).
 # Its two generated sub-flists are rendered by `make asic-flist`; regenerate
@@ -55,19 +76,33 @@ if [ ! -f "$CHIPLET_HOME/build/chip/flist/soc.flist" ] || \
 fi
 
 rc=0
+V_RC=skipped
+H_RC=skipped
 
 if [ "$DO_VERILATOR" = 1 ]; then
     echo "== verilator: full-design lint =="
-    python3 "$HERE/verilator_lint.py" --out "$OUT/verilator" | tee "$OUT/verilator_report.txt"
-    rc=$(( rc | ${PIPESTATUS[0]} ))
+    BASE_ARGS=(--baseline "$BASELINE")
+    [ "$NO_BASELINE" = 1 ] && BASE_ARGS=(--no-baseline)
+    python3 "$HERE/verilator_lint.py" --out "$OUT/verilator" "${BASE_ARGS[@]}" \
+        | tee "$OUT/verilator_report.txt"
+    V_RC="${PIPESTATUS[0]}"
+    rc="$(worst "$rc" "$V_RC")"
 fi
 
 if [ "$DO_HAL" = 1 ]; then
     echo "== HAL: full-design structural lint (~35 min) =="
     "$HERE/hal_lint.sh" --out "$OUT/hal" | tee "$OUT/hal_report.txt"
-    rc=$(( rc | ${PIPESTATUS[0]} ))
+    H_RC="${PIPESTATUS[0]}"
+    rc="$(worst "$rc" "$H_RC")"
 fi
 
 echo
 echo "reports under $OUT"
+echo "  verilator: $V_RC    HAL: $H_RC"
+case "$rc" in
+    0) echo "== FULL LINT OK — both halves ran and neither regressed ==" ;;
+    1) echo "== FULL LINT FAILED — a gated finding regressed (see above) ==" ;;
+    *) echo "== FULL LINT INCONCLUSIVE — the measurement is not trustworthy;" \
+            "this is NOT a pass ==" ;;
+esac
 exit "$rc"
