@@ -99,6 +99,48 @@ fi
 echo "== $("${VERILATOR}" --version) =="
 mkdir -p "${BBOX}" "${LOGDIR}"
 
+#-----------------------------------------------------------------------------
+# ONE RUN AT A TIME PER WORKING TREE.
+#
+# The blackbox stubs (build/lint/bbox/) and the per-pass logs
+# (build/lint/passes/) are FIXED paths, and they have to be: ci/signoff.yaml's
+# `lint` stage reads build/lint/passes/*.log BY NAME for its post-condition and
+# collects build/lint/** as its artefacts. So they cannot be made per-process,
+# and two concurrent runs truncate each other's stubs mid-write.
+#
+# MEASURED on this tree, which is worked by many sessions at once: 12 runs as
+# six concurrent pairs produced one failure — "SKIPPED PASS(ES): 3 WRAPPER",
+# because the SoC stub was zero-length at the instant the other run had just
+# opened it. A FALSE RED. That is the safe direction to fail, and it is only
+# visible at all because a skipped pass now fails the run; but a blocking gate
+# that reddens at random in a shared tree gets ignored, and an ignored red gate
+# fails in exactly the way a green one does.
+#
+# Worse for the stage than for the script: signoff's `check:` re-reads those
+# same fixed logs AFTER the run, so a concurrent run landing between the two
+# could hand the check a different run's evidence — including a clean one.
+#
+# flock serialises rather than racing: the second run waits. Re-exec through
+# `env` so the lock is held for the whole run and released when it exits.
+#-----------------------------------------------------------------------------
+if [ -z "${LINT_LOCK_HELD:-}" ]; then
+    if command -v flock >/dev/null 2>&1; then
+        LOCKRC=0
+        flock -w 1800 -E 99 "${REPO}/build/lint/.run.lock" \
+            env LINT_LOCK_HELD=1 "$0" "$@" || LOCKRC=$?
+        if [ "${LOCKRC}" = 99 ]; then
+            echo "FATAL: another verif/lint/run.sh held the lock in this working"
+            echo "       tree for 1800s. NOTHING WAS MEASURED — this is not a"
+            echo "       lint verdict in either direction."
+            exit 2
+        fi
+        exit "${LOCKRC}"
+    fi
+    echo "NOTE: flock not found — running unserialised. A concurrent"
+    echo "      verif/lint/run.sh in this tree can corrupt this one's blackbox"
+    echo "      stubs and produce a spurious failure."
+fi
+
 fail=0
 skipped=""
 
