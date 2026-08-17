@@ -125,6 +125,36 @@ ROM_GDS_GATE    ?= block
 # one line here plus its ROM_*_<name> values.
 ROMS := eth cc
 
+# ── Geometry for the SIMULATION readback gate (mk/gls.mk, `make gls-rom`) ───
+#
+# DERIVED FROM THE ONE EXISTING SPELLING, NOT RE-STATED. $(ROM_EXPECT_WORDS)
+# lives in rom_build.mk and is already cross-checked against $(ROM_ADDR_BITS)
+# there, with an $(error) if the two disagree -- because "two spellings of one
+# fact" is exactly how the 512-vs-2048 disagreement survived on this project.
+# A third independent copy here would re-open that hole in a new place.
+#
+# The gate REFUSES to infer these from the .rcf, and that refusal is the point:
+# a truncated content file would otherwise define a shorter ROM and then match
+# itself perfectly. Measured 2026-08-17 - an under-declared depth of 256 against
+# these 512-word macros passed a .rcf whose top half was garbage, and printed
+# "every word matches the firmware". Declared here, cross-checked against the
+# artefacts by the runner before any simulator starts.
+#
+# Both ROMs are the same shape. A die whose ROMs differ sets them per ROM.
+#
+# `$$` IS LOAD-BEARING. common.mk includes THIS file at :605 and rom_build.mk -
+# where $(ROM_EXPECT_WORDS) is defined - at :613, eight lines later. A plain
+# `$(ROM_EXPECT_WORDS)` here is expanded by $(eval) immediately, finds nothing,
+# and assigns EMPTY; `?=` then treats the variable as set, so nothing later
+# fixes it and `make gls-rom` reports the depth as undeclared. Escaping the
+# dollar defers expansion to use time, by which point rom_build.mk has been
+# read. Measured 2026-08-17: the un-escaped form left GLS_ROM_WORDS_eth empty
+# while GLS_ROM_BITS_eth resolved fine, because ROM_EXPECT_BITS is defined on
+# the line above and ROM_EXPECT_WORDS is not.
+ROM_EXPECT_BITS ?= 32
+$(foreach r,$(ROMS),$(eval GLS_ROM_WORDS_$(r) ?= $$(ROM_EXPECT_WORDS)))
+$(foreach r,$(ROMS),$(eval GLS_ROM_BITS_$(r)  ?= $$(ROM_EXPECT_BITS)))
+
 # ROM_SIM_<r> is the SIMULATION boot ROM — the behavioural .sv the RTL flows
 # and the FPGA build read. The checker compares it too, because "the ASIC ROM
 # and the ROM everyone simulates hold different programs" is a defect nobody
