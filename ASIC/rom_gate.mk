@@ -220,8 +220,69 @@ romlibs-verify:
 	  echo "code files verified against (sha256):"; \
 	  sha256sum $(foreach r,$(ROMS),$(ROM_CODE_$(r))); \
 	} > $(ROM_VERIFY_DIR)/last_pass.txt; \
+	$(MAKE) -f $(COMMON_MK) --no-print-directory romlibs-content-hashes || exit 1; \
 	echo "OK: ROM gate passed — files, spec/wrapper/macro agreement, and content"; \
 	echo "    stamp: $(ROM_VERIFY_DIR)/last_pass.txt"
+
+#-----------------------------------------------------------------------------
+# romlibs-content-hashes — the flat file every P&R run manifest reads
+#
+# The toolkit's stage scripts write a PROVENANCE block into every stage manifest
+# (flow/common/provenance.tcl), and a boot ROM's content hash is one of its
+# fields — because two builds of "the same design" whose ROMs differ are not the
+# same design, and a comparison between their reports is meaningless. That block
+# READS this file. It does not compute a hash of its own: a second implementation
+# of "what is in this ROM" is a second thing to be wrong, and the two would agree
+# until the day they did not.
+#
+# So this is an EXTRACTION from the JSON the checker has already written — the
+# PHYSICAL bit-cell programming decoded out of the transistor-level netlist,
+# which is the only view that describes silicon.
+#
+# Written ONLY after the gate has passed. A tree whose ROM gate has not passed
+# has no file here, every stage manifest records UNVERIFIED for its ROMs, and
+# `asic-flow-compare-runs` REFUSES to diff that run against any other. That is
+# the point, not a side effect: a build on unverified ROMs must not be quietly
+# compared against one on verified ROMs, and it has been.
+#
+# Mirrors the toolkit's mk/rom.mk `rom-content-hashes`. This file is a project-
+# side fork of that one; keep the two in step.
+#
+# Format, one line per ROM:  <name> <content sha256> <code-file sha256>
+#-----------------------------------------------------------------------------
+.PHONY: romlibs-content-hashes
+romlibs-content-hashes:
+	@mkdir -p $(ROM_VERIFY_DIR)
+	@rc=0; \
+	{ echo "# ROM content hashes, extracted from the ROM gate's own JSON."; \
+	  echo "# name  content_sha256  code_file_sha256"; \
+	} > $(ROM_VERIFY_DIR)/rom_content_hashes.txt; \
+	for r in $(ROMS); do \
+	    j=$(ROM_VERIFY_DIR)/$$r.json; \
+	    test -s "$$j" || { echo "FAIL: no $$j — cannot extract a content hash the gate did not write"; rc=1; continue; }; \
+	    python3 -c 'import json,sys;\
+d=json.load(open(sys.argv[1]));\
+roms=d.get("roms",[]);\
+m=[x for x in roms if x.get("name")==sys.argv[2]] or (roms if len(roms)==1 else []);\
+sys.exit("no rom entry for %s" % sys.argv[2]) if not m else None;\
+r=m[0];\
+c=r.get("physical",{}).get("stats",{}).get("content_sha256");\
+f=r.get("code_file",{}).get("sha256");\
+sys.exit("no physical content_sha256 — the checker did not decode the CDL") if not c else None;\
+sys.exit("no code_file sha256") if not f else None;\
+print("%s %s %s" % (sys.argv[3], c, f))' \
+	        "$$j" "$(ROM_LABEL_$(r))" "$$r" \
+	        >> $(ROM_VERIFY_DIR)/rom_content_hashes.txt \
+	      || { echo "FAIL: could not extract a content hash for '$$r' from $$j"; rc=1; }; \
+	done; \
+	if [ $$rc -ne 0 ]; then \
+	    rm -f $(ROM_VERIFY_DIR)/rom_content_hashes.txt; \
+	    echo "      Removed the hash file rather than leave a partial one: a run"; \
+	    echo "      manifest naming one of two ROMs compares equal against a run"; \
+	    echo "      with a different second one."; \
+	    exit 1; \
+	fi; \
+	echo "    content hashes: $(ROM_VERIFY_DIR)/rom_content_hashes.txt"
 
 romlibs-verify-files:
 	@echo "== ROM gate 1/3: the files Genus opens =="
