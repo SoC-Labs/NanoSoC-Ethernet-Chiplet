@@ -335,7 +335,39 @@ place_macro {*region_eth_scratch_rx_0*} 590.2000000000 1338.8000000000 R0
 ## hit it on some runs and not others.
 place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1637.3100000000 MY  ;## MOVED +3.51 y: was 1633.8 (itself -20, "12.89 over the new core top")
 ## [2026-08-13] MOVED +2.72 y, from 1503.4. See ORPHAN CORRIDORS below.
-place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1506.1200000000 R0  ;## was 1503.4 (itself -10 from 1513.4, "3.68 over the new core top")
+## [2026-08-17] 1506.12 -> 1505.60. THE 1506.12 MOVE CAUSED FOUR VDD-VSS SHORTS.
+##
+## Moving this macro up to close the orphan corridor put it 20nm past the point
+## where its M5 supply straps stop clearing the ones below, and VDD met VSS on
+## M5 -- four `Special Wire of Net VSS & Special Wire of Net VDD` records, i.e.
+## power shorted to ground. They are absent at 1503.4 and present at 1506.12.
+##
+## THE RULE, derived and then tested. With dY measured from the fixed structure
+## above (1538.60) and P the M5 set-to-set pitch:
+##
+##     short  <=>  (1538.60 - y) mod P  lies in the open interval (0.5, 2.5)
+##
+##     1503.40 (original)   5.200   no short   corridor 2.72um  A ROW FITS
+##     1506.12 (the bug)    2.480   SHORT      corridor 0.00um  closed
+##     1506.10 (naive fix)  2.500   no short   corridor 0.02um  closed
+##     1505.60 (here)       3.000   no short   corridor 0.52um  closed
+##
+## NOTE THE THIRD ROW, AND DO NOT TAKE IT. Backing off by the 20nm the overshoot
+## suggests lands exactly ON the interval edge, where the two stripe edges become
+## COINCIDENT -- still a short, and reported with a ZERO-HEIGHT marker, which is
+## the shape of a defect that looks like a rounding artefact. Measured on the PG
+## probe, not reasoned about. 1505.60 sits a clear half-micron off the edge.
+##
+## Corridor still closed: the halo top lands 0.52um below the core top, and a
+## standard-cell row is 1.8um, so no row fits and IMPSP-2021 does not return.
+## Measured effect on the probe: 4 rail-to-rail shorts -> 0, total 71 -> 65, the
+## macro-blockage class unchanged at 33.
+##
+## FOUR MORE MACRO PAIRS SIT WITHIN HALF A MICRON OF THIS WINDOW. There is no
+## check anywhere in this flow that a PG stripe landed inside a macro, so the
+## next person to nudge a macro for placement reasons gets no warning at all.
+## That gate is the real fix; this coordinate is the repair.
+place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1505.6000000000 R0  ;## was 1506.12 (shorted), before that 1503.4 (orphan corridor)
 place_macro {*way1_cache_ram_tag_ram_0_i} 911.2000000000 468.6900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 402.0900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_data_ram_0_word_2_i} 553.8000000000 480.4000000000 R0  ;## MOVED +20 y: QSPI cache stack moves up as one block
