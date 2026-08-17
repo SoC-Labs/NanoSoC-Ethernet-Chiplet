@@ -7,30 +7,59 @@
 // --------------------
 // The Europractice mini@sic manual requires the final GDS to be "DRC/ANT/BND
 // clean". BND is the wire-bond pad rule set and it has never been run on this
-// design. Foundry deck:
-//   /tsmc65pdk/65/CMOS/LP/pdk/Calibre/drc/wire_bond/CN65_WIRE_BOND_9M_6X1Z1U.20a
-// -- 9M_6X1Z1U, an exact match to our metal stack. Same placeholder problem as
-// the DRC and ANT decks (LAYOUT PATH/PRIMARY at deck lines 43-44, DRC RESULTS/
-// SUMMARY at 46-47), so the same `DRC ICSTATION YES` wrapper pattern applies.
+// design.
 //
-// TWO DECK SWITCHES MATTER HERE, AND BOTH ARE LEFT AS THE FOUNDRY SET THEM
+// WHICH FOUNDRY DECK: this file does not name one. $BND_FOUNDRY_DECK is resolved
+// per site from $(TSMC_65_HOME) by ASIC/genus-innovus/drc_project.mk, which is
+// gitignored. It must select the WIRE BOND deck for the SAME metal stack as the
+// DRC deck and as the Innovus GdsOutMap used by write_stream -- a mismatched
+// stack is a silently-wrong result, not an error. The deck's release name
+// encodes a metal stack and a purchased revision, so it is site configuration,
+// not source. See ci/site.env.example.
+//
+// Same placeholder problem as the DRC and ANT decks -- the shipped deck's layout
+// path, primary cell, results database and summary report are literal
+// placeholder strings the customer is expected to replace -- so the same
+// `DRC ICSTATION YES` wrapper pattern applies. The deck's own text is not
+// reproduced here: this repository is public and TSMC's licence does not permit
+// it. Read the block in your own PDK.
+//
+// THE PITCH OPTION IS MANDATORY AND WE WERE NOT SETTING IT
 // -------------------------------------------------------------------------
-//   #DEFINE with_AP   (deck line 33) -- "Turn on to use AP as the redistribution
-//                     metal or metal Fuse after passivation". Our stack IS
-//                     ...+AlRDL and the design has AP geometry, so leaving the
-//                     foundry default is correct. If a run says otherwise,
-//                     change it HERE, never in /tsmc65pdk.
-//   #DEFINE SINGLE_PAD (deck lines 263,266) -- pad arrangement.
+// MEASURED 2026-08-09 run (calibre_runs/bnd_run_20260809): 197 rulechecks
+// executed, only TWO non-zero -- and one of them was the deck telling us it was
+// misconfigured, via its own PITCH_OPTION.ERROR.1 rulecheck, which fires when no
+// pitch option has been selected. With no pitch option defined the deck falls
+// through to its final #ELSE and sets every pad-row layer it derives to EMPTY.
+// Every pad-row-derived check then evaluates against nothing. THE ~200 ZEROS
+// WERE A FABRICATED CLEAN, not a pass.
+//
+// PITCH_70_STAGGER is the right one, on two independent pieces of evidence:
+//   - we instantiate PAD70GU and PAD70NU (place_bondpads.tcl:140-165), i.e.
+//     70um-pitch bond pads; the library's single-in-line variants PAD70GU_SL /
+//     PAD70NU_SL are NOT used.
+//   - floorplan.tcl:11 -- the bond ring is staggered, PAD70GU outer and PAD70NU
+//     inner. Two rows = staggered, not single-in-line.
+#DEFINE PITCH_70_STAGGER
+//
+// CORRECTION to what this file used to claim: it said a single-pad switch was
+// "a switch left at the foundry default". That was wrong. The lines it cited are
+// inside the BODIES of single-pitch #IFDEF blocks that never execute; that name
+// is not a top-level switch, and single-pad is the wrong structure for us anyway.
+//
+//   The after-passivation redistribution-metal switch is active in the shipped
+//   deck, and that is correct for us: our stack carries AlRDL and the design has
+//   AP geometry. Change it HERE, never in the read-only PDK.
 // If the broker's own switch set differs, theirs wins: ask before overriding.
 //
 // EXPECT NOISE ON THIS ONE, AND KNOW WHY
 // --------------------------------------
-// Bond pads (tpbn65v PAD70NU/PAD70GU) stream as near-empty black boxes -- 13
-// polygons each, on 38/40, 39/60 and 74/0 -- and the passivation-opening layer
-// CB (GDS 76) does not appear ANYWHERE in the stream. A bond-pad deck with no
-// CB openings cannot evaluate pad-opening rules, so those will be silent rather
-// than clean. The useful signal tonight is the metal/AP geometry around the pad
-// ring, not the pad openings themselves. Treat a green CB result as absence of
+// Bond pads (tpbn65v PAD70NU/PAD70GU) stream as near-empty black boxes -- a
+// handful of polygons each, on a few layers -- and the passivation-opening layer
+// does not appear ANYWHERE in the stream. A bond-pad deck with no pad openings
+// cannot evaluate pad-opening rules, so those will be silent rather than clean.
+// The useful signal tonight is the metal/AP geometry around the pad ring, not
+// the pad openings themselves. Treat a green pad-opening result as absence of
 // evidence, exactly as with the corner CSR checks.
 //
 // The foundry deck is READ-ONLY and is not copied, patched or sed-ed.
@@ -51,4 +80,4 @@ DRC MAXIMUM VERTEX  4096
 
 #DEFINE LP
 
-INCLUDE "/tsmc65pdk/65/CMOS/LP/pdk/Calibre/drc/wire_bond/CN65_WIRE_BOND_9M_6X1Z1U.20a"
+INCLUDE "$BND_FOUNDRY_DECK"
