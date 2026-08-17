@@ -103,6 +103,20 @@ export CMSDK_DIR ?= $(ARM_IP_LIBRARY_PATH)/BP210/BP210-BU-00000-r1p1-00rel0
 export TSMC_65_HOME ?= /tsmc65pdk/65
 export PHYS_IP      ?= /research/AAA/phys_ip_library
 
+# Which absolute prefixes scripts/ci/run_provenance.py should record as EXTERNAL
+# (read-only, hashed in place, never copied). Built from the variables above
+# rather than respelled, so this file stays the single place that names a site
+# mount and run_provenance.py - which is published - names none of them. Add a
+# prefix here, not there.
+#
+# The EDA install root is deliberately ABSENT rather than spelled: a tool mount
+# is the same inventory-shaped disclosure as a PDK mount, and it does not need to
+# be here. run_provenance.py falls through to repo_of() for any path it does not
+# recognise, that returns None for anything outside a git repository, and the
+# result is "external" either way. The prefixes below buy the same answer one
+# step earlier for the trees we do already name; they are not load-bearing.
+export PROVENANCE_EXTERNAL_PREFIXES ?= $(TSMC_65_HOME):$(PHYS_IP):$(ARM_IP_LIBRARY_PATH)
+
 # ── ASIC flow toolkit root ─────────────────────────────────────────────────
 # The Innovus stage scripts (2_pnr_setup / 3_pnr_clock / 4_pnr_route) do
 # `source $env(SOCLABS_ASIC_FLOW_DIR)/Cadence/procs.tcl` internally, so passing
@@ -167,7 +181,28 @@ export TLUPLUS_PATH   ?= $(PHYS_IP_PATH)/arm_tech/r2p0/synopsys_tluplus/1p9m_6x2
 export TLUPLUS_MAP    ?= $(TLUPLUS_PATH)/tluplus.map
 
 # ── Design constraints ────────────────────────────────────────────────────
-# 4 ns period (250 MHz) — matches tidelink.
+# THIS DESIGN RUNS AT 100 MHz. CLK_PERIOD below is 10.0 ns.
+#
+# This comment previously read "4 ns period (250 MHz) — matches tidelink",
+# which contradicted the export 13 lines below it and was wrong about this
+# design. Verified three ways before correcting it:
+#   ASIC/common.mk:183                     export CLK_PERIOD ?= 10.0
+#   inputs/constraints.sdc:19              set EXTCLK_PERIOD $::env(CLK_PERIOD)
+#   the elaborated SDC of the last full run (runs/20260813T231658Z_fullrun-
+#   scratch-padfix/outputs/*_syn.sdc:17)   create_clock -period 10.0 ... CLK
+#
+# WHERE THE 250 MHz CAME FROM, so nobody "restores" it: 4 ns is TideLink's
+# OWN standalone SDC (tidelink/syn/asic/fusion-compiler/inputs/constraints.sdc,
+# set T_UI_NS 4.0), which this chiplet flow does not use. It is that block's
+# target in isolation, never this chip's operating point.
+#
+# WHY IT MATTERED: at 100 MHz there is 2.5x margin to the CDCM61001's LVCMOS
+# fOUT ceiling, and every timing number in docs/tapeout is a 10 ns number.
+# Anyone sizing margin against a believed 250 MHz would have been out by 2.5x.
+#
+# NOTE the D2D link rate inherits this variable too — inputs/tidelink_constraints.sdc
+# does `set D2D_LINK_PERIOD $EXTCLK_PERIOD` — so a sweep here silently retargets
+# the die-to-die link as well. See that file's header.
 #
 # Primary clock/reset are MODULE-dependent. The SoC top's free-running
 # clock is sys_fclk and its async reset is sys_sysresetn (hclk/hresetn are
@@ -335,16 +370,64 @@ rom-compiler-stage:
 # macro shipped stale precisely because nothing re-derived its code file, and a
 # code file that is merely PRESENT is not a code file that is CURRENT.
 # Writes only into the build tree — NOT src/rtl/bootrom/*.sv.
+#
+# ── REGENERATION IS CONTENT-PRESERVING, AND THAT IS LOAD-BEARING ────────────
+#
+# These targets used to write the .bintxt unconditionally, so every invocation
+# gave the code file a NEW mtime whether or not the program had changed. That
+# breaks the one piece of provenance these artefacts have.
+#
+# ASIC/romlibs is gitignored with no tracked files, so there is no VCS record of
+# a ROM. rom_verify.py's `provenance` check therefore reasons from mtimes and
+# from the compiler's internal creation stamp: a macro whose code file is NEWER
+# than the macro was not built from that code file. That check is what caught
+# two macros seven weeks older than their own firmware, and it must stay sharp.
+#
+# An unconditional rewrite makes it fire on correct artefacts — touch the code
+# file and every previously-built ROM is retrospectively "stale" — which is both
+# a false alarm and, worse, the kind of false alarm that gets a real check
+# switched off. It also defeats any reuse of a previous build: ASIC/rom_build.mk
+# treats a cache entry older than its code file as a miss, precisely so it never
+# stages a macro that would fail provenance, so a spurious mtime bump costs a
+# full recompile of both ROMs.
+#
+# So: generate into a temporary directory, compare, and replace the real file
+# ONLY if the bytes differ. mtime then means what the checker assumes it means —
+# when the contents last changed.
 .PHONY: eth-bintxt cc-bintxt rom-bintxt
+
+# $(1)=hex  $(2)=bintxt out  $(3)=sv out  $(4)=module name
+define rom_bintxt_regen
+	@test -f "$(1)" || { echo "FAIL: $(1) not built — build firmware first (make firmware)."; exit 1; }
+	@# The result is REPORTED PER FILE, not as one verdict for both. The .bintxt
+	@# is the code file the ROM is burned from; the .sv beside it is a byproduct
+	@# that no ASIC stage reads. A shared "changed" flag makes a stale .sv report
+	@# the CODE FILE as updated — alarming, wrong, and it hides the one line that
+	@# matters.
+	@tmp=$$(mktemp -d) || exit 1; trap 'rm -rf "$$tmp"' EXIT; \
+	python3 $(BOOTROM_GEN) -i $(1) -a $(ROM_ADDR_BITS) -t gcc \
+	    -v "$$tmp/$(4).sv" -b "$$tmp/$(4).bintxt" -m $(4) > "$$tmp/gen.log" 2>&1 \
+	  || { echo "FAIL: bootrom_gen.py failed for $(4):"; cat "$$tmp/gen.log"; exit 1; }; \
+	test -s "$$tmp/$(4).bintxt" || { \
+	    echo "FAIL: bootrom_gen.py exited 0 and wrote no code file for $(4)."; \
+	    cat "$$tmp/gen.log"; exit 1; }; \
+	if cmp -s "$$tmp/$(4).bintxt" "$(2)"; then \
+	    echo "OK: $(4) code file unchanged, mtime preserved ($$(wc -l < $(2)) words)"; \
+	else \
+	    cp "$$tmp/$(4).bintxt" "$(2)"; \
+	    echo "OK: $(4) CODE FILE UPDATED — $(2) ($$(wc -l < $(2)) words)"; \
+	fi; \
+	if cmp -s "$$tmp/$(4).sv" "$(3)"; then :; else \
+	    cp "$$tmp/$(4).sv" "$(3)"; \
+	    echo "    (also refreshed the generated $(4).sv beside it — not read by any ASIC stage)"; \
+	fi
+endef
+
 eth-bintxt:
-	@test -f "$(ETH_HEX)" || { echo "FAIL: $(ETH_HEX) not built — build firmware first (make firmware)."; exit 1; }
-	python3 $(BOOTROM_GEN) -i $(ETH_HEX) -a 9 -t gcc -v $(ETH_ROM_DIR)/eth_ss_bootrom.sv -b $(ETH_BINTXT) -m eth_ss_bootrom
-	@echo "OK: regenerated $(ETH_BINTXT) ($$(wc -l < $(ETH_BINTXT)) words)"
+	$(call rom_bintxt_regen,$(ETH_HEX),$(ETH_BINTXT),$(ETH_ROM_DIR)/eth_ss_bootrom.sv,eth_ss_bootrom)
 
 cc-bintxt:
-	@test -f "$(CC_HEX)" || { echo "FAIL: $(CC_HEX) not built — build firmware first (make firmware)."; exit 1; }
-	python3 $(BOOTROM_GEN) -i $(CC_HEX) -a 9 -t gcc -v $(CC_ROM_DIR)/nanosoc_bootrom_chip_core.sv -b $(CC_BINTXT) -m nanosoc_bootrom_chip_core
-	@echo "OK: regenerated $(CC_BINTXT) ($$(wc -l < $(CC_BINTXT)) words)"
+	$(call rom_bintxt_regen,$(CC_HEX),$(CC_BINTXT),$(CC_ROM_DIR)/nanosoc_bootrom_chip_core.sv,nanosoc_bootrom_chip_core)
 
 rom-bintxt: eth-bintxt cc-bintxt
 
@@ -353,10 +436,26 @@ romlibs-preflight:
 	@echo "== ROM-lib preflight =="
 	@test -x "$(ROM_COMPILER)" || { echo "FAIL: ROM compiler missing/not executable: $(ROM_COMPILER)"; exit 1; }
 	@# Probe what the compiler can actually DO, rather than guessing from its
-	@# path. A working install lists its generators; a broken one prints
-	@# "Available generators are: ." and would otherwise fail later, silently
-	@# leaving stale/absent .libs. See the MEM_COMPILER_DIR note above.
-	@gens=$$("$(ROM_COMPILER)" -help 2>/dev/null | sed -n 's/^Available generators are: *//p'); \
+	@# path. A working install lists its generators; a broken one lists none and
+	@# would otherwise fail later, silently leaving stale/absent .libs. See the
+	@# MEM_COMPILER_DIR note above.
+	@#
+	@# THE GENERATOR NAMES ARE ON THE LINES AFTER THE HEADING, ONE PER LINE — not
+	@# on the heading line. This check used to read them with
+	@#     sed -n 's/^Available generators are: *//p'
+	@# which returns the empty remainder of the heading, so it declared a PERFECTLY
+	@# WORKING COMPILER broken and then explained the NFS-inode failure at length.
+	@# Measured 2026-08-14: the local-disk mirror lists 15 generators and compiles
+	@# both ROMs, while this gate refused to let it start. A false negative here is
+	@# expensive in a specific way — it sends you to fix an install that is fine,
+	@# and it is why `tsmc_65_romlibs` was believed unrunnable on this host.
+	@gens=$$("$(ROM_COMPILER)" -help < /dev/null 2>/dev/null | awk '\
+	    /Available generators are:/ { \
+	        sub(/.*Available generators are:[[:space:]]*/, ""); \
+	        f = 1; if ($$0 != "") print $$0; next } \
+	    f { if ($$0 ~ /^[[:space:]]*$$/ || $$0 ~ /^(You can also|Options)/) exit; \
+	        if ($$0 ~ /^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*$$/) print $$1; else exit }' \
+	    | tr '\n' ' '); \
 	if [ -z "$$(echo $$gens | tr -d ' .')" ]; then \
 	    echo "FAIL: $(ROM_COMPILER)"; \
 	    echo "      starts but lists NO generators ('Available generators are: $$gens')."; \
@@ -405,35 +504,29 @@ romlibs-preflight:
 # code file is passed by its own path, not a copy — the macro records the name
 # it was compiled from, and that stamp is how romlibs-verify proves the macro
 # belongs to the firmware the spec names. A renamed copy defeats that check.
-# The integrity guard below is the belt to that braces: it snapshots the code
-# file, and fails the build if any generator wrote to it.
-ROM_GENERATORS ?= liberty lef-fp gds2 verilog masis tmax fastscan ctl lvs \
-                  bitmap apache_avm memorybist ascii postscript
+# The build snapshots the code file and fails if any generator wrote to it.
+#
+# ── WHERE THAT LOGIC NOW LIVES ─────────────────────────────────────────────
+# All of it — the generator list, the never-`testcode` rule, the per-generator
+# integrity guard — moved to scripts/ci/rom_cache.py, driven by rom_build.mk.
+# There was a `rom_compile` shell macro here that did the same job; two
+# implementations of "how to run the ROM compiler safely" is exactly one too
+# many when the thing they protect against is a silent content substitution, so
+# this file no longer carries its own. ROM_GENERATORS is defined once, in
+# ASIC/rom_build.mk.
 
-# $(1)=output dir  $(2)=spec  $(3)=code file
-define rom_compile
-	rm -rf $(1); mkdir -p $(1)
-	@cp $(3) $(1)/.code_file.expected
-	@for g in $(ROM_GENERATORS); do \
-	    echo "  [$(notdir $(1))] $$g"; \
-	    ( cd $(1) && $(ROM_COMPILER) $$g -spec $(2) -code_file $(3) < /dev/null \
-	        > $(1)/gen_$$g.log 2>&1 ) \
-	      || { echo "FAIL: generator $$g failed; see $(1)/gen_$$g.log"; exit 1; }; \
-	    cmp -s $(3) $(1)/.code_file.expected || { \
-	        echo "FAIL: generator '$$g' MODIFIED the code file $(3)."; \
-	        echo "      Restore it (make rom-bintxt) and remove '$$g' from ROM_GENERATORS."; \
-	        cp $(1)/.code_file.expected $(3); exit 1; }; \
-	done
-	@rm -f $(1)/.code_file.expected
-endef
-
-# Code files first (both regenerated from their hex), then preflight, then compile.
-tsmc_65_romlibs: rom-compiler-stage rom-bintxt romlibs-preflight
-	@echo "Generating Bootroms"
-	$(call rom_compile,$(ROMLIBS_DIR)/eth_rom,$(ETH_ROM_SPEC),$(ETH_BINTXT))
-	$(call rom_compile,$(ROMLIBS_DIR)/cc_rom,$(CC_ROM_SPEC),$(CC_BINTXT))
-	@echo "Done: ROM libs in $(ROMLIBS_DIR)/{eth_rom,cc_rom}"
-	@$(MAKE) -f $(COMMON_MK) --no-print-directory romlibs-verify
+# `tsmc_65_romlibs` — the historical entry point, kept because docs, CI messages
+# and muscle memory all name it. It now delegates to the per-run machinery with
+# the run pointed at the LEGACY SHARED DIRECTORY, so it does what it always did
+# while going through one build implementation, one cache and one gate.
+#
+# Prefer `rom-run ROM_RUN_DIR=<run>`: a macro in ASIC/romlibs is shared by every
+# run in the checkout and can be replaced between two stages of the same flow,
+# which is the property that let a wrong ROM survive months of synthesis.
+tsmc_65_romlibs:
+	@echo "note: tsmc_65_romlibs builds into the SHARED $(ROMLIBS_DIR)."
+	@echo "      For a run that owns its ROMs: make -f common.mk rom-run ROM_RUN_DIR=<run>"
+	@$(MAKE) -f $(COMMON_MK) --no-print-directory rom-run ROM_RUN_DIR=$(ROMLIBS_DIR)
 
 # ── romlibs-verify lives in ASIC/rom_gate.mk (included at the end of this file)
 # It used to be HERE, and it used to check only that four files existed and were
@@ -545,3 +638,11 @@ pad-lef-verify:
 # spec paths defined above. Anything that re-enters this makefile from a recipe
 # must use $(COMMON_MK) — see the note beside its definition at the top.
 include $(dir $(COMMON_MK))rom_gate.mk
+
+# ── Per-run ROM generation ─────────────────────────────────────────────────
+# rom-run / rom-run-stage / rom-run-status / rom-cache-clean. AFTER rom_gate.mk
+# because it consumes that file's ROM table ($(ROMS), ROM_LABEL_*, ROM_SPEC_*,
+# ROM_CODE_*, ROM_INST_*) — one description of which ROMs this die has, used
+# both to build them and to judge them. It also drives the gate, pointed at the
+# run it has just populated.
+include $(dir $(COMMON_MK))rom_build.mk
