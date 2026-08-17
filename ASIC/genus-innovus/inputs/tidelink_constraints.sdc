@@ -93,6 +93,47 @@ set_input_delay 1 -clock [get_clocks "D2D_RX_CLK_0"] [get_ports {TL_RX[*]}]
 #      That belongs in the synthesis flow, not in this SDC.
 #-----------------------------------------------------------------------------
 
+# --- PIN THE DIVIDED LEG INERT ----------------------------------------------
+# Raised by 08, who landed the divider: the divided leg (clkdiv_r) is a SECOND
+# clock source into the same net through the mux. At ratio 0 it is disabled by
+# div_en_r, but nothing above TELLS THE TIMER that. A timer seeing two clock
+# sources on one net can report multiple-waveform pins and can make TA-1018 read
+# against a topology that is true in only one configuration - i.e. the SDC
+# stops describing the netlist, which is the exact failure this whole exercise
+# has been eliminating. So make it provably inert rather than incidentally so.
+#
+# NOTE WHAT THE OBVIOUS FORM DOES NOT DO. Case-analysing ratio_i alone is NOT
+# sufficient here, and 08's suggested form needs this correction: ratio_i feeds
+# a two-stage synchroniser plus an equality filter (ratio_meta_r, ratio_sync_r,
+# ratio_r) before it reaches sel_div. set_case_analysis propagates through
+# COMBINATIONAL logic, not through flops, so a value forced on ratio_i does not
+# reach ratio_r and the divided leg would stay live in the timing graph. The
+# registers hold RATIO_RESET out of reset, but STA does not simulate reset.
+#
+# The pin that actually gates the leg is div_en_r, so that is the one forced.
+# byp_en_r is forced to 1 for the same reason on the other leg. Both are flop
+# outputs, which set_case_analysis handles.
+#
+# Also note ratio_i is NOT driven at chiplet level - link_clk_div_ratio_i does
+# not reach nanosoc_eth_chiplet.sv, the pad ring, or the boundary spec, so it
+# floats. An X input is not something to leave STA reasoning about even though
+# the RTL's equality filter holds /1 bypass in simulation.
+#
+# GUARDED, because this hierarchy only exists once the divider has landed in the
+# compiled tidelink. Absent, the constraint is skipped with a loud note rather
+# than erroring the flow - a run against a pre-divider tidelink is still valid.
+set _lcd "u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_link_clk_div"
+if {[llength [get_pins -quiet ${_lcd}/div_en_r/Q]]} {
+    set_case_analysis 0 [get_pins ${_lcd}/div_en_r/Q]
+    set_case_analysis 1 [get_pins ${_lcd}/byp_en_r/Q]
+    puts "TIDELINK-SDC: link-clock divider pinned to /1 bypass (div_en_r=0, byp_en_r=1)"
+} else {
+    puts "TIDELINK-SDC: NOTE no u_link_clk_div in this netlist - divider case analysis skipped."
+    puts "TIDELINK-SDC:      If the divider IS meant to be compiled, this is a REAL GAP:"
+    puts "TIDELINK-SDC:      the divided leg would be a second, unconstrained clock source."
+}
+unset _lcd
+
 create_generated_clock -name "D2D_TX_CLK_0" -source [get_pins u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_chiplet_controller/u_wlink/pad_clk_tx] -divide_by 1 [get_ports TL_CLK_TX]
 
 set_output_delay 0.8 -clock [get_clocks "D2D_TX_CLK_0"] [get_ports {TL_TX[*]}]
