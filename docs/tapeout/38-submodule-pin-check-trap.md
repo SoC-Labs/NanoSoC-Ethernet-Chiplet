@@ -93,10 +93,73 @@ done
 And the check that would have caught this one regardless of git state — **ask the
 flist, not the repo**: every file the build compiles must resolve to a commit.
 
+**Get this one right or it is worse than useless.** Written the obvious way — run
+from the repo root — it reported **137 of 182 entries untracked** on the first
+flist it was pointed at, and every one was a false positive: nested submodules
+(`deps/axi-chiplet-controller`, `deps/tidelink-phy`) keep their files in their own
+indexes, so the parent correctly does not track them. A second, "submodule-aware"
+attempt silently failed to populate its lookup table and reproduced the same 137
+under a different label. A check that cries wolf gets switched off, which leaves
+you worse off than having no check.
+
+The version that works is shorter than either. Ask git from the **file's own
+directory** and let it resolve the innermost repo itself:
+
 ```bash
-# for each entry in the compiled flist, is it tracked in its own repo?
-git -C "$repo" ls-files --error-unmatch "$path" >/dev/null 2>&1 || echo "NOT TRACKED: $path"
+d=$(dirname "$p"); b=$(basename "$p")
+git -C "$d" ls-files --error-unmatch "$b" >/dev/null 2>&1 \
+    || echo "NOT RESOLVABLE TO A COMMIT: $p"
 ```
+
+On the same flist that gives 150 resolvable and 32 not — and the 32 are one real
+finding rather than a flood.
+
+### What the real 32 turned out to be
+
+All under `deps/xhb500/generated`, and the tracked entry is not a file at all:
+
+```
+120000  deps/xhb500/generated -> /home/dam1n19/SoCLabs/tidelink/deps/xhb500/generated
+```
+
+**A committed symlink holding an absolute path into a personal home directory**,
+pointing at a *different checkout* of the same project. The worktree has a
+materialised directory there instead, so the build works on this machine and git
+reports the symlink as deleted.
+
+Check for the legitimate version of this before raising it: vendor IP that must
+*not* be committed is often referenced rather than vendored, and that is correct.
+The tell is where the link points — the read-only lab-shared IP tree named in
+`CLAUDE.md` is by design; someone's `$HOME` is not.
+
+The compiled bits are identical today, and that is the trap rather than the
+reassurance:
+
+```
+  submodule HEAD    d7fe5d5
+  standalone HEAD   3d4748fc      <- a DIFFERENT commit
+  diff -rq          identical apart from one stray nested directory
+```
+
+Two checkouts of the same project on different commits, one of them referenced
+from the other's build, and nothing keeping them in step. It agrees by luck, and
+will stop agreeing silently. Committing the files is not the fix (Arm IP); the fix
+is to resolve the path at build time from the shared IP location the rest of the
+flow already uses.
+
+### The check that had this document's own bug
+
+Worth stating plainly rather than hiding as an admission: **the check written to
+catch "a correct command answering a different question" was itself a correct
+command answering a different question.** `git ls-files --error-unmatch` faithfully
+answered "does the parent repo track this path" when the question was "does *any*
+repo track this path". It was right, and useless, and looked like 137 findings.
+
+If it can happen to the check, in the document about it, minutes after writing the
+document — assume it is happening in whatever you are measuring right now. The
+defence is not care. It is a control: run the probe against a case you *know* is
+positive, and if it does not light up, the instrument is wrong rather than the
+subject clean.
 
 An untracked file in a flist is unreproducible whatever the SHAs say. That is the
 strongest form of the check and it does not care how many levels of submodule sit
