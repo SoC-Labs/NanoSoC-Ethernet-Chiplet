@@ -188,6 +188,27 @@ Three ways to get this wrong, all of which happened while this was being chased:
   false alarm: `syn: asic-flist` is a real prerequisite (`design.mk:747`), so the
   generated flist is rebuilt every synthesis and the stale copy is never used.
 
+**Why the stale-copy alarm keeps coming back, and why it is not a one-off.** The
+bullet above is right that synthesis never uses the stale copy — but that is only
+half the picture, and the missing half is what makes this reproducible:
+
+| Consumer | Reads the generated flist | Re-renders it first |
+|---|---|---|
+| `make syn` | yes | **yes** — `asic-flist` is a real prerequisite (`design.mk:747`) |
+| `make lint` | yes | **no** — it reads whatever is on disk |
+
+So lint and synthesis can disagree about the design's contents indefinitely, and
+lint is the one that is wrong. A stale render therefore produces findings that
+are internally consistent, reproducible on demand, and entirely phantom — the
+worked example being an "unresolved module in the D2D clock path" plus HAL
+`E,UNCONI` on `user_hsclk` and `UASWIR` on `link_hsclk_w`, i.e. *"the D2D PHY
+reference clock has no driver"*. All three vanish against a fresh render. Nothing
+was wrong with the design.
+
+Before reporting anything from a flist-derived check, **re-render first** and say
+in the report which render you measured. A lint finding against a stale flist is
+not weak evidence, it is evidence about a file that does not exist.
+
 So: resolve the generated flist from its generator before auditing it, and
 confirm which config (V1/V2) the flow selects. Auditing the wrong flist produces
 confident conclusions about a file nothing compiles.
