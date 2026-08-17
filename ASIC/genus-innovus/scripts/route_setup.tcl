@@ -35,8 +35,38 @@ write_db ${block_name}_cts
 # evaluate on its own — see the same argument for cts_buffer_cells in
 # cts_setup.tcl. Not yet done.
 
-### Multi Cut Via Effort 
-set_db route_design_detail_use_multi_cut_via_effort medium
+### Multi Cut Via Effort — OVERRIDABLE, because it is the prime suspect for the
+### VIA3 signoff class and has never been swept.
+#
+# `medium` was the only setting in this file carrying no reason for its value.
+# Everything else here is argued or was deleted with an explanation; this was a
+# bare assignment, so treat it as an unexamined default rather than a decision.
+#
+# WHAT IT IS SUSPECTED OF. Calibre on the shipping stream reports 23
+# VIA3.R.2__VIA3.R.3 results, 17 of them design-owned, plus 2 VIA3.R.4:M4. Both
+# rules require a REDUNDANT VIA3 once the connecting metal passes a width
+# threshold -- read the rule text and the threshold off the deck on your own
+# install; they are the foundry's and are deliberately not reproduced here.
+#
+# Single-cut vias on wide metal is precisely what multi-cut via effort governs:
+# `high` makes NanoRoute work harder to place the second cut where the rule
+# demands one. See docs/DRC_WAIVER_INVENTORY.md § 5 item 2.
+#
+# THE DEFAULT IS DELIBERATELY UNCHANGED. Raising it is a QoR change — more cuts
+# means more area pressure and a different detail-route result — and no route
+# has been run at `high` on this design, so shipping it as the default would be
+# swapping a measured 19 results for an unmeasured everything-else. Sweep it
+# first, exactly as power_plan.tcl's M5 offset was swept before anyone touched
+# the shipped value:
+#
+#     EVR_MULTICUT_VIA_EFFORT=high  make ...      (route stage)
+#
+# and read VIA3.R.2__VIA3.R.3 out of the next Calibre summary with
+# `scripts/ci/drc_census.py <rundir>`. The read-back at 4b:775-779 already
+# prints the value each run, so a setting that does not take is visible rather
+# than silent — which is the failure mode this whole flow is written against.
+opt EVR_MULTICUT_VIA_EFFORT medium
+set_db route_design_detail_use_multi_cut_via_effort $EVR_MULTICUT_VIA_EFFORT
 
 ### Timing Driven Route
 set_db route_design_with_timing_driven 1 
