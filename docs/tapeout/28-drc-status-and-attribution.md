@@ -153,6 +153,18 @@ stable across twelve years of rule revisions.
 
 > ### ⚠ CORRECTED 2026-08-13 — THIS SECTION'S CONCLUSION WAS WRONG
 >
+> **Independently re-verified 2026-08-18, and this correction HOLDS.** The
+> controlled experiment below was re-run against the run data and checked for the
+> two ways it could have been wrong — that the taped-out chip's zero was really an
+> attribution artefact (it is not: all 148 of that chip's own `PO.R.8` were tested
+> by coordinate against the five memory footprints and none is inside), and that
+> the deck-revision evidence might already settle the question (it does not: it
+> rules out a *rule-revision* artefact and is silent on *context*). The 691 are
+> now waived, cell-scoped, in the census. See
+> [39-po-r8-resolved.md](39-po-r8-resolved.md) — and note that
+> `docs/DRC_WAIVER_INVENTORY.md`, which contradicted this section until
+> 2026-08-18, has been corrected to agree with it, not the other way round.
+>
 > This section used to end the paragraph below with *"The layout is already present, so no import
 > resolves them."* **That is false, and the opposite is true: the import is exactly what resolves
 > them.** These are an artefact of shipping a black-box GDS, not vendor defects. Do not raise them

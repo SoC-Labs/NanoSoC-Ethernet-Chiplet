@@ -46,28 +46,42 @@ results are inside ARM Artisan compiler GDS. Neither is actionable by a P&R
 iteration, so gating on them would make the gate permanently and uninformatively
 red. The design bucket has NO exemptions and defaults to a budget of zero.
 
-THESE EXEMPTIONS ARE NOW PERMANENT, AND TWO SENTENCES HERE USED TO SAY OTHERWISE
-(corrected 2026-08-17). The old text said the pad results "clear when eptsmc
-imports the IO layout" and that the memory results "need a vendor waiver", both
-of which described a route that is no longer being taken:
+TWO SENTENCES HERE WERE WRONG, IN OPPOSITE DIRECTIONS. Corrected 2026-08-18:
 
   * THE BACK-END PACKAGES ARE NOT COMING. That was decided, not discovered; see
     docs/DRC_WAIVER_INVENTORY.md. So the missing base layers are a standing
     property of every stream this project will ever produce, and the design
     bucket is a FLOOR, not a total -- a route-to-cell-internal check cannot fire
     against geometry that is not in the stream. Do not read design == 0 as
-    clean; read it as "clean in the layers we actually have".
-  * PO.R.8 IS NOT AN ABSTRACTION ARTEFACT and would not clear on an IO import
-    even if one happened. Its 691 results are real merged memory GDS, identical
-    under the 2012 and 2024 decks, in 23 Artisan leaf cells we cannot edit.
+    clean; read it as "clean in the layers we actually have". THIS ONE STANDS.
+  * "PO.R.8 IS NOT AN ABSTRACTION ARTEFACT ... its 691 results are real merged
+    memory GDS" -- THAT WAS FALSE, and it is now measured false. It IS an
+    artefact of black-boxing, and the foundry's cell-layout import is exactly
+    what resolves it. The same macros inside a previously taped-out chip that
+    HAS real cell layout report ZERO, against 429 expected if the results were
+    inherent to the macros. The deck-revision evidence (691 under both the 2012
+    and 2024 decks) is real but proves something else: it rules out a rule
+    REVISION artefact, and says nothing about CONTEXT. Do not read one as the
+    other. Full evidence: docs/tapeout/39-po-r8-resolved.md.
 
-The consequence for this script is nil -- the split and the gating are unchanged
-and were always right. The consequence for whoever READS its output is the whole
-point: the two non-design buckets are waived permanently and on the record,
-rather than parked pending a delivery.
+WAIVERS (added 2026-08-18)
+    Because that is now established, PO.R.8 is waived --- CELL-SCOPED, in
+    ASIC/genus-innovus/scripts/calibre/drc_waivers.yaml, which this script is
+    the only consumer of. The deck cannot carry it: make_project_deck.sh copies
+    the foundry rule bodies verbatim from the read-only PDK on every run, so
+    Calibre goes on reporting all 837 and the raw summary stays untouched
+    evidence. This script subtracts the waived (check, cell) pairs from what it
+    LEADS WITH, and prints both numbers, always.
+
+    A waiver here is an accounting instrument, not a suppression. It FAILS the
+    gate if a listed cell contributed nothing (stale), if any count moved in
+    either direction (a waived result that changed is a new fact), or if a
+    waiver names the layout primary cell (refused in code, so no edit to the
+    yaml can ever hide a violation in our own routing).
 
 Usage:  drc_census.py <rundir> [--budget N] [--density-budget N]
-Env:    DRC_DESIGN_BUDGET, DRC_DENSITY_BUDGET  (command line wins)
+                               [--waivers PATH | --no-waivers]
+Env:    DRC_DESIGN_BUDGET, DRC_DENSITY_BUDGET, DRC_WAIVERS  (command line wins)
 """
 
 import argparse
@@ -83,6 +97,135 @@ MEMORY_PREFIXES = ("rf_", "flash_cache_", "rom_via", "eth_rom_via", "sram_")
 IOPAD_PREFIXES = ("PAD", "PDDW", "PDUW", "PVDD", "PVSS", "PFILLER", "PCORNER")
 
 DESIGN, MEMORY, IOPAD = "design", "vendor-memory", "io-pad-abstract"
+
+# The waiver file, resolved from THIS script's location so it is found whether
+# the census is run from the repo root, from a signoff fixture sandbox, or by
+# `make drc-census` out of ASIC/genus-innovus.
+DEFAULT_WAIVERS = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "ASIC", "genus-innovus", "scripts", "calibre", "drc_waivers.yaml")
+
+
+def load_waivers(path):
+    """Return (waivers, problems). Absent file is not an error; a broken one is.
+
+    Absent means "nothing is waived" -- the census then reports the raw total,
+    which is the safe direction. Present-but-unreadable must NOT degrade to that
+    silently: a gate that quietly stops applying its own waivers still prints a
+    number, and nobody re-reads a number that got bigger for an unstated reason.
+    """
+    if not os.path.exists(path):
+        return [], []
+    try:
+        import yaml
+    except ImportError:
+        return [], [f"{path} exists but PyYAML is not installed, so its waivers "
+                    f"cannot be read. Install pyyaml (ci/signoff.py already "
+                    f"requires it) or pass --no-waivers deliberately."]
+    try:
+        with open(path) as fh:
+            doc = yaml.safe_load(fh) or {}
+    except Exception as e:                                   # noqa: BLE001
+        return [], [f"{path} is not parseable YAML: {e}"]
+    if not isinstance(doc, dict):
+        return [], [f"{path} does not parse to a mapping — expected a document "
+                    f"with `applies_to:` and `waivers:` at the top level."]
+
+    # The file names the block it was measured on. Pointed at another design's
+    # run -- and this script IS routinely pointed at other runs, e.g. the
+    # reference chip in calibre_runs/drc_fanis_* -- every cell would legitimately
+    # match nothing, and calling that "stale" is a misdiagnosis of a file that is
+    # simply not applicable. Waive nothing, say so, fail nothing.
+    applies = (doc.get("applies_to") or {}).get("block")
+    out, problems = [], []
+    for i, w in enumerate(doc.get("waivers") or []):
+        where = f"{path} waivers[{i}]"
+        check = w.get("check")
+        cells = w.get("cells") or {}
+        if not check or not isinstance(cells, dict) or not cells:
+            problems.append(f"{where}: needs a `check:` and a non-empty `cells:` "
+                            f"map. A rule-scoped waiver is not expressible here "
+                            f"on purpose.")
+            continue
+        if not w.get("justification") or not w.get("evidence"):
+            problems.append(f"{where} ({check}): no `justification:`/`evidence:`. "
+                            f"A waiver without a stated, checkable reason is the "
+                            f"thing this file exists to prevent.")
+            continue
+        bad = {c: n for c, n in cells.items() if not isinstance(n, int) or n < 0}
+        if bad:
+            problems.append(f"{where} ({check}): expected counts must be "
+                            f"non-negative integers: {bad}")
+            continue
+        out.append({"id": w.get("id") or check, "check": check,
+                    "cells": dict(cells), "block": applies,
+                    "expect_total": w.get("expect_total")})
+    return out, problems
+
+
+def apply_waivers(waivers, by_cell, checks, primary):
+    """Subtract waived (check, cell) pairs. Return (waived_total, rows, problems).
+
+    THE SCOPING GUARANTEE LIVES HERE, NOT IN THE YAML. A waiver may only ever
+    name a cell that is not the layout primary, so a result attributed to our own
+    top-level routing is unwaivable no matter what the file says.
+    """
+    waived_total, rows, problems = 0, [], []
+    for w in waivers:
+        check, want = w["check"], w["cells"]
+        if w.get("block") and w["block"] != primary:
+            rows.append({"id": w["id"], "check": check, "waived": 0,
+                         "dormant": False, "miss": [], "drift": {},
+                         "uncovered": {c: n for c, n in
+                                       ((c, r.get(check, 0)) for c, r
+                                        in by_cell.items()) if n},
+                         "cells": 0,
+                         "n_a": f"declared for {w['block']}, this run is {primary}"})
+            continue
+        # Is this waiver live in this run at all? If the check produced nothing
+        # anywhere, the waiver is dormant -- there is nothing to hide, so an
+        # unmatched cell is not yet evidence of staleness.
+        run_total = checks.get(check, 0)
+        got = {c: r.get(check, 0) for c, r in by_cell.items() if r.get(check, 0)}
+
+        for cell in sorted(want):
+            if cell == primary:
+                problems.append(
+                    f"waiver {w['id']}: refuses to waive {check} in the layout "
+                    f"primary cell {primary!r}. Results attributed to the top "
+                    f"cell are OUR geometry; they are never waivable here.")
+        hit = {c: n for c, n in want.items() if c != primary and got.get(c, 0)}
+        miss = [c for c in sorted(want) if c != primary and not got.get(c, 0)]
+        drift = {c: (want[c], got[c]) for c in hit if got[c] != want[c]}
+
+        n = sum(got[c] for c in hit)
+        waived_total += n
+        uncovered = {c: v for c, v in got.items() if c not in want}
+        rows.append({"id": w["id"], "check": check, "waived": n,
+                     "dormant": run_total == 0, "miss": miss, "drift": drift,
+                     "uncovered": uncovered, "cells": len(hit)})
+
+        if run_total == 0:
+            continue                       # dormant: nothing produced, nothing hidden
+        if miss:
+            problems.append(
+                f"waiver {w['id']}: {check} produced {run_total} results in this "
+                f"run, but these waived cells matched NOTHING: "
+                f"{', '.join(miss)}. A waiver that matches nothing is not "
+                f"coverage -- either the cell was renamed or it is stale. Fix "
+                f"the file; do not widen it.")
+        if drift:
+            d = ", ".join(f"{c} expected {e} got {g}" for c, (e, g) in
+                          sorted(drift.items()))
+            problems.append(
+                f"waiver {w['id']} ({check}): waived counts MOVED -- {d}. A "
+                f"waived result that changed is a new fact, not a waived one. "
+                f"Re-establish it before updating the expected count.")
+        if w["expect_total"] is not None and n != w["expect_total"]:
+            problems.append(
+                f"waiver {w['id']} ({check}): waived {n}, file says "
+                f"expect_total {w['expect_total']}.")
+    return waived_total, rows, problems
 
 
 def owner(cell, primary):
@@ -324,6 +467,12 @@ def main():
     # inboard of this cannot contain pad-abstract geometry.
     ap.add_argument("--pad-inset", type=float,
                     default=float(os.environ.get("DRC_PAD_INSET", "135")))
+    ap.add_argument("--waivers",
+                    default=os.environ.get("DRC_WAIVERS", DEFAULT_WAIVERS),
+                    help="cell-scoped waiver file (default: %(default)s)")
+    ap.add_argument("--no-waivers", action="store_true",
+                    help="count every result, waived or not. Use to see the raw "
+                         "number the foundry will reproduce.")
     a = ap.parse_args()
 
     rundir = a.rundir
@@ -353,6 +502,14 @@ def main():
         buckets[owner(cell, primary)] += sum(rules.values())
     attributed = sum(buckets.values())
 
+    if a.no_waivers:
+        waivers, wv_problems, waived, wv_rows = [], [], 0, []
+    else:
+        waivers, wv_problems = load_waivers(a.waivers)
+        waived, wv_rows, apply_problems = apply_waivers(
+            waivers, by_cell, checks, primary)
+        wv_problems += apply_problems
+
     dens, die = density_windows(rundir, a.pad_inset)
     dens_bad = {c: v for c, v in dens.items() if v[0] > 0}
     dens_capped = sorted(c for c, v in dens_bad.items()
@@ -376,11 +533,42 @@ def main():
     print(f"primary cell   : {primary}")
     print(f"result cap     : {cap}")
     print(f"rulechecks >0  : {len(nonzero)}")
-    print(f"TOTAL results  : {total}")
+    print(f"TOTAL results  : {total}   (raw, exactly what Calibre reported)")
+    if waived:
+        print(f"  less waived  : {waived}")
+        print(f"  REPORTED     : {total - waived}   <- the number to work from")
+    elif not a.no_waivers and waivers:
+        print(f"  waived       : 0 — every waiver in {a.waivers} is dormant")
     print()
+    if wv_rows:
+        print(f"waivers ({a.waivers}):")
+        for r in wv_rows:
+            if r.get("n_a"):
+                state = f"NOT APPLICABLE — {r['n_a']}"
+            elif r["dormant"]:
+                state = "DORMANT (check absent from this run)"
+            else:
+                state = f"{r['waived']} results across {r['cells']} cells"
+            print(f"  {r['id']:<28} {r['check']:<22} {state}")
+            if r["miss"]:
+                print(f"    STALE, matched nothing: {', '.join(r['miss'])}")
+            if r["drift"]:
+                print("    DRIFT: " + ", ".join(
+                    f"{c} {e}->{g}" for c, (e, g) in sorted(r["drift"].items())))
+            if r["uncovered"]:
+                # Not an error: cell-scoped means an unlisted cell is simply not
+                # waived, and it stays in the reported count. Printed because a
+                # NEW cell producing a waived check is the one thing a reader of
+                # this report must not miss.
+                print("    NOT waived (no entry — counted above): " + ", ".join(
+                    f"{c}={n}" for c, n in sorted(r["uncovered"].items())))
+        print()
     print("owner split (by owning cell, from the summary's BY CELL section):")
     for k in (DESIGN, IOPAD, MEMORY):
-        print(f"  {k:<16} {buckets[k]}")
+        extra = ""
+        if k == MEMORY and waived:
+            extra = f"   ({waived} waived, {buckets[k] - waived} still reported)"
+        print(f"  {k:<16} {buckets[k]}{extra}")
     if attributed != total:
         print(f"  NOTE: BY CELL sums to {attributed}, main section to {total}")
     print()
@@ -400,11 +588,32 @@ def main():
         for c, (n, _c, _k) in sorted(fe.items(), key=lambda kv: -kv[1][0])[:4]:
             print(f"  {c:<24} {'':>6} {n:>7}")
     print()
-    print("top rulechecks by count:")
-    for c, n in sorted(nonzero.items(), key=lambda kv: -kv[1])[:15]:
-        print(f"  {c:<28} {n}")
+    # Waived counts are subtracted HERE, in the ranking, because burying the real
+    # work under one vendor check is the whole complaint this waiver answers. A
+    # partly-waived check keeps its residue and is marked, so nothing vanishes.
+    per_check_waived = {}
+    for r in wv_rows:
+        per_check_waived[r["check"]] = per_check_waived.get(r["check"], 0) + r["waived"]
+    ranked = {c: n - per_check_waived.get(c, 0) for c, n in nonzero.items()}
+    ranked = {c: n for c, n in ranked.items() if n > 0}
+    print("top rulechecks by count (waived results excluded; raw in brackets):")
+    for c, n in sorted(ranked.items(), key=lambda kv: -kv[1])[:15]:
+        mark = f"   [raw {nonzero[c]}, {per_check_waived[c]} waived]" \
+            if per_check_waived.get(c) else ""
+        print(f"  {c:<28} {n}{mark}")
+    gone = sorted(c for c in nonzero if c not in ranked)
+    if gone:
+        print(f"  (fully waived, 0 remaining: {', '.join(gone)})")
 
     rc = 0
+    if wv_problems:
+        print()
+        print(f"FAIL: {len(wv_problems)} waiver problem(s). A waiver that does "
+              f"not match what it claims to explain is worse than no waiver, "
+              f"because it reads as coverage:")
+        for p in wv_problems:
+            print(f"  * {p}")
+        rc = 1
     if saturated:
         print()
         print(f"FAIL: {len(saturated)} rulecheck(s) SATURATED the {cap}-result "
@@ -439,6 +648,11 @@ def main():
         print(f"      {buckets[IOPAD]} io-pad-abstract and {buckets[MEMORY]} "
               f"vendor-memory results remain, reported not gated — see the "
               f"docstring for why, and the waiver dossier for their status.")
+        if waived:
+            print(f"      {waived} of those are WAIVED and excluded above; "
+                  f"Calibre still reported all {total}. Every waived pair was "
+                  f"present at its recorded count — see "
+                  f"docs/DRC_WAIVER_INVENTORY.md.")
     return rc
 
 

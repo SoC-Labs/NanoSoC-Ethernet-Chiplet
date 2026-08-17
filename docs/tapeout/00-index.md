@@ -56,6 +56,9 @@ self-documentation commands that make Innovus stop being opaque.
 | 26 | [Plan to a submittable GDS](26-plan-to-submittable-gds.md) | The route from here to something a shuttle will accept |
 | 27 | [Broker questions](27-broker-questions-SEND-NOW.md) | The questions only the broker/fab can answer |
 | 28 | [DRC status and attribution](28-drc-status-and-attribution.md) | Every DRC/ANT/BND result, decomposed by who owns it |
+| 39 | [`PO.R.8` resolved](39-po-r8-resolved.md) | Why 691 of 837 DRC results are a black-boxing artefact, how that was proved, and the cell-scoped waiver built on it |
+
+*(29–38 exist but are not yet listed here.)*
 
 **Pages 22 and 23 are companions to the evaluation scripts.** Those scripts are written
 to be read by someone learning the flow, so their comments explain *what each stage

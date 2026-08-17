@@ -1,0 +1,163 @@
+# ---------------------------------------------------------------------------
+# DRC WAIVERS --- nanosoc_eth_chiplet_pads
+#
+# Consumed by scripts/ci/drc_census.py, which is the script ci/signoff.yaml
+# (id: drc) delegates the whole DRC verdict to. That is the ONLY consumer, and
+# it is deliberate: the Calibre deck cannot carry these.
+#
+# WHY NOT IN THE DECK
+#   ASIC/genus-innovus/scripts/calibre/make_project_deck.sh assembles the deck as
+#       derived header (make_project_header.py, regenerated from the PDK every
+#       run)  +  `tail -n +250 <foundry deck>` copied VERBATIM.
+#   Neither half can hold a project waiver: the rule bodies are read-only
+#   foundry collateral re-read on every run, and the header is generated. The
+#   only deck hook, DECK_APPEND, is documented there as "diagnostics only ---
+#   never used by the signoff path". Calibre's own auto-waiver flow
+#   (bin/waiver_flow, -waiver_file) is installed but is marker-GEOMETRY based:
+#   it needs a waiver GDS, a second licence feature, and it REWRITES the results
+#   database --- destroying the raw 837 we want on the record and want the
+#   foundry to reproduce. See docs/tapeout/39-po-r8-resolved.md § "mechanism
+#   choice".
+#
+#   So Calibre keeps reporting all 837. This file changes what the GATE counts
+#   and what the report leads with. The raw summary is untouched evidence.
+#
+# THE RULES THIS FILE PLAYS BY
+#   1. CELL-SCOPED, NEVER RULE-SCOPED. A waiver names (check, cell) pairs. The
+#      same check appearing in any cell not listed here is NOT waived and still
+#      reports. drc_census.py additionally REFUSES to waive the layout primary
+#      cell whatever this file says --- so a PO.R.8 in our own routing can never
+#      be suppressed by editing this file. That guard is in code, not in
+#      convention.
+#   2. EVERY ENTRY CARRIES ITS EXPECTED COUNT. A waived result whose count moved
+#      is a new fact, not a waived one: the census FAILS on any drift, in either
+#      direction. A waiver here cannot absorb a regression.
+#   3. A WAIVER THAT MATCHES NOTHING IS A FAULT. If the check has results in the
+#      run but a listed cell contributed none, the census FAILS as stale. A
+#      waiver that silently matches nothing looks like coverage and is not.
+#   4. THE JUSTIFICATION MUST BE THE ESTABLISHED ONE. See the evidence: fields.
+# ---------------------------------------------------------------------------
+version: 1
+
+applies_to:
+  block: nanosoc_eth_chiplet_pads
+  # The run these counts were measured on. Informational: the census matches on
+  # cell and check, never on this string, so a re-stream does not silently
+  # invalidate the file --- rule 2 catches a real change instead.
+  measured_on: ASIC/genus-innovus/calibre_runs/drc_toolkit_20260817
+  measured_stream: ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds
+
+waivers:
+  - id: PO.R.8-blackbox-context
+    check: PO.R.8
+    verdict: WAIVE-BLACKBOX
+    expect_total: 691
+
+    # ---- what is waived -------------------------------------------------
+    # 22 Artisan memory-compiler leaf cells. Note WHICH cells: control logic
+    # (CNTRL), write drivers (WDX*), column/BIST logic (COLM*_BIST_WM,
+    # CKM4_BIST), ROM wordline decode (CK64WLM8) and output buffers (BUFDO_M8).
+    # Every one is macro PERIPHERY --- the ring of logic whose gates are fed by
+    # the macro's input pins. NOT ONE RESULT IS IN A BITCELL-ARRAY CELL. That
+    # distribution is what the mechanism below predicts, and it is independent
+    # corroboration of it.
+    cells:
+      eth_rom_viaCK64WLM8: 103
+      rom_viaCK64WLM8: 103
+      rf_32kCNTRL: 74
+      rf_16kCNTRL: 70
+      rf_08kCNTRL: 68
+      flash_cache_dataCNTRL: 67
+      flash_cache_tagCNTRL: 62
+      rf_01kCKM4_BIST: 60
+      rf_08kWDX64: 8
+      rf_16kWDX64: 8
+      rf_32kWDX64: 8
+      rf_01kWDX32: 8
+      flash_cache_dataWDX16: 8
+      flash_cache_tagWDX16: 8
+      eth_rom_viaBUFDO_M8: 6
+      rom_viaBUFDO_M8: 6
+      rf_08kCOLM8_BIST_WM: 4
+      rf_16kCOLM8_BIST_WM: 4
+      rf_32kCOLM16_BIST_WM: 4
+      rf_01kCOLM4_BIST_WM: 4
+      flash_cache_dataCOLM8: 4
+      flash_cache_tagCOLM8_BIST_WM: 4
+
+    # ---- why ------------------------------------------------------------
+    justification: >
+      NOT a defect in the vendor macros, and not ours: an artefact of submitting
+      a black-box stream. PO.R.8 is net-based --- it fires when a gate's
+      extracted net reaches no source/drain anywhere. A gate behind a macro
+      input pin has its source/drain in the DRIVING cell, outside the macro. Our
+      stream contains no standard-cell, IO or bond-pad layout at all (every TSMC
+      delivery on this site is a front-end kit; write_stream reports 384 master
+      cells not found after merging), so those drivers are LEF abstracts with
+      metal pin shapes and no diffusion. The net then has a gate and nothing
+      else, and Calibre correctly calls it floating given what it was shown.
+      They resolve when real cell layout is merged --- which is what the
+      foundry's import does.
+
+    # ---- how that was established, and how to re-check it ---------------
+    evidence: docs/tapeout/39-po-r8-resolved.md
+    evidence_summary: >
+      Controlled experiment, re-verified 2026-08-18. A previously taped-out
+      chip (ASIC/genus-innovus/runs/fanis/nanosoc_fanis_26_02_24v2.gds) carries
+      the SAME macros with REAL standard-cell layout around them. Same deck,
+      same tool, same macros; only the surroundings differ:
+        - rf_08k promoted to LAYOUT PRIMARY out of that file  -> PO.R.8 = 80
+          (calibre_runs/drc_fanismacro_rf_08k), and out of our own vendor copy
+          -> 80 (calibre_runs/drc_macro_rf_08k). Identical.
+        - the same macro inside OUR chip -> 80 (68 CNTRL + 8 WDX64 + 4
+          COLM8_BIST_WM). Our surroundings add nothing: we reproduce the
+          standalone black-box number exactly.
+        - the same macro inside the TAPED-OUT chip -> 0. Not one result, of any
+          check, is attributed to any rf_*, rom_via* or flash_cache_* cell in
+          calibre_runs/drc_fanis_20260813. Its 148 PO.R.8 are real floating
+          gates in that chip's own logic, all 148 outside every memory
+          footprint (verified by coordinate, not by attribution).
+      Expected from 2x rf_08k + 2x rf_16k + 1x rom_via if the results were
+      inherent to the macros: 429. Observed: 0.
+
+    scope_of_proof: >
+      DIRECTLY demonstrated for rf_08k (80) and rf_16k (82) --- 162 of the 691
+      --- because only those two macro types exist in the reference chip. The
+      remaining 529 (rf_01k, rf_32k, flash_cache_*, and 64-wordline ROMs against
+      the reference's 32) rest on the same mechanism plus the periphery-cell
+      distribution above, not on their own control. Stated so the foundry can
+      weigh it: doc 27 asks them to report the count after import either way,
+      and 691 coming back would falsify this.
+
+    withdraw_if: >
+      The foundry reports a non-zero PO.R.8 after importing cell layout. That
+      would refute the mechanism and convert these into a real vendor-IP waiver
+      request --- which has no ready-made vendor cover: TSMC's SRAMDMY exclude
+      never reaches this rule (the floating-gate chain is built from raw PO and
+      OD, and the markers sit on bitcell arrays, not on the control logic these
+      results are in), and the ARM register-file compiler's own release note
+      (revision-coded product name deliberately not reproduced -- read it off
+      the compiler release on your own install) waives
+      M5-M9.DN.1L density and four PATHCHK ERC categories in these macros but
+      NOT PO.R.8.
+
+# ---------------------------------------------------------------------------
+# DELIBERATELY NOT WAIVED --- and this is a live control, not an oversight
+#
+#   VIA3.R.2__VIA3.R.3   6 results   in rf_01kMEM_SLICE
+#
+# Also vendor-memory geometry, also un-editable by us, and the DRC_WAIVER
+# INVENTORY still carries it as WAIVE-VENDOR at submission. It is left OUT of
+# this file for two reasons:
+#
+#   1. NO CONTROL COVERS IT. rf_01k does not exist in the reference chip, and
+#      unlike PO.R.8 there is no mechanism argument tying a via-redundancy rule
+#      to the absence of surrounding diffusion. Waiving it would be suppression
+#      on an unestablished premise --- the exact thing this exercise exists to
+#      stop.
+#   2. IT IS THE STANDING POSITIVE CONTROL. Six vendor-memory results survive
+#      into the reported count every run. If the census ever reports a
+#      vendor-memory total of 0, the waiver has stopped being cell-scoped and
+#      has started swallowing the bucket. Six results drown nothing; a silent
+#      blanket suppression would.
+# ---------------------------------------------------------------------------
