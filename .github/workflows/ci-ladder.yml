@@ -45,6 +45,7 @@ on:
           - '4-lint'          # make lint           (verilator 4.028)
           - '5-elab'          # make elab           (VCS licence seat)
           - '6-elab-strict'   # make elab-strict    (Xcelium licence seat)
+          - '7-cdc'           # make cdc            (Xcelium/HAL licence seat)
 
 # Never two ladders at once — they would fight over one workspace and the same
 # licence seats. NOTE nightly.yml currently uses its own group (`nightly`), so
@@ -56,7 +57,12 @@ concurrency:
 jobs:
   ladder:
     runs-on: [self-hosted, linux, "${{ inputs.runner }}"]
-    timeout-minutes: 120
+    # The rungs are CUMULATIVE, so the top of the ladder is the sum of everything
+    # below it: bootstrap + lint + elab, then elab-strict (~37 min measured) and
+    # cdc (~25-40 min), both full HAL elaborations of the same 590-file design.
+    # 120 could not fit rung 7 and would have killed it mid-run, which reads as a
+    # CDC failure rather than as a timeout.
+    timeout-minutes: 240
 
     steps:
       # Via env, not direct interpolation, so the input never reaches the shell
@@ -233,7 +239,8 @@ jobs:
           rm -rf tidelink/deps/xhb500/generated \
                  nanosoc-multicore-system/build_soc \
                  build/elab \
-                 verif/elab_strict/build
+                 verif/elab_strict/build \
+                 verif/cdc/build
 
       - name: 'rung 5 — elab (VCS)'
         if: fromJSON(steps.plan.outputs.level) >= 5
@@ -243,6 +250,22 @@ jobs:
         if: fromJSON(steps.plan.outputs.level) >= 6
         run: make elab-strict
 
+      # CDC is a declared stage in ci/signoff.yaml but has never run in this
+      # ladder. It sits ABOVE elab-strict deliberately: it is the same xrun -hal
+      # elaboration of the same design and needs the same Xcelium/HAL licence
+      # seat, so anything that breaks rung 6 breaks this identically and should
+      # be diagnosed one rung lower, where the run is already understood.
+      #
+      # NOT a clean bill and the step does not claim to be one. HAL infers clocks
+      # from the netlist and reads no SDC, so the synchroniser rules (CLKDMN,
+      # CMBCDC, INSYNC, FLSYNC, RSTSYN, RSTSCB) report zero BY CONSTRUCTION. The
+      # runner reports those as NOT MEASURED and gates only on "the analysis ran
+      # and produced clock/reset-domain findings at all". See verif/cdc/run.sh
+      # and docs/CDC_FINDINGS.md.
+      - name: 'rung 7 — cdc (Xcelium/HAL)'
+        if: fromJSON(steps.plan.outputs.level) >= 7
+        run: make cdc
+
       - name: Collect logs
         if: always() && fromJSON(steps.plan.outputs.level) >= 4
         uses: actions/upload-artifact@v4
@@ -250,7 +273,14 @@ jobs:
           name: ci-ladder-${{ github.run_number }}-stage-${{ inputs.stage }}
           retention-days: 14
           if-no-files-found: ignore
+          # build/lint/** now also picks up build/lint/passes/*.log — verif/lint/
+          # run.sh keeps one durable log per pass instead of deleting a mktemp,
+          # so the lint verdicts arrive here as evidence without a tee.
+          # The two HAL logs are large (elab-strict ~43 MB, cdc ~105 MB) but
+          # compress hard, and they are the only record of what the rule engines
+          # actually saw. Narrow the globs if retention becomes a problem.
           path: |
             build/lint/**
             build/elab/*.log
             verif/elab_strict/build/**/*.log
+            verif/cdc/build/**/*.log

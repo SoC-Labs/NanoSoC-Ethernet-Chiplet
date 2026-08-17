@@ -29,7 +29,12 @@ HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CHIPLET_HOME="$(cd "$HERE/../.." && pwd)"
 HAL="${HAL:-/eda/cadence/xcelium/tools/bin/hal}"
 XRUN="${XRUN:-/eda/cadence/xcelium/tools/bin/xrun}"
-BUILD="$HERE/build"
+# Relocatable output. This script cd's into $BUILD, so xrun's droppings
+# (xcelium.d/, hal.design_facts, *.history) land there too — which means two
+# runs with different ASIC_LANE_OUT do not collide, and this pass can run
+# concurrently with the backend instead of serialising against it. The default
+# is the historical path, so an unset environment behaves exactly as before.
+BUILD="${ASIC_LANE_OUT:-$HERE/build}"
 TOP=nanosoc_eth_chiplet
 
 mkdir -p "$BUILD"
@@ -89,11 +94,144 @@ timeout 2400 "$XRUN" -sv -hal -elaborate \
 rc=$?
 set -e
 
+LOG="$BUILD/xrun_hal.log"
+
 echo
 echo "== summary =="
-echo "  xrun -hal exit=$rc  (log: $BUILD/xrun_hal.log)"
-echo "== CDC findings (MCKDMN / CLKDMN / CMBCDC / RSTSYN / INSYNC / FLSYNC) =="
-grep -aoE "(CLKDMN|CMBCDC|RSTSYN|RSTDAS|INSYNC|FLSYNC|MCKDMN|RSTSCB)" "$BUILD/xrun_hal.log" \
-    | sort | uniq -c | sort -rn | sed 's/^/  /' || echo "  (none reported)"
-echo "== structural (halstruct) tally — mostly waivable CBPAHI (comb path across units) =="
-grep -aoE "\*[EW],[A-Z0-9]+" "$BUILD/xrun_hal.log" | sort | uniq -c | sort -rn | head -8 | sed 's/^/  /'
+echo "  xrun -hal exit=$rc  (log: $LOG)"
+
+# ---------------------------------------------------------------------------
+# VERDICT — ASSERT ON THE ARTEFACT, NEVER ON EXIT STATUS.
+#
+# What this replaced: the script used to END on the reporting pipeline
+#     grep -aoE "(CLKDMN|...)" "$LOG" | sort | uniq -c | sort -rn | sed 's/^/  /'
+# so under `set -eo pipefail` (line 26) THE SCRIPT'S EXIT STATUS WAS THE `sed`'s
+# — 0 whatever the analysis found, and 0 even if the analysis never ran. Three
+# distinct defects travelled together:
+#
+#   1. NO VERDICT AT ALL. `make cdc` was green by construction.
+#   2. THE REGEX MISSED THE FINDINGS. Seven of the eight rule codes it grepped
+#      for are exactly the codes this flow CANNOT produce (see SYNCHRONISER_
+#      RULES below), so the report printed one line and hid ~7300 clock/reset
+#      domain findings HAL *did* report. Measured on the 2026-07-11 log:
+#      FFASRT 4352, ASNRST 1307, DIFCLK 444, DIFRST 442, RSTDAT 376, FFWASR 144.
+#   3. IT COUNTED TOKENS, NOT FINDINGS. `grep -o` matches a rule name wherever
+#      it appears, including inside HAL's own end-of-run summary table
+#      ("MCKDMN (40)"), so it reported 41 MCKDMN where HAL itself counted 40.
+# ---------------------------------------------------------------------------
+
+# --- (a) did the analysis actually RUN? ------------------------------------
+# Same test as verif/elab_strict/run.sh, and for the same reason: every count
+# below is a grep over $LOG, so it means something only if HAL finished. HAL
+# 22.03 prints no success banner in this mode, so assert the engine's own
+# output — a complete run emits thousands of `halstruct:` lines, an aborted one
+# emits none.
+if grep -aqE '\*E,BLDSTP|Analysis failed' "$LOG" 2>/dev/null; then
+    echo "== cdc FAIL: HAL ABORTED before the rule set completed =="
+    echo "   Every count below would be 'not checked', not 'clean'."
+    grep -aE '\*E,BLDSTP|Analysis failed|Total errors' "$LOG" | head -5 | sed 's/^/   /'
+    echo "   log: $LOG"
+    exit 1
+fi
+if ! grep -aq '^halstruct:' "$LOG" 2>/dev/null; then
+    echo "== cdc FAIL: halstruct never ran — no structural rules were applied =="
+    echo "   A zero CDC count here would mean 'not checked', not 'clean'."
+    echo "   log: $LOG"
+    exit 1
+fi
+
+# --- (b) rule classes, split by whether THIS FLOW CAN MEASURE THEM ---------
+# STRUCTURAL   inferred from the netlist alone. HAL does produce these here.
+# SYNCHRONISER need the ASYNC CLOCK RELATIONSHIPS, which only an SDC supplies.
+#   `xrun -hal` takes NO SDC input (see the note above the xrun call), so HAL
+#   cannot know that sys_hclk, user_ref_clk and pad_clk_rx are mutually
+#   asynchronous, and these rules report ZERO BY CONSTRUCTION. Measured
+#   2026-07-11: all nine are 0 while the structural set totals ~7300.
+#   A ZERO HERE IS A NULL RESULT, NOT A CLEAN ONE. This script must never
+#   present it as a pass. The real unsynchronised-crossing signoff needs
+#   constraints/nanosoc_eth_chiplet_cdc.sdc driven into a dedicated CDC tool.
+#   See docs/CDC_FINDINGS.md.
+STRUCTURAL_RULES="MCKDMN MULMCK DIFCLK DIFRST FFASRT ASNRST RSTDAT FFWASR
+                  RSTUCL CLKINF GTDCLK RSTINP NEFLOP FRSTDF CLKUCL RSTGNP
+                  FFCKNP CLKGNP"
+SYNCHRONISER_RULES="CLKDMN CMBCDC INSYNC FLSYNC RSTSYN RSTSCB RSTDMN RSTDAS ACNCPI"
+
+# Anchored on HAL's own line format — `halstruct: *W,RULE (path,line|col): msg`
+# — so a rule name inside a message or a summary table cannot inflate the count.
+# `grep -c` prints 0 and EXITS 1 on no match, which under `set -eo pipefail`
+# would kill the script precisely on the clean cases — the same false-RED that
+# verif/elab_strict/run.sh documents at length. `|| true` keeps the status at 0,
+# and the ${n:-0} default keeps the caller's `[ -gt ]` arithmetic well-formed
+# even if the log vanished between here and there.
+count_rule() {
+    local n
+    n="$(grep -acE "^hal[a-z]*: \*[ENW],$1 " "$LOG" 2>/dev/null || true)"
+    printf '%s' "${n:-0}"
+}
+
+echo
+echo "== CDC/RDC findings HAL COULD measure (netlist-inferred, no SDC needed) =="
+structural_total=0
+for r in $STRUCTURAL_RULES; do
+    n="$(count_rule "$r")"
+    structural_total=$(( structural_total + n ))
+    [ "$n" -gt 0 ] && printf '  %8d  %s\n' "$n" "$r"
+done
+printf '  %8d  TOTAL\n' "$structural_total"
+
+echo
+echo "== rules this flow CANNOT measure (need an SDC — reported as NOT MEASURED) =="
+for r in $SYNCHRONISER_RULES; do
+    n="$(count_rule "$r")"
+    if [ "$n" -gt 0 ]; then
+        printf '  %8d  %s\n' "$n" "$r"
+    else
+        printf '  %8s  %s   (no SDC in this flow — absence is not evidence)\n' \
+               'NOT-MEAS' "$r"
+    fi
+done
+
+# --- (c) the headline number, stated explicitly ----------------------------
+MCKDMN="$(count_rule MCKDMN)"
+echo
+echo "== MCKDMN (instance driven by clocks from different inferred domains): $MCKDMN =="
+if [ "$MCKDMN" -gt 0 ]; then
+    grep -aE "^hal[a-z]*: \*[ENW],MCKDMN " "$LOG" \
+        | grep -aoE '\([^,]+,[0-9]+' | tr -d '(' | cut -d, -f1 \
+        | sed "s|^$CHIPLET_HOME/||" | sort | uniq -c | sort -rn | head -10 \
+        | sed 's/^/    /'
+fi
+
+# --- (d) the criterion ------------------------------------------------------
+# FAIL when the analysis produced NO clock/reset-domain information at all.
+# Justification: this design provably carries at least three clock domains
+# (sys_hclk, user_ref_clk, and the far-die-driven pad_clk_rx — see
+# RESET_ORDERING.md), so a run in which every structural rule is zero has not
+# measured the design; it has failed to analyse it. This is the null-result
+# guard that the old `sed`-terminated script could not express.
+if [ "$structural_total" -eq 0 ]; then
+    echo
+    echo "== cdc FAIL: halstruct ran but reported ZERO clock/reset-domain findings =="
+    echo "   This design has >=3 clock domains, so zero is a NULL RESULT — the"
+    echo "   analysis did not examine the design. Do not read it as clean."
+    echo "   log: $LOG"
+    exit 1
+fi
+
+# OPTIONAL ratchet. Deliberately UNSET by default rather than pinned to today's
+# number: a budget set to whatever the current run happens to measure cannot
+# discriminate a regression from the status quo. Set CDC_MAX_MCKDMN explicitly
+# when the triage in docs/CDC_FINDINGS.md justifies a ceiling.
+if [ -n "${CDC_MAX_MCKDMN:-}" ] && [ "$MCKDMN" -gt "$CDC_MAX_MCKDMN" ]; then
+    echo
+    echo "== cdc FAIL: MCKDMN $MCKDMN exceeds CDC_MAX_MCKDMN=$CDC_MAX_MCKDMN =="
+    echo "   log: $LOG"
+    exit 1
+fi
+
+echo
+echo "== cdc PARTIAL-OK: analysis ran; $structural_total netlist-inferred finding(s) reported =="
+echo "   NOT a CDC clean bill. The synchroniser rules above were NOT MEASURED"
+echo "   (no SDC in this flow), and the structural findings are triage input,"
+echo "   not a gate. See docs/CDC_FINDINGS.md."
+echo "   log: $LOG"
