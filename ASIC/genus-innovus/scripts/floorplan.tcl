@@ -250,6 +250,27 @@ unset _csr _bp_d _dx1 _dy1 _dx2 _dy2 _cx1 _cy1 _cx2 _cy2 _expect
 ## The patterns below key on the RTL-derived fragments (region names, cache
 ## way/word indices, macro type), which are stable, and ignore the separators
 ## and prefixes, which are not. place_macro insists on exactly one match.
+##
+## ===========================================================================
+## BEFORE YOU CHANGE ANY y BELOW: MOVING A MACRO CAN SHORT VDD TO VSS SOMEWHERE
+## ELSE ON THE DIE, AND NOTHING IN EITHER FLOW WILL TELL YOU.
+## ===========================================================================
+##
+## This is not about the macro you are moving. `power_plan.tcl:198` splits rows
+## per macro and add_stripes re-anchors the M5 ladder PER REGION, and the regions
+## are partitioned from ALL macros collectively -- so changing one y re-phases
+## ladders belonging to macros nowhere near it. Measured 2026-08-17: a 0.52um
+## nudge to rf_32k at x=290.8 changed the short count at x=883.5, 550um away.
+## A clean-looking placement diff proves nothing.
+##
+## The current coordinates are LUCKY, not safe, and four more macro pairs sit
+## within half a micron of the same window.
+##
+## BEFORE COMMITTING ANY MOVE: re-run scripts/probe_pg_build.tcl and read the
+## RAIL-TO-RAIL SHORT COUNT (not the DRC total -- Innovus check_drc disagrees in
+## SIGN with Calibre on this design) plus check_connectivity opens/dangling.
+## ~3 minutes, no P&R licence. Full treatment, including why the obvious
+## detectors miss it: docs/tapeout/35-split-row-pg-anchoring-hazard.md
 proc place_macro {pattern x y orient} {
     # Filter to MACROS explicitly. `get_db insts <pattern>` matches every
     # instance, standard cells included, so a region-scoped glob like
