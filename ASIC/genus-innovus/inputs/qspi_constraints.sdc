@@ -1,3 +1,85 @@
+#############################################################################
+# [C3] OPEN DECISION, FOR THE OWNER — `-divide_by 2` IS TRUE ONLY AT A
+#      REGISTER'S RESET VALUE, AND ANOTHER IN-TREE CONSTRAINT SET CONTRADICTS
+#      THIS ONE OUTRIGHT. NO CONSTRAINT IS CHANGED BY THIS BLOCK.
+#      Recorded 2026-08-17.
+#############################################################################
+#
+# FINDING 1 — THE RATIO IS SOFTWARE, NOT SILICON. `-divide_by 2` below describes
+# the divider at its power-on value and at no other. From the RTL
+# (nanosoc-multicore-system/ahb_qspi/logical/...):
+#
+#   qspi_clock_div.v:10   assign QSPI_SCLK_i = (QSPI_CLK_DIV==5'h00) ? HCLK
+#                                                                    : QSPI_SCLK_reg;
+#   qspi_clock_div.v:18     if (QSPI_CLK_DIV==5'h01) QSPI_SCLK_reg <= ~QSPI_SCLK_reg;
+#   qspi_clock_div.v:20-26  else if (QSPI_CLK_DIV!=5'h00)
+#                             toggle QSPI_SCLK_reg every QSPI_CLK_DIV HCLKs
+#
+#   => QSPI_CLK_DIV = 1        toggle every HCLK          -> HCLK/2   [the SDC]
+#      QSPI_CLK_DIV = N >= 2   toggle every N HCLKs       -> HCLK/2N
+#      QSPI_CLK_DIV = 0        pass-through               -> HCLK/1
+#
+# QSPI_CLK_DIV is reg13[4:0] of the APB register block, and it is WRITABLE:
+#   apb_qspi_regs.v:168   assign QSPI_CLK_DIV = reg13;
+#   apb_qspi_regs.v:181   reg13 <= 5'h01;                       ; # POR default
+#   apb_qspi_regs.v:198   10'h00D: reg13 <= (PWDATA[4:0]==5'h00) ? 5'h01
+#                                                               : PWDATA[4:0];
+# Note the write path COERCES 0 to 1, so the /1 pass-through leg at line 10 is
+# unreachable through software and the real range is /2 (reset) to /62
+# (reg13 = 31) — a 31x span. The RTL states the far end itself:
+# ahb_qspi_interface.sv:241-242, "at the slowest practical QSPI_SCLK_i
+# (CLK_DIV=31 -> QSPI_SCLK_i = HCLK/62)".
+#
+# THIS FILE ALREADY CONTEMPLATES CHANGING IT. WARNING 2 below says opcode 03H
+# Read Memory is limited to 40 MHz and that "any silicon use of 03H needs the
+# divider dropped (e.g. /4=25MHz via reg13)". reg13 = 2 gives exactly that — and
+# the moment it is written, QSPI_SCLK's declared waveform is wrong by 2x, and
+# QSPI_SCLK_o and both set_input_delay/set_output_delay budgets go with it.
+# The tool cannot notice; it reports clean against the waveform it was given.
+#
+# WHY THIS IS NOT SIMPLY "FIX THE NUMBER". Every candidate is a choice:
+#   * KEEP /2. Correct at POR and at the FAST_READ boot path this part actually
+#     boots from. Optimistic-in-frequency for any slower setting, but a SLOWER
+#     real clock against a FASTER declared one is the conservative direction for
+#     setup — the risk is not that /2 under-constrains, it is that the
+#     input/output delays (WARNING 1) are budgeted against the wrong period.
+#   * DECLARE THE SLOWEST (/62). Safe for the flash, but it would relax the
+#     whole QSPI domain by 31x and hide real logic failures at the boot rate.
+#   * DECLARE BOTH AND SWITCH BY MODE. The honest answer for a software-ratio
+#     clock, and it needs an MMMC mode per divider setting — a flow change, not
+#     an SDC edit.
+# The choice depends on which divider values silicon is committed to using,
+# which is a software/bring-up decision that has not been made.
+#
+# FINDING 2 — TWO IN-TREE CONSTRAINT SETS SAY OPPOSITE THINGS ABOUT THIS CLOCK.
+#   nanosoc-multicore-system/ahb_qspi/cdc/top_ahb_qspi.sgdc declares three
+#   domains and puts the QSPI serial clock in its own:
+#       clock -name HCLK        -domain hclk_domain  -period 10.0
+#       clock -name QSPI_SCLK_i -domain qspi_domain  -period 40.0
+#   with the reason stated in its header: "For CDC analysis we treat it as a
+#   separate asynchronous domain since the divider ratio is software-programmable
+#   and the phase relationship is not guaranteed."
+#   constraints.sdc says the opposite. It puts $EXTCLK, QSPI_SCLK and
+#   QSPI_SCLK_o in ONE group of `set_clock_groups -asynchronous`, and
+#   set_clock_groups cuts only BETWEEN groups — so at the chip level these three
+#   are declared MUTUALLY SYNCHRONOUS and every HCLK <-> QSPI_SCLK_i crossing is
+#   fully timed.
+#
+#   BOTH CANNOT BE RIGHT, AND THEY ARE NOT TRIVIALLY RECONCILABLE. Note also the
+#   sgdc's 40.0 ns period is a third number, matching neither /2 (20 ns) nor any
+#   other single setting. The chip-level view is arguably the defensible one —
+#   QSPI_SCLK_reg is a flop on HCLK, so the divided clock IS phase-related to
+#   HCLK by construction whatever the ratio, and a generated clock is the right
+#   way to say so. But the sgdc is what CDC signoff was run against, and the
+#   crossings it treats as CDC (and waives as quasi_static) are being timed here.
+#   Whoever resolves this should make the two files agree explicitly rather than
+#   let one silently overrule the other per tool.
+#
+# NOTHING BELOW IS CHANGED BY THIS BLOCK. See also the same class of defect
+# argued in ethernet_constraints.sdc's SMI section, where a software-programmable
+# MDC divider is the reason NOT to write a create_generated_clock at all.
+#############################################################################
+
 # QSPI CLocks
 create_generated_clock -name "QSPI_SCLK" -source [get_ports CLK] -divide_by 2 [get_pins u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_qspi_flash_0/u_top_ahb_qspi/u_qspi_clock_div/QSPI_SCLK_i]
 create_generated_clock -name "QSPI_SCLK_o" -source [get_pins u_nanosoc_eth_chiplet_chip/u_soc/u_soc/u_qspi_flash_0/u_top_ahb_qspi/u_qspi_clock_div/QSPI_SCLK_i] -divide_by 1 [get_ports QSPI_SCLK]
