@@ -43,7 +43,14 @@ set -eo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CHIPLET_HOME="$(cd "$HERE/../.." && pwd)"
 XRUN="${XRUN:-/eda/cadence/xcelium/tools/bin/xrun}"
-BUILD="$HERE/build"
+# Relocatable output. This script cd's into $BUILD, so xrun's droppings
+# (xcelium.d/, hal.design_facts, *.history) follow it there — which means two
+# runs with different ASIC_LANE_OUT do not collide, and this pass can run
+# concurrently with the backend instead of serialising against it. The default
+# is the historical path, so an unset environment behaves exactly as before.
+# NOTE .github/workflows/ci-ladder.yml deletes the DEFAULT path in its stale-
+# artefact step; a lane that overrides ASIC_LANE_OUT owns its own cleanup.
+BUILD="${ASIC_LANE_OUT:-$HERE/build}"
 TOP=nanosoc_eth_chiplet
 mkdir -p "$BUILD"
 
@@ -100,13 +107,50 @@ echo "== xrun -hal: strict structural elaboration over $TOP (~25 min) =="
 # Rejected alternatives: -xmwarn downgrades xmelab/xmvlog message codes, not HAL
 # rule codes, and had no effect. -NOHALSYNTH would also clear the abort but
 # discards the synthesizability triage this script reports.
+# ELAB_STRICT_TIMEOUT, with headroom, NOT the measured runtime.
+#
+# History, because the number has been wrong twice in opposite directions.
+# Before -BB_NONSYNTH the run ABORTED at ~2 min and never reached the
+# structural rules; once halstruct genuinely ran, a full pass measured
+# 00:37:04 and the cap was set to 3600 on the strength of that - three
+# minutes of headroom on a number that was only ever going to grow.
+#
+# On 2026-08-17 it grew. A run took 3605.4s against the 3600 cap, was killed
+# by the wall clock, and REPORTED PASS: 109 MB / 284,834 halstruct lines
+# against 43 MB / 60,493 on the last known-complete run, ending mid-message
+# on a CLKDMN line. So set this from what the run may become, not what it
+# last was - the tidelink bump moved it once and TL-037 + N3 will move it
+# again.
+ELAB_STRICT_TIMEOUT="${ELAB_STRICT_TIMEOUT:-10800}"
+
 set +e
-# 3600, not 2400. Before -BB_NONSYNTH the run ABORTED at ~2 min and never
-# reached the structural rules; now that halstruct genuinely runs, a full
-# pass measured 00:37:04 - three minutes under the old 40-minute cap.
-timeout 3600 "$XRUN" -sv -hal -elaborate -halargs "-BB_NONSYNTH" \
+timeout "$ELAB_STRICT_TIMEOUT" "$XRUN" -sv -hal -elaborate -halargs "-BB_NONSYNTH" \
     -f "$BUILD/merged_dedup.f" -top "$TOP" -l "$LOG" >/dev/null 2>&1
+xrun_rc=$?
 set -e
+
+# THE KILL MUST BE CAUGHT HERE, BECAUSE NEITHER GREP BELOW CAN SEE IT.
+#
+# This is the same false-green class as the "Analysis complete" defect, one
+# layer down. A SIGTERM from `timeout` leaves NO '*E,BLDSTP' and NO
+# 'Analysis failed', so guard 1 passes; and by 60 minutes hundreds of
+# thousands of '^halstruct:' lines have already been written, so guard 2
+# passes too. The script then printed "none - no multiple-driver nets
+# anywhere in the elaborated design" from a run that never applied the rules.
+#
+# MLTDRV=0 from a killed run means NOT MEASURED. It does not mean clean, and
+# the difference is a tapeout claim. `timeout` exits 124 on TERM and 137 on
+# KILL; anything else is xrun's own status, which is NOT authoritative here
+# (HAL exits non-zero on findings) and is left to the greps below.
+if [ "$xrun_rc" -eq 124 ] || [ "$xrun_rc" -eq 137 ]; then
+    echo "== elab-strict FAIL: the run was KILLED at ${ELAB_STRICT_TIMEOUT}s, not finished =="
+    echo "   rc=$xrun_rc. The rules never completed, so the MLTDRV verdict below"
+    echo "   would be 'not measured' reported as 'clean'. This is a FAILURE."
+    echo "   Raise ELAB_STRICT_TIMEOUT and re-run; do not read the log as a result."
+    echo "   log: $LOG  ($(wc -c <"$LOG" 2>/dev/null || echo 0) bytes,"
+    echo "               $(grep -ac '^halstruct:' "$LOG" 2>/dev/null || echo 0) halstruct lines)"
+    exit 1
+fi
 
 # The verdict below is a grep over $LOG, so it means something only if HAL
 # actually finished. Assert that before drawing any conclusion from it.
