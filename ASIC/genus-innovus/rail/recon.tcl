@@ -28,7 +28,22 @@
 ################################################################################
 
 set RAILDIR [file normalize [file dirname [info script]]]
-set DB /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/runs/20260812T133501Z_route-baseline-gds/work/nanosoc_eth_chiplet_pads_eval_route
+# ---- INPUTS. Resolved in rail_env.tcl, not spelled here ----------------------
+# This file used to open with two absolute paths: a database under runs/, and
+#   set QRC /<the site's PDK mount>/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/...
+# SIX files in this directory carried that second line. That is a site constant
+# copied six times into a PUBLIC repository, and the repo's own vendor gate
+# says why it must not be: "THE PDK MOUNT IS INHERITED, NOT NAMED HERE ... a
+# default spelled here would be a second copy of a site constant, and the kind
+# of copy this very script exists to find."
+#
+# THE SPELLING CHANGED; THE SELECTION DID NOT. $::RAIL(qrc) resolves to the same
+# extraction deck and ::rail::db_or_default to the same database this script has
+# always read - both byte-compared against the previous literals. RAIL_DB
+# overrides the database without editing anything.
+
+source [file join [file dirname [info script]] rail_env.tcl]
+set DB  [::rail::db_or_default $::RAIL(repo)/ASIC/genus-innovus/runs/20260812T133501Z_route-baseline-gds/work/nanosoc_eth_chiplet_pads_eval_route]
 
 if {![file isdirectory $DB]} { puts "FATAL: no DB at $DB" ; exit 1 }
 

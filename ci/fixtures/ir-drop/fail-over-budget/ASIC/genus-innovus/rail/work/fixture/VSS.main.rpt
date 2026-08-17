@@ -1,0 +1,101 @@
+POWER NET REPORT 
+Generated Date: Mon Aug 17 23:50:28 2026
+Host Name: srv03335
+
+
+==============================
+POWER NET 
+==============================
+Power Net: VSS
+Voltage: 0.000
+Threshold: 0.054
+
+
+==============================
+POWER-GRID VIEW
+==============================
+Power-Grid Views Used: 388
+
+
+==============================
+POWER-GRID ATTRIBUTES
+==============================
+Total Resistor Elements: 926201
+    Please refer to ../VSS/grid.gif for more details
+Top-level Resistor Elements:926201
+Cell Library Resistor Elements: 0
+Total Number of Current Taps: 356578
+    Please refer to ../VSS/tc.gif for more details
+
+
+==============================
+IR DROP ANALYSIS
+==============================
+Layer based IR Drop Report: See Report
+Minimum, Average, Maximum IR drop: 0.000V 7.215mV 8.893mV
+    Please refer to ../VSS/ir_linear.gif for more details
+Total Static Current Loaded: 0.050527976825833321A
+Number of Violations: 0
+    Please refer to ../VSS/ir_limit.gif for more details
+Minimum, Average, Maximum Vsrc Current: 0.012065508402884007A, 0.01263199420645833A, 0.013122531585395336A
+
+
+==============================
+EFFECTIVE RESISTANCE ANALYSIS
+==============================
+Minimum, Average, Maximum Reff: NA, NA, NA
+
+
+==============================
+CURRENT DENSITY ANALYSIS
+==============================
+Minimum, Average, Maximum J/Jmax:
+Number of Violations: 0
+    Please refer to /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/rail/work/fp1505/results/PD_TOP_125C_avg_1/Reports/VSS/rj.gif for more details
+
+
+==============================
+POWER SWITCH ANALYSIS
+==============================
+PowerGate Current I/Idsat violations: 
+    Please refer to /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/rail/work/fp1505/results/PD_TOP_125C_avg_1/Reports/VSS/pi.gif for more details
+Minimum, Average, Maximum I/Idsat (pi): NA, NA, NA
+Minimum, Average, Maximum IRdrop Across PowerGate (pv): 0, 0, 0
+Power Switch ECO file for Soc Encounter: 
+
+
+==============================
+PACKAGE ANALYSIS
+==============================
+Voltage Drop Across Package (vu): NA, NA, NA
+
+
+==============================
+CAPACITANCE ANALYSIS
+==============================
+Decap Optimization method: area  
+Total Coupling Capacitance: NA
+    Please refer to ../VSS/dd.gif for more details
+Grid Coupling Capacitance: NA
+Gate Coupling Capacitance (internal): NA
+Loading Coupling Capacitance: NA
+Capacitance Offered by Placed Decaps: NA
+Additional Capacitance Required: 0.000F
+    Please refer to ../VSS/dr.gif for more details
+Total Feasible Capacitance: 0.000F
+Total Leakage Current of Placed Decaps: 0.000A
+Total Leakage Current of ECO Decaps: 0.000A
+What-if ECO File:   
+SoC Encounter ECO File: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/rail/work/fp1505/results/PD_TOP_125C_avg_1//VSS/vs2fe_eco.tcl 
+
+
+==============================
+ADDITIONAL FILES
+==============================
+Instance Voltage File: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/rail/work/fp1505/results/PD_TOP_125C_avg_1/Reports/VSS/VSS.iv
+Dynamic IR drop Waveform File (dynamic): 
+Effective Instance Voltage File (dynamic): 
+
+Summary: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/rail/work/fp1505/results/PD_TOP_125C_avg_1//VSS/results 
+
+

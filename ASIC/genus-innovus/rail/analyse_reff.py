@@ -18,6 +18,16 @@ import re
 from collections import defaultdict
 
 
+def norm(name):
+    """Innovus escapes bus brackets in the .effr report (`foo_reg\\[44\\]`) and
+    does not in `get_db insts .name` (`foo_reg[44]`). Joining the two raw
+    dropped 58,530 of 338,903 rows - 17% - and every one of them was a bussed
+    register, i.e. exactly the clustered datapath the spatial map is for. The
+    loss was invisible because the join simply reported fewer instances.
+    """
+    return name.replace("\\", "")
+
+
 def load_xy(path):
     xy = {}
     with open(path) as fh:
@@ -26,7 +36,7 @@ def load_xy(path):
             if len(parts) != 3:
                 continue
             try:
-                xy[parts[0]] = (float(parts[1]), float(parts[2]))
+                xy[norm(parts[0])] = (float(parts[1]), float(parts[2]))
             except ValueError:
                 continue
     return xy
@@ -38,8 +48,15 @@ def load_reff(path):
     The instance column is taken positionally rather than by regex on the name,
     because hierarchical names here contain '/', '[', ']' and '.' and a
     name-shaped pattern would silently drop whole subtrees.
+
+    Returns (rows, disconnected). A row whose resistance column is the literal
+    "D/C" is NOT a small resistance and must never be averaged in: the report's
+    own legend says it means the instance is DISCONNECTED FROM THE NET. Those
+    are returned separately and counted, because an instance with no path to
+    the supply is a defect and silently dropping it would hide one.
     """
     out = []
+    disc = []
     with open(path) as fh:
         for line in fh:
             if not line.strip() or line.lstrip().startswith("#"):
@@ -51,12 +68,15 @@ def load_reff(path):
                 continue
             if p[0] not in ("PASS", "FAIL", "-"):
                 continue
+            if p[1] == "D/C":
+                disc.append(norm(p[2]))
+                continue
             try:
                 r = float(p[1])
             except ValueError:
                 continue
-            out.append((p[2], r))
-    return out
+            out.append((norm(p[2]), r))
+    return out, disc
 
 
 def pct(sorted_vals, q):
@@ -77,7 +97,7 @@ def main():
         core = tuple(float(v) for v in sys.argv[i + 1:i + 5])
 
     xy = load_xy(xy_path)
-    rows = load_reff(effr_path)
+    rows, disc = load_reff(effr_path)
     if not rows:
         print("NO ROWS PARSED from %s - nothing was measured" % effr_path)
         return 2
@@ -95,6 +115,15 @@ def main():
     print("  total instances in design : %d" % len(xy))
     print("  COVERAGE                  : %.1f%% of instances"
           % (100.0 * len(rows) / max(1, len(xy))))
+    print("  DISCONNECTED (D/C)        : %d  - the report's own word for "
+          "'no path to this supply'" % len(disc))
+    if disc:
+        dxy = [(n, xy[n]) for n in disc if n in xy]
+        print("    of which placed        : %d" % len(dxy))
+        for n, (x, y) in dxy[:8]:
+            print("      %-10.1f %-10.1f %s" % (x, y, n))
+        if len(dxy) > 8:
+            print("      ... and %d more" % (len(dxy) - 8))
     print()
     print("distribution (ohms)")
     print("  min    %10.4f" % vals[0])

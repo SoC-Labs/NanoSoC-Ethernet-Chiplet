@@ -1,0 +1,91 @@
+# rail_budgets.txt - the supply contract this design's rail result is judged
+# against, and where every number came from.
+#
+# ANTI-RATCHET. Every threshold carries a `<key>_source` string. rail_gate.py
+# REFUSES TO RUN - before judging anything - if a source is missing, empty, or
+# matches previous_run|last_run|as_measured|measured|today|observed|baseline.
+# This project has set a budget to the day's measured number more than once, and
+# a budget set that way cannot fail: it is a record of what happened, wearing the
+# costume of a requirement. Enforced at LOAD time, not at review time.
+#
+# WHAT IS A FOUNDRY REQUIREMENT AND WHAT IS NOT. TSMC does not specify a
+# permitted IR drop for a digital design; there is no such rule to violate. What
+# is externally fixed is (a) EM current-density limits per layer and (b) the
+# voltages the libraries are characterised at, which bound what may be CLAIMED.
+# Every percentage below is this project's own budget and is labelled convention.
+#
+# THE DIVISOR, which matters more than any threshold here. This project has four
+# contradictory records of the core supply voltage, and running against the wrong
+# one scales every percentage while leaving every number plausible. The divisor
+# is the voltage AT THE PAD in this analysis - the voltage report_power priced
+# the design at, and the corner the setup view resolves to. The gate reads it out
+# of the run's own census and refuses to proceed if the configured value and
+# report_power's own rail table disagree.
+
+# ---- effective collapse, VDD droop + VSS rise AT THE SAME INSTANCE -----------
+# Never the sum of two independent maxima: that is pessimistic AND it hides the
+# case where the two worsts are co-located, which is the dangerous one. The
+# combined per-instance report carries the co-located value directly.
+ir.eff_collapse_pct_max         3.0
+ir.eff_collapse_pct_max_source  convention: industry-conventional static allowance is 1-3% of supply, static+dynamic together 5-10%. The LOW end is taken because this design has NO dynamic analysis and no switching activity anywhere in the flow; the untested dynamic component will consume the rest of any wider allowance. Taking 3% static on zero dynamic coverage would be spending the same margin twice.
+
+ir.eff_collapse_p99_pct_max        2.0
+ir.eff_collapse_p99_pct_max_source convention: a worst-only gate cannot tell one hot instance from a grid sagging everywhere. p99 is the population statement; the peak is the outlier statement. Both are required.
+
+ir.eff_collapse_mean_pct_max        1.0
+ir.eff_collapse_mean_pct_max_source convention: the typical instance's share of the budget. If the MEAN reaches the peak budget the grid is inadequate everywhere and no local repair helps.
+
+# ---- the two nets separately -------------------------------------------------
+# VDD and VSS are measured separately rather than assumed to mirror: this
+# floorplan has SIX VDD pads and FOUR VSS pads, all on the top and bottom edges.
+ir.vdd_droop_pct_max         2.0
+ir.vdd_droop_pct_max_source  convention: half the combined allowance to each net, so neither can consume the whole budget alone.
+ir.vss_rise_pct_max          2.0
+ir.vss_rise_pct_max_source   convention: same split. Asymmetric pad counts (6 VDD vs 4 VSS) mean VSS is expected to be the worse half, and a shared budget would let that hide.
+
+# ---- COMPLETENESS. Asserted BEFORE any voltage is believed --------------------
+# A rail run that fails to attach current, or analyses a fraction of the design,
+# completes successfully and reports a SMALL drop. That is the best possible
+# result produced from no data, and it is the failure mode this project keeps
+# hitting. These are not conventions; they are the conditions under which the
+# millivolts mean anything at all.
+cov.instance_frac_min          0.99
+cov.instance_frac_min_source   completeness requirement: below this the worst case reported is a worst-of-a-sample. 0.99 is chosen so the check has a margin against ordinary tool-side exclusions and still catches an order-of-magnitude shortfall.
+
+cov.current_ratio_lo           0.90
+cov.current_ratio_lo_source    charge conservation: the solver's own loaded current against the demand file it was handed. Catches an empty, truncated or mis-scaled demand file. The band is symmetric and generous because both sides descend from the same power estimate.
+cov.current_ratio_hi           1.10
+cov.current_ratio_hi_source    charge conservation: see cov.current_ratio_lo.
+
+cov.parser_tool_agree_mv        1.0
+cov.parser_tool_agree_mv_source cross-implementation check: the worst drop recomputed from the per-instance report must agree with the tool's own summary. The tool's summary is printed to 3 decimal places, so 1 mV is the resolution of the comparison, not a tolerance for disagreement. Same idiom as the existing drc_trailer != drc_total check.
+
+# ---- PG OPENS. Instances with NO PATH to a supply -----------------------------
+# Zero, and not because zero was measured - because an instance with no path to
+# a supply RAIL DOES NOT POWER UP. This is a functional defect, not a margin, so
+# there is no non-zero value that could be defended. Recommended in
+# docs/tapeout/31-power-delivery-measured.md section 9 on the strength of 255
+# VDD / 302 VSS such instances found at macro edges on the 08-12 database, which
+# the flow's own check_connectivity had already seen and reported as 66 lines
+# among 976 informational messages without ever placing them on the die.
+cov.disconnected_max         0
+cov.disconnected_max_source  functional requirement: an instance with no path to VDD or VSS does not power up. No non-zero value is defensible, so this one is not a budget at all.
+
+# ---- THE HOTSPOT / GRID SPLIT ------------------------------------------------
+# One number cannot tell a single hot instance from a grid that sags everywhere,
+# and the two need different responses. Over-budget instances confined to a few
+# tiles are a local defect with a local fix; spread across many tiles they are
+# grid inadequacy, which no local repair addresses.
+cls.tile_um                 50
+cls.tile_um_source          geometry: comparable to the power-stripe pitch, so one tile is the neighbourhood a single strap serves. NOT calibrated against a real over-budget distribution on this design - no run has produced one. If it is ever tuned, tune it once and record why here.
+cls.localised_tile_max         4
+cls.localised_tile_max_source geometry: an exceedance touching more than four 50um tiles is not a spot. Same calibration caveat as cls.tile_um. An exceedance whose report carries NO coordinates is treated as DISTRIBUTED, because an unprovable "it is only a hotspot" is not a mitigation.
+
+# ---- ELECTROMIGRATION --------------------------------------------------------
+# report_rail reports PG current density ONLY if EM models are supplied. The trap
+# is explicit in the tool documentation: in static mode, if -em_models is not
+# given and -process_techgen_em_rules is not true, current-density analysis is
+# DISABLED - the run still succeeds and the EM report is simply absent. So an
+# absent EM result is recorded as NOT_ANALYSED and never as a pass.
+em.required_at_signoff         true
+em.required_at_signoff_source  completeness requirement: an unmeasured signoff criterion is not a pass. EM limits are the one genuinely foundry-defined number in this whole file.

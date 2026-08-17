@@ -1,0 +1,8 @@
+* excerpt of the fp1505 implementation run's report_power output; only
+* the per-rail table is kept, which is the one artefact the rail stage
+* does not produce and cannot influence.
+*	Power Units = 1mW
+
+Rail                  Voltage   Internal   Switching     Leakage       Total  Percentage 
+Default                  1.08      16.31           0     0.01318       16.33       20.74
+VDD                      1.08         37       17.22      0.3697       54.59       69.35
