@@ -30,6 +30,7 @@
 import argparse
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,10 +38,43 @@ from pathlib import Path
 # argument of write_stream in asic-flows/Cadence/4_pnr_route.tcl:61. Keep these
 # three in step: a deck generated against a different metal option than the one
 # write_stream used is silently wrong.
-DEF_TLEF = ("/tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/"
-            "PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef")
-DEF_MAP = ("/tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/"
-           "Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map")
+#
+# NEITHER DEFAULT IS SPELLED. Point 2 above says no foundry numbers are
+# committed — but the two paths themselves used to be, and a path whose last
+# component is a deck/library RELEASE code is foundry data too: it states what
+# this site licensed. They now come from the same resolver the Innovus, DRC and
+# LVS flows use, so "keep these three in step" is enforced by sharing one
+# resolution rather than by three hand-kept literals agreeing.
+#
+# Selection is unchanged: both resolve byte-identically to the literals they
+# replaced. `pdk_paths.sh --verify` re-proves it.
+# parents[2] is ASIC/ (this file is ASIC/klayout-drc/scripts/gen_deck.py).
+_PDK_PATHS = (Path(__file__).resolve().parents[2]
+              / "tech_wrappers" / "tsmc65" / "scripts" / "pdk_paths.sh")
+
+
+def _pdk(key, envvar):
+    """Resolve a foundry path: an exported PDK_* wins, else ask the resolver.
+
+    Returns None rather than raising, so `--help` and the arg parsing still work
+    on a host with no PDK; main() already reports an unreadable path with a
+    precise message, and that stays the single place this fails.
+    """
+    val = os.environ.get(envvar)
+    if val:
+        return val
+    if not os.access(_PDK_PATHS, os.X_OK):
+        return None
+    try:
+        out = subprocess.run([str(_PDK_PATHS), key], capture_output=True,
+                             text=True, check=True).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return out or None
+
+
+DEF_TLEF = _pdk("tech-lef", "PDK_TECH_LEF")
+DEF_MAP = _pdk("gdsout-map", "PDK_GDSMAP")
 DEF_TOP = "nanosoc_eth_chiplet_pads"
 
 
@@ -578,10 +612,15 @@ def main():
                     help="omit the width-dependent spacing checks")
     a = ap.parse_args()
 
-    for p in (a.tlef, a.gmap):
+    for what, p in (("tech LEF", a.tlef), ("GdsOutMap", a.gmap)):
+        if not p:
+            sys.exit("FAIL: could not resolve the %s.\n"
+                     "      Pass it explicitly, or export TSMC_65_HOME and let\n"
+                     "      ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh find it\n"
+                     "      (run that script directly to see why it could not)." % what)
         if not os.access(p, os.R_OK):
-            sys.exit("FAIL: unreadable: %s\n      needs the /tsmc65pdk mount and "
-                     "membership of group tsmc65pdkgrp." % p)
+            sys.exit("FAIL: unreadable %s: %s\n      needs the foundry PDK mount "
+                     "and membership of the group that can read it." % (what, p))
 
     layers, vias, grid = parse_lef(a.tlef)
     gmap = parse_map(a.gmap)

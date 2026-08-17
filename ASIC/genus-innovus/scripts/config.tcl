@@ -79,19 +79,65 @@ if {[llength [info commands check_cpf]]
     }
 }
 
+# ── Foundry library paths — RESOLVED, NOT SPELLED ───────────────────────────
+# These used to name the deck/library RELEASE this site licensed, in a PUBLIC
+# repository. They now come from ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh,
+# which globs the installed PDK and derives the metal stack from the single
+# installed tech LEF. Selection is unchanged — every path below resolves
+# byte-identically to the literal it replaced; `make -C $DESIGN_HOME/ASIC
+# -f common.mk pdk-paths` re-proves that on demand.
+#
+# THE SAME RESOLVER THE MAKEFILES USE. ASIC/common.mk exports these as PDK_*
+# before Innovus launches, so the P&R flow, the DRC flow, the LVS flow and the
+# KLayout deck generator cannot drift onto different foundry collateral. The
+# `exec` fallback is for a config.tcl sourced outside that makefile; it calls
+# the identical script, so there is still exactly one resolution.
+proc site_env {envvar what} {
+    if {[info exists ::env($envvar)] && $::env($envvar) ne ""} { return $::env($envvar) }
+    die "$envvar is not set, so $what cannot be located. ASIC/common.mk exports
+  it and is the one place in this repository that names a site mount - run this
+  flow through a makefile that includes it, or export $envvar yourself. Do not
+  work around this by pasting an absolute path back in: this repository is
+  public and that is the disclosure the export exists to avoid."
+}
+
+proc pdk_path {key envvar} {
+    if {[info exists ::env($envvar)] && $::env($envvar) ne ""} {
+        return $::env($envvar)
+    }
+    set sh $::design_home/ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh
+    if {![file executable $sh]} {
+        die "cannot resolve foundry path '$key': $envvar is not set and the
+  resolver $sh is missing or not executable. Nothing can select the right deck
+  or layer map without one of the two - this is not a state to work around by
+  hardcoding a path back in."
+    }
+    if {[catch {exec $sh $key} out]} {
+        die "cannot resolve foundry path '$key' via $sh:\n$out"
+    }
+    return $out
+}
+
+
 set hdl_file_list ../scripts/read_flist.tcl
 
-# System Paths, please edit for your system
-set io_lib_dir $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/
-set sc_lib_dir $::env(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tcbn65lp_220a
+# System Paths — resolved, not spelled. Both of these named the library RELEASE
+# this site licensed, twice each (the package and the inner library directory).
+# The trailing slash on io_lib_dir is PRESERVED deliberately: it is concatenated
+# into $lib_search_path_list below and the value must not change shape.
+set io_lib_dir [pdk_path io-nldm-dir PDK_IO_NLDM_DIR]/
+set sc_lib_dir [pdk_path sc-nldm-dir PDK_SC_NLDM_DIR]
 
 # Automatically setup !Don't touch!
-set rf_32k_dir /research/precompiled_mems/TSMC65/rf_32k
-set rf_16k_dir /research/precompiled_mems/TSMC65/rf_16k/ 
-set rf_08k_dir /research/precompiled_mems/TSMC65/rf_08k/ 
-set rf_01k_dir /research/precompiled_mems/TSMC65/rf_01k/
-set flash_cache_data_dir /research/precompiled_mems/TSMC65/flash_cache_data
-set flash_cache_tag_dir /research/precompiled_mems/TSMC65/flash_cache_tag
+# Derived from MEM_LIB_ROOT (ASIC/common.mk names it, and is the one place in
+# this repository that names a site mount). Trailing slashes preserved exactly.
+set mem_lib_root [site_env MEM_LIB_ROOT "the compiled-memory library root"]
+set rf_32k_dir $mem_lib_root/rf_32k
+set rf_16k_dir $mem_lib_root/rf_16k/ 
+set rf_08k_dir $mem_lib_root/rf_08k/ 
+set rf_01k_dir $mem_lib_root/rf_01k/
+set flash_cache_data_dir $mem_lib_root/flash_cache_data
+set flash_cache_tag_dir $mem_lib_root/flash_cache_tag
 
 # ── THE BOOT ROMs — THIS RUN'S, NOT THE SHARED DROP ────────────────────────
 # These two macros are MASK PROGRAMMED, and until 2026-08-14 they were a
@@ -171,12 +217,11 @@ set power_nets {VDD VDDIO}
 set ground_nets {VSS VSSIO}
 
 
-# Set library paths 
-# !! EDIT THIS TO YOUR PATHS IN YOUR ENVIRONMENT
-set TECH_LEF $::env(TSMC_65_HOME)/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef
-#$::env(PHYS_IP)/arm/tsmc/cln65lp/arm_tech/r2p0/lef/1p9m_6x2z/sc12_tech.lef
-set BASE_LEF $::env(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Back_End/lef/tcbn65lp_200a/lef/tcbn65lp_9lmT2.lef
-set IO_PAD_LEF $::env(TSMC_65_HOME)/iolib/tpbn65v_200b_FE/TSMCHOME/digital/Back_End/lef/tpbn65v_200b/cup/9m/9M_6X1Z1U/lef/tpbn65v_9lm.lef
+set TECH_LEF   [pdk_path tech-lef    PDK_TECH_LEF]
+set BASE_LEF   [pdk_path base-lef    PDK_BASE_LEF]
+set IO_PAD_LEF [pdk_path io-pad-lef  PDK_IO_PAD_LEF]
+# Alternative std-cell tech LEF, kept for reference: the Arm sc12 Milkyway-side
+# tech file under $::env(PHYS_IP) (key arm-tech-dir + /lef/<stack>/sc12_tech.lef).
 # PATCHED TSMC IO driver LEF — GENERATED AT BUILD TIME, three added lines.
 #
 # The IO supply pads declare their supply pins as plain signal pins:
@@ -335,7 +380,11 @@ if {![file readable $gds_layer_map]} {
     warn "  harmless before the route stage; write_stream will FAIL without it."
 }
 
-set drc_ruledeck /tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a
+# Resolved like every other foundry path above, which also fixes the anomaly
+# that this one was an ABSOLUTE literal while the rest already derived from
+# $::env(TSMC_65_HOME). The deck must match the stack the stream uses; both are
+# now chosen from the same anchor, so they cannot disagree.
+set drc_ruledeck [pdk_path drc-ruledeck PDK_DRC_DECK]
 
 # ── multi-CPU / distributed processing ──────────────────────────────────────
 # The stage scripts used to hardcode `-local_cpu 8`. srv03335 has 16 physical

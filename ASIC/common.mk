@@ -117,6 +117,69 @@ export PHYS_IP      ?= /research/AAA/phys_ip_library
 # step earlier for the trees we do already name; they are not load-bearing.
 export PROVENANCE_EXTERNAL_PREFIXES ?= $(TSMC_65_HOME):$(PHYS_IP):$(ARM_IP_LIBRARY_PATH)
 
+# ── Foundry collateral — RESOLVED HERE ONCE, SPELLED NOWHERE ───────────────
+# Paths under the PDK end in a component that names the DECK REVISION and the
+# IP RELEASE this site bought. The family spelling is public; the revision
+# suffix is purchase information, and this repository is published. Those
+# suffixes used to appear ~65 times across ~30 files.
+#
+# pdk_paths.sh resolves each one by globbing the installed PDK, anchored on the
+# single routing tech LEF whose own filename carries the metal stack — so the
+# stack is read OUT of the PDK rather than typed into a public file, and every
+# glob is exact-one-match-or-fail. Its header carries the full reasoning.
+#
+# THE VALUES ARE UNCHANGED. Each resolves byte-identically to the literal it
+# replaced; `pdk_paths.sh --verify` re-proves that on demand. This is a
+# redaction of the SPELLING, never of the SELECTION — a wrong deck or a wrong
+# stream-out map changes what the GDS *is*, which is far worse than the
+# disclosure being fixed.
+#
+# RESOLVED IN THIS FILE, NOT IN EACH CONSUMER, so the Innovus flow, the DRC
+# flow, the LVS flow and the KLayout deck generator cannot drift onto different
+# foundry collateral from each other — a class of bug that reads as clean on
+# both sides right up until the GDS is wrong.
+PDK_PATHS_SH := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh
+
+# Resolve $(1) from key $(2), but only if it is not already set: an explicit
+# environment or command-line value still wins, exactly as the `?=` it replaces.
+#
+# THE ROOTS ARE PASSED EXPLICITLY, AND MUST BE. `export` in a makefile puts a
+# variable into the environment of RECIPE commands only — GNU make does NOT put
+# it into the environment of a `$(shell ...)` expanded while the makefile is
+# being read. Relying on the `export` above would hand pdk_paths.sh an empty
+# TSMC_65_HOME, it would exit 1, `2>/dev/null` would swallow the reason, and
+# every path below would silently become the empty string. Verified against GNU
+# Make 4.2.1: a plain `$(shell echo $$FOO)` after `export FOO ?= ...` prints
+# nothing. Do not "simplify" this by dropping the assignments.
+#
+# stderr is dropped only so that a host with no PDK (CI, a laptop) parses
+# quietly; absence is a legitimate state there. It is NOT a pass — run
+# `make pdk-paths` to see what actually resolved, and note the consumers below
+# keep their own `test -r` guards for the empty case.
+define pdk_resolve
+  ifeq ($$(origin $(1)),undefined)
+    export $(1) := $$(shell TSMC_65_HOME='$$(TSMC_65_HOME)' PHYS_IP='$$(PHYS_IP)' \
+                            $$(PDK_PATHS_SH) $(2) 2>/dev/null)
+  endif
+endef
+
+$(eval $(call pdk_resolve,PDK_TECH_LEF,tech-lef))
+$(eval $(call pdk_resolve,PDK_GDSMAP,gdsout-map))
+$(eval $(call pdk_resolve,PDK_DRC_DECK,drc-ruledeck))
+$(eval $(call pdk_resolve,PDK_BASE_LEF,base-lef))
+$(eval $(call pdk_resolve,PDK_IO_PAD_LEF,io-pad-lef))
+$(eval $(call pdk_resolve,PDK_STDCELL_VLOG,stdcell-vlog))
+$(eval $(call pdk_resolve,PDK_IO_VLOG,io-vlog))
+$(eval $(call pdk_resolve,PDK_LVS_DECK,lvs-deck))
+$(eval $(call pdk_resolve,PDK_LVS_SOURCE_ADDED,lvs-source-added))
+$(eval $(call pdk_resolve,PDK_METAL_STACK,metal-stack))
+$(eval $(call pdk_resolve,PDK_METAL_OPTION,metal-option))
+
+## Prove the resolver still selects what the literals used to select.
+.PHONY: pdk-paths
+pdk-paths:
+	@$(PDK_PATHS_SH) --verify
+
 # ── ASIC flow toolkit root ─────────────────────────────────────────────────
 # The Innovus stage scripts (2_pnr_setup / 3_pnr_clock / 4_pnr_route) do
 # `source $env(SOCLABS_ASIC_FLOW_DIR)/Cadence/procs.tcl` internally, so passing
@@ -147,37 +210,59 @@ export FLIST := $(if $(wildcard $(ASIC_FLIST_PATH)),$(ASIC_FLIST_PATH),$(NANOSOC
 export ASIC_FLIST := $(NANOSOC_ETH_CHIPLET_HOME)/flist/nanosoc_eth_chiplet_asic.flist
 
 # ── Cell libraries (TSMC 65nm — matches tidelink) ──────────────────────────
-# Target library (.db) — used for mapping and optimization
-export TARGET_LIB     ?= /research/AAA/phys_ip_library/arm/tsmc/cln65lp/sc12_base_rvt/r0p0/db/sc12_cln65lp_base_rvt_ss_typical_max_1p08v_125c.db
+# Target library (.db) — used for mapping and optimization.
+# Resolved, not spelled: the Arm RELEASE directory under sc12_base_rvt is
+# purchase information. Exactly one is installed, so the glob selects the same
+# tree the hardcoded release code did. The .db BASENAME is kept — it carries no
+# revision, only the public library/variant/corner spelling.
+$(eval $(call pdk_resolve,TARGET_LIB,arm-target-lib))
 
 # ── Memory macro libraries (compiled register file) ────────────────────────
 # TODO: confirm memory macro sizing for IMEM (64 KB), DMEM (16 KB), BOOTROM (8 KB)
 # and eth scratch SRAMs (16 KB each). Current default uses the 16 KB RF macro.
 export MEM_PATH       ?= /research/precompiled_mems/TSMC65/rf_16k
+# The library ROOT, DERIVED from MEM_PATH rather than spelled a second time, so
+# this file names that mount exactly once. config.tcl reads MEM_LIB_ROOT for its
+# six macro directories instead of respelling the site path six times over.
+export MEM_LIB_ROOT   ?= $(patsubst %/,%,$(dir $(MEM_PATH)))
 export MEM_DB_SS      ?= $(MEM_PATH)/rf_16k_ss_1p08v_1p08v_125c.db
 export MEM_DB_FF      ?= $(MEM_PATH)/rf_16k_ff_1p32v_1p32v_m40c.db
 
 # Link libraries — target + any additional macro/IP libs
 export LINK_LIBS      ?= $(TARGET_LIB) $(MEM_DB_SS)
 
-# TF/Milkyway — physical reference for floorplan estimation (TSMC 65nm, 1p9m_6x2z)
-export PHYS_IP_PATH   ?= /research/AAA/phys_ip_library/arm/tsmc/cln65lp
+# TF/Milkyway — physical reference for floorplan estimation.
+# Derived from PHYS_IP rather than respelling the mount. `cln65lp` is a public
+# process-family spelling and carries no revision, so it stays.
+export PHYS_IP_PATH   ?= $(PHYS_IP)/arm/tsmc/cln65lp
 
-# Standard cell Verilog simulation models (for gate-level simulation)
-export STDCELL_VERILOG ?= $(PHYS_IP_PATH)/sc12_base_rvt/r0p0
-export TF_FILE        ?= $(PHYS_IP_PATH)/arm_tech/r2p0/milkyway/1p9m_6x2z/sc12_tech.tf
-export MW_REF_LIB     ?= $(PHYS_IP_PATH)/sc12_base_rvt/r0p0/milkyway/1p9m_6x2z/sc12_cln65lp_base_rvt
+# Standard cell Verilog simulation models (for gate-level simulation), and the
+# Milkyway physical references. Each resolves the Arm RELEASE directory by glob
+# instead of naming it. The Milkyway METAL OPTION is not derivable — six ship
+# side by side — so it lives in ARM_MILKYWAY_STACK inside pdk_paths.sh, flagged
+# there as a maintainer decision. Nothing in this project currently consumes
+# TF_FILE or MW_REF_LIB: they feed a Synopsys flow this repository does not run.
+$(eval $(call pdk_resolve,STDCELL_VERILOG,arm-stdcell-verilog-dir))
+$(eval $(call pdk_resolve,TF_FILE,arm-tf-file))
+$(eval $(call pdk_resolve,MW_REF_LIB,arm-mw-ref-lib))
 
 # ── RTLA Reference Methodology ────────────────────────────────────────────
-export RTLA_RM_PATH   ?= /research/synopsys/RTLA-RM_U-2022.12
+# EDA_TOOLS_ROOT is a named site mount for the same reason the others are. The
+# RTLA-RM release directory is globbed: a tool VERSION is the same
+# inventory-shaped disclosure as a PDK revision, and this file's own policy note
+# above says an EDA install root should not be spelled out.
+export EDA_RESEARCH_ROOT ?= /research/synopsys
+export RTLA_RM_PATH   ?= $(firstword $(wildcard $(EDA_RESEARCH_ROOT)/RTLA-RM_*))
 
 # ── Multi-corner .db libraries (for RTLA CLIB on-the-fly creation) ────────
-export DB_PATH        ?= $(PHYS_IP_PATH)/sc12_base_rvt/r0p0/db
+$(eval $(call pdk_resolve,DB_PATH,arm-db-dir))
 export DB_SS          ?= $(DB_PATH)/sc12_cln65lp_base_rvt_ss_typical_max_1p08v_125c.db
 export DB_FF          ?= $(DB_PATH)/sc12_cln65lp_base_rvt_ff_typical_min_1p32v_m40c.db
 
 # ── TLU+ parasitic extraction models ──────────────────────────────────────
-export TLUPLUS_PATH   ?= $(PHYS_IP_PATH)/arm_tech/r2p0/synopsys_tluplus/1p9m_6x2z
+# Release directory globbed; the metal option is ARM_MILKYWAY_STACK inside
+# pdk_paths.sh, flagged there as a maintainer decision.
+$(eval $(call pdk_resolve,TLUPLUS_PATH,arm-tluplus-dir))
 export TLUPLUS_MAP    ?= $(TLUPLUS_PATH)/tluplus.map
 
 # ── Design constraints ────────────────────────────────────────────────────
@@ -311,7 +396,11 @@ MEM_COMPILER_DIR ?= $(PHYS_IP)
 # /research or any other NFS mount. Cheap to keep: ~90 MB, and rsync makes the
 # refresh a no-op once populated.
 ROM_COMPILER_LOCAL ?= $(if $(TMPDIR),$(TMPDIR),/tmp)/armmemcomp-$(USER)
-ROM_COMPILER_REL   := arm/tsmc/cln65lp/rom_via_hdd_rvt_rvt/r0p0
+# RELATIVE on purpose - it is joined onto both MEM_COMPILER_DIR and the local
+# rsync copy below. The Arm release directory is globbed, not spelled.
+$(eval $(call pdk_resolve,ROM_COMPILER_REL,arm-rom-compiler-rel))
+# Likewise for the register-file compiler used by the mem targets.
+$(eval $(call pdk_resolve,RF_COMPILER_REL,arm-rf-compiler-rel))
 ROM_COMPILER_SRC   := $(MEM_COMPILER_DIR)/$(ROM_COMPILER_REL)
 
 ROM_65nm_SPEC_FILE :=
@@ -546,15 +635,15 @@ gen_memories: bootrom
 	cp $(BOOTROM_BIN_FILE_IN) $(BOOTROM_BIN_FILE)
 	echo "Generating register file memory libraries"
 	echo "16K RF"
-	cd $(RF_16K_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rf_sp_hdf_hvt_rvt/r0p0/bin/rf_sp_hdf_hvt_rvt all -spec $(RF_16K_65nm_SPEC_FILE);
-	cd $(RF_16K_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rf_sp_hdf_hvt_rvt/r0p0/bin/rf_sp_hdf_hvt_rvt liberty -spec $(RF_16K_65nm_SPEC_FILE);
+	cd $(RF_16K_DIR); $(MEM_COMPILER_DIR)/$(RF_COMPILER_REL)/bin/rf_sp_hdf_hvt_rvt all -spec $(RF_16K_65nm_SPEC_FILE);
+	cd $(RF_16K_DIR); $(MEM_COMPILER_DIR)/$(RF_COMPILER_REL)/bin/rf_sp_hdf_hvt_rvt liberty -spec $(RF_16K_65nm_SPEC_FILE);
 	echo "8K RF"
-	cd $(RF_08K_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rf_sp_hdf_hvt_rvt/r0p0/bin/rf_sp_hdf_hvt_rvt all -spec $(RF_08K_65nm_SPEC_FILE);
-	cd $(RF_08K_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rf_sp_hdf_hvt_rvt/r0p0/bin/rf_sp_hdf_hvt_rvt liberty -spec $(RF_08K_65nm_SPEC_FILE);
+	cd $(RF_08K_DIR); $(MEM_COMPILER_DIR)/$(RF_COMPILER_REL)/bin/rf_sp_hdf_hvt_rvt all -spec $(RF_08K_65nm_SPEC_FILE);
+	cd $(RF_08K_DIR); $(MEM_COMPILER_DIR)/$(RF_COMPILER_REL)/bin/rf_sp_hdf_hvt_rvt liberty -spec $(RF_08K_65nm_SPEC_FILE);
 	cd $(ROM_DIR)
 	echo "Generating ROM Libraries"
-	cd $(ROM_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rom_via_hdd_rvt_rvt/r0p0/bin/rom_via_hdd_rvt_rvt liberty -spec $(ROM_65nm_SPEC_FILE) -code_file $(BOOTROM_BIN_FILE);
-	cd $(ROM_DIR); $(MEM_COMPILER_DIR)/arm/tsmc/cln65lp/rom_via_hdd_rvt_rvt/r0p0/bin/rom_via_hdd_rvt_rvt all -spec $(ROM_65nm_SPEC_FILE) -code_file $(BOOTROM_BIN_FILE);
+	cd $(ROM_DIR); $(MEM_COMPILER_DIR)/$(ROM_COMPILER_REL)/bin/rom_via_hdd_rvt_rvt liberty -spec $(ROM_65nm_SPEC_FILE) -code_file $(BOOTROM_BIN_FILE);
+	cd $(ROM_DIR); $(MEM_COMPILER_DIR)/$(ROM_COMPILER_REL)/bin/rom_via_hdd_rvt_rvt all -spec $(ROM_65nm_SPEC_FILE) -code_file $(BOOTROM_BIN_FILE);
 	echo "Finished generating memory libraries"
 
 

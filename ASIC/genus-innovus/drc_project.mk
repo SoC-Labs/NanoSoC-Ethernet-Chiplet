@@ -122,11 +122,16 @@ DRC_DIE_YRT ?= $(call drc_dec,$(word 2,$(DRC_DIE_SIZE)))
 #       Run a 6X1Z1U stream against a different deck and every via-stack and
 #       thick-metal rule is checked against the wrong geometry.
 #
-#       Built from $(TSMC_65_HOME) — exported by ASIC/common.mk — rather than a
-#       literal /tsmc65pdk, so a second PDK install needs no edit here. The tree
-#       is READ-ONLY lab collateral: the flow copies the deck's rule bodies and
+#       RESOLVED, NOT SPELLED. The deck's last path component names the deck
+#       revision this site licensed, and this repository is public. ASIC/common.mk
+#       resolves PDK_DRC_DECK through pdk_paths.sh, which globs the installed
+#       PDK and derives the stack from the one installed tech LEF — i.e. from the
+#       SAME anchor the GdsOutMap is chosen by, so the "must match the stream"
+#       requirement above is now structural rather than a hand-kept coincidence.
+#       Selection is unchanged; `make pdk-paths` re-proves it. The tree is
+#       READ-ONLY lab collateral: the flow copies the deck's rule bodies and
 #       never writes to it.
-DRC_FOUNDRY_DECK ?= $(TSMC_65_HOME)/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a
+DRC_FOUNDRY_DECK ?= $(PDK_DRC_DECK)
 
 # The project-owned switch/environment block that replaces the foundry deck's
 # own is NOT a variable here, on purpose. It lives beside its assembler as

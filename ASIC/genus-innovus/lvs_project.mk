@@ -100,7 +100,9 @@ LVS_INPUT_HINT ?= run 'make pnr_route' (it streams the GDS and writes <top>_pnr.
 # [SITE] The PDK install root. The one path to change on a different machine;
 #        everything below hangs off it. This project's ASIC/common.mk already
 #        exports the same tree as TSMC_65_HOME.
-PDK_ROOT ?= /tsmc65pdk/65
+# Derived from TSMC_65_HOME (ASIC/common.mk) rather than respelling the site
+# mount: that file is the single place this repository names one.
+PDK_ROOT ?= $(TSMC_65_HOME)
 
 # [PDK] The foundry LVS rule deck. TSMC ships it per process option, under
 #       Calibre/lvs/. Pick the one matching the process you taped out on (here
@@ -108,12 +110,14 @@ PDK_ROOT ?= /tsmc65pdk/65
 #       lives in). Find yours with:
 #           find $(PDK_ROOT) -name 'calibre.lvs'
 #       Read-only: the flow copies and rewrites it, never edits it in place.
-LVS_DECK ?= $(PDK_ROOT)/CMOS/LP/pdk/Calibre/lvs/calibre.lvs
+# Resolved by pdk_paths.sh via ASIC/common.mk, so run_lvs.sh and this makefile
+# cannot drift onto different decks. Same file as before.
+LVS_DECK ?= $(PDK_LVS_DECK)
 
 # [PDK] `source.added` — the deck's own SPICE stubs for foundry primitives
 #       (RF/analogue devices), fed to `v2lvs -lsp`. Ships beside calibre.lvs.
 #       Legitimately empty on PDKs that do not provide one.
-LVS_SOURCE_ADDED ?= $(PDK_ROOT)/CMOS/LP/pdk/Calibre/lvs/source.added
+LVS_SOURCE_ADDED ?= $(PDK_LVS_SOURCE_ADDED)
 
 # [PDK] Standard-cell SIMULATION Verilog — the behavioural models, not the
 #       liberty and not a netlist. In an academic Front-End PDK release this is
@@ -127,12 +131,16 @@ LVS_SOURCE_ADDED ?= $(PDK_ROOT)/CMOS/LP/pdk/Calibre/lvs/source.added
 # Calibre rejects the whole source with "Wrong pin count" and never reaches a
 # compare (measured: 256 errors). TSMC ships both variants side by side; pick
 # the one matching your netlist. CONTRACT.md 6b.
-STDCELL_VLOG ?= $(PDK_ROOT)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Front_End/verilog/tcbn65lp_200a/tcbn65lp_pwr.v
+# The two release directories in this path name what this site bought, so the
+# path is globbed by pdk_paths.sh (exact-one-or-fail) rather than spelled.
+# The _pwr.v BASENAME is kept -- it is the variant selector described above and
+# carries no revision. Same file as before.
+STDCELL_VLOG ?= $(PDK_STDCELL_VLOG)
 
 # [PDK] The same thing for the IO drivers. Same Front_End/verilog/ shape, in the
 #       IO library release rather than the standard-cell one. Leave EMPTY for a
 #       padless macro — the flow handles that.
-IO_VLOG ?= $(PDK_ROOT)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/verilog/tphn65lpgv2od3_sl_140a/tphn65lpgv2od3_sl.v
+IO_VLOG ?= $(PDK_IO_VLOG)
 
 #-----------------------------------------------------------------------------
 # 4. Hard macros — the part of the run that is real verification
@@ -250,7 +258,10 @@ CALIBRE ?= calibre
 
 # [SITE] The foundry GDS-out map. Must be the one P&R streams with:
 #        scripts/4b_pnr_route_eval.tcl:225.
-LVS_PG_MAP_IN ?= $(PDK_ROOT)/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map
+# Same resolution the P&R stream uses (PDK_GDSMAP), so "must be the one P&R
+# streams with" is now enforced by sharing one value instead of by two
+# hand-kept copies of a release-coded filename.
+LVS_PG_MAP_IN ?= $(PDK_GDSMAP)
 
 # [PROJECT] Hard-macro GDS to merge, matching MACRO_CDLS one-for-one.
 LVS_PG_MERGE_GDS ?= \

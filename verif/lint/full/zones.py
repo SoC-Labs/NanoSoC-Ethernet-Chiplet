@@ -64,6 +64,34 @@ REPO = os.environ.get(
     os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__))))))
 
+# ── The read-only Arm IP tree, NAMED ONCE AND NOT SPELLED ──────────────────
+# This repository is PUBLIC, and an absolute path to this site's IP mount is
+# site-layout disclosure. set_env.sh exports ARM_IP_LIBRARY_PATH (and ASIC/
+# common.mk exports the same value); verif/lint/full/run.sh sources set_env.sh
+# before importing this module, so it is set in every real run.
+#
+# UNSET IS FATAL, NOT DEFAULTED. Tiering is a path-prefix test: with the wrong
+# root, every Arm source stops matching, tiers AUTHORED, is linted verbatim and
+# reddens the gate as if it were our RTL. That is precisely the "SILENT SCOPE
+# COLLAPSE" verif/lint/run.sh:38 already warns about, and a quietly wrong tier
+# map is worse than no run. So this raises instead of falling back to a literal.
+_ARM_IP_ROOT = os.environ.get("ARM_IP_LIBRARY_PATH", "").rstrip("/")
+if not _ARM_IP_ROOT:
+    raise RuntimeError(
+        "ARM_IP_LIBRARY_PATH is not set, so the Arm-IP tier prefixes cannot be\n"
+        "built. Source set_env.sh (verif/lint/full/run.sh does this for you) or\n"
+        "export ARM_IP_LIBRARY_PATH yourself.\n"
+        "This is deliberately fatal rather than defaulted: with the wrong root\n"
+        "every Arm source tiers AUTHORED and the gate reddens on vendor RTL --\n"
+        "the silent scope collapse verif/lint/run.sh:38 describes.")
+
+
+def _arm_ip(*parts):
+    """A prefix under the read-only Arm IP tree. Product names are public; the
+    mount point is not, so only the leaf names appear in this file."""
+    return "/".join((_ARM_IP_ROOT,) + parts) + "/"
+
+
 # Set to 1 to tier on literal prefixes only. An escape hatch for a dead NFS
 # mount, not a normal mode -- the gate is wrong without the scan wherever a
 # source tree is reached through a link.
@@ -135,20 +163,20 @@ def _expand(prefixes, deep):
 
 _ARM_IP = [
     # Read-only shared lab tree
-    "/research/AAA/ip_library/BP210/",
-    "/research/AAA/ip_library/Corstone-101/",
-    "/research/AAA/ip_library/CG092/",              # flash cache
-    "/research/AAA/ip_library/Cortex-M0-plus/",
-    "/research/AAA/ip_library/PL022/",              # SSP
-    "/research/AAA/ip_library/SoC-400/",            # CoreSight DAP
+    _arm_ip("BP210"),
+    _arm_ip("Corstone-101"),
+    _arm_ip("CG092"),                               # flash cache
+    _arm_ip("Cortex-M0-plus"),
+    _arm_ip("PL022"),                               # SSP
+    _arm_ip("SoC-400"),                             # CoreSight DAP
     # Arm IP that lives INSIDE the submodules, vendor-generated
     f"{REPO}/tidelink/deps/xhb500/",                       # XHB500 AHB bridge
     f"{REPO}/nanosoc-multicore-system/build_soc/rtl/dma250/rendered_CFG_MIN/",
 ]
 
 _THIRD_PARTY = [
-    "/research/AAA/ip_library/OpenCores-EthMAC/",
-    "/research/AAA/ip_library/OpenCores-HA1588/",
+    _arm_ip("OpenCores-EthMAC"),
+    _arm_ip("OpenCores-HA1588"),
     f"{REPO}/nanosoc-multicore-system/ethernet-subsystem-ahb/ethernet-mac-ahb/src/rtl/ethmac_patches/",
     f"{REPO}/nanosoc-multicore-system/ethernet-subsystem-ahb/ethernet-mac-ahb/src/rtl/ha1588_patches/",
     f"{REPO}/tidelink/deps/axi-chiplet-controller/",       # Wlink, Bluespec-generated

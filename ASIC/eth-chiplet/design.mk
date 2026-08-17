@@ -77,7 +77,8 @@ LEGACY_ASIC_DIR := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/genus-innovus
 # and     ../genus-innovus/drc_project.mk:62       `BLOCK ?= ...`
 BLOCK := nanosoc_eth_chiplet_pads
 
-# Source: ../common.mk:94  TSMC_65_HOME=/tsmc65pdk/65, and every library path in
+# Source: ../common.mk  TSMC_65_HOME (the site PDK mount, named there and only
+# there), and every library path in
 # scripts/config.tcl. The pack owns the standard cells, the IO library, the tech
 # LEF, the cap tables, the layer names and the stream-out map.
 TECH  := tsmc65
@@ -105,7 +106,12 @@ TECH  := tsmc65
 # and the site fact now lives with the project instead of inside the toolkit.
 #
 # `?=`, so a shell export or ci/site.env still wins.
-export ARM_CLN65LP_TECH ?= /research/AAA/phys_ip_library/arm/tsmc/cln65lp/arm_tech/r2p0
+# Resolved, not spelled: `arm_tech/<rel>` names the Arm release this site
+# licensed, and this repository is public. pdk_paths.sh globs it (exactly one
+# is installed) off $(PHYS_IP), which ../common.mk already names. Same tree as
+# before -- `make -C .. -f common.mk pdk-paths` re-proves it.
+export ARM_CLN65LP_TECH ?= $(shell TSMC_65_HOME='$(TSMC_65_HOME)' PHYS_IP='$(PHYS_IP)' \
+                             $(PDK_PATHS_SH) arm-tech-dir 2>/dev/null)
 
 # WHERE THE TOOLKIT IS. Two answers, and which one is right changes on the day
 # the submodule swap lands - so this resolves rather than asserts.
@@ -393,10 +399,12 @@ GDS_EXPECT ?= PAD70GU=42 PAD70NU=40 PCORNER_G=4
 #   ../genus-innovus/scripts/floorplan.tcl:104
 #   ../genus-innovus/drc_project.mk:92-114 does the identical derivation
 
-# [PDK] The foundry deck. Its path encodes the METAL STACK (9M 6X1Z1U) and is
-# not interchangeable with the stream's map.
-# Source: ../genus-innovus/drc_project.mk:129
-DRC_FOUNDRY_DECK ?= $(TSMC_65_HOME)/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a
+# [PDK] The foundry deck. Its path encodes the METAL STACK and is not
+# interchangeable with the stream's map -- so both are now derived from the one
+# installed tech LEF by pdk_paths.sh rather than from two hand-kept literals,
+# and the deck revision is no longer spelled in a public file.
+# Source: ../common.mk (PDK_DRC_DECK), ../genus-innovus/drc_project.mk
+DRC_FOUNDRY_DECK ?= $(PDK_DRC_DECK)
 
 # The IO row depth, from the IO cell LEF SIZE. Every PDDW*_G / PVDD2*_G /
 # PCORNER_G in tphn65lpgv2od3_sl is 135 um tall.

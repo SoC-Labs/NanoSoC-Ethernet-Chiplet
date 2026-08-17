@@ -14,7 +14,7 @@
 #   LVS needs a transistor netlist AND a layout for every leaf cell. This system
 #   has neither for the standard cells, the IO drivers or the bond pads: every
 #   TSMC package installed is a Front End (`_FE`) pack, and
-#   `find /tsmc65pdk -iname '*.cdl' -o -iname '*.gds*'` returns exactly one
+#   `find $TSMC_65_HOME -iname '*.cdl' -o -iname '*.gds*'` returns exactly one
 #   92-byte file. The memory macros and ROMs DO have both.
 #
 #   So `--check` below fails with the precise missing list and a pointer to
@@ -31,25 +31,70 @@
 #   run_calibre_lvs.sh --run <gds> <netlist> <top> <work> <logs>
 #
 # Env overrides, expected to be set once the _BE packages land:
-#   LVS_DECK        default /tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/calibre.lvs
-#   STDCELL_CDL     tcbn65lp_220a_BE  ... .cdl
-#   IODRV_CDL       tphn65lpgv2od3_sl_210a_BE ... .cdl
-#   PAD_CDL         tpbn65v_200b_BE   ... .cdl
+#   LVS_DECK        the foundry Calibre LVS deck
+#   STDCELL_CDL     standard-cell CDL   ) the three _BE files that do not
+#   IODRV_CDL       IO-driver CDL       ) exist yet; see above
+#   PAD_CDL         bond-pad CDL        )
 #   MEM_CDL_DIRS    space-separated dirs holding the macro CDLs (defaulted)
+#
+# NONE OF THOSE DEFAULTS ARE SPELLED HERE ANY MORE. A path ending in a library
+# RELEASE code states what this site licensed, and this repository is PUBLIC. They
+# are resolved by ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh, which globs the
+# installed PDK. The three _BE paths are derived from the _FE package that IS
+# installed, with the suffix swapped -- so they still name exactly where the
+# matching Back End pack would land, and still report MISSING until it does.
+# Values are unchanged: `pdk_paths.sh --verify` prints all of them.
+#
+# TSMC_65_HOME IS REQUIRED, not defaulted. It used to be defaulted to the site
+# mount three times in this file; ASIC/common.mk is the one place in this
+# repository that names a site mount, and the Makefile that invokes this script
+# includes it. Running this script by hand needs that export too -- preflight
+# says so rather than guessing.
 #-----------------------------------------------------------------------------
 set -uo pipefail
 
-LVS_DECK="${LVS_DECK:-/tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/calibre.lvs}"
-SOURCE_ADDED="${SOURCE_ADDED:-/tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/source.added}"
-V2LVS="${V2LVS:-/eda/mentor/calibre/bin/v2lvs}"
+# One resolution, shared with the Innovus/DRC/KLayout flows, so LVS cannot end
+# up checking against different foundry collateral from the one that was routed.
+PDK_PATHS="$(dirname "$0")/../../../tech_wrappers/tsmc65/scripts/pdk_paths.sh"
 
-# The three that do not exist yet. Deliberately defaulted to the paths the
-# _BE packages would install to, so `--check` names something actionable.
-STDCELL_CDL="${STDCELL_CDL:-${TSMC_65_HOME:-/tsmc65pdk/65}/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_BE/TSMCHOME/digital/Back_End/cdl/tcbn65lp_220a/tcbn65lp.cdl}"
-IODRV_CDL="${IODRV_CDL:-${TSMC_65_HOME:-/tsmc65pdk/65}/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_BE/TSMCHOME/digital/Back_End/cdl/tphn65lpgv2od3_sl.cdl}"
-PAD_CDL="${PAD_CDL:-${TSMC_65_HOME:-/tsmc65pdk/65}/iolib/tpbn65v_200b_BE/TSMCHOME/digital/Back_End/cdl/tpbn65v.cdl}"
+# Resolve, or leave EMPTY and let preflight report it. Empty is deliberate: this
+# script's whole job is to say precisely what is missing, so a failure to
+# resolve must arrive as a named MISSING line, never as an abort or -- worse --
+# as a silently different path.
+pdk() {
+    [ -x "$PDK_PATHS" ] || return 0
+    "$PDK_PATHS" "$1" 2>/dev/null || true
+}
 
-MEM_CDL_DIRS="${MEM_CDL_DIRS:-/research/precompiled_mems/TSMC65}"
+LVS_DECK="${LVS_DECK:-$(pdk lvs-deck)}"
+SOURCE_ADDED="${SOURCE_ADDED:-$(pdk lvs-source-added)}"
+# Found on PATH, or beside the calibre install the environment already names.
+# An EDA mount is the same inventory-shaped disclosure as a PDK mount, and this
+# repository is public -- so it is discovered rather than spelled. Resolves to
+# the same binary the hardcoded path did.
+V2LVS="${V2LVS:-$(command -v v2lvs 2>/dev/null)}"
+: "${V2LVS:=${MGC_HOME:-${CALIBRE_HOME:-}}/bin/v2lvs}"
+
+# The three that do not exist yet: the path the _BE package WOULD install to,
+# derived from the installed _FE package. `--check` names something actionable
+# without this file spelling a release code. See the header.
+STDCELL_CDL="${STDCELL_CDL:-$(pdk stdcell-cdl)}"
+IODRV_CDL="${IODRV_CDL:-$(pdk iodrv-cdl)}"
+PAD_CDL="${PAD_CDL:-$(pdk pad-cdl)}"
+
+# Derived from the same named site mount ASIC/common.mk exports.
+MEM_CDL_DIRS="${MEM_CDL_DIRS:-${MEM_LIB_ROOT:-}}"
+
+if [ -z "${TSMC_65_HOME:-}" ]; then
+    echo "run_lvs: NOTE - TSMC_65_HOME is unset, so no foundry path below could" >&2
+    echo "  be resolved and everything will report MISSING. That is not a real" >&2
+    echo "  preflight result. Run this through 'make -C ASIC/genus-innovus lvs*'," >&2
+    echo "  which includes ASIC/common.mk, or export TSMC_65_HOME yourself." >&2
+fi
+
+# The package directory a leaf CDL lives under -- everything above /TSMCHOME/.
+# That directory name is the thing to quote when ordering the _BE pack.
+pkg_of() { local p=${1%%/TSMCHOME/*}; [ "$p" = "$1" ] && echo "?" || basename "$p"; }
 
 red()  { printf '\033[31m%s\033[0m\n' "$*"; }
 grn()  { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -99,7 +144,11 @@ preflight() {
         echo "   only in the _BE packages. Calibre nmLVS-H has 150 idle seats and the"
         echo "   decks are on disk — nothing else is missing."
         echo
-        echo "   Request: tcbn65lp_220a_BE, tphn65lpgv2od3_sl_210a_BE, tpbn65v_200b_BE"
+        # Derived from the resolved paths rather than spelled. The package names
+        # ARE release codes, and this is the one place they legitimately need to
+        # appear -- printed to a human on a terminal so they can order them.
+        # Printing beats committing.
+        echo "   Request: $(pkg_of "$STDCELL_CDL"), $(pkg_of "$IODRV_CDL"), $(pkg_of "$PAD_CDL")"
         echo "   See docs/TSMC_BACKEND_PACKAGE_REQUEST.md"
         echo
         echo "   NOTE the GDS is affected by the same gap: 424 cell masters are"
