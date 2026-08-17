@@ -79,28 +79,53 @@ rc=0
 V_RC=skipped
 H_RC=skipped
 
+# `set -e` PLUS `pipefail` MADE THE SECOND HALF UNREACHABLE. Both halves are
+# `cmd | tee`, and under `set -eo pipefail` a non-zero cmd aborts the script AT
+# THAT PIPELINE — before `V_RC="${PIPESTATUS[0]}"` is even assigned. So from the
+# moment the verilator half went red (which it is on this tree today), HAL never
+# ran, the two-code worst() arithmetic was dead, and none of the summary below
+# was printed. A verilator regression silently cancelled the entire structural /
+# reset-domain pass, and the run still exited with a plausible-looking status.
+#
+# Measured: `false | tee /dev/null; V="${PIPESTATUS[0]}"` under `set -eo
+# pipefail` never reaches the assignment.
+#
+# Both halves must run and BOTH statuses must be collected — that is the whole
+# point of worst(). So the exit status is suspended around each, and read
+# explicitly, which is what PIPESTATUS was there to do.
 if [ "$DO_VERILATOR" = 1 ]; then
     echo "== verilator: full-design lint =="
     BASE_ARGS=(--baseline "$BASELINE")
     [ "$NO_BASELINE" = 1 ] && BASE_ARGS=(--no-baseline)
+    set +e
     python3 "$HERE/verilator_lint.py" --out "$OUT/verilator" "${BASE_ARGS[@]}" \
         | tee "$OUT/verilator_report.txt"
     V_RC="${PIPESTATUS[0]}"
+    set -e
     rc="$(worst "$rc" "$V_RC")"
 fi
 
 if [ "$DO_HAL" = 1 ]; then
     echo "== HAL: full-design structural lint (~35 min) =="
+    set +e
     "$HERE/hal_lint.sh" --out "$OUT/hal" | tee "$OUT/hal_report.txt"
     H_RC="${PIPESTATUS[0]}"
+    set -e
     rc="$(worst "$rc" "$H_RC")"
 fi
 
 echo
 echo "reports under $OUT"
 echo "  verilator: $V_RC    HAL: $H_RC"
+# "both halves ran" is a claim, so only make it when both did. --verilator-only
+# and --hal-only each leave one status at the literal string `skipped`, and a
+# green from one half is not the green this line used to advertise.
+if [ "$V_RC" = skipped ] || [ "$H_RC" = skipped ]; then
+    echo "  NOTE: this was a HALF RUN (verilator=$V_RC, HAL=$H_RC) — the skipped"
+    echo "        half made no measurement, in either direction."
+fi
 case "$rc" in
-    0) echo "== FULL LINT OK — both halves ran and neither regressed ==" ;;
+    0) echo "== FULL LINT OK — the halves that ran did not regress ==" ;;
     1) echo "== FULL LINT FAILED — a gated finding regressed (see above) ==" ;;
     *) echo "== FULL LINT INCONCLUSIVE — the measurement is not trustworthy;" \
             "this is NOT a pass ==" ;;
