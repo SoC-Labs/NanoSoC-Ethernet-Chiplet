@@ -227,6 +227,12 @@ def main():
     ap.add_argument("--no-baseline", action="store_true",
                     help="report only, do not apply the ratchet. Leaves the exit "
                          "status governed by the flow checks alone.")
+    ap.add_argument("--min-files", type=int, default=300,
+                    help="floor on the number of files actually handed to "
+                         "verilator. A COLLAPSE DETECTOR, NOT A BUDGET: the ship "
+                         "flist has carried 590 +/- 1 files since 2026-08-08, so "
+                         "the default is roughly half and can only fire on a "
+                         "scope collapse, never on drift.")
     a = ap.parse_args()
 
     # The emitted filelist names the generated black boxes by path, so a RELATIVE
@@ -251,7 +257,15 @@ def main():
         return 2
 
     n_all = len(r.files)
+    excluded_hit = EXCLUDE & set(r.files)
     r.files = [f for f in r.files if f not in EXCLUDE]
+    # An EXCLUDE entry is a claim about a file IN THIS FLIST ("no instantiation
+    # anywhere in the resolved file set"). Spelled wrong, or pointed at a lab
+    # tree this host mounts elsewhere, it silently matches nothing while the
+    # report still counts it as excluded. Say which entries did nothing.
+    for stale in sorted(EXCLUDE - excluded_hit):
+        print(f"FLOW WARNING -- EXCLUDE entry matched no file in the resolved "
+              f"flist, so it excluded nothing: {stale}")
     keep, dropped, conflicts = dedup_files(r.files)
     for f, ms in conflicts:
         print(f"FLOW ERROR -- partially shadowed file needs a manual split: {f} {ms}")
@@ -379,9 +393,9 @@ def main():
     print(f"FULL-DESIGN VERILATOR LINT -- top {a.top}")
     print("=" * W)
     print(f"flist          : {a.flist}")
-    print(f"files          : {n_all} listed -> {len(keep)} linted "
+    print(f"files          : {n_all} listed -> {len(linted) + len(stubs)} linted "
           f"({len(dropped)} shadowed duplicates dropped, "
-          f"{len(EXCLUDE & set(range(0)))+len([1 for f in EXCLUDE])} excluded)")
+          f"{len(excluded_hit)} of {len(EXCLUDE)} EXCLUDE entries applied)")
     print(f"black boxes    : {len(stubs)} hard macros, {arm_stubbed} Arm IP modules "
           f"stubbed ({arm_pkgs} Arm packages kept, {len(arm_failed)} un-stubbable)")
     print(f"verilator      : exit {p.returncode}")
@@ -496,6 +510,47 @@ def main():
             f"verilator produced NO findings at all over "
             f"{len(linted) + len(stubs)} files (verilator exit {p.returncode}) "
             f"-- the run did not happen")
+
+    # (a2) THE TOOL'S OWN EXIT STATUS. It was computed, printed in the header as
+    # "verilator : exit N", and then never read by anything. That is worse than
+    # not having it: the number is on screen, so a reader assumes something
+    # judged it.
+    #
+    # This is not the usual "exit status is unreliable for a lint tool" case.
+    # THIS command line carries -Wno-fatal, so findings alone do NOT make
+    # verilator exit non-zero -- the live 3024-finding full-chip run exits 0
+    # (measured 2026-08-17, and printed in every report this script has ever
+    # written). A non-zero status therefore means the front end gave up: a parse
+    # error, a missing file, a top module it could not find. The findings on
+    # disk are then a PREFIX of the real set, and a prefix compared against a
+    # baseline shows up as improvements -- which the ratchet passes.
+    #
+    # (verif/lint/run.sh, the 3-file wrapper lint, must NOT copy this rule: it
+    # passes no -Wno-fatal, so Verilator 4.028 exits 1 there on any warning.
+    # Same tool, opposite meaning, because of one flag.)
+    if p.returncode != 0:
+        flow_errors.append(
+            f"verilator exited {p.returncode}. This command line passes "
+            f"-Wno-fatal, so a healthy full run exits 0 -- a non-zero status "
+            f"means the front end stopped early and the {len(findings)} "
+            f"finding(s) recorded are a PREFIX of the real set. Compared "
+            f"against a baseline a prefix reads as an improvement, which is "
+            f"why this cannot be left unread. See {os.path.join(a.out, 'lint.log')}")
+
+    # (a3) SCOPE-COLLAPSE GUARD. A COLLAPSE DETECTOR, NOT A BUDGET -- the ship
+    # flist has carried 590 +/- 1 files since 2026-08-08, so the default floor is
+    # roughly half of that and can only fire when the scope falls off a cliff
+    # (an unrendered generated sub-flist, a resolver that returned nothing), not
+    # when the design gains or loses a module. r.missing above catches a flist
+    # that names files which are absent; it cannot catch a flist that names
+    # almost nothing, because an empty list has no missing entries.
+    n_linted = len(linted) + len(stubs)
+    if n_linted < a.min_files:
+        flow_errors.append(
+            f"only {n_linted} file(s) reached verilator, below the --min-files "
+            f"floor of {a.min_files}. This is a FULL-DESIGN lint; that scope is "
+            f"not the design. Check the generated sub-flists under "
+            f"build/chip/flist/ (make asic-flist) before reading any verdict")
 
     if flow_errors:
         print(f"  FLOW ERROR x{len(flow_errors)} -- the measurement is not")
