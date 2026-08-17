@@ -257,11 +257,27 @@ though the signoff SDF is clean.
 
 | ID | Sev | count | Representative line (verbatim) | What it means | Class |
 |---|---|---|---|---|---|
-| `IMPSP-9099` | **ERROR** | true 2 | `Scan chains exist in this design but are not defined for 30.55% flops. Placement and timing QoR can be severely impacted in this case!` | Innovus thinks scan chains exist but 30.55 % of flops are not in one. | REAL-BUT-KNOWN → **BENIGN**. `16-open-defects.md` §6: false positive, `DFT 0`, the heuristic mis-reads `.SI(BlockTxDone)` feedback. |
-| `IMPSP-9025` | WARN | true 1 (per session) | `No scan chain specified/traced.` | No scan chain was given. | BENIGN — consistent with `DFT 0`; it is the *counterpart* to 9099 and confirms 9099 is bogus. |
+| `IMPSP-9099` | **ERROR** | true 2 | `Scan chains exist in this design but are not defined for 30.55% flops. Placement and timing QoR can be severely impacted in this case!` | Innovus thinks scan chains exist but 30.55 % of flops are not in one. | REAL-BUT-KNOWN → **BENIGN**. `16-open-defects.md` §6: false positive, `DFT 0`, the heuristic mis-reads `.SI(BlockTxDone)` feedback. **⚠ NO LONGER EMITTED — last seen 2026-08-07 14:21. Zero occurrences in every build from 08-08 onward, including current. See note below the table.** |
+| `IMPSP-9025` | WARN | ~~true 1 (per session)~~ **52** in `full-20260814`, **23** in `fp1505` | `No scan chain specified/traced.` | No scan chain was given. | BENIGN — consistent with `DFT 0`. ~~it is the *counterpart* to 9099~~ — **it is now the only scan message this design raises.** |
 | `IMPDC-1629` | WARN | true 2 | `The default delay limit was set to 101. This is less than the default of 1000 and may result in inaccurate delay calculation for nets with a fanout higher than the setting.  If needed, the default delay limit may be adjusted by running the command 'set delaycal_use_default_delay_limit'.` | Delay calc will be inaccurate on nets with fanout > 101. | **UNTRIAGED (medium)** — a fanout-101 delay limit is unusually low and nothing in the flow scripts sets `delaycal_use_default_delay_limit`, so this is a tool default reacting to something. Every high-fanout net (reset, scan-enable, test) is timed approximately. |
 | `IMPSP-196` | WARN | true 1 | `User sets both -place_global_uniform_density and -place_global_initial_padding_level options. Overriding -place_global_initial_padding_level to 5.` | Two conflicting placement options; one wins. | BENIGN — tool states the resolution. |
 | `IMPFP-325` | WARN | 1 | `Floorplan of the design is resized. All current create_floorplan objects are automatically derived based on specified new create_floorplan. This may change blocks, fixed standard cells, existing routes and blockages.` | The floorplan was re-created, invalidating derived objects. | BENIGN — expected, `create_floorplan` runs once from scratch. Documented in `03-floorplan.md`. |
+
+> **⚠ `IMPSP-9099` retired — added 2026-08-18.** This census is a snapshot of the
+> **2026-08-06** run and is accurate for it. Since then `IMPSP-9099` has stopped being
+> emitted entirely: last occurrence **2026-08-07 14:21**
+> (`runs/20260807T150304Z_gwen-sdc-i2c-m7/prev_logs/pnr_m7.log`), zero occurrences in
+> `full-20260814`, `m5off5` and `fp1505`.
+> *Positive control:* nine other `IMPSP-*` IDs are present in those same logs — `9025`
+> (75), `5217` (47), `5534` (37), `5110` (31), `2021` (30), `5224` (27), `196` (22),
+> `9082` (16), `2040` (12) — so this is a real absence, not a failed grep.
+>
+> The likely reason: the scan-cell population that made Innovus believe chains existed
+> collapsed in the same window, from **37,834 of 58,120 flops (65.1%)** to
+> **3,715 of 58,620 (6.34%)**. The two events are correlated; **the cause of the collapse
+> is not established** — see `16-open-defects.md` §6, where one candidate explanation was
+> tested and refuted. A census that still lists `IMPSP-9099` as a live ERROR will make
+> this design look scan-populated when it has no chain at all.
 | `IMPSP-5534` | WARN | 3 | `'add_endcaps_left_edge' and 'add_endcaps_right_edge' are using the same endcap cells` | The same cell is used on both row edges. | **UNTRIAGED (low)** — TSMC endcaps are usually orientation-specific; if the wrong one is on one edge it is a DRC issue, and this flow's DRC cannot see std-cell geometry. |
 | `IMPSP-5224` | WARN | 2 | `Option '-preCap' for command add_endcaps is obsolete and has been replaced by 'setEndCapMode -rightEdge cell_name'.` | Deprecated option. | BENIGN — deprecation. |
 | `IMPSR-4058` | WARN | 6 | `Route_special option: blockPinTarget should be used in conjunction with option: -connect blockPin.` | An option was passed that the command is not using. | BENIGN — `15-pg-opens-analysis.md` calls it cosmetic. |

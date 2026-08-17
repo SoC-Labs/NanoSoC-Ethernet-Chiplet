@@ -10,7 +10,10 @@ proven by a sanity harness.**
 blackboxes). Every §4 verdict below still holds, with one change: the 20 open
 outputs in row 6 are no longer left as `.port()` — they are closed properly in
 **§4.1**. Integration-zone DESIGN findings: Verilator **0 → 0** (measured), HAL
-**21 → 0** (expected; HAL is licence-gated and re-runs centrally).
+**21 → 0** (~~expected; HAL is licence-gated and re-runs centrally~~ — **corrected
+2026-08-18: there is no "central" re-run host.** HAL runs here, in
+`verif/lint/full/run.sh`, on an Xcelium seat. If this 21 → 0 was recorded as *expected*
+rather than *measured*, re-measure it before relying on it — see §1).
 
 This pass exists because `make elab` links a netlist but never evaluates it, so it
 is blind to the class of defect that motivated this work: combinational loops,
@@ -23,7 +26,7 @@ and only bit when a transaction ran through it. Lint is the missing gate.
 | Tool | Status | Notes |
 |---|---|---|
 | **Verilator** | **4.028** (2020-02-06) | The pass is built on this. `--lint-only -Wall` gives combinational-loop detection via **UNOPTFLAT**, plus latch/width/undriven/multidriven checks. Old, but adequate. |
-| Cadence **HAL** | **22.03** at the Cadence Xcelium `hal` binary | Real flist-native structural+CDC lint. License-gated; not wired up here (would be the tool for a full-integration pass — see §5). |
+| Cadence **HAL** | **22.03** at the Cadence Xcelium `hal` binary | Real flist-native structural+CDC lint. ~~License-gated; not wired up here~~ **CORRECTED 2026-08-18: HAL IS wired up and runs on this host.** `verif/lint/full/run.sh` runs Verilator **and** HAL — see `verif/lint/full/hal_lint.sh:30` and `:136` (`"$XRUN" -sv -hal -elaborate`). "Licence-gated" is true only in the trivial sense that it takes an `Xcelium_Single_Core` seat from the same pool the flow already uses (41 issued, 1 in use, measured 2026-08-18). |
 | verible-verilog-lint | absent | style linter (no comb-loop detection anyway) |
 | slang | absent | |
 | **SpyGlass** | **T-2022.06-SP2**, installed **and licensed** | ~~absent — no `which` hit; do not assume it exists~~ **CORRECTED 2026-08-17 — see §1.1.** `${SPYGLASS_HOME}/bin/`. Off `$PATH`, reached by absolute path. |

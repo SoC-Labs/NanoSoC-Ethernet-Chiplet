@@ -17,8 +17,21 @@ covers three modules, this covers the elaborated chiplet.
 | **flow noise** | **0** | **0** (11 682 style suppressed) |
 | waived by unit-level policy | 1 142 | — |
 | reset/clock-domain (owned by `make cdc`) | — | 20 089 |
-| **design findings — authored RTL** | **195** | **920** |
+| **design findings — authored RTL** | **195** ⚠ | **920** ⚠ |
 | design findings — third-party in-tree | 292 | 3 532 |
+
+> **⚠ THESE COUNTS ARE STALE — flagged 2026-08-18, NOT re-measured here.**
+> This table is a snapshot of the 2026-08-09 full-chip pass. The lint remediation work
+> since then has reduced the authored-RTL count by roughly two orders of magnitude — the
+> figure quoted elsewhere tonight is **3** authored DESIGN findings, and the checked-in
+> baseline `verif/lint/full/baseline/verilator.json` is now a **single** entry
+> (`soc-generated|CMPCONST: 2`, file dated 2026-08-17 18:09), which is not consistent with
+> 195 surviving.
+>
+> **I did not re-run the full-chip lint, so I am not asserting a replacement number.**
+> Re-run `verif/lint/full/run.sh` and update this table before quoting any figure from it.
+> Treat 195 / 920 as historical. `docs/LINT_FINDINGS.md` was corrected separately and is
+> the better starting point.
 
 Zero hard errors in authored RTL from Verilator. Two from HAL (`METAEQ`,
 `TERMST`). The report contains no flow-related error or warning: every

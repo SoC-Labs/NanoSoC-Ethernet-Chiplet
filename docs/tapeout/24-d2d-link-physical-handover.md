@@ -139,8 +139,24 @@ worth restating as a block because items 1–3 are only as trustworthy as this:
 - **The cap tables model M9 at 0.9 µm; real M9 is 3.4 µm** — a 3.8× error, which is why
   `preplace.tcl` confines signal routing to M1–M7.
 
-**And there is no signoff STA at all**: `ci/signoff.yaml:238` — "No Tempus or PrimeTime installed.
-Timing evidence is limited to Genus/Innovus in-tool reports, which is not signoff STA."
+~~**And there is no signoff STA at all**: `ci/signoff.yaml:238` — "No Tempus or PrimeTime installed.
+Timing evidence is limited to Genus/Innovus in-tool reports, which is not signoff STA."~~
+
+> **⚠ CORRECTED 2026-08-18 — "no Tempus or PrimeTime installed" is FALSE.** Both are
+> installed and completely idle, measured today: **Tempus** `SSV_21.11.000`
+> (`Tempus_Timing_Signoff_XL/_MP/_TSO`, 41 issued / 0 in use) and **PrimeTime** `2022.12`
+> (200 + 4 issued / 0 in use). Tempus 21.11 is **version-matched to the
+> `INNOVUS_21.11.000` that built this database**, so it is the low-friction option.
+>
+> **The true statement is narrower:** signoff STA has *not been run*, and no extraction is
+> wired — that is a wiring gap, not a licence gap. Note items 2–3 of this section were
+> corrected on 2026-08-17 but this line was left behind.
+>
+> **This is a quotation, and the source string is still wrong.** `ci/signoff.yaml` still
+> carries the "No Tempus or PrimeTime installed" `reason:`, so any new document that cites
+> the manifest will re-import the error. Flagged to whoever owns that file — the Voltus
+> entry in the same file has already been rewritten correctly and is the model to follow.
+> See `40-signoff-sta-plan.md`.
 
 **Implication for item 1:** once the word clocks are declared, the newly-surfaced violations will be
 computed with downgraded extraction on a single corner with no derate. Treat the first post-fix number

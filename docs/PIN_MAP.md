@@ -24,11 +24,40 @@ columns that are *tech-specific choices only the physical team can make* are mar
 The pad count below must stay in lock-step with the boundary checker. If a future port
 change breaks the count, this line makes it visible.
 
+> ### ⚠ CORRECTED 2026-08-18 — EVERY NUMBER IN THIS SECTION WAS STALE
+>
+> The block below used to quote `bonded 59 / tied 21 / open 31` and **"46 pad cells"**.
+> None of those is the value the checker prints today, and "46" did not match any
+> physical quantity in the design even approximately. Measured 2026-08-18 by actually
+> running the checker and independently counting the shipping netlist.
+>
+> **The root confusion: "pad cells" names three different things.** The checker's own
+> label is the misleading one — it prints `boundary.pads`, which is a count of *chip-level
+> port groups*, and calls them "pad cells". They are not pad cells. A bus port is one
+> entry there and eight pad cells in silicon. Keep these four numbers distinct:
+>
+> | Quantity | Value | Where it comes from |
+> |---|---:|---|
+> | Chip-level ports (checker calls these "pad cells") | **23** | `scripts/check_chip_boundary.py`, run 2026-08-18 |
+> | Signal **pad cells** in silicon | **48** | one per signal *bit*; buses expand |
+> | Supply pad cells | **34** | VDD 6 / VDDIO 12 / VSS 4 / VSSIO 12 |
+> | **Total pad cells** | **82** | 48 signal + 34 supply |
+> | Pad-ring **placements** | **493** | 82 IO + 82 `PAD70*` bond + 325 filler + 4 `PCORNER_G` |
+> | Bonded *inner-SoC* RTL ports | **35** | collapse to 23 chip ports (bidir = in/out/oe triplet) |
+>
+> Artefacts: `ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads_pnr.v` and
+> `.../work/nanosoc_eth_chiplet_pads_routed/nanosoc_eth_chiplet_pads.fp.gz` (build
+> `fp1505`, 2026-08-17 21:33) — cross-checked against
+> `ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v`, which agrees exactly.
+> **There is no DEF**: this flow writes GDS and never calls `write_def`, so ring
+> placements come from the Innovus floorplan DB.
+
 ```
-$ make chip-boundary
+$ make chip-boundary          # actually run, 2026-08-18
   RTL ports  : 111  (377 bits)
-  classified : 111  (bonded 59 / tied 21 / open 31 / terminated 0)
-  pads       : 46 pad cells
+  classified : 111  (bonded 35 / tied 36 / open 40 / terminated 0)
+  pads       : 23 pad cells
+  pad ring   : nanosoc_eth_chiplet_pads.v agrees (all 35 bonded ports reach a pad cell)
   OK — every port accounted for exactly once
 ```
 
@@ -36,19 +65,30 @@ $ make chip-boundary
 |---|---|---|
 | Total RTL top ports | 111 | (all classified in the YAML, not all bonded) |
 | Total port bits | 377 | — |
-| **Bonded pad cells** | **46** | **46 rows across the tables below** |
-| Bonded inner ports | 59 | 6 bidir×3 + 1 tri-out×2 + 39 single = 59 |
-| Tied inputs (not bonded) | 21 | see §7 |
-| Open outputs (not bonded) | 31 | see §7 |
+| **Chip-level ports** (checker's "pad cells") | **23** | *was quoted as 46* |
+| Bonded inner ports | 35 | *was quoted as 59* |
+| Tied inputs (not bonded) | 36 | *was 21* — see §7 |
+| Open outputs (not bonded) | 40 | *was 31* — see §7 |
+| **Physical pad cells** | **82** | 48 signal + 34 supply — **not printed by the checker** |
 
-> If `make chip-boundary` ever prints anything other than **46 pad cells / bonded 59**,
+> If `make chip-boundary` ever prints anything other than **23 pad cells / bonded 35**,
 > a port was added, removed or re-classified. Update this map before tape-out and re-run
-> the count.
+> the count. **Do not read the checker's "pad cells" line as a pad-cell count** — for the
+> silicon number, count `P*` instances in the pad wrapper.
 
 > **Changed 2026-07-16: 50 → 46 pad cells.** The four link-status pads
 > (`link_active`, `role_is_master`, `role_locked`, `d2d_reset`) were unbonded — all
 > four are already readable over the TideLink config APB, which the SWJ-DP reaches
 > independently of CPU state. See §4c and **docs/STATUS_REGISTERS.md**.
+> *(Historical note, retained: the 50→46 change was real, but both figures were counts of
+> chip-level port groups, not pad cells. The current figure on that basis is 23.)*
+
+> **The pad ring was NOT built for two TideLink instances.** This has been asserted more
+> than once and is **refuted**: the design instantiates **exactly one** `tidelink_top`
+> (`src/rtl/nanosoc_eth_chiplet.sv:791`) with **`NUM_PHY_LANES = 8`**, giving
+> 8 TX + 8 RX + 1 TX clock + 1 RX clock = **18 D2D pads** — exactly what the boundary
+> spec declares. The inflated pad counts formerly in this section are the most likely
+> origin of that belief.
 
 ---
 
@@ -113,13 +153,39 @@ proposals to ratify, not UPF facts):
 | `i2c_scl` | Bidir | 1 | I2C | `AON-LINK` | `[TEAM DECISION]` — **open-drain** | `[TEAM DECISION]` | inner `i2c_scl_i` / `i2c_scl_o` / `i2c_scl_t`. **OE active-low** (`_t`=1 ⇒ Hi-Z). Needs external pull-up; pad must never drive high. |
 | `i2c_sda` | Bidir | 1 | I2C | `AON-LINK` | `[TEAM DECISION]` — **open-drain** | `[TEAM DECISION]` | inner `i2c_sda_i` / `i2c_sda_o` / `i2c_sda_t`. **OE active-low** (`_t`=1 ⇒ Hi-Z). Needs external pull-up. |
 
-### 4b. Link bring-up straps (per-die) — 3 pads  (see §6b)
+### 4b. Link bring-up straps (per-die) — ~~3 pads~~ **ZERO pads**  (see §6b)
 
-| Pad name | Dir | Width | Class | Sugg. domain | Pad cell type | Die side | Notes |
-|---|---|---|---|---|---|---|---|
-| `role_strap` | In | 1 | strap | `AON-LINK` | `[TEAM DECISION]` | `[TEAM DECISION]` | inner `role_strap_i`; link role select. **MUST differ per die** — see §6b. |
-| `mask_hs_bypass` | In | 1 | strap | `AON-LINK` | `[TEAM DECISION]` | `[TEAM DECISION]` | inner `mask_hs_bypass_i`; opens the SW role-lock path. **Bench strap — interlock or drop for silicon** (RESET_ORDERING §3.3). |
-| `apb_debug_unlock` | In | 1 | strap | `AON-LINK` | `[TEAM DECISION]` | `[TEAM DECISION]` | inner `apb_debug_unlock_i`; debug strap, opens the SW role-lock path. **Bench strap — interlock or drop for silicon.** |
+> ### ⚠ CORRECTED 2026-08-18 — NONE OF THESE THREE IS A PAD
+>
+> This section was headed "3 pads" and laid out as a pad table with `[TEAM DECISION]`
+> pad-cell columns, i.e. as work for the physical team. **There is no such work: all
+> three are tied to `1'b0` in the boundary spec and none reaches a pad cell.**
+>
+> `sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml:231–233`:
+> ```yaml
+> - { soc_port: role_strap_i,       const: "1'b0" }
+> - { soc_port: mask_hs_bypass_i,   const: "1'b0" }
+> - { soc_port: apb_debug_unlock_i, const: "1'b0" }
+> ```
+> Confirmed against the pad wrapper: `grep -c` for all three in
+> `ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v` returns **0**.
+> *Positive control:* the same grep for `TL_CLK_TX` returns **3**.
+>
+> **Consequence, and it is not cosmetic:** the two dies are physically identical *and*
+> come up electrically identical — `role_strap_i = 0` on both. The per-die differentiation
+> problem described in §6b is **completely unsolved in hardware**, not "solved by a pad the
+> team must strap". This is consistent with the observed silicon behaviour in which both
+> dies claim root. Solving it needs OTP / fuse / die-UID, or a spec change to bond one of
+> these — the latter is a real option but it is **not** what the design currently does.
+>
+> The rows are kept below for traceability, with the Dir/Width columns as the RTL declares
+> them, but the pad-layout columns are struck through because there is nothing to lay out.
+
+| Inner port | Dir | Width | Class | Status in shipping design | Notes |
+|---|---|---|---|---|---|
+| `role_strap_i` | In | 1 | strap | **TIED `1'b0` — not a pad** | link role select. Was marked "MUST differ per die"; it *cannot* differ, both dies read 0. See §6b. |
+| `mask_hs_bypass_i` | In | 1 | strap | **TIED `1'b0` — not a pad** | opens the SW role-lock path. Tied 0 = normal. Bench-strap landmine below is therefore **not reachable by a pad** on this tapeout. |
+| `apb_debug_unlock_i` | In | 1 | strap | **TIED `1'b0` — not a pad** | debug strap; tied 0 = debug locked. |
 
 ### 4c. Link status / observability — 0 pads (was 4; unbonded 2026-07-16)
 
@@ -269,7 +335,7 @@ never converge (RESET_ORDERING §3.4). Per PHYSICAL_HANDOFF §3:
 
 | Differentiator | Kind in *this* wrapper | What the team must do |
 |---|---|---|
-| `role_strap` (`role_strap_i`) | **Bonded pad** (§4b) | Strap **opposite values** on the two dies. This is currently the *only* per-die differentiator that is a real pad. |
+| `role_strap` (`role_strap_i`) | **⚠ NOT A PAD — CORRECTED 2026-08-18.** Previously listed here as "**Bonded pad** (§4b) … the only per-die differentiator that is a real pad". **That was wrong.** | The YAML ties it: `sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml:231` — `{ soc_port: role_strap_i, const: "1'b0" }` — and it is dangling in silicon (`..._pnr.v:1309422`: `.role_strap_i(UNCONNECTED_HIER_Z1461)`). **Both dies come up with `role_strap_i = 0`.** There is therefore **no pad-based per-die differentiator at all**; the strap plan must come from OTP / fuse / UID (next row). |
 | `nego_priority_i[15:0]` | **TIED `16'h0001` in the wrapper — NOT a pad** | Two dies presenting equal priority have **no tiebreak**. Production must source this from **OTP / a die UID / fuse bank** and strap the dies **asymmetrically**. Bonding 16 pads is the wrong answer; a fuse bank is the right one. (YAML head, decision 1.) |
 | `DEVICE_CLASS` (TideChart) | **Parameter, not a port** — defaults `16'h0001` | `16'h0001` "reliably wins" the root election, so *every* die boots claiming to be the host complex. **Override the parameter per die** at the instance; this file cannot fix it. |
 | `NEGO_CFG_RESET` (TideLink) | Parameter — RTL default `7'h00` (autoneg OFF, parks in `ST_BYPASS`) | Decide deliberately. Production intent is real autoneg (`7'h61`) so `role_locked` intrinsically waits for the far die (RESET_ORDERING §3.3). |
@@ -324,7 +390,9 @@ Design-level decisions:
       configuration** with shipped parameters, inside TideLink where the
       `pad_clk_rx -> sys_hclk` crossing lives (PHYSICAL_HANDOFF §6).
 - [ ] **`idelay_ref_clk`** stays tied off on ASIC (`USE_IDELAY=0`) — it is FPGA-only.
-- [ ] Re-run `make chip-boundary` and confirm **46 pad cells / bonded 59** before tape-out.
+- [ ] Re-run `make chip-boundary` and confirm **23 pad cells / bonded 35** before tape-out.
+      *(Corrected 2026-08-18 from "46 pad cells / bonded 59", which matched no run.)*
+      Separately confirm the silicon count: **82 pad cells, 493 ring placements.**
 - [ ] **If any die in the package will be strapped `dap_swj_enable = 0`** (§4c), revisit
       the status-pad decision — such a die has no SWD, so with its link down it has no
       link-status visibility at all. Bonding `role_locked` alone would close that.
@@ -359,6 +427,8 @@ four former status pads **`link_active_o`**, **`role_is_master_o`**,
 > observability** — but the machine-checked YAML **ties** the first three and leaves the
 > last three **open**, so **none of those six is a pad**. This pin map follows the YAML
 > (the authoritative, `make chip-boundary`-checked source). Of §3's six "Straps", only
-> **three** are bonded pads (`role_strap`, `mask_hs_bypass`, `apb_debug_unlock`); **as of
+> ~~**three** are bonded pads (`role_strap`, `mask_hs_bypass`, `apb_debug_unlock`)~~
+> — **CORRECTED 2026-08-18: none of those three is a pad either.** All three are tied
+> `1'b0` (YAML:231–233); see §4b. So of §3's six "Straps", **zero** are bonded pads; **as of
 > 2026-07-16 NONE of its seven "Status" entries is bonded** — the last four
 > (`link_active`, `role_is_master`, `role_locked`, `d2d_reset`) became register reads.

@@ -271,7 +271,18 @@ chip. This is procurement, not engineering.
 
 ## 5. The other gaps
 
-**No QRC deck.** Parasitic extraction turns geometry into the R and C that
+**~~No QRC deck.~~ ⚠ CORRECTED 2026-08-18: THE QRC DECK IS PRESENT.** This heading
+contradicted **this same document's own item 20**, which already read
+"~~QRC/Quantus tech file — absent.~~ **Present.**" §5's header was simply never updated
+when item 20 was. Measured: `<PDK>/…/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile`,
+186,639,161 bytes; Quantus installed (`QUANTUS_21.11.000`), `QRC_Advanced_Analysis`
+41 issued / 0 in use. **The rest of this paragraph — why cap tables are not signoff
+extraction, and that the flow currently falls back to `extract_rc_effort_level low` — is
+still accurate and still matters.** What changed is that closing it is a flow edit, not a
+procurement request. See also `17-silent-noops.md`, corrected the same day for the same
+reason.
+
+Parasitic extraction turns geometry into the R and C that
 determine delay. Cap tables are 2.5-D lookups; a QRC/Quantus tech file is a
 foundry-calibrated field-solver model, and that is what timing signoff means at
 65nm. We get `IMPEXT-3518` and fall back to `extract_rc_effort_level low` — the

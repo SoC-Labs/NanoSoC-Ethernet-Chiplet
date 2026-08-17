@@ -795,8 +795,18 @@ set_input_transition -max 2.00 [get_ports {HOSTIO4_P1[*]}]
 
 # SCAN IS OFF IN MISSION MODE, AND SAYING SO IS WORTH REAL TIMING.
 # Without this, the scan multiplexer inside every SDFxx flop is timed in BOTH
-# states, so the SI/SE side of ~23.5k mux-D flops competes with the functional
-# D side for the critical path. Post-route STA on 2026-08-07 found violating
+# states, so the SI/SE side of every mux-D flop competes with the functional
+# D side for the critical path.
+#
+# COUNT CORRECTED 2026-08-18: this comment used to say "~23.5k mux-D flops".
+# That was true of the 08-06/08-07 netlists (37,834 SDF*/SEDF* of 58,120 flops,
+# 65.1%). The current netlist has 3,715 of 58,620 -- 6.34%. The flip happened
+# between 08-07 and 08-08 and its cause is NOT established; see
+# docs/tapeout/16-open-defects.md section 6. The constraint is still correct and
+# still worth having, but it now buys roughly a tenth of the paths implied
+# above, so do not cite it as a large-scale timing saving.
+#
+# Post-route STA on 2026-08-07 found violating
 # endpoints that were literally scan pins (adp_addr_reg[30]/SI, and an /SE),
 # i.e. margin spent on a path that cannot exist on this die.
 #

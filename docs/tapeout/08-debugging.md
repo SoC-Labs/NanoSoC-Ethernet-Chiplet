@@ -240,7 +240,7 @@ Triaged:
 | `TCLCMD-917` | 20 | `Cannot find 'pins' that match 'uPAD_VDD_B_0/VDD' (File ..._syn.sdc, Line 696)` | **worth chasing** — 20 SDC constraints are silently not applied |
 | `IMPSE-110` | 3 | `can't find package Tk 8.0` | explains why the in-Innovus Calibre call is dead ([07](07-reading-reports.md#the-in-innovus-calibre-call-is-a-no-op-use-the-makefile)) |
 | `IMPMSMV-3501` | 3 | `Input power intent (CPF/UPF) does not define power_mode/power_state` | same root cause as `IMPSP-5110` |
-| `IMPSP-9099` | 2 | `Scan chains exist ... but are not defined for 30.55% flops` | **worth chasing** — affects placement and timing QoR |
+| `IMPSP-9099` | 2 | `Scan chains exist ... but are not defined for 30.55% flops` | ~~**worth chasing**~~ → **BENIGN, and now RETIRED (2026-08-18).** DFT is off by design. The message has not been emitted since **2026-08-07 14:21** and is absent from every build from 08-08 onward; today's equivalent is `IMPSP-9025` (WARN) "No scan chain specified/traced". Do not spend time chasing it. See `16-open-defects.md` §6. |
 | `IMPDB-1221` | 2 | `GNC ... 'VDDIO' name pattern ... Unable to establish connection` | **worth chasing** — a power connection did not happen |
 
 Three of six categories are real problems that no one has closed. None of them stopped the

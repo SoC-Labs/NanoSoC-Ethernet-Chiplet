@@ -47,7 +47,9 @@ place+CTS: 81.5 min stage time, 87 min end-to-end
 1. **27.4% of the design has never been timed.** 16,653 of 60,706 sequential clock pins untimed. The SDC fix exists (`inputs/tidelink_constraints.sdc:71-88`), is **uncommitted**, and **has never been through synthesis** — the last synthesis snapshotted the 08-07 file with zero occurrences of `D2D_RX_WORD_CLK`, and its `_syn.sdc` has **0** word clocks. [V]
 2. **Innovus reads exactly one SDC** — `outputs/nanosoc_eth_chiplet_pads_syn.sdc`, written by a bare `write_sdc` (`asic-flows/Cadence/1_synthesis.tcl:93`). `inputs/tidelink_constraints.sdc` reaches P&R **only** via `write_sdc`.
 3. **No parasitic extraction deck is wired.** Every post-route number reads `Parasitics Mode: No SPEF/RCDB` with `extract_rc_effort low`. The cap tables at `nanosoc_eth_chiplet_pads.mmmc:69,79,89` are ARM `1p9m_6x2z` — **the wrong metal stack**, modelling M9 at 0.9 µm when the tech LEF says 3.4 µm. The 5→103 post-fill FEP swing is fill *and* re-extraction, not separable. [V]
-4. **Calibre has never been run here.** Zero `.drc.summary`, `.drc.results`, `_lvs.rep`, `.ant.results` anywhere.
+4. ~~**Calibre has never been run here.** Zero `.drc.summary`, `.drc.results`, `_lvs.rep`, `.ant.results` anywhere.~~ **⚠ FALSE AS OF 2026-08-18 — CORRECTED.** Calibre has run extensively. Measured today: **35** run directories under `ASIC/genus-innovus/calibre_runs/` (27 `drc_*`, 6 `ant_*`, 4 `bnd_*` by prefix), and repo-wide **28** `.drc.summary`, **7** `.ant.summary`, **5** `.bnd.summary`, **8** `calibre_erc*` files, **5** LVS reports. This item was true when written and is now the single most misleading line on this page — it is the origin of the "never run" wording repeated in A7, A8, 7b and 7c below. See item 4a for what is genuinely *not* covered, which is a different and still-real problem.
+
+4a. **What is genuinely missing is signoff *meaning*, not execution.** The runs above are real but they check a stream with **no standard-cell, IO or bond-pad layout in it**: `reports/nanosoc_eth_chiplet_pads_stream.rep` shows `-merge` naming exactly **eight** macro GDS files (the four register files, two flash-cache arrays, two ROM vias) and nothing else, with `-output_macros` streaming every other cell as a LEF abstract. So density, antenna gate-area ratios, latch-up and all base-layer checks have no denominator. **Read every Calibre zero on this design as a NULL result until cell layout is imported.** [V]
 5. **Every archived database in `runs/` fails to load.** `read_db` dies with `TCLCMD-989` — `work/<design>/libs/mmmc/<design>_syn.sdc` is a symlink into the live `outputs/`, which `scripts/ci/new_run.sh:198-203` empties when archiving. One dangling link per DB. **This is why "just re-check the database" has never been done.** The pgfix-verify post-CTS DB *does* exist: a complete 57 MB tree saved 09:35:22. [V]
 6. **The corners are occupied.** A `PCORNER_G` sits at each of the four die corners, and it is a full-height IO-row square — it fills the corner completely, so the triangular keep-out the shuttle demands is not merely encroached on, it is entirely covered. That is why the CSR keep-out is a real blocker and not a clearance tweak. Verified at GDS level: `grep -a -c PCORNER_G` on the streamed GDS → **5** (one `STRNAME` + four `SREF`s). [V] (Corner-cell LEF dimensions not reproduced — TSMC licence; read them from the `tphn65lpgv2od3_sl` IO LEF.)
 7. **The evaluation gates cannot be trusted until repaired** (§6). Worst case: the route gate judged `setup FEP 5` on a run whose filled database measured **103**.
@@ -87,8 +89,8 @@ Load-bearing sentences from the manual:
 | A4 | **Four corner triangles empty**, ≥74 µm legs, every mask layer | `CSR.R.1` == 0 with **imported** cell layouts — see §2.3 | PD + broker |
 | A5 | Innovus `check_drc` == 0 hard, ≤N documented waivers | `check_drc` on routed DB | PD |
 | A6 | Calibre DRC on our geometry: 0 non-waived + waiver dossier | `make drc GDS=…` | PD |
-| A7 | Calibre ANT clean — *"never acceptable"* | never run | PD |
-| A8 | Calibre BND clean — **mandatory per manual** | never run | PD |
+| A7 | Calibre ANT clean — *"never acceptable"* | ~~never run~~ **RUN — 714 rulechecks, 0 results, but a NULL result** (see 7b) | PD |
+| A8 | Calibre BND clean — **mandatory per manual** | ~~never run~~ **run** — 5 `.bnd.summary` present (see 7c) | PD |
 | A9 | No seal ring in the GDS; `sealring.zip` **must not** ship | grep structure names | PD |
 | A10 | No extra text/marker layers outside chip boundary | 349,272 text records + 2,498 `108/0` boxes today | PD |
 | A11 | Density meets **foundry** rule (M1–M7 ≥10% @75×75/37.5; M8/M9 ≥20%; AP 10–70%) | never checked; LEF Innovus reads enforces **1% @20×20** | PD/broker |
@@ -299,8 +301,49 @@ Measured stage costs: synthesis ~1.5 h · place 17 m · pre-CTS opt 25 m · ccop
 ### Phase 7 — Physical verification for real (2-3 days, Calibre seat)
 
 **7a.** Calibre **DRC** on the Phase 6 stream with the agreed switch set.
-**7b.** Calibre **ANT** (`/tsmc65pdk/65/CMOS/util/ANTENNA_DRC/CN65S_9M_ANT.26_2a`) — never run; *"antenna violations are never acceptable"*.
-**7c.** Calibre **BND** (`/tsmc65pdk/65/CMOS/LP/pdk/Calibre/drc/wire_bond/CN65_WIRE_BOND_9M_6X1Z1U.20a`) — **mandatory**, never run.
+**7b.** Calibre **ANT** (foundry 9-metal antenna deck; path under `<PDK>/…/ANTENNA_DRC/` —
+redacted here per the vendor-text gate, and given verbatim in the Calibre wrapper deck).
+~~never run~~ — **⚠ CORRECTED 2026-08-18: it HAS been run, six times.** Latest
+`ASIC/genus-innovus/calibre_runs/ant_toolkit_20260817/nanosoc_eth_chiplet_pads.ant.summary`
+(executed 2026-08-17 15:39, Calibre v2023.1_18.8): **714 rulechecks executed, 0 results.**
+
+> **Both the old wording and the obvious new wording are wrong.** It is **not** "never
+> run", and it is **not** "clean". **It is a NULL result.** The checked stream carries no
+> standard-cell or IO layout, so the gate-area term that antenna ratios divide by is
+> absent — 12,648 POLY polygons chip-wide on a design with 61,674 LEC compare points. The
+> deck says so itself in its own header comment: *"Checks that need gate area will
+> under-report. The signal here is the ROUTING contribution."*
+>
+> *Positive control that the 0 is not a dead deck:* `calibre_runs/ant_track2`, **same deck,
+> same 714 rulechecks**, produced **1,549 results** (`A.R.8.3*` across M4–M7) on an older
+> stream. The deck fires on this design when there is something to find. The six runs:
+> `ant_run_20260809` 0 · `ant_track2` **1549** · `ant_noobs` 0 · `ant_newmap_20260813` 0 ·
+> `ant_keepobs` 0 · `ant_toolkit_20260817` 0.
+
+**7c.** Calibre **BND** (foundry wire-bond deck under `<PDK>/…/Calibre/drc/wire_bond/` —
+path redacted per the vendor-text gate) — **mandatory**. ~~never run~~ — **corrected
+2026-08-18: run**; 5 `.bnd.summary` files exist. Note commit `309a9a5` records that this
+deck's *pitch option had never been set*, so re-check what a given summary actually
+exercised before quoting it as a pass.
+
+**7g. ERC — undocumented until 2026-08-18, and it runs.** TSMC ships the N65 ERC checks
+**inside the Calibre LVS deck**, not as a separate deck file, so ERC rides along on
+`calibre -lvs` and its output has been written unread. *Positive control that there is no
+standalone deck:* a `-maxdepth 1 -iname '*erc*'` search of the PDK util tree returns
+**nothing**.
+- **6 rulechecks executed, 0 results** — `mnpg`, `mppg`, `floating.nxwell_float`,
+  `floating.psub`, `npvss49`, `ppvdd49`.
+- **6 of 8, not 8 of 8.** The deck defines 8 named ERC checks in 4 `#IFDEF` groups;
+  `GATE_TO_PG_CHECK` (`npvss150`/`ppvdd150`) and `PATH_CHECK` (4 × `ERC PATHCHK`) are
+  **off by foundry default** and nothing in this project overrides them.
+- **It ran only on 2026-08-10**, four times, all against
+  `runs/20260810T065131Z_honest-full-pnr2`. It has **not** run since, and there is **no
+  ERC record for any current build**.
+- **The clean result inherits the pad-ring hole:** it was obtained with
+  `LVS_PG_STRIP_OBS=1`, which leaves the pad ring with no geometry at all in an FE-only
+  stream. Pad-ring power connectivity is **not** verified by these 6 checks.
+- **`PO.R.8` is permanently outside ERC's remit** — TSMC's deck changelog records moving
+  floating gates to DRC deliberately. Do not expect ERC to clear them.
 **7d. Density against the foundry rule.** `grep -c "75.0um X 75.0um"` on the density report today = 0. Measured minima at the *wrong* window (20×20): M8 **7.60%**, M2 18.60%, M4 18.03%. M8's real floor is 20% @75×75 — roughly a third of it. Either metal fill closes this or the broker's dummy fill does.
 **7e. CB layer.** GDS 76 appears nowhere — as streamed the die has no bond-pad openings. Determine whether `place_bondpads.tcl` should emit it or whether it arrives with the imported `PAD70GU/NU` layouts. [U]
 **7f. Text and marker layers.** 349,272 text records, 2,498 `108/0` boxes.

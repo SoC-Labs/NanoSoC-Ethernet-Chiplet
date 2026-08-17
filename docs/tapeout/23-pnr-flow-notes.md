@@ -487,6 +487,15 @@ moment the D2D domain split happens (11-known-issues (d)).
 `IMPSP-9099` is deliberately **not** suppressed with `set_message -suppress`: a suppressed
 message cannot be counted, and stable visible counts are the point.
 
+> **⚠ Updated 2026-08-18 — `IMPSP-9099` is no longer emitted at all.** Last occurrence
+> **2026-08-07 14:21**; zero in every build from 08-08 onward (positive control: nine
+> other `IMPSP-*` IDs are present in the same logs). The reasoning above still stands as
+> policy, but it now applies to nothing. `2b_pnr_place_eval.tcl:158` still lists
+> `IMPSP-9099` in `EVP_ERROR_ALLOWLIST`; that entry is **dead but deliberately left**, so
+> the allowlist still tolerates the message if a future flow change reintroduces it.
+> The live scan message is `IMPSP-9025` (WARN, "No scan chain specified/traced").
+> See `16-open-defects.md` §6 for the census, which also changed by ~10× and inverted.
+
 ## 19. Two helpers write production database names
 
 `cts_setup.tcl` opens with `write_db ${block_name}_placed` and `route_setup.tcl` with

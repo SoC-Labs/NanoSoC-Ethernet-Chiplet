@@ -183,8 +183,31 @@ timing and the SDF, are extracted at `extract_rc_effort_level low` on a 65 nm
 design. Not a no-op — it produces numbers — but not the accuracy the tool
 considers correct for the node, and nothing in the flow says so.
 
-**Recommended fix — and the honest caveat.** This is **not** fixable by editing
-a script today. There is no Quantus/QRC technology file installed:
+> ### ⚠ CORRECTED 2026-08-18 — THE QRC FILE **DOES** EXIST; THE EVIDENCE BELOW WAS WRONG
+>
+> The paragraph below concludes "procurement, not engineering". **That conclusion does not
+> follow, because its premise is false.** A Quantus/QRC technology file ships with this
+> PDK: `<PDK>/…/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile`, **186,639,161 bytes**
+> (178 MiB), readable from this host. A StarRC deck for the same stack is present too
+> (`.nxtgrd` + `.itf` under `<PDK>/…/pdk/CCI/online/1p9m_6X1Z1U/`).
+>
+> **The original search missed it because it looked only under `CMOS/util/`** — the file
+> lives under `pdk/Assura/`, which is a directory name that does not contain "qrc".
+>
+> Quantus itself is also installed and idle: `qrc` under `QUANTUS_21.11.000`, with
+> `QRC_Advanced_Analysis` **41 issued / 0 in use** (measured 2026-08-18).
+>
+> **So this IS fixable by editing a script.** Adding `-qrc_tech_file` to the three
+> `create_rc_corner` blocks is a real, local change — not a procurement item. The bullets
+> below are retained to show what was searched, and the ARM-tech-tree bullet remains
+> correct (that tree genuinely has no QRC directory; it is simply not where the file is).
+>
+> Corroborated independently by `26-plan-to-submittable-gds.md:60`,
+> `25-what-remains-explained.md` item 20, and `40-signoff-sta-plan.md`.
+
+**Recommended fix — and the honest caveat.** ~~This is **not** fixable by editing
+a script today. There is no Quantus/QRC technology file installed:~~
+*(struck 2026-08-18 — see correction above. The search evidence follows.)*
 
 - nothing matching `*qrc*` or `*.tch` under `/tsmc65pdk`;
 - `/tsmc65pdk/.../PRTF_EDI_65nm_001_Cad_V24a/` ships `GdsOutMap`, `LefHeader`

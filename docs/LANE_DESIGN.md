@@ -493,7 +493,23 @@ Measured on this host, 2026-08-17:
 | backend | Genus, Innovus | `genus`, `innovus` | `CDS_LIC_FILE` | (see `$CDS_LIC_FILE`) |
 | static | Verilator | `/usr/bin/verilator` | *none* | — |
 | static | HAL | the Xcelium `hal` binary under `$XCELIUM_HOME/tools/bin`, via `xrun -hal` | `CDS_LIC_FILE` | (see `$CDS_LIC_FILE`) |
-| (CDC, elsewhere) | SpyGlass | **not installed on this host** | `SNPSLMD_LICENSE_FILE` | (see `$SNPSLMD_LICENSE_FILE`) |
+| (CDC, elsewhere) | SpyGlass | ~~**not installed on this host**~~ → **INSTALLED AND LICENSED** — `SpyGlass_vT-2022.06-SP2`; `spyglass` and `sg_shell` both present under `…/SPYGLASS_2022.06-SP2/SPYGLASS_HOME/bin/`. Measured 2026-08-18: `lint_func` **204 issued / 0 in use**, `Advanced_CDC` **204 / 0**. | `SNPSLMD_LICENSE_FILE` | (see `$SNPSLMD_LICENSE_FILE`) |
+
+> **⚠ CORRECTED 2026-08-18 — the SpyGlass row above said "not installed on this host".**
+> That was false. `docs/LINT_FINDINGS.md` and `docs/CDC_FINDINGS.md` both retracted the
+> same claim on 2026-08-17; **this row was missed**, making it the last surviving copy.
+>
+> **Why the original check failed, which matters if you re-test it:** `SPYGLASS_HOME` is
+> **not set** in the default environment on this host, so a `which spyglass` or a
+> `${SPYGLASS_HOME}/bin/...` probe finds nothing and looks like an absent tool. Probe the
+> install path directly, not through the variable.
+>
+> This is the fourth tool family this repo has documented as absent while it was installed
+> and idle — the others are Voltus, Tempus/PrimeTime and QRC/Quantus. **IC Validator is a
+> fifth and no document mentions it at all**: `icv` is installed (U-2022.12) with
+> `ICValidator2-GeometryEngine` **960 issued / 0 in use**, and the PDK ships a matching
+> `ICV_iLVS` deck. Treat "tool X is not available here" in any repo document as
+> **unverified until re-probed**.
 
 `verif/lint/full/run.sh` runs **Verilator and HAL** — see `hal_lint.sh:30`
 (`XRUN="${XRUN:-<xcelium>/tools/bin/xrun}"`) and `:136`

@@ -19,6 +19,45 @@ Harness: `ASIC/genus-innovus/scripts/lec/`
 > run. Both LEC legs ran on 2026-08-08. §4's unreachable-point prediction, §6's "proposed,
 > not applied", and §7 items 1–3 have been re-derived from the measurements rather than
 > quietly restated — what changed is called out at each.
+>
+> ### ✅ AMENDED 2026-08-18 — THE JOINT IS NOW CLOSED. `lec-gate` PASSED.
+>
+> **This page's central negative finding has been resolved, and the resolution is the
+> good kind.** Everything below about the 2026-08-08 legs remains accurate and should be
+> read as history, not as current status.
+>
+> **1. `lec-gate` passed for the first time in this repository's history**, at
+> **2026-08-17 23:38:35** — `build/full-20260814/reports/lec/gate/verdict.txt`.
+> A whole-tree `find` for `verdict.txt` (including `genus-innovus/runs/*` and both
+> `baseline_2026-08-0*` trees) turns up exactly **two** full-chip `gate` legs ever: the
+> 08-08 `FAIL` and this one. Everything else is a `selftest_*` or a per-block `rtl_*` leg.
+>
+> **2. The chain now genuinely composes.** All three of tonight's legs cite the *same*
+> middle file — `..._gate_power.v` `sha1=78bf7b97…` appears as the *revised* side of the
+> `gate` leg and the *golden* side of both `pnr` and `audit-control`. So
+> `gate.v ≡ gate_power.v ≡ pnr.v` holds over one consistent set of netlists. This is
+> exactly the defect §7 describes: on 08-08 the two legs used **different**
+> `gate_power.v` files (`431c06a5…`, 41,061,573 B, 08-07 17:43 for the `pnr` leg vs
+> `664d76d7…`, 40,690,594 B, 08-08 17:14 for the `gate` leg), so they proved `A≡B` and
+> `B'≡C` about two different middles and did not compose. **That is now fixed.**
+>
+> **3. What changed to make it pass was the harness, not the netlist.** The underlying
+> exceptions are byte-identical to 08-08 — the same 4 revised-side PI points
+> (`/VDD /VDDIO /VSS /VSSIO`) and the same `unreachable_golden=34 unreachable_revised=34`.
+> The verdict schema gained two tolerances absent on 08-08:
+> `extra_tolerated_pg_ports=R:PI:VDD,R:PI:VDDIO,R:PI:VSS,R:PI:VSSIO` and
+> `unreachable_symmetric=34`. Read the pass as "the exceptions are now named and
+> tolerated", not as "the exceptions went away".
+>
+> **4. Two honest caveats.** Compare-point counts differ between generations (61,375 /
+> 61,534 on 08-08 vs **61,674** tonight), so this is a **different design revision** — it
+> is not a re-verdict on the 08-08 netlists. And the **RTL→gate `lec-syn` leg was still
+> running** when this was written, so the chain is closed only from `gate.v` downward.
+> `syn_provenance` on all three legs records `ac1e1e9 (dirty=yes)`.
+>
+> **Do not read "Conformal printed PASS" as a pass anywhere on this page** — that is the
+> precise error §7 exists to document. Both 08-08 legs printed `Compare Results: PASS`
+> with `tool_exit_code=0` and both record `RESULT=FAIL`.
 
 ---
 
@@ -670,8 +709,19 @@ decision to be argued in writing, not a quick fix.
 **7. Equivalence is not timing.** LEC says the shipped netlist computes the same
 function. It says nothing about whether the 10,555 hold-repair delay cells actually fixed
 hold, or whether the design meets setup. That is STA, and
-[`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) lists `sta-signoff` as unsupported: no Tempus
-or PrimeTime is installed.
+[`ci/signoff.yaml`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ci/signoff.yaml) lists `sta-signoff` as unsupported: ~~no Tempus
+or PrimeTime is installed.~~
+
+> **⚠ CORRECTED 2026-08-18.** The `ci/signoff.yaml` string quoted above is **false**, and
+> restating it here without a flag propagated it. Measured today: **Tempus** is installed
+> (`SSV_21.11.000`, `Tempus_Timing_Signoff_XL/_MP/_TSO` — 41 issued, **0 in use**) and
+> **PrimeTime** is installed (`2022.12` — 204 issued, **0 in use**). Tempus 21.11 is
+> version-matched to the `INNOVUS_21.11.000` that built this database.
+>
+> **The point being made here still stands**: LEC proves function, not timing, and signoff
+> STA has not been run. But the reason is that it is **not wired**, not that the tools are
+> missing. See `40-signoff-sta-plan.md`. The upstream `signoff.yaml` string is still
+> uncorrected and will keep re-seeding this — flagged to its owner.
 
 ---
 

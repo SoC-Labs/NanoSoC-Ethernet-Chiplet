@@ -19,7 +19,7 @@ Verdict summary, worst first:
 | [3](#3-qspi-flash-cache-tag-ram-undriven-gwen) | QSPI flash-cache tag RAM `GWEN` undriven | **REAL — RTL defect** | both tag RAMs stuck in write mode; cache never reads a tag |
 | [4](#4-vddio-vssio-have-no-routing) | `VDDIO` / `VSSIO` have no routing | **BENIGN, but unverified** | expected for an abutted pad ring; nothing checks the ring is continuous |
 | [5](#5-tclcmd-917-20-sdc-pins-not-found) | `TCLCMD-917` ×20+ on pad supply pins | **BENIGN — with a real side effect** | timing unaffected; but it exhausts the message limit that would report genuine failures |
-| [6](#6-impsp-9099-scan-chains-undefined-for-3055-of-flops) | `IMPSP-9099` scan chains undefined for 30.55% of flops | **BENIGN — false positive** | DFT is off by design; message is a misreading of functional mux use |
+| [6](#6-impsp-9099-scan-chains-undefined-for-3055-of-flops) | ~~`IMPSP-9099`~~ → **`IMPSP-9025`** "No scan chain specified/traced" | **BENIGN — historical ID** | DFT is off by design. `IMPSP-9099` has not been emitted since 2026-08-07; the scan-cell census in that section is stale by ~10× and inverted — see its correction banner |
 
 > **The headline number is setup-only.** `qor_05_route_opt.rep` and
 > `timing_summary_05_route_opt.rep` report **WNS +0.079, TNS 0, FEP 0** — and both are
@@ -509,32 +509,91 @@ Two changes, neither in this page's write scope:
 
 **BENIGN. False positive. DFT is off by design — document, do not chase.**
 
+> ### ⚠ CORRECTED 2026-08-18 — CONCLUSION STANDS, MESSAGE ID AND CENSUS NOW STALE
+>
+> Everything below was **measured correctly against the 2026-08-06 / 08-07 netlists** and
+> is preserved for that reason. Three facts have since changed. Do not quote the numbers
+> in this section against a current build.
+>
+> **1. `IMPSP-9099` no longer occurs.** Innovus last emitted it on **2026-08-07 14:21**
+> (`runs/20260807T150304Z_gwen-sdc-i2c-m7/prev_logs/pnr_m7.log`), at ERROR severity, ×2,
+> with exactly the text quoted here. It appears **zero** times in every build from
+> 2026-08-08 onward, including the current `fp1505` and `full-20260814`.
+> *Positive control:* nine other `IMPSP-*` IDs do appear in those same logs
+> (`9025`, `5217`, `5534`, `5110`, `2021`, `5224`, `196`, `9082`, `2040`), so this is a
+> real absence and not a broken grep.
+>
+> **The message you will actually see today is `IMPSP-9025`, "No scan chain
+> specified/traced"** — WARN, not ERROR: 52 occurrences in `full-20260814`, 23 in
+> `fp1505`. It is benign for the same reason, and it is the message any future triage
+> should be written against.
+>
+> **2. The census below is inverted for current builds.** Measured 2026-08-18:
+>
+> | Netlist (`..._pnr.v`) | scan-family `SDF*`/`SEDF*` | plain `DF*`/`EDF*` | total flops | scan % |
+> |---|---:|---:|---:|---:|
+> | `baseline_2026-08-06` | 37,834 | 20,286 | 58,120 | **65.1%** |
+> | `baseline_2026-08-07` | 37,834 | 20,286 | 58,120 | **65.1%** |
+> | `build/full-20260814` | 3,715 | 54,905 | 58,620 | **6.34%** |
+> | `build/fp1505` (current) | 3,715 | 54,905 | 58,620 | **6.34%** |
+>
+> The original "37,834 `SDF*` and 20,137 `DF*`" is **exactly right for the 08-06/08-07
+> netlists** — 20,137 is `DF*` excluding the 149 `EDF*`. On the current netlist the
+> majority has flipped: scan-family cells are now **6.34%**, not the majority. A reader
+> who took the old figure forward would conclude this design is close to scan-ready.
+> **It is not — there is no chain at all**, which is precisely what `IMPSP-9025` says.
+>
+> The flip happened between **2026-08-07 12:27** (`baseline_2026-08-07`, 37,834) and
+> **2026-08-08 12:12** (`runs/20260808T100330Z_route-setupopt`, 3,604) — the same window
+> in which `IMPSP-9099` stopped being emitted, which is consistent with the two having a
+> single cause.
+>
+> **The cause is NOT ESTABLISHED and was not determined here.** One obvious candidate was
+> tested and **refuted**: the `set_case_analysis 0 [get_ports SE]` in `constraints.sdc`
+> landed in commit `7510739` on **2026-08-09**, *after* the flip, and in any case the
+> flop `SE` pins are driven by internal enable nets rather than by the top-level `SE`
+> port, so it cannot constant-propagate them. Treat the mechanism as an open question.
+>
+> **3. The mechanism described below is still real, just rare.** `BlockTxDone_reg` is
+> still an `SDFCNQD1` in the current netlist (now at `pnr.v:10482`, not `:2897`). Genus
+> still maps some load-enables onto the scan mux; it now does so for ~3.7k flops instead
+> of ~37.8k.
+>
+> **Line citations in this section have all drifted** and are corrected inline below.
+
 ### DFT is off
 
-[`scripts/config.tcl:123`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) —
+[`scripts/config.tcl:166`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) —
 
 ```tcl
 set DFT 0
 ```
 
-Every DFT branch in the flow is therefore skipped:
+Every DFT branch in the flow is therefore skipped (line numbers re-measured 2026-08-18
+against `ASIC/asic-flows` @ `c2a46ee`, branch `lpddr4-pll`; the previous numbers in this
+table were 8–14 lines low and are given in brackets):
 
 | Guarded by `if {$DFT == 1}` | File |
 |---|---|
-| `source ../scripts/dft_setup.tcl` | `asic-flows/Cadence/1_synthesis.tcl:50` |
-| `convert_to_scan` / `connect_scan_chains` | `1_synthesis.tcl:61` |
-| `write_scandef`, scan reports, ATPG models | `1_synthesis.tcl:83` |
-| `read_def $OUT_DIR/$block_name.def` (scan DEF) | `2_pnr_setup.tcl:33` |
-| `reorder_scan` | `2_pnr_setup.tcl:58` |
-| `reorder_scan -clock_aware true` | `3_pnr_clock.tcl:36` |
+| `source ../scripts/dft_setup.tcl` | `asic-flows/Cadence/1_synthesis.tcl:59` *(was :50)* |
+| `convert_to_scan` / `connect_scan_chains` | `1_synthesis.tcl:70–71` *(was :61)* |
+| `write_scandef`, scan reports, ATPG models | `1_synthesis.tcl:97` *(was :83)* |
+| `read_def $OUT_DIR/$block_name.def` (scan DEF) | `2_pnr_setup.tcl:39` *(was :33)* |
+| `reorder_scan` | `2_pnr_setup.tcl:64` *(was :58)* |
+| `reorder_scan -clock_aware true` | `3_pnr_clock.tcl:42` *(was :36)* |
+
+Because these live in a submodule, re-check them against the pin you actually build with
+before quoting them.
 
 No scan insertion, no scan DEF, no chain reorder. This matches
-`inputs/constraints.sdc:43` — *"scan_clk : tied 1'b0; the scan chain is not bonded."*
+`inputs/constraints.sdc:71` *(was cited as :43)* — *"scan_clk : tied 1'b0; the scan chain
+is not bonded."*
 
 ### Why Innovus thinks chains exist anyway
 
 The netlist is full of scan-flop cells — but their scan pins carry **functional** logic.
-`outputs/nanosoc_eth_chiplet_pads_pnr.v:2897`:
+`outputs/nanosoc_eth_chiplet_pads_pnr.v:2897` (08-06 vintage; the same instance is at
+`:10482` in the current `fp1505` netlist, still an `SDFCNQD1`):
 
 ```verilog
    SDFCNQD1 BlockTxDone_reg (.CDN(n_6),
@@ -557,15 +616,29 @@ the 30.55% in the message. **I could not reproduce 30.55% exactly**; Innovus's d
 is its own and is not derivable from the netlist. The qualitative conclusion does not
 depend on it.
 
+> **↑ TRUE FOR 08-06/08-07 ONLY.** Re-measured 2026-08-18 the same netlist census gives
+> **3,715 scan-family and 54,905 plain out of 58,620 flops — 6.34% scan.** See the
+> correction banner at the top of this section for the full table. Note also that the
+> netlist total *is* exactly 58,120 for the 08-06 vintage, so the "denominator is its own"
+> caveat was over-cautious: 37,834 + 20,286 (`DF*` **plus** the 149 `EDF*`) = 58,120
+> exactly. Innovus's total was derivable after all; only the 30.55% split was not.
+
 ### Action
 
 None on the design. Document it as expected. Two flow notes worth logging:
 
-- **`scripts/dft_setup.tcl` does not exist.** `1_synthesis.tcl:50` sources it whenever
+- **`scripts/dft_setup.tcl` does not exist.** `1_synthesis.tcl:59` sources it whenever
   `DFT == 1`, so **DFT cannot currently be turned on** — the run would die immediately.
   If DFT is ever wanted, that file has to be written first and the whole path is untested.
-- Suppress the noise rather than re-investigating it each run:
-  `set_message -suppress -id IMPSP-9099` in `preplace.tcl`, with a comment pointing here.
+  *Re-verified 2026-08-18:* still absent (`find ASIC -name dft_setup.tcl` → nothing;
+  positive control: the same `find` for `1_synthesis.tcl` returns three hits).
+- ~~Suppress the noise rather than re-investigating it each run:
+  `set_message -suppress -id IMPSP-9099` in `preplace.tcl`~~ — **obsolete.** The message
+  is no longer emitted, so there is nothing to suppress. Note that
+  `scripts/2b_pnr_place_eval.tcl:158` still carries `IMPSP-9099` in
+  `EVP_ERROR_ALLOWLIST`; that entry is now dead but harmless, and removing it would mean
+  the allowlist no longer tolerates the message if a future flow change brings it back.
+  Left alone deliberately — not a defect.
 
 ---
 
