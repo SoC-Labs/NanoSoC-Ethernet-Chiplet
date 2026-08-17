@@ -1,0 +1,13 @@
+{
+  "verdict": "PASS",
+  "rom": "eth_rom",
+  "rom_dir": "_fixture/romlibs/cc_rom",
+  "code_file": "_fixture/fw/nanosoc_bootrom_chip_core.bintxt",
+  "roms": [
+    {
+      "instance": "eth_rom_via",
+      "content_equivalence": {"status": "PASS"},
+      "code_file_sanity": {"words": 2048, "width": 32}
+    }
+  ]
+}

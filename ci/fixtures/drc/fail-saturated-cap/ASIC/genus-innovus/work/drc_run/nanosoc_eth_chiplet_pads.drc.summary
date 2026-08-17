@@ -1,0 +1,9 @@
+CALIBRE::DRC-H  SUMMARY REPORT
+
+Layout Primary Cell: nanosoc_eth_chiplet_pads
+Maximum Results/RuleCheck: 1000
+
+--- RULECHECK RESULTS STATISTICS (BY RULECHECK)
+RULECHECK M6.DN.1 ........................ TOTAL Result Count = 1000
+
+--- RULECHECK RESULTS STATISTICS (BY CELL)

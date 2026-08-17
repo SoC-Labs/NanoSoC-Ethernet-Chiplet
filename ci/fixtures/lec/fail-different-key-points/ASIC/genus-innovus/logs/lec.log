@@ -1,0 +1,7 @@
+//  Conformal(R) Equivalence Checker
+//  Version 21.10-s300
+LEC> compare
+     Compare Results:    FAIL
+ERROR: 3 Different Key Points detected between golden and revised.
+LEC> report unmapped points > ../work/noneq.rpt
+LEC> exit -f

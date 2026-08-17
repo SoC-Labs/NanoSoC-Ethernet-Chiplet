@@ -1,0 +1,9 @@
+//  Conformal(R) Equivalence Checker
+//  Version 21.10-s300
+LEC> compare
+     ------------------------------------------
+      Compared points      PO     DFF    Total
+     ------------------------------------------
+      Equivalent        27411  132281  159692
+     ------------------------------------------
+LEC> exit -f

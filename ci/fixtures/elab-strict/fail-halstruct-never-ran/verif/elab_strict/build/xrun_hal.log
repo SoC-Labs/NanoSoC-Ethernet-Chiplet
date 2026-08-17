@@ -1,0 +1,4 @@
+xcelium> xrun -sv -hal -elaborate -top nanosoc_eth_chiplet
+hal: 22.03-s001: (c) Copyright 1995-2022 Cadence Design Systems, Inc.
+halsynth: *W,LATINF (src/rtl/chiplet_d2d_decode.sv,77|3): latch inferred.
+hal: Total number of errors : 0

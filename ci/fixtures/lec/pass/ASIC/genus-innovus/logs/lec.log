@@ -1,0 +1,13 @@
+//  Conformal(R) Equivalence Checker
+//  Version 21.10-s300
+LEC> read design -golden -verilog ../rtl.v
+LEC> read design -revised -verilog ../outputs/nanosoc_eth_chiplet_pads_gate.v
+LEC> add compared points -all
+LEC> compare
+     Compare Results:    PASS
+     ------------------------------------------
+      Compared points      PO     DFF    Total
+     ------------------------------------------
+      Equivalent        27411  132281  159692
+     ------------------------------------------
+LEC> exit -f
