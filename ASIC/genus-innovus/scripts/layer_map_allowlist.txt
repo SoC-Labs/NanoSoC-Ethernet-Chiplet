@@ -1,0 +1,119 @@
+# layer_map_allowlist.txt - EXPECTED-unmapped (layer, datatype) pairs for
+# check-layer-map-coverage --allow-list (docs/tapeout/49-layer-map-coverage-
+# check.md, docs/tapeout/53-gate-promotion-plan.md S1).
+#
+# WHAT THIS IS. $(GDSMAP) (ASIC/genus-innovus/scripts/gdsmap_derive.py's
+# output) only names the layers INNOVUS ITSELF constructs: routing metal,
+# vias, AP, pin-name text, the die outline. A full chiplet stream also
+# carries PRE-DRAWN geometry merged in from vendor library GDS (standard
+# cells, macros, bond pads) on front-end mask layers, plus dummy-fill,
+# LOGO and SRAM-marker layers - $(GDSMAP) was never meant to name any of
+# those; Innovus does not draw them, it only passes them through. Without
+# this file, `check-layer-map-coverage --map $(GDSMAP)` reports every one of
+# these as UNMAPPED, POPULATED on every real merged build, which is the
+# "gate that cannot discriminate" failure docs/tapeout/35 and 39 both
+# document - a check that is red on every good run teaches nobody anything.
+#
+# WHERE EACH ROW CAME FROM - measured, not assumed. Every (layer, datatype)
+# below was seen POPULATED (real geometry or text, not zero) in at least one
+# of these two real runs on 2026-08-18, and its name comes from the real
+# foundry LayerMapCadence table (ASIC/imec_results/Archive_.../design/
+# reports/Final_Report_*.rpt - identical table in both the 17Aug26 and
+# 18Aug26 archives), not a guess:
+#
+#   RUN A - ASIC/eth-chiplet/build/{fp1505,full-20260814}/outputs/
+#           nanosoc_eth_chiplet_pads.gds, each diffed against its OWN
+#           build's derived map (build/<tag>/work/tech/gdsout.stream.map):
+#             python3 ASIC/asic-toolkit/scripts/check-layer-map-coverage \
+#               <gds> --map build/<tag>/work/tech/gdsout.stream.map
+#           Both builds independently produced the IDENTICAL 24-row
+#           unmapped/populated set below (same layers, same shape counts) -
+#           fp1505 and full-20260814 agree exactly.
+#
+#   RUN B - the IMEC-matched reference GDS (md5 7f6214965501c911bd
+#           65069378ae911d, see doc 49 S "Validation"), diffed against
+#           this project's OWN current derived map
+#           (ASIC/genus-innovus/work/tech/*.derived.map):
+#             python3 ASIC/asic-toolkit/scripts/check-layer-map-coverage \
+#               .../nanosoc_eth_chiplet_pads_logo_full_L300.gds \
+#               --map ASIC/genus-innovus/work/tech/*.derived.map
+#           27 unmapped/populated rows: RUN A's 24, plus three more that
+#           only show up on this LOGO+seal-ring-merged stream (150/9,
+#           150/10, 158/0/LOGO) - RUN A's build/outputs GDS is a P&R-stage
+#           stream that predates the LOGO/seal-ring merge, so it never
+#           populates those three.
+#
+#   CROSS-CHECK: on RUN B, "mapped-and-covered by $(GDSMAP)" (24) + these 27
+#   allow-listed rows = 51 populated pairs total - EXACTLY the 51 pairs BOTH
+#   real IMEC LayerMapCadence tables (archive 1, 17Aug26, and archive 2,
+#   18Aug26 - see docs/tapeout/49 S "Validation") also report as covered,
+#   with ZERO unmapped/populated left over either way. This allow-list is
+#   therefore not a guess at what the vendor table would say - on the one
+#   file this project can cross-check byte-for-byte against a real foundry
+#   read, it names exactly the complement the real foundry table also
+#   accounts for. Nothing here was invented to make a finding disappear.
+#
+# WHAT IS DELIBERATELY *NOT* HERE. SEAL RING (162/0, SEALRING/drawing) is
+# one of the categories ASIC/genus-innovus/Makefile's layer-map-check
+# comment names as expected-unmapped, but it does NOT appear below: neither
+# RUN A nor RUN B populated 162/0 with any real shape (both IMEC archives
+# show it MAPPED, EMPTY - zero geometry - on the one file we can check).
+# Adding a row for it now would be exactly the "measured nothing" mistake
+# this project has been burned by before - an allow-list entry must be
+# sourced from an observed population, not from the Makefile's prose list.
+# If a future full-merge stream DOES populate 162/0, check-layer-map-
+# coverage will correctly report it as UNMAPPED, POPULATED, UNEXPLAINED
+# until someone measures its real shape count and adds a properly-sourced
+# row here - that is the gate discriminating correctly, not a gap in it.
+#
+# FORMAT: same 4-column shape check-layer-map-coverage's --map reader
+# already uses (name category stream# dataType) - `#` comments and blank
+# lines ignored, exactly 4 whitespace-separated tokens per data row. An
+# allow-list row is NEVER counted as coverage (it does not make the
+# MAPPED/EMPTY tally); it only reclassifies an already-unmapped, already-
+# populated finding from UNEXPLAINED to EXPECTED. See check-layer-map-
+# coverage's own --allow-list help text for the full mechanism.
+#
+# name       category                    stream#  dataType
+
+# --- front-end, vendor-drawn (standard cells / macros / pads stream in
+#     pre-drawn from merged library GDS; $(GDSMAP) only names what Innovus
+#     itself constructs, never front-end masks) ---
+NW           front-end-vendor-drawn      3        0
+OD           front-end-vendor-drawn      6        0
+PO           front-end-vendor-drawn      17       0
+PP           front-end-vendor-drawn      25       0
+NP           front-end-vendor-drawn      26       0
+CO           front-end-vendor-drawn      30       0
+CO           front-end-vendor-drawn      30       11
+PO           front-end-pin-text          149      0
+
+# --- threshold-voltage / SRAM markers (compiler-drawn, front-end) ---
+VTH_N        front-end-vendor-drawn      67       0
+VTH_P        front-end-vendor-drawn      68       0
+SRM          sram-marker                 50       0
+SRM          sram-marker                 50       10
+SRAMDMY      sram-marker                 186      0
+SRAMDMY      sram-marker                 186      1
+SRAMDMY      sram-marker                 186      4
+
+# --- dummy fill / density / exclusion (foundry density-fill and its
+#     control layers - never Innovus-constructed) ---
+RODMY        dummy-fill                  49       0
+DIODMY       dummy-fill                  119      0
+DMEXCL       dummy-fill                  150      1
+DMEXCL       dummy-fill                  150      2
+DMEXCL       dummy-fill                  150      3
+DMEXCL       dummy-fill                  150      4
+DMEXCL       dummy-fill                  150      9
+DMEXCL       dummy-fill                  150      10
+ODBLK        dummy-fill                  150      20
+POBLK        dummy-fill                  150      21
+
+# --- IP / library identification (text-only marker layer, not geometry) ---
+IP           ip-marker-text              63       63
+
+# --- chip LOGO artwork (only present once logos/nanosoc_eth_Logo.gds is
+#     merged in - see docs/tapeout/50-bnd-and-logo-checks.md; only observed
+#     in RUN B above, the logo-merged reference stream) ---
+LOGO         logo-artwork                158      0

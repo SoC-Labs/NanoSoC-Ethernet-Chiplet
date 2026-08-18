@@ -1,0 +1,334 @@
+# ---------------------------------------------------------------------------
+# CSR / SEAL-RING RULE-CATEGORY RATCHET BUDGET --- nanosoc_eth_chiplet_pads
+#
+# Consumed by scripts/ci/csr_ratchet.py, which ci/signoff.yaml (id:
+# csr-category-ratchet) delegates the ratchet verdict to. That is the ONLY
+# consumer.
+#
+# WHAT THIS IS, AND WHAT IT IS NOT
+#   This is NOT a fix, and NOT a clean baseline. It is a CEILING recording the
+#   WORST numbers seen so far for three named CSR/seal-ring rulechecks plus a
+#   rollup for every rule category that fired for the first time in the fuller
+#   of the two IMEC archives -- so that a FUTURE re-check cannot silently grow
+#   past what is already known-bad without a human noticing. None of the
+#   counts below are understood or root-caused. See
+#   docs/tapeout/53-gate-promotion-plan.md §2 "CSR / 157-category ratchet" and
+#   CONVERGENCE_PLAN_2026-08-18.md §8 for the investigation this baseline is
+#   drawn from.
+#
+# THIS BASELINE IS AGAINST A STALE REFERENCE GDS, NOT THE CURRENT BUILD
+#   Both archives below check `nanosoc_eth_chiplet_pads_logo_full_L300.gds`
+#   (md5 7f6214965501c911bd65069378ae911d), a snapshot from the now-legacy
+#   ASIC/genus-innovus engine dated 2026-08-10 (docs/tapeout/48-imec-signoff-
+#   results-analysis.md §0). It predates the toolkit migration, the LEFOBS
+#   phantom-metal fix, the PO.R.8 characterization, and everything else that
+#   has landed since. The CURRENT shipping lineage (fp1505/full-20260814) has
+#   NEVER had a full-library-merge DRC run at all -- IMEC's own decks are the
+#   only source of these numbers, and only against the old snapshot.
+#
+#   So THE RATCHET'S REAL JOB RIGHT NOW is "don't let a FUTURE re-check
+#   against IMEC (on whatever build is current then) show these numbers
+#   growing past today's baseline", NOT "gate the current build" -- there is
+#   nothing local to gate yet. Promote CI's csr-category-ratchet stage from
+#   `report` to `block` only once (a) a full-library-merge check exists
+#   against the CURRENT build and (b) the counts have a verified ceiling with
+#   no unexplained residue (doc 53 §1's own promotion bar).
+#
+# WHY THE MAJORITY OF THE GROWTH IS UNEXPLAINED, NOT JUST UNFIXED
+#   CONVERGENCE_PLAN_2026-08-18.md §8 traced CORNER_B's own by-cell count as
+#   BYTE-IDENTICAL between the two archives, and in the main drc deck
+#   CORNER_B carries only 4 of archive 2's 804 CSR.R.2:D hits (was 91/91 =
+#   100% in archive 1). The corner-rotation fix
+#   (ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io, applied
+#   2026-08-18 per CONVERGENCE_PLAN §9) is real and clears IMEC's mechanical
+#   Padringcheck orientation error, but does NOT provably touch CSR.R.2:B/D
+#   or CSR.EN.8 -- PCORNER_G's own GDS content is orientation-symmetric.
+#   Roughly 800 of 804, 644 of 644 and 96 of 96 are NOT attributed to the
+#   corner cells at all, and the reports truncate before naming what is:
+#   full attribution needs either a fuller by-cell report from the broker or
+#   a local re-check against a corner-rotation-fixed, fully-merged stream.
+#
+# ARCHIVE PROVENANCE (both gitignored, host-local broker deliverables --
+# ASIC/imec_results is NOT tracked in this repo, per drc_waivers.yaml's own
+# `measured_on:` convention of citing a path that will not exist on every
+# checkout)
+#   archive 1 (partial merge, pad-ring library only):
+#     ASIC/imec_results/Archive_nanosoc_eth_chiplet_pads_logo_full_L300_merged_dummyWithSealRing_17Aug26_15u14/
+#     drc/cali_drc_nanosoc_eth_chiplet_pads_logo_full_L300_merged_dummy_with_sealring.rpt
+#   archive 2 (full merge -- BOTH tphn65lpgv2od3_sl.gds AND tcbn65lp.gds
+#              substituted in, first time real std-cell geometry existed
+#              around this design in any check we've had) -- THE BASELINE
+#              SOURCE, because it is the fuller/more-recent merge:
+#     ASIC/imec_results/Archive_nanosoc_eth_chiplet_pads_logo_full_L300_dummy_merged_dummyWithSealRing_18Aug26_19u28/
+#     drc/cali_drc_nanosoc_eth_chiplet_pads_logo_full_L300_dummy_merged_dummy_with_sealring.rpt
+#   measured (this file):  2026-08-18
+#   report format:         "RULECHECK <name> ... TOTAL Result Count = <capped-display> (<original>)"
+#                           `ceiling`/`archive2_count` below is the FIRST
+#                           (capped-display) number -- the one every count in
+#                           doc 53/CONVERGENCE_PLAN §8 and this file's own
+#                           tracked_checks quote -- not the parenthetical
+#                           original-geometry count.
+#
+# SELF-TEST DISCIPLINE (docs/tapeout/39-po-r8-resolved.md §8's proof table is
+# the pattern; scripts/ci/csr_ratchet.py --self-test reproduces it here)
+#   `python3 scripts/ci/csr_ratchet.py --self-test` re-derives every number in
+#   this file DIRECTLY from the two archive reports on disk (when reachable --
+#   see the script's docstring for the degraded-but-honest behaviour when
+#   ASIC/imec_results is absent, e.g. a fresh clone) and FAILS if this file's
+#   recorded ceiling/archive1_count/archive2_count/new_categories has DRIFTED
+#   from what the raw reports actually say -- the same "a waived/recorded
+#   number that moved is a new fact" discipline drc_census.py's waiver
+#   apply_waivers() already enforces. It also runs a battery of synthetic
+#   fixtures (a summary with a tracked count OVER ceiling; one exactly AT
+#   ceiling; one with a genuinely new, untracked category firing; a
+#   structurally malformed budget file) to prove the ratchet can actually
+#   FAIL, not just report -- see that command's own output for the pass/fail
+#   table.
+# ---------------------------------------------------------------------------
+version: 1
+
+applies_to:
+  block: nanosoc_eth_chiplet_pads_dummy_dummy_WithSealRing
+  archive1: Archive_nanosoc_eth_chiplet_pads_logo_full_L300_merged_dummyWithSealRing_17Aug26_15u14
+  archive2: Archive_nanosoc_eth_chiplet_pads_logo_full_L300_dummy_merged_dummyWithSealRing_18Aug26_19u28
+  archive1_report: drc/cali_drc_nanosoc_eth_chiplet_pads_logo_full_L300_merged_dummy_with_sealring.rpt
+  archive2_report: drc/cali_drc_nanosoc_eth_chiplet_pads_logo_full_L300_dummy_merged_dummy_with_sealring.rpt
+  measured_utc: "2026-08-18"
+  baseline_is_stale_reference: true
+  note: >
+    Baseline measured against nanosoc_eth_chiplet_pads_logo_full_L300.gds
+    (md5 7f6214965501c911bd65069378ae911d), the legacy-engine snapshot dated
+    2026-08-10 IMEC actually checked -- NOT the current fp1505/full-20260814
+    toolkit build, which has never had a full-library-merge DRC run at all.
+    See the header above.
+
+# ---------------------------------------------------------------------------
+# Three named CSR/seal-ring rulechecks that grew sharply between the two
+# archives. `ceiling` is archive 2's TOTAL Result Count (capped-display
+# number) -- the worst measured so far, recorded as a ceiling a future
+# re-check must not exceed.
+# ---------------------------------------------------------------------------
+tracked_checks:
+  - check: "CSR.R.2:B"
+    ceiling: 644
+    archive1_count: 104
+    archive2_count: 644
+    archive2_original: 644
+    justification: >
+      Grew +519% (104 -> 644) between archive 1 (pad-ring-only merge) and
+      archive 2 (full std-cell + seal-ring merge). NOT closed, NOT
+      root-caused. The corner-rotation fix (nanosoc_eth_chiplet_pads.io)
+      clears IMEC's mechanical Padringcheck orientation error but does NOT
+      provably touch this rule -- PCORNER_G's GDS content is
+      orientation-symmetric (uniform 135x135um block, LEF SYMMETRY X Y R90).
+      See CONVERGENCE_PLAN_2026-08-18.md §8.
+
+  - check: "CSR.R.2:D"
+    ceiling: 804
+    archive1_count: 91
+    archive2_count: 804
+    archive2_original: 816
+    justification: >
+      Grew +783% (91(364) -> 804(816)). Only 4 of archive 2's 804 hits
+      attribute to CORNER_B by-cell (was 91/91 = 100% in archive 1) --
+      CORNER_B's own by-cell count is BYTE-IDENTICAL between the two
+      archives, so the bulk of the growth (roughly 800 of 804) is NOT
+      attributed to the corner cells at all. Full attribution needs either a
+      fuller by-cell report from the broker or a local re-check against a
+      corner-rotation-fixed, fully-merged stream. See
+      CONVERGENCE_PLAN_2026-08-18.md §8 and
+      docs/tapeout/48-imec-signoff-results-analysis.md §1.3.
+
+  - check: "CSR.EN.8"
+    ceiling: 96
+    archive1_count: 28
+    archive2_count: 96
+    archive2_original: 96
+    justification: >
+      Grew +243% (28 -> 96). Unattributed by cell in either archive's report;
+      same seal-ring-construction rule family as CSR.R.2:B/D, same
+      "plausibly helps, does not provably fix" relationship to the
+      corner-rotation fix. See CONVERGENCE_PLAN_2026-08-18.md §8.
+
+# ---------------------------------------------------------------------------
+# The 157 rule categories present (nonzero TOTAL Result Count) in archive 2's
+# main DRC summary section that did NOT appear at all -- not even as a zero
+# line -- in archive 1's. Pulled by diffing the two reports' RULECHECK name
+# sets, not hand-copied (see the diff command in
+# docs/tapeout/53-gate-promotion-plan.md's cross-link note). Each value is
+# [archive2_count, archive2_original] -- the same capped-display/original
+# pair the tracked_checks above quote. NONE of these are triaged: doc 53 §2
+# splits them into two untriaged groups --
+#   (1) transistor/std-cell-internal geometry rules (OD/PO/CO/PP/NP/NW/
+#       VIA-spacing/G.2/ESD families) that can only fire once real diffusion
+#       exists to check -- several capped at 1000, plausible merge-
+#       duplication artefacts rather than design defects, unconfirmed;
+#   (2) seal-ring/corner construction rules (CSR.S.*, CSR.EN.*, CSR.R.3,
+#       SR.*) coinciding with the second merged library (tcbn65lp), possibly
+#       supplying real seal-ring/ESD-guard content the pad-only first
+#       archive never showed.
+# A rulecheck present here at count 1000 with original == 1000 too may
+# genuinely be exactly 1000, OR may be capped with an unknown true count --
+# this file does not distinguish that (the raw .rpt has no explicit
+# "Maximum Results/RuleCheck" header in either archive to test against); the
+# ratchet's `ceiling`/comparison logic uses the number AS REPORTED, the same
+# way doc 53/CONVERGENCE_PLAN §8's own headline numbers do.
+# ---------------------------------------------------------------------------
+new_categories:
+  CO.EN.1: [200, 200]
+  CO.EN.1.1: [22, 22]
+  CO.EN.3__CO.EN.4: [316, 316]
+  CO.S.1: [1000, 1000]
+  CO.S.2: [876, 876]
+  CO.S.3: [1000, 1000]
+  CO.S.4: [311, 311]
+  CO.S.5: [1000, 1000]
+  CO.S.6: [308, 336]
+  CO.W.1: [714, 3648]
+  CSR.EN.1: [120, 120]
+  CSR.EN.2: [1000, 1006]
+  CSR.EN.4: [36, 48]
+  "CSR.R.3:CO": [57, 96]
+  "CSR.R.3:VIA1": [56, 92]
+  "CSR.R.3:VIA2": [24, 48]
+  "CSR.R.3:VIA3": [60, 84]
+  "CSR.R.3:VIA4": [60, 84]
+  "CSR.R.3:VIA5": [60, 84]
+  "CSR.R.3:VIA6": [60, 84]
+  "CSR.R.3:VIA7": [22, 28]
+  CSR.S.1: [715, 715]
+  CSR.S.2: [1000, 1000]
+  DOD.EN.1: [1000, 1000]
+  DOD.S.2: [1000, 1000]
+  DOD.S.3: [1000, 1000]
+  DOD.S.5: [1000, 1000]
+  DPO.S.2: [1000, 1000]
+  DPO.S.3: [1000, 1000]
+  DTCD.R.2: [1000, 1000]
+  DTCD.R.3: [42, 42]
+  ESD.18g: [62, 62]
+  ESD.20g: [192, 192]
+  ESD.21g: [147, 2370]
+  ESD.22g: [28, 1344]
+  ESD.23g: [1000, 5368]
+  ESD.28g: [46, 46]
+  ESD.30g: [76, 76]
+  ESD.32g: [189, 189]
+  ESD.3g: [1000, 1000]
+  ESD.4g: [147, 147]
+  ESD.5g: [2, 2]
+  ESD.6g: [2, 2]
+  ESD.WARN.2: [8, 8]
+  ESDIMP.EN.1: [240, 240]
+  "ESDIMP.EN.1:R": [240, 240]
+  "G.2:COi": [1000, 1000]
+  "G.2:OD25_33": [8, 8]
+  "G.2:OD_25i": [8, 8]
+  "G.2:ODi": [72, 72]
+  "G.2:PPi": [32, 32]
+  "G.2:VIA1i": [640, 640]
+  "G.2:VIA2i": [208, 208]
+  "G.2:VIA3i": [1000, 1000]
+  "G.2:VIA4i": [1000, 1000]
+  "G.2:VIA5i": [1000, 1000]
+  "G.2:VIA6i": [1000, 1000]
+  "G.4:M1i": [32, 32]
+  "G.4:ODi": [61, 61]
+  "G.4:POi": [53, 53]
+  LDP.O.2: [72, 72]
+  M1.A.2: [64, 64]
+  M1.S.2: [60, 60]
+  M1.S.2.1: [84, 84]
+  M2.A.2: [16, 16]
+  M2.S.2: [36, 36]
+  M2.S.2.1: [36, 36]
+  M3.S.3: [16, 16]
+  M5.S.3: [16, 16]
+  M5.S.4: [4, 4]
+  M7.S.3: [16, 16]
+  NP.EX.1: [5, 5]
+  NP.EX.2: [34, 34]
+  NP.EX.4: [400, 400]
+  NP.O.1: [53, 53]
+  NP.R.1: [138, 138]
+  NP.S.1: [3, 3]
+  NP.S.2: [51, 51]
+  NP.S.4: [1, 1]
+  NP.S.5: [476, 476]
+  NW.EN.1: [54, 54]
+  NW.EN.2: [72, 72]
+  NW.EN.3: [52, 52]
+  NW.S.5: [64, 2484]
+  OD.A.2: [349, 349]
+  OD.L.1: [6, 6]
+  OD.S.1: [482, 482]
+  OD.S.2: [351, 351]
+  OD.S.3: [83, 83]
+  OD.S.3.1: [193, 193]
+  OD.S.4: [72, 72]
+  OD.S.5: [1000, 1000]
+  OD.W.1: [3, 3]
+  OD.W.2: [1000, 1000]
+  OD.W.3: [849, 849]
+  OD2.S.1: [8, 8]
+  OD2.S.7: [8, 8]
+  OD25_33.W.1: [184, 184]
+  OD25_33.W.2: [239, 239]
+  PO.A.2: [54, 54]
+  PO.EX.1: [1000, 1000]
+  PO.EX.2: [931, 931]
+  PO.EX.3: [227, 227]
+  PO.R.1: [726, 726]
+  PO.R.4: [1000, 1000]
+  PO.S.1: [1000, 1000]
+  PO.S.10: [113, 113]
+  PO.S.2: [1000, 1000]
+  PO.S.2.1: [968, 968]
+  PO.S.3: [538, 538]
+  PO.S.4: [494, 494]
+  PO.S.4.1: [177, 177]
+  PO.S.5: [379, 379]
+  PO.S.6: [438, 438]
+  PO.S.7: [50, 50]
+  PO.S.9: [209, 209]
+  PO.W.1: [19, 19]
+  PP.EX.1: [129, 129]
+  PP.EX.2: [2, 2]
+  PP.EX.4: [446, 446]
+  PP.O.1: [95, 95]
+  PP.R.1: [345, 345]
+  PP.R.2: [120, 120]
+  PP.S.1: [33, 33]
+  PP.S.2: [68, 68]
+  PP.S.4: [48, 48]
+  PP.S.5: [639, 639]
+  RM.WARN.2: [114, 768]
+  RPO.R.1: [8, 8]
+  "SR.CO_VIA:WARNING": [1000, 1014]
+  "SR.R.3:CO": [1000, 1014]
+  "SR.R.3:VIA1": [642, 656]
+  "SR.R.3:VIA2": [445, 808]
+  "SR.R.3:VIA3": [1000, 1144]
+  "SR.R.3:VIA4": [1000, 1144]
+  "SR.R.3:VIA5": [1000, 1144]
+  "SR.R.3:VIA6": [1000, 1144]
+  SR.S.1: [1000, 1000]
+  "SR.S.1:M3": [16, 16]
+  "SR.S.1:M4": [16, 16]
+  "SR.S.1:M5": [16, 16]
+  "SR.S.1:M6": [16, 16]
+  "SR.S.1:M7": [16, 16]
+  USER_GUIDE.2: [1000, 1000]
+  VIA1.S.1: [1000, 1000]
+  VIA1.S.2: [472, 472]
+  VIA2.S.1: [1000, 1000]
+  VIA2.S.2: [916, 916]
+  VIA3.S.1: [1000, 1000]
+  VIA3.S.2: [1000, 1000]
+  VIA4.S.1: [1000, 1000]
+  VIA4.S.2: [1000, 1000]
+  VIA5.S.1: [1000, 1000]
+  VIA5.S.2: [1000, 1000]
+  VIA6.S.1: [1000, 1000]
+  VIA6.S.2: [1000, 1000]
+  VT.S.1: [24, 24]

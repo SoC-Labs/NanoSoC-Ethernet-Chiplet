@@ -1,0 +1,26 @@
+==================================================================================
+=== CALIBRE::DRC-H SUMMARY REPORT
+===
+Execution Date/Time:       Tue Aug 18 00:00:00 2026
+Layout Primary Cell:       nanosoc_eth_chiplet_pads
+Maximum Results/RuleCheck: 1000
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS
+---
+RULECHECK PM.W.1 ................. TOTAL Result Count = 0  (0)
+RULECHECK AP.W.1 ................. TOTAL Result Count = 0  (0)
+RULECHECK AP.W.2 ................. TOTAL Result Count = 2  (82)
+RULECHECK AP.S.1 ................. TOTAL Result Count = 0  (0)
+RULECHECK AP.S.4 ................. TOTAL Result Count = 0  (0)
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS (BY CELL)
+---
+CELL PAD70GU ..................... TOTAL Result Count = 1  (42)
+    RULECHECK AP.W.2 ............. TOTAL Result Count = 1  (42)
+CELL PAD70NU ..................... TOTAL Result Count = 1  (40)
+    RULECHECK AP.W.2 ............. TOTAL Result Count = 1  (40)
+----------------------------------------------------------------------------------
+--- SUMMARY
+---
+TOTAL DRC RuleChecks Executed:   205
+TOTAL DRC Results Generated:     2 (82)

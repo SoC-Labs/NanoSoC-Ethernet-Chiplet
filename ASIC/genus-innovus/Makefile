@@ -802,17 +802,40 @@ DRC_DECK_ENV = BLOCK=$(BLOCK) FOUNDRY_DECK=$(DRC_FOUNDRY_DECK) \
 #   else is read as a plain GdsOutMap-shaped file. Point it at a broker's
 #   Final_Report when you have one — that is the one source in this project
 #   that names the front-end and library-merged layers $(GDSMAP) does not.
-# LAYER_MAP_STRICT — 0 (default) prints the finding and does not fail the
-#   build; 1 fails `make drc` on any UNMAPPED, POPULATED finding. Defaults to
-#   0 because $(GDSMAP) alone WILL report every front-end/library layer
-#   (NW, OD, PO, PP, NP, CO, dummy fill, seal ring, LOGO, SRAM markers) as
-#   unmapped on any real merged stream — those arrive pre-drawn from vendor
-#   GDS content this map was never meant to name, and a gate that is red on
-#   every good run is the "gates that cannot discriminate" failure this
-#   project has been burned by before (docs/tapeout/35, 39). Turn it on once
-#   LAYER_MAP_EXTRA gives the check a source complete enough to trust.
+# LAYER_MAP_ALLOWLIST — space-separated --allow-list file(s)
+#   (scripts/layer_map_allowlist.txt by default). NOT a map: an allow-list
+#   entry never counts as coverage, it only reclassifies an already-unmapped,
+#   already-populated (layer, datatype) from UNEXPLAINED (fails the check)
+#   to EXPECTED (printed, does not fail). This is the mechanism doc 53 S1
+#   asks for — every row in the default file is sourced from a REAL prior
+#   run of this tool against a real GDS, not guessed; see that file's own
+#   header for the exact commands and the two builds it was measured on.
+#   Set to empty (LAYER_MAP_ALLOWLIST=) to see the old, undifferentiated
+#   "N unmapped" count with no allow-list applied.
+# LAYER_MAP_STRICT — 1 (default since 2026-08-18) fails `make drc` on any
+#   UNMAPPED, POPULATED, UNEXPLAINED finding; an UNEXPLAINED, EXPECTED
+#   (allow-listed) finding never fails the build. This used to default to 0
+#   because $(GDSMAP) alone reports every front-end/library layer (NW, OD,
+#   PO, PP, NP, CO, dummy fill, LOGO, SRAM markers) as unmapped on any real
+#   merged stream — those arrive pre-drawn from vendor GDS content $(GDSMAP)
+#   was never meant to name, and a gate that is red on every good run is the
+#   "gates that cannot discriminate" failure this project has been burned by
+#   before (docs/tapeout/35, 39). LAYER_MAP_ALLOWLIST now closes exactly that
+#   gap: docs/tapeout/49-layer-map-coverage-check.md S"Validation" and
+#   docs/tapeout/53-gate-promotion-plan.md S1 record the empirical proof —
+#   both current builds (fp1505, full-20260814) report ZERO unexplained
+#   findings against $(GDSMAP)+this allow-list, both real IMEC
+#   Final_Report(s) (17Aug26 and 18Aug26 archives) agree with each other and
+#   with $(GDSMAP)+allow-list on the one file cross-checkable byte-for-byte
+#   against a real foundry read (zero unmapped either way, 24 native +
+#   27 allow-listed = the 51 pairs the foundry table also covers), and the
+#   allow-list mechanism is proven to actually fail (removing any one of its
+#   rows and re-running turns that layer back into an UNEXPLAINED finding —
+#   this is not a gate that can only ever pass). Override back to 0 to
+#   return to advisory-only.
 LAYER_MAP_EXTRA         ?=
-LAYER_MAP_STRICT        ?= 0
+LAYER_MAP_ALLOWLIST     ?= $(DESIGN_DIR)/scripts/layer_map_allowlist.txt
+LAYER_MAP_STRICT        ?= 1
 LAYER_MAP_CHECK_SCRIPT  := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/asic-toolkit/scripts/check-layer-map-coverage
 
 layer-map-check: gdsmap
@@ -827,27 +850,36 @@ layer-map-check: gdsmap
 	        then extra="$$extra --imec-report $$f"; \
 	        else extra="$$extra --map $$f"; fi; \
 	done; \
-	python3 $(LAYER_MAP_CHECK_SCRIPT) $(GDS) --map $(GDSMAP) $$extra; rc=$$?; \
+	allow=""; \
+	for f in $(LAYER_MAP_ALLOWLIST); do \
+	    test -s "$$f" || { echo "FAIL: LAYER_MAP_ALLOWLIST names unreadable file: $$f"; exit 1; }; \
+	    allow="$$allow --allow-list $$f"; \
+	done; \
+	python3 $(LAYER_MAP_CHECK_SCRIPT) $(GDS) --map $(GDSMAP) $$extra $$allow; rc=$$?; \
 	if [ -z "$(LAYER_MAP_EXTRA)" ]; then \
 	    echo ""; \
-	    echo "  NOTE: only the derived stream-out map (\$$GDSMAP) was supplied."; \
-	    echo "  It declares the layers INNOVUS ITSELF constructs — routing metal,"; \
-	    echo "  vias, AP, pin-name text, the die outline. Front-end and library-"; \
-	    echo "  merged layers (std cells, macros, pads, dummy fill, seal ring,"; \
-	    echo "  LOGO, SRAM markers) stream in pre-drawn from vendor GDS content"; \
-	    echo "  and are NOT named by this map — they are EXPECTED to show as"; \
-	    echo "  unmapped below, and that is not a defect. Set LAYER_MAP_EXTRA to"; \
-	    echo "  a foundry/IMEC layer table for a complete check."; \
+	    echo "  NOTE: only the derived stream-out map (\$$GDSMAP) was supplied, plus"; \
+	    echo "  \$$LAYER_MAP_ALLOWLIST ($(LAYER_MAP_ALLOWLIST))."; \
+	    echo "  \$$GDSMAP declares the layers INNOVUS ITSELF constructs — routing"; \
+	    echo "  metal, vias, AP, pin-name text, the die outline. Front-end and"; \
+	    echo "  library-merged layers (std cells, macros, pads, dummy fill, LOGO,"; \
+	    echo "  SRAM markers) stream in pre-drawn from vendor GDS content and are NOT"; \
+	    echo "  named by \$$GDSMAP — the allow-list is what tells this check those are"; \
+	    echo "  EXPECTED, not a defect (see docs/tapeout/49 for the empirical basis of"; \
+	    echo "  every allow-listed row). Set LAYER_MAP_EXTRA to a foundry/IMEC layer"; \
+	    echo "  table for independent confirmation, or to check a layer this project's"; \
+	    echo "  own allow-list does not yet cover."; \
 	fi; \
 	echo ""; \
 	if [ "$$rc" != 0 ]; then \
 	    if [ "$(LAYER_MAP_STRICT)" = "1" ]; then \
-	        echo "  LAYER_MAP_STRICT=1 — failing on the UNMAPPED, POPULATED finding(s) above."; \
+	        echo "  LAYER_MAP_STRICT=1 — failing on the UNMAPPED, POPULATED, UNEXPLAINED"; \
+	        echo "  finding(s) above. (An EXPECTED/allow-listed finding never reaches"; \
+	        echo "  here — only UNEXPLAINED ones set this exit code.)"; \
 	        exit 1; \
 	    else \
 	        echo "  Not failing the build (LAYER_MAP_STRICT=0). Read the finding(s)"; \
-	        echo "  above; set LAYER_MAP_STRICT=1 once the map(s) supplied are"; \
-	        echo "  complete enough to gate on."; \
+	        echo "  above; LAYER_MAP_STRICT=1 is the default — this run overrode it."; \
 	    fi; \
 	fi
 
@@ -877,8 +909,16 @@ drc-census:
 ##   make bnd BND_GDS=some/other.gds — check a different stream
 ##   make bnd BND_DECK=/tmp/pitch80.bnd.rules — switch A/B against a scratch
 ##                                     copy of the wrapper (never on signoff)
+## BND_GDS ?= $(GDS): FIXED 2026-08-18. The recipe used to hardcode $(GDS) into
+## the exported BND_GDS regardless of what was passed on the command line, so
+## the override this header has documented since the target was written NEVER
+## WORKED -- `make bnd BND_GDS=some/other.gds` silently checked $(GDS) instead.
+## Caught while reproducing docs/tapeout/50-bnd-and-logo-checks.md's numbers:
+## the override is exactly how that page's reference run points BND_GDS at the
+## exact IMEC-checked file instead of the default $(OUT_DIR)/$(BLOCK).gds.
+BND_GDS ?= $(GDS)
 bnd:
-	BND_GDS=$(GDS) BND_RUNDIR=$(BND_RUNDIR) BND_CPUS=$(BND_CPUS) \
+	BND_GDS=$(BND_GDS) BND_RUNDIR=$(BND_RUNDIR) BND_CPUS=$(BND_CPUS) \
 	BLOCK=$(BLOCK) BND_FOUNDRY_DECK=$(BND_FOUNDRY_DECK) \
 	    $(DESIGN_DIR)/scripts/calibre/run_bnd.sh
 
@@ -900,6 +940,58 @@ padring-gds:
 	mkdir -p $(REPORT_DIR)
 	python3 $(NANOSOC_ETH_CHIPLET_HOME)/scripts/check_padring_gds.py \
 	    --gds $(GDS) --json $(REPORT_DIR)/padring_gds_report.json
+
+#-----------------------------------------------------------------------------
+# PVDD2POC cardinality check -- visibility only, NOT a fix. See
+# docs/tapeout/53-gate-promotion-plan.md §2 and CONVERGENCE_PLAN_2026-08-18.md
+# §8 "New: PVDD2POC".
+#-----------------------------------------------------------------------------
+## pvdd2poc-check: report how many PVDD2POC_G pad-ring cells
+## ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v instantiates, and flag
+## drift against the recorded baseline (today: 4, one per pad-ring side). This
+## tracks IMEC's "multiple PVDD2POC cells in digital domain" padring error --
+## it does NOT decide whether 1 or 4 is correct, and it does NOT convert any
+## instance to PVDD2DGZ_G. See scripts/check_pvdd2poc_cardinality.py. No PDK,
+## no Calibre seat, no build needed -- just the tracked Verilog source.
+.PHONY: pvdd2poc-check
+pvdd2poc-check:
+	mkdir -p $(REPORT_DIR)
+	python3 $(NANOSOC_ETH_CHIPLET_HOME)/scripts/check_pvdd2poc_cardinality.py \
+	    --json $(REPORT_DIR)/pvdd2poc_cardinality_report.json
+
+#-----------------------------------------------------------------------------
+# CSR / seal-ring rule-category ratchet -- a budget CEILING, not a fix. See
+# docs/tapeout/53-gate-promotion-plan.md §2 "CSR / 157-category ratchet" and
+# CONVERGENCE_PLAN_2026-08-18.md §8.
+#-----------------------------------------------------------------------------
+## csr-ratchet: run scripts/ci/csr_ratchet.py against a real DRC summary (e.g.
+## a fresh IMEC archive's drc/cali_drc_*.rpt, or a local Calibre run against a
+## full-library-merge stream) and fail if any of CSR.R.2:B, CSR.R.2:D or
+## CSR.EN.8 exceed the recorded baseline ceiling in
+## ASIC/genus-innovus/scripts/calibre/csr_ratchet_budget.yaml. Any rule
+## category firing that isn't already in that file's tracked_checks or
+## new_categories is flagged, not failed on.
+##   make csr-ratchet CSR_TARGET=/path/to/a/drc/summary/or/rundir
+.PHONY: csr-ratchet
+csr-ratchet:
+	@test -n "$(CSR_TARGET)" || { \
+	    echo "usage: make csr-ratchet CSR_TARGET=/path/to/drc/summary/or/rundir"; exit 1; }
+	mkdir -p $(REPORT_DIR)
+	python3 $(NANOSOC_ETH_CHIPLET_HOME)/scripts/ci/csr_ratchet.py "$(CSR_TARGET)" \
+	    --json $(REPORT_DIR)/csr_ratchet_report.json
+
+## csr-ratchet-selftest: prove the ratchet mechanism discriminates (a battery
+## of synthetic must-pass/must-fail fixtures, no archive needed) and, when
+## ASIC/imec_results (gitignored, host-local) is present, re-validate the
+## budget file's recorded numbers directly against the two raw archive
+## reports -- the stale/drift self-test discipline this project applies to
+## drc_waivers.yaml (docs/tapeout/39-po-r8-resolved.md §8), applied here to a
+## budget file instead of a waiver file.
+.PHONY: csr-ratchet-selftest
+csr-ratchet-selftest:
+	mkdir -p $(REPORT_DIR)
+	python3 $(NANOSOC_ETH_CHIPLET_HOME)/scripts/ci/csr_ratchet.py --self-test \
+	    --json $(REPORT_DIR)/csr_ratchet_selftest.json
 
 #-----------------------------------------------------------------------------
 # Logo merge (klayout — no EDA licence)
@@ -996,8 +1088,19 @@ endif
 
 ## DRC the SUBMISSION artefact. Own rundir, so it never overwrites the signoff
 ## run's results and the two counts can be compared.
+## DRC_LOGO_RUNDIR ADDED 2026-08-18: this used to hardcode
+## $(WORK_DIR)/../calibre_runs/drc_logo_flow with no override at all — the
+## same "CI clones the repo and finds nothing there" defect ci/signoff.yaml's
+## `drc` stage comment describes fixing for the main DRC gate, but never
+## applied here. calibre_runs/ is gitignored (ASIC/*/calibre_runs), so a CI
+## stage that ran drc-logo-check exactly as this recipe used to write it would
+## produce evidence a fresh clone's own `check:` step could never find. Caught
+## while wiring ci/signoff.yaml's `logo` stage (docs/tapeout/
+## 53-gate-promotion-plan.md §1 row 4) — see that stage's `run:` for a
+## build-tree override in practice.
+DRC_LOGO_RUNDIR ?= $(WORK_DIR)/../calibre_runs/drc_logo_flow
 drc-logo: logo
-	DRC_GDS=$(LOGO_GDS_OUT) DRC_RUNDIR=$(WORK_DIR)/../calibre_runs/drc_logo_flow \
+	DRC_GDS=$(LOGO_GDS_OUT) DRC_RUNDIR=$(DRC_LOGO_RUNDIR) \
 	DRC_CPUS=$(DRC_CPUS) $(DRC_DECK_ENV) \
 	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
 
@@ -1008,7 +1111,7 @@ drc-logo: logo
 ## (calibre_runs/drc_logo, drc_logo_L300, drc_logo_text) into a single
 ## reproducible target — see docs/tapeout/50-bnd-and-logo-checks.md.
 drc-logo-check: drc-logo
-	@SUMMARY=$(WORK_DIR)/../calibre_runs/drc_logo_flow/$(BLOCK).drc.summary; \
+	@SUMMARY=$(DRC_LOGO_RUNDIR)/$(BLOCK).drc.summary; \
 	if [ ! -s "$$SUMMARY" ]; then \
 	    echo "FAIL: no summary at $$SUMMARY"; exit 1; \
 	fi; \

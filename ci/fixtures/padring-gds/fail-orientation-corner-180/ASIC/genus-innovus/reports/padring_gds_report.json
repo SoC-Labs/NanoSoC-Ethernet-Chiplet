@@ -1,0 +1,109 @@
+{
+  "gds": "/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds",
+  "problems": [
+    {
+      "kind": "orientation-mismatch",
+      "detail": [
+        "uPAD_CORNER_BL (PCORNER_G @ bottomleft): placed at ANGLE=180 mirror=False, expected ANGLE=0 mirror=False -- Bottom-left die corner: abuts the LEFT edge (running up, toward uPAD_TL_TX_7) and the BOTTOM edge (running right, toward uPAD_VDDIO_B_0). R0 is this design's reference (unrotated) corner orientation, assigned to bottom-left.",
+        "uPAD_CORNER_BR (PCORNER_G @ bottomright): placed at ANGLE=270 mirror=False, expected ANGLE=90 mirror=False -- Bottom-right die corner: abuts the BOTTOM edge (running left, toward uPAD_VDDIO_B_2) and the RIGHT edge (running up, toward uPAD_VDDIO_R_0). R90 continues the counter-clockwise progression from the bottom-left reference around to bottom-right.",
+        "uPAD_CORNER_TL (PCORNER_G @ topleft): placed at ANGLE=90 mirror=False, expected ANGLE=270 mirror=False -- Top-left die corner: this corner's pad ring must abut the TOP edge (running right, toward uPAD_VDDIO_T_0) and the LEFT edge (running down, toward uPAD_TL_RX_0). R270 is the rotation that faces PCORNER_G's ESD/guard geometry into that top+left pairing.",
+        "uPAD_CORNER_TR (PCORNER_G @ topright): placed at ANGLE=0 mirror=False, expected ANGLE=180 mirror=False -- Top-right die corner: abuts the RIGHT edge (running down, toward uPAD_HOST_IO_6) and the TOP edge (running left, toward uPAD_VSSIO_T_2). R180 -- the corner diagonally opposite bottom-left's R0 reference, which is exactly the 180-degree relationship the shipped bug got wrong on ALL FOUR corners at once (see the header comment above)."
+      ]
+    }
+  ],
+  "info": [],
+  "top_cell": "nanosoc_eth_chiplet_pads",
+  "counts": {
+    "PAD70GU": {
+      "expected": 42,
+      "observed": 42,
+      "defined": true
+    },
+    "PAD70NU": {
+      "expected": 40,
+      "observed": 40,
+      "defined": true
+    },
+    "PCORNER_G": {
+      "expected": 4,
+      "observed": 4,
+      "defined": true
+    },
+    "PDDW04DGZ_G": {
+      "expected": 9,
+      "observed": 9,
+      "defined": true
+    },
+    "PDDW16DGZ_G": {
+      "expected": 36,
+      "observed": 36,
+      "defined": true
+    },
+    "PDUW08DGZ_G": {
+      "expected": 1,
+      "observed": 1,
+      "defined": true
+    },
+    "PDUW16DGZ_G": {
+      "expected": 2,
+      "observed": 2,
+      "defined": true
+    },
+    "PVDD1DGZ_G": {
+      "expected": 6,
+      "observed": 6,
+      "defined": true
+    },
+    "PVDD2DGZ_G": {
+      "expected": 8,
+      "observed": 8,
+      "defined": true
+    },
+    "PVDD2POC_G": {
+      "expected": 4,
+      "observed": 4,
+      "defined": true
+    },
+    "PVSS1DGZ_G": {
+      "expected": 4,
+      "observed": 4,
+      "defined": true
+    },
+    "PVSS2DGZ_G": {
+      "expected": 12,
+      "observed": 12,
+      "defined": true
+    }
+  },
+  "corner_orientation": {
+    "uPAD_CORNER_BL": {
+      "expected_angle": 0,
+      "expected_mirror": false,
+      "observed_angle": 180,
+      "observed_mirror": false
+    },
+    "uPAD_CORNER_BR": {
+      "expected_angle": 90,
+      "expected_mirror": false,
+      "observed_angle": 270,
+      "observed_mirror": false
+    },
+    "uPAD_CORNER_TL": {
+      "expected_angle": 270,
+      "expected_mirror": false,
+      "observed_angle": 90,
+      "observed_mirror": false
+    },
+    "uPAD_CORNER_TR": {
+      "expected_angle": 180,
+      "expected_mirror": false,
+      "observed_angle": 0,
+      "observed_mirror": false
+    }
+  },
+  "top_child_total": 2346912,
+  "geometry": {
+    "...": "trimmed for this fixture -- padring-gds's check: never reads this key"
+  },
+  "_provenance": "REAL capture, unmodified: ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds via scripts/check_padring_gds.py, 2026-08-18. Matches ASIC/imec_results/Archive_..._18Aug26_19u28/padring/Padring_check.rpt's own 4 Error-padringcheck lines exactly."
+}

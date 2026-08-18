@@ -1,0 +1,20 @@
+==================================================================================
+=== CALIBRE::DRC-H SUMMARY REPORT
+===
+Execution Date/Time:       Tue Aug 18 00:00:00 2026
+Layout Primary Cell:       nanosoc_eth_chiplet_pads
+Maximum Results/RuleCheck: 1000
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS
+---
+RULECHECK LOGO.S.1 ...................... TOTAL Result Count = 0   (0)
+RULECHECK LOGO.O.1 ...................... TOTAL Result Count = 0   (0)
+RULECHECK LOGO.R.4 ...................... TOTAL Result Count = 0   (0)
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS (BY CELL)
+---
+----------------------------------------------------------------------------------
+--- SUMMARY
+---
+TOTAL DRC RuleChecks Executed:   1904
+TOTAL DRC Results Generated:     0 (0)

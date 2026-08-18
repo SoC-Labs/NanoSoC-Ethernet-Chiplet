@@ -80,6 +80,19 @@ does too (a cell-NAME diff, not a geometry diff):
     shuffled, missing, extra, or substituted pad-TYPE in the ring; it CANNOT
     tell two same-typed adjacent pads apart (e.g. it cannot prove TL_RX_2 in
     particular is not swapped with TL_RX_3 -- both are `PDDW16DGZ_G`).
+  * ORIENTATION, for the 4 corner cells only: each corner placement's live
+    STRANS/ANGLE transform, read directly from the GDS, diffed against a
+    reviewed `EXPECTED_ORIENTATION` table (see Section 1a below) -- this is
+    what catches a corner cell placed at the right SPOT with the right NAME
+    but rotated the wrong way, the exact defect class IMEC's Padringcheck
+    caught 2026-08-18 that nothing else here can see (name/count/order all
+    stayed clean throughout that bug -- see docs/tapeout/52-padring-gds-
+    check.md Section 7). It is intentionally NOT extended to the 82 ordinary
+    IO/power pads: `nanosoc_eth_chiplet_pads.io` declares no `orientation=`
+    for them (their rotation is a PnR placement OUTPUT, not a floorplan
+    INPUT), so there is no sourceable "expected" value to check them against
+    -- see EXPECTED_ORIENTATION's own docstring for why guessing one would be
+    exactly the mistake this check exists to prevent.
   * GEOMETRY CONTENT, informationally only: whether each expected structure's
     own definition carries any BOUNDARY/PATH/BOX geometry at all, and on how
     many distinct layers -- a coarse, uninterpreted signal for "is this a
@@ -91,9 +104,9 @@ does too (a cell-NAME diff, not a geometry diff):
 What it flatly CANNOT do: prove the padframe is DRC-clean, prove the streamed
 geometry electrically matches the real vendor cell, or substitute for
 IMEC/the foundry's own CompareCells and Padringcheck. A clean run of this
-script is "our own names, counts and order are internally consistent, and
-present in the stream" -- not "this pad ring will clear the broker's tools."
-See the docstring section "VALIDATION RESULT" recorded in
+script is "our own names, counts, order and corner orientation are internally
+consistent, and present in the stream" -- not "this pad ring will clear the
+broker's tools." See the docstring section "VALIDATION RESULT" recorded in
 docs/tapeout for what running this against the exact GDS IMEC saw found.
 
 Usage
@@ -102,9 +115,10 @@ Usage
 
 Exit status
 -----------
-    0  every expected pad/corner/bond-pad name, count and per-side type
-       order matches what the sources intend
-    1  a mismatch was found (missing, extra, misnamed, or out-of-order)
+    0  every expected pad/corner/bond-pad name, count, per-side type order
+       and corner orientation matches what the sources intend
+    1  a mismatch was found (missing, extra, misnamed, out-of-order, or
+       wrongly rotated)
     2  usage / internal error (bad arguments, sources unreadable, GDS
        unreadable or not GDSII)
 """
@@ -141,6 +155,113 @@ SIDE_KEYWORDS = ("topleft", "topright", "bottomleft", "bottomright",
 # expected names is a "misnamed / unexpected" flag -- the kind of drift a
 # version suffix or a case change would produce.
 WATCH_PREFIXES = ("PAD7", "PCORNER", "PDDW", "PDUW", "PVDD", "PVSS")
+
+# ---------------------------------------------------------------------------
+# 1a. Expected corner orientation -- A REVIEWED, HAND-WRITTEN TABLE, NOT A
+#     VALUE RE-READ FROM THE .io FILE AT RUNTIME, AND NOT A DERIVED FORMULA.
+#     BOTH alternatives were considered and rejected. Read this before editing.
+#
+#     WHY NOT "just re-parse .io's orientation= like Expected already does
+#     for names/counts/order": because that field is EXACTLY what was wrong.
+#     The bug this table exists to catch is that
+#     ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io itself carried
+#     four wrong `orientation=` values for months (all four PCORNER_G corners
+#     rotated 180 degrees from correct, introduced whenever this
+#     hand-maintained file was last edited -- commit 9f57214, "ASIC Cadence
+#     PnR up to routing complete" -- and never touched again until IMEC's
+#     Padringcheck caught it 2026-08-18: "Design does not contain any TSMC IO
+#     cells or bondpads" was the visible symptom on THAT run, but the
+#     corner-rotation finding is the one this table addresses). If this
+#     check's "expected" value were sourced by re-reading that same .io file
+#     every run, a future re-introduction of the identical bug (someone edits
+#     orientation= back to wrong) would make "expected" drift in lockstep
+#     with "wrong" -- the two would always agree with each other and this
+#     check would never fire. A trip-wire cannot be wired to the thing it is
+#     guarding.
+#
+#     WHY NOT a derived formula (e.g. "each corner is +90 degrees from the
+#     last, walking the ring"): this exact mistake has already been made once
+#     in this repo. docs/tapeout/04-floorplan-and-io.md Section 4.2 (commit
+#     b5d249c8) *asserted* a "verified" +90-degrees-per-step rotational
+#     pattern around the four corners, stated with confidence, and it was
+#     WRONG -- PCORNER_G is rotation-symmetric for CSR.R.1 (ESD ruling)
+#     purposes, which is a completely different question from which of the
+#     four TL/TR/BL/BR *positions* a given rotation belongs in relative to
+#     the pad rows that corner must abut. A formula that looks plausible from
+#     symmetry alone re-encodes exactly the kind of unreviewed guess that
+#     produced the original bug, just with extra indirection.
+#
+#     SO: this table was built by a human reading the CORRECTED
+#     nanosoc_eth_chiplet_pads.io on 2026-08-18 (post-fix; verified against
+#     the file, not against memory -- see docs/tapeout/52-padring-gds-check.md
+#     Section 7 for the before/after values, sourced from git history at
+#     commit 9f57214 for "before" and the working tree as corrected today for
+#     "after") and is pinned here as an independent, static reference. If
+#     `nanosoc_eth_chiplet_pads.io` is ever deliberately re-floorplanned (a
+#     real design change, not a bug fix), this table must be updated BY HAND,
+#     by a human re-deriving what "correct" means for the new floorplan --
+#     never by re-pointing it at the .io file's own field.
+#
+#     Each entry: the .io file's own instance name -> {gds cell, expected
+#     rotation in degrees (0/90/180/270, GDSII ANGLE convention: degrees
+#     counter-clockwise), expected mirror bit, WHY}. "WHY" names the die
+#     corner and the two pad-ring edges that corner must abut -- so a future
+#     editor can sanity-check a change against the physical floorplan, not
+#     just against this table's own past self.
+#
+#     GDSII's `orientation=` string (R0/R90/R180/R270, as .io/place_io write
+#     it) maps onto STRANS/ANGLE as: R<N> -> ANGLE=<N> degrees, no reflection
+#     (STRANS bit 15 clear). This design's floorplan never uses a mirrored
+#     ("MX"/"MY"-style) corner orientation, so `mirror: False` throughout --
+#     recorded explicitly rather than assumed, so a future corner placement
+#     that DOES need a mirror shows up as a table gap, not a silent pass.
+# ---------------------------------------------------------------------------
+EXPECTED_ORIENTATION: dict[str, dict] = {
+    "uPAD_CORNER_TL": {
+        "cell": "PCORNER_G",
+        "corner": "topleft",
+        "angle_deg": 270,
+        "mirror": False,
+        "why": ("Top-left die corner: this corner's pad ring must abut the "
+                "TOP edge (running right, toward uPAD_VDDIO_T_0) and the "
+                "LEFT edge (running down, toward uPAD_TL_RX_0). R270 is the "
+                "rotation that faces PCORNER_G's ESD/guard geometry into "
+                "that top+left pairing."),
+    },
+    "uPAD_CORNER_BL": {
+        "cell": "PCORNER_G",
+        "corner": "bottomleft",
+        "angle_deg": 0,
+        "mirror": False,
+        "why": ("Bottom-left die corner: abuts the LEFT edge (running up, "
+                "toward uPAD_TL_TX_7) and the BOTTOM edge (running right, "
+                "toward uPAD_VDDIO_B_0). R0 is this design's reference "
+                "(unrotated) corner orientation, assigned to bottom-left."),
+    },
+    "uPAD_CORNER_BR": {
+        "cell": "PCORNER_G",
+        "corner": "bottomright",
+        "angle_deg": 90,
+        "mirror": False,
+        "why": ("Bottom-right die corner: abuts the BOTTOM edge (running "
+                "left, toward uPAD_VDDIO_B_2) and the RIGHT edge (running "
+                "up, toward uPAD_VDDIO_R_0). R90 continues the "
+                "counter-clockwise progression from the bottom-left "
+                "reference around to bottom-right."),
+    },
+    "uPAD_CORNER_TR": {
+        "cell": "PCORNER_G",
+        "corner": "topright",
+        "angle_deg": 180,
+        "mirror": False,
+        "why": ("Top-right die corner: abuts the RIGHT edge (running down, "
+                "toward uPAD_HOST_IO_6) and the TOP edge (running left, "
+                "toward uPAD_VSSIO_T_2). R180 -- the corner diagonally "
+                "opposite bottom-left's R0 reference, which is exactly the "
+                "180-degree relationship the shipped bug got wrong on ALL "
+                "FOUR corners at once (see the header comment above)."),
+    },
+}
 
 
 class SourceError(Exception):
@@ -319,6 +440,30 @@ class Expected:
 
         self.watch_exact = set(self.counts) | self.corner_cells
 
+        # Cross-check the REVIEWED orientation table (above) against what the
+        # .io file's corner block names TODAY -- not to source values from it
+        # (see the table's own docstring for why not), but so a corner
+        # renamed/added/removed in a future floorplan revision is caught as a
+        # SourceError rather than the table silently going stale and checking
+        # nothing. This is the same "both directions matter" discipline
+        # already applied to pads.v/io_file/place_bondpads.tcl above.
+        io_corner_names = {c["name"] for c in self.corners}
+        table_names = set(EXPECTED_ORIENTATION)
+        if io_corner_names != table_names:
+            only_io = sorted(io_corner_names - table_names)
+            only_table = sorted(table_names - io_corner_names)
+            detail = []
+            if only_io:
+                detail.append(f"{IO_FILE.name} names corner(s) {only_io} that "
+                               f"EXPECTED_ORIENTATION does not cover")
+            if only_table:
+                detail.append(f"EXPECTED_ORIENTATION covers corner(s) {only_table} "
+                               f"that {IO_FILE.name} no longer names")
+            self.cross_check_errors.append(
+                "orientation table is out of step with the floorplan's own corner "
+                "list -- " + "; ".join(detail) + " (update the reviewed table by "
+                "hand; see its docstring)")
+
 
 def read_top_cell_name(path: Path) -> str | None:
     if not path.is_file():
@@ -344,8 +489,22 @@ def read_top_cell_name(path: Path) -> str | None:
 #    a transform, nothing else -- confirmed empirically too: `strings` over
 #    the reference GDS in this investigation found zero occurrences of any
 #    "uPAD_*" instance name anywhere in the file. So every check below is
-#    necessarily about structure NAMES, COUNTS and GEOMETRIC POSITION, never
-#    about a specific net's identity.
+#    necessarily about structure NAMES, COUNTS, GEOMETRIC POSITION and (for
+#    the 4 corners) TRANSFORM -- never about a specific net's identity.
+#
+#    STRANS/ANGLE/MAG, added alongside XY/COLROW: a GDSII SREF/AREF element's
+#    body is, in file order, [ELFLAGS] [PLEX] SNAME [STRANS [MAG] [ANGLE]] XY
+#    [COLROW for AREF] {property records} ENDEL -- i.e. the transform record
+#    group always comes AFTER SNAME and BEFORE XY, exactly where pend_sname is
+#    already known and pend_xy has not been read yet. STRANS is a 2-byte
+#    bit-array; bit 15 (0x8000, the MSB) is the reflection ("mirror about X
+#    before rotating") flag and is the only STRANS bit this script reads --
+#    bits 13/14 (absolute mag/angle) do not change what "the cell's own
+#    rotation" means for a comparison against EXPECTED_ORIENTATION. ANGLE is
+#    an 8-byte GDSII REAL8 (not IEEE 754): sign in bit 0 of byte 0, a 7-bit
+#    excess-64 base-16 exponent, and a 56-bit unsigned mantissa -- decoded by
+#    _gds_real8() below. A watched instance with NO STRANS record at all is
+#    orientation R0/unmirrored (GDSII's own default for an absent STRANS).
 # ---------------------------------------------------------------------------
 R_HEADER = 0x00
 R_ENDLIB = 0x04
@@ -363,9 +522,39 @@ R_ENDEL = 0x11
 R_SNAME = 0x12
 R_COLROW = 0x13
 R_NODE = 0x15
+R_STRANS = 0x1A
+R_MAG = 0x1B
+R_ANGLE = 0x1C
 R_BOX = 0x2D
 
 _GEOM_RTYPES = (R_BOUNDARY, R_PATH, R_BOX, R_NODE)
+
+# Instances this run should try to read a live orientation transform for.
+# Restricted to the 4 corner names, deliberately: they are the only
+# placements this script can uniquely identify (one PCORNER_G per die
+# corner, self-calibrated the same way classify_sides() calibrates edges),
+# so they are the only ones an EXPECTED_ORIENTATION entry can be diffed
+# against without guessing which of several same-typed placements on an edge
+# a given transform belongs to.
+ORIENTATION_WATCH_CELLS = {v["cell"] for v in EXPECTED_ORIENTATION.values()}
+
+
+def _gds_real8(b: bytes) -> float:
+    """Decode an 8-byte GDSII REAL8 (excess-64, base-16 exponent) to float.
+
+    Not IEEE 754 -- GDSII's own float format, used by ANGLE and MAG. Only
+    values this script needs to compare are whole degrees (0/90/180/270), so
+    precision beyond that is not a concern, but the decode itself must be
+    exact or a real ANGLE=180.0 could misread as e.g. 179.99999.
+    """
+    if len(b) != 8:
+        return 0.0
+    sign = -1.0 if (b[0] & 0x80) else 1.0
+    exponent = (b[0] & 0x7F) - 64
+    mantissa = int.from_bytes(b[1:8], "big")
+    if mantissa == 0:
+        return 0.0
+    return sign * (mantissa / (1 << 56)) * (16.0 ** exponent)
 
 
 class GdsFindings:
@@ -376,7 +565,7 @@ class GdsFindings:
         self.geom_layers: dict[str, Counter[int]] = defaultdict(Counter)
         self.nested_refs: Counter[str] = Counter()
         # every direct (top-cell) placement of a watched cell:
-        # {cell, x, y, kind, colrow}
+        # {cell, x, y, kind, colrow, angle_deg, mirror}
         self.top_children: list[dict] = []
         self.top_child_total = 0
         self.aref_watched = 0
@@ -398,6 +587,8 @@ def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
     pend_sname: str | None = None
     pend_xy: tuple[int, int] | None = None
     pend_colrow: tuple[int, int] | None = None
+    pend_mirror: bool = False
+    pend_angle: float = 0.0
 
     with open(path, "rb", buffering=1 << 20) as fh:
         while True:
@@ -426,8 +617,16 @@ def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
                            and pend_sname in watch_exact)
             need_layer = (rtype == R_LAYER and in_watched_def is not None
                           and elem_kind == "geo")
+            # STRANS/ANGLE come after SNAME, before XY -- read them only for
+            # the orientation-watched cells (corners), and only under the top
+            # cell, same scoping as need_xy.
+            need_strans = (rtype == R_STRANS and in_top and pend_kind is not None
+                           and pend_sname in ORIENTATION_WATCH_CELLS)
+            need_angle = (rtype == R_ANGLE and in_top and pend_kind is not None
+                          and pend_sname in ORIENTATION_WATCH_CELLS)
             need_body = body_len > 0 and (
-                rtype == R_STRNAME or need_sname or need_xy or need_colrow or need_layer)
+                rtype == R_STRNAME or need_sname or need_xy or need_colrow
+                or need_layer or need_strans or need_angle)
 
             if need_body:
                 body = fh.read(body_len)
@@ -451,6 +650,7 @@ def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
                     f.top_found = True
                 in_watched_def = name if name in watch_exact else None
                 pend_kind = pend_sname = pend_xy = pend_colrow = None
+                pend_mirror, pend_angle = False, 0.0
                 elem_kind = None
 
             elif rtype == R_ENDSTR:
@@ -458,6 +658,7 @@ def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
                 in_top = False
                 in_watched_def = None
                 pend_kind = pend_sname = pend_xy = pend_colrow = None
+                pend_mirror, pend_angle = False, 0.0
                 elem_kind = None
 
             elif rtype == R_ENDLIB:
@@ -469,10 +670,20 @@ def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
                 pend_sname = None
                 pend_xy = None
                 pend_colrow = None
+                pend_mirror, pend_angle = False, 0.0
 
             elif rtype == R_SNAME:
                 if need_sname:
                     pend_sname = body.rstrip(b"\x00").decode("ascii", "replace")
+
+            elif rtype == R_STRANS and need_strans:
+                if body_len >= 2:
+                    bits = struct.unpack(">H", body[:2])[0]
+                    pend_mirror = bool(bits & 0x8000)
+
+            elif rtype == R_ANGLE and need_angle:
+                if body_len >= 8:
+                    pend_angle = _gds_real8(body[:8])
 
             elif rtype == R_XY and need_xy:
                 if body_len == 8:
@@ -507,10 +718,17 @@ def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
                             "xy": pend_xy,
                             "kind": "aref" if pend_kind == R_AREF else "sref",
                             "colrow": pend_colrow,
+                            "angle_deg": (round(pend_angle) % 360
+                                          if pend_sname in ORIENTATION_WATCH_CELLS
+                                          else None),
+                            "mirror": (pend_mirror
+                                       if pend_sname in ORIENTATION_WATCH_CELLS
+                                       else None),
                         })
                 elif in_watched_def is not None and pend_kind is not None:
                     f.nested_refs[in_watched_def] += 1
                 pend_kind = pend_sname = pend_xy = pend_colrow = None
+                pend_mirror, pend_angle = False, 0.0
                 elem_kind = None
 
     if not f.seen_header:
@@ -523,7 +741,7 @@ def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
 
 
 # ---------------------------------------------------------------------------
-# 3. Compare: names + counts, then per-side order.
+# 3. Compare: names + counts, then per-side order, then corner orientation.
 # ---------------------------------------------------------------------------
 def classify_sides(top_children: list[dict]):
     """Self-calibrate the die's 4 edges from the padframe placements THEMSELVES
@@ -564,6 +782,24 @@ def classify_sides(top_children: list[dict]):
         return min(d, key=d.get)
 
     return side_of, notes
+
+
+def classify_corner(x: int, y: int, left_x: int, right_x: int,
+                     bottom_y: int, top_y: int) -> str:
+    """Which of the 4 die corners (topleft/topright/bottomleft/bottomright)
+    an (x, y) placement is nearest -- same bounding-box calibration
+    classify_sides() uses, just resolving to a CORNER instead of an EDGE, so
+    a PCORNER_G placement can be matched to its EXPECTED_ORIENTATION entry
+    without depending on GDSII instance names (which do not exist -- see the
+    module docstring)."""
+    candidates = {
+        "topleft": (left_x, top_y),
+        "topright": (right_x, top_y),
+        "bottomleft": (left_x, bottom_y),
+        "bottomright": (right_x, bottom_y),
+    }
+    return min(candidates, key=lambda k: (x - candidates[k][0]) ** 2
+                                          + (y - candidates[k][1]) ** 2)
 
 
 def sequences_match(observed: list[str], expected: list[str]) -> bool:
@@ -680,6 +916,66 @@ def run_check(gds_path: Path, top_override: str | None) -> tuple[int, dict]:
             if side_problems:
                 report["problems"].append({"kind": "padframe-order", "detail": side_problems})
 
+        # ---- corner orientation ---------------------------------------------
+        # Only possible once side_of's bounding box exists -- classify_corner()
+        # reuses the same calibration. Every watched-cell placement whose type
+        # is one of ORIENTATION_WATCH_CELLS (today: just PCORNER_G) is matched
+        # to its nearest die corner, and diffed against EXPECTED_ORIENTATION.
+        pts = [c["xy"] for c in findings.top_children if c["xy"] is not None]
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        left_x, right_x = min(xs), max(xs)
+        bottom_y, top_y = min(ys), max(ys)
+
+        by_name = {v["cell"]: {} for v in EXPECTED_ORIENTATION.values()}
+        for c in findings.top_children:
+            if c["cell"] not in ORIENTATION_WATCH_CELLS or c["xy"] is None:
+                continue
+            corner_pos = classify_corner(c["xy"][0], c["xy"][1],
+                                          left_x, right_x, bottom_y, top_y)
+            by_name[c["cell"]].setdefault(corner_pos, []).append(c)
+
+        orient_problems = []
+        orient_report = {}
+        for inst_name, exp_entry in sorted(EXPECTED_ORIENTATION.items()):
+            cell = exp_entry["cell"]
+            corner_pos = exp_entry["corner"]
+            placements = by_name.get(cell, {}).get(corner_pos, [])
+            key = f"{inst_name} ({cell} @ {corner_pos})"
+            if not placements:
+                # Already reported under name-or-count / padframe-order if the
+                # cell is simply missing altogether; here specifically no
+                # placement landed in the EXPECTED corner bucket, which is a
+                # distinct fault (e.g. two corners swapped positions).
+                orient_problems.append(
+                    f"{key}: no {cell} placement found nearest the {corner_pos} "
+                    f"die corner -- cannot check its orientation")
+                orient_report[inst_name] = {"expected_angle": exp_entry["angle_deg"],
+                                             "expected_mirror": exp_entry["mirror"],
+                                             "observed": None}
+                continue
+            if len(placements) > 1:
+                orient_problems.append(
+                    f"{key}: {len(placements)} {cell} placements bucket to this "
+                    f"corner (expected exactly 1) -- orientation check is on the "
+                    f"first by placement order, but this is itself a padframe-order "
+                    f"defect")
+            p = placements[0]
+            got_angle = p["angle_deg"] if p["angle_deg"] is not None else 0
+            got_mirror = bool(p["mirror"])
+            orient_report[inst_name] = {"expected_angle": exp_entry["angle_deg"],
+                                         "expected_mirror": exp_entry["mirror"],
+                                         "observed_angle": got_angle,
+                                         "observed_mirror": got_mirror}
+            if got_angle != exp_entry["angle_deg"] or got_mirror != exp_entry["mirror"]:
+                orient_problems.append(
+                    f"{key}: placed at ANGLE={got_angle} mirror={got_mirror}, "
+                    f"expected ANGLE={exp_entry['angle_deg']} "
+                    f"mirror={exp_entry['mirror']} -- {exp_entry['why']}")
+        report["corner_orientation"] = orient_report
+        if orient_problems:
+            report["problems"].append({"kind": "orientation-mismatch",
+                                        "detail": orient_problems})
+
     # ---- geometry content, informational only --------------------------------
     geom_info = {}
     for cell in sorted(exp.watch_exact):
@@ -708,6 +1004,24 @@ def print_report(report: dict) -> None:
     print(f"  top-cell placements   : {report.get('top_child_total', 0)} total "
           f"(all cell types, direct children only)")
 
+    orient = report.get("corner_orientation", {})
+    if orient:
+        n_orient_ok = sum(1 for v in orient.values()
+                           if v.get("observed_angle") == v.get("expected_angle")
+                           and v.get("observed_mirror") == v.get("expected_mirror"))
+        print(f"  corner orientation    : {len(orient)} corner(s) checked "
+              f"({n_orient_ok} OK)")
+        for name in sorted(orient):
+            v = orient[name]
+            if "observed_angle" not in v:
+                print(f"    {name:18s} UNRESOLVED -- {v}")
+                continue
+            mark = "OK" if (v["observed_angle"] == v["expected_angle"]
+                             and v["observed_mirror"] == v["expected_mirror"]) else "MISMATCH"
+            print(f"    {name:18s} expected ANGLE={v['expected_angle']:>3d} "
+                  f"mirror={v['expected_mirror']!s:<5s}  observed ANGLE="
+                  f"{v['observed_angle']:>3d} mirror={v['observed_mirror']!s:<5s}  {mark}")
+
     empty = [c for c, g in report.get("geometry", {}).items() if g["geometry_records"] == 0]
     nonempty = [c for c, g in report.get("geometry", {}).items() if g["geometry_records"] > 0]
     print(f"  geometry (informational, not gated): {len(nonempty)} watched structure(s) "
@@ -724,8 +1038,8 @@ def print_report(report: dict) -> None:
         print(f"  note: {note}")
 
     if not report["problems"]:
-        print(f"  OK -- every expected pad/corner/bond-pad name, count and per-side "
-              f"type order matches the floorplan sources")
+        print(f"  OK -- every expected pad/corner/bond-pad name, count, per-side "
+              f"type order and corner orientation matches the floorplan sources")
         return
 
     print(f"\npadring_gds: {len(report['problems'])} problem group(s):", file=sys.stderr)

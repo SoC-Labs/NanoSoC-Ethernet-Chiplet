@@ -1,0 +1,23 @@
+# Synthetic (not a capture): ERC_TIMEOUT expired mid-run, or the Calibre
+# licence was never granted -- run_erc.sh's own documented shape for this
+# (RC_NORUN=3, "no calibre_erc.sum and no calibre_lvs.log ... after the
+# run"). The script never reaches its pg_verdict()/OVERALL print on this
+# path at all -- it dies before printing one. Proves erc_census.py's
+# "no OVERALL line found" arm on a transcript that has real content but
+# never reaches a verdict, distinct from the empty-file and missing-file
+# cases the script also has to refuse.
+== ERC preflight ==
+  OK      calibre  /eda/mentor/calibre/bin/calibre
+  OK      /tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/calibre.lvs
+  OK      klayout  /home/dam1n19/bin/klayout   (used by --quick and top-cell auto-detect)
+== ERC preflight OK ==
+== Calibre ERC (standalone, dummy source — no schematic compare) ==
+  gds       : ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+  top cell  : nanosoc_eth_chiplet_pads
+  deck      : /tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/calibre.lvs
+  rundir    : ASIC/eth-chiplet/build/fp1505/work/erc_run
+  power     : [VDD VDDIO]
+  ground    : [VSS VSSIO]
+  timeout   : 1800s
+INFO: timeout 1800s calibre -lvs -hier -64 -turbo 8 ASIC/eth-chiplet/build/fp1505/work/erc_run/run.deck
+FAIL: no licence available for feature 'calibre-lvs' -- queue exceeded ERC_NOWAIT

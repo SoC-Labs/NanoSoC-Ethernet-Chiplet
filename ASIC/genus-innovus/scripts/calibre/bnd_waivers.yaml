@@ -1,0 +1,132 @@
+# ---------------------------------------------------------------------------
+# BND WAIVERS --- nanosoc_eth_chiplet_pads
+#
+# Consumed by scripts/ci/bnd_census.py, the ONLY consumer, same reasoning as
+# drc_waivers.yaml (ASIC/genus-innovus/scripts/calibre/drc_waivers.yaml):
+# run_bnd.sh's deck is a plain `INCLUDE "$BND_FOUNDRY_DECK"` wrapper over the
+# read-only foundry wire-bond deck (CN65_WIRE_BOND_<stack>), re-read from the
+# PDK on every run. There is nowhere in that to put a project waiver that
+# would survive, so Calibre keeps reporting everything and this file changes
+# what the GATE counts, never what Calibre reports.
+#
+# THE RULES THIS FILE PLAYS BY (identical to drc_waivers.yaml, deliberately)
+#   1. CELL-SCOPED, NEVER RULE-SCOPED. bnd_census.py REFUSES to waive the
+#      layout primary cell whatever this file says, in code, not convention.
+#   2. EVERY ENTRY CARRIES ITS EXPECTED COUNT. Any drift FAILS the census.
+#   3. A WAIVER THAT MATCHES NOTHING IS A FAULT (stale -> FAIL).
+#   4. THE JUSTIFICATION MUST BE THE ESTABLISHED ONE, with real evidence.
+# ---------------------------------------------------------------------------
+version: 1
+
+applies_to:
+  block: nanosoc_eth_chiplet_pads
+  # Informational only, same as drc_waivers.yaml -- the census matches on
+  # cell/check, never on this string.
+  measured_on: ASIC/genus-innovus/calibre_runs/bnd_postfix_check
+  measured_stream: ASIC/genus-innovus/runs/20260811T103338Z_fill-verify/prev_outputs/nanosoc_eth_chiplet_pads_logo_full_L300.gds
+  measured_stream_md5: 7f6214965501c911bd65069378ae911d   # the exact file IMEC checked
+
+waivers:
+  - id: AP.W.2-pad70-bondpad-plate
+    check: AP.W.2
+    verdict: WAIVE-VENDOR
+    expect_total: 2
+
+    # ---- what is waived -------------------------------------------------
+    # The TSMC reference bond-pad cells' own AP redistribution plate --- the
+    # metal shape a bond wire actually lands on. One result per cell, at the
+    # cell's own full footprint width (see the .bnd.results polygon: PAD70GU's
+    # AP shape spans roughly 61 x 69um, PAD70NU's roughly 61 x 69um -- both
+    # comfortably over the 35um AP.W.2 maximum by construction).
+    cells:
+      PAD70GU: 1
+      PAD70NU: 1
+
+    # ---- why ------------------------------------------------------------
+    justification: >
+      NOT introduced by this design and not fixable here short of choosing
+      different foundry pad cells. AP.W.2 caps interconnect width at 35um,
+      but a bond-pad's AP plate is not interconnect -- it is the physical
+      bond-wire landing target, and TSMC's own PAD70GU/PAD70NU reference
+      cells draw it as one solid block covering nearly the whole pad
+      footprint, which is necessarily wider than any interconnect-width rule
+      permits. Same class as the PO.R.8 waiver
+      (docs/tapeout/39-po-r8-resolved.md): vendor-authored cell geometry,
+      not a defect this design's floorplan or routing introduced.
+
+    # ---- how that was established, and how to re-check it ---------------
+    evidence: docs/tapeout/50-bnd-and-logo-checks.md
+    evidence_summary: >
+      Cross-checked against IMEC's own real Calibre run, TWICE, on both
+      archives (17Aug pad-ring-only merge and 18Aug full std-cell + seal-ring
+      merge): both report the identical count in the identical cells --
+      CELL PAD70GU: AP.W.2 = 1 (42), CELL PAD70NU: AP.W.2 = 1 (40) -- byte
+      for byte the same true (parenthesised) count as this local run, on
+      TWO different IMEC merges eight days apart with materially different
+      surrounding geometry. A vendor-cell-inherent finding does not move
+      when the geometry around it changes; a design-introduced one would.
+
+    withdraw_if: >
+      A future IMEC archive, or a local run against a stream that swaps in
+      different foundry pad cells, reports a different count for these two
+      cells. That would mean the plate width is not in fact fixed by the
+      vendor cell and needs re-examination.
+
+  # ---------------------------------------------------------------------
+  # STRUCTURALLY UNMEASURABLE, NOT WAIVED. PM.*/CB.*/CBVIA*.*/CBM*.*/
+  # CUPCB.*/CUPVIAT.*/RV.*/AP.S.4 are not listed here at all -- there is
+  # nothing to waive because this design's own GDS carries zero PM/CB/CB2/
+  # seal-ring geometry locally (LAYER PMi/CBi/CB2i all "Original Geometry
+  # Count = 0" in every local BND summary). bnd_census.py reports these as a
+  # SEPARATE "structurally unmeasurable" bucket, not folded into a clean
+  # pass and not waived, because a waiver here would misrepresent "we cannot
+  # check this" as "we checked this and it is fine". docs/tapeout/50 Part A
+  # "The two deltas" is the mechanism; docs/tapeout/48 §1.3's IMEC comparison
+  # (PM.W.1 889/919, AP.S.4 131/46 in IMEC's two real, merged archives against
+  # our own 0/0) is the confirmation.
+  # ---------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# DELIBERATELY NOT WAIVED --- and this is a live control, not an oversight
+#
+#   AP.W.1   12 results   in the LAYOUT PRIMARY CELL (nanosoc_eth_chiplet_pads)
+#   AP.S.1    4 results   in the LAYOUT PRIMARY CELL (nanosoc_eth_chiplet_pads)
+#
+# bnd_census.py's code REFUSES to waive the primary cell regardless of what
+# this file says, so these could not be hidden here even by mistake -- but
+# they are recorded explicitly because they are the reason `bnd` is not
+# promoted to a zero-budget block gate by this pass (docs/tapeout/
+# 50-bnd-and-logo-checks.md Part A.1, docs/tapeout/53-gate-promotion-plan.md
+# row 4).
+#
+#   * REAL, un-black-boxed geometry: this GDS is the legacy genus-innovus
+#     pad-ring-merged stream, so unlike a toolkit build these ARE real AP
+#     shapes, not LEF abstracts. There is no "no cell layout here" story to
+#     tell, the way PO.R.8's does.
+#   * EXACT MATCH against IMEC's independent Calibre run on both archives --
+#     confirms this is a real, reproducible finding, not a local artefact --
+#     but exact-match only proves REPRODUCIBLE, not ACCEPTABLE. Nothing in
+#     docs/tapeout/50 ever asked whether these 16 are a genuine design defect.
+#   * By coordinate (calibre_runs/bnd_postfix_check/
+#     nanosoc_eth_chiplet_pads.bnd.results, 2026-08-18): all 16 polygons sit
+#     at x 314-1006um, y 872-1125um on a 1600x2000um die with a 135um pad
+#     row -- squarely in the CORE, nowhere near the pad ring or seal ring.
+#     This is AP-layer redistribution routing this design drew itself
+#     (plausibly, not yet confirmed, associated with the D2D/TideLink AP
+#     routing near the u_tidelink SRAM macro at (230.6, 1210) -- proximate,
+#     not proven).
+#   * NO MECHANISM ARGUMENT covers them the way PO.R.8's black-boxing story
+#     does. A width-below-3um or spacing-below-2um result in metal this
+#     design routed is either a real defect to fix or a deliberate,
+#     documented design choice -- neither has been established. Waiving it
+#     on "IMEC sees it too" would be exactly the un-established-premise
+#     waiver docs/tapeout/39-po-r8-resolved.md §7 rejects for PO.R.8's
+#     six never-waived VIA3.R.2 vendor-memory results, for the same reason:
+#     no control has been run, only a match confirmed.
+#
+# NEXT STEP, not done here: pull the 16 polygons' nets from the routed
+# database and determine whether they are a real AP.W.1/AP.S.1 defect (fix
+# the route) or an accepted characteristic of this design's AP-layer
+# strategy (root-cause, then either fix or write a REAL waiver with a
+# mechanism, not just a match).
+# ---------------------------------------------------------------------------

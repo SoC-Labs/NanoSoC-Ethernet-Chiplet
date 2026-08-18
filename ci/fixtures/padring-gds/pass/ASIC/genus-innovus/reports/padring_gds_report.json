@@ -1,0 +1,99 @@
+{
+  "gds": "/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds",
+  "problems": [],
+  "info": [],
+  "top_cell": "nanosoc_eth_chiplet_pads",
+  "counts": {
+    "PAD70GU": {
+      "expected": 42,
+      "observed": 42,
+      "defined": true
+    },
+    "PAD70NU": {
+      "expected": 40,
+      "observed": 40,
+      "defined": true
+    },
+    "PCORNER_G": {
+      "expected": 4,
+      "observed": 4,
+      "defined": true
+    },
+    "PDDW04DGZ_G": {
+      "expected": 9,
+      "observed": 9,
+      "defined": true
+    },
+    "PDDW16DGZ_G": {
+      "expected": 36,
+      "observed": 36,
+      "defined": true
+    },
+    "PDUW08DGZ_G": {
+      "expected": 1,
+      "observed": 1,
+      "defined": true
+    },
+    "PDUW16DGZ_G": {
+      "expected": 2,
+      "observed": 2,
+      "defined": true
+    },
+    "PVDD1DGZ_G": {
+      "expected": 6,
+      "observed": 6,
+      "defined": true
+    },
+    "PVDD2DGZ_G": {
+      "expected": 8,
+      "observed": 8,
+      "defined": true
+    },
+    "PVDD2POC_G": {
+      "expected": 4,
+      "observed": 4,
+      "defined": true
+    },
+    "PVSS1DGZ_G": {
+      "expected": 4,
+      "observed": 4,
+      "defined": true
+    },
+    "PVSS2DGZ_G": {
+      "expected": 12,
+      "observed": 12,
+      "defined": true
+    }
+  },
+  "corner_orientation": {
+    "uPAD_CORNER_TL": {
+      "expected_angle": 270,
+      "expected_mirror": false,
+      "observed_angle": 270,
+      "observed_mirror": false
+    },
+    "uPAD_CORNER_BL": {
+      "expected_angle": 0,
+      "expected_mirror": false,
+      "observed_angle": 0,
+      "observed_mirror": false
+    },
+    "uPAD_CORNER_BR": {
+      "expected_angle": 90,
+      "expected_mirror": false,
+      "observed_angle": 90,
+      "observed_mirror": false
+    },
+    "uPAD_CORNER_TR": {
+      "expected_angle": 180,
+      "expected_mirror": false,
+      "observed_angle": 180,
+      "observed_mirror": false
+    }
+  },
+  "top_child_total": 2346912,
+  "geometry": {
+    "...": "trimmed for this fixture -- padring-gds's check: never reads this key"
+  },
+  "_provenance": "CONSTRUCTED, and says so: real fp1505 names/counts/order (already clean there) + a hand-patched corner_orientation matching EXPECTED_ORIENTATION exactly, standing in for a re-stream against the corrected .io this site has not yet run Innovus to produce. See ci/fixtures/README.md's lec/pass precedent for this pattern."
+}
