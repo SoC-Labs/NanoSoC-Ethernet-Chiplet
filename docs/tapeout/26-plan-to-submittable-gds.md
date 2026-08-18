@@ -1,5 +1,33 @@
 # THE PLAN — `nanosoc_eth_chiplet_pads` to a submittable GDSII
 
+> ## ⚠ STALE — written before the decision that removes several of its steps. Marked 2026-08-18.
+>
+> **Dated 2026-08-09. On 2026-08-17 it was decided that the TSMC Back-End packages will NOT
+> be obtained.** This plan treats them as an obtainable ask in five places. That route is
+> closed, and the consequences are permanent rather than pending: full-chip LVS will never
+> run here (black-box LVS is the only form available), base-layer DRC and foundry antenna
+> are unmeasurable on any stream this project can produce, and **the design-owned DRC count
+> is a FLOOR, not a total** — a rule between top-level routing and a cell's internal
+> geometry cannot fire against geometry that is not in the stream.
+>
+> Since this was written, metal fill has been assigned to the **foundry**, and timing
+> closure is an accepted open item rather than a gate.
+>
+> **Read it for the flow and the reasoning, not for the route to submission.**
+>
+> **Live sources, in order of authority:**
+>
+> | what | where |
+> |---|---|
+> | what signoff does **not** cover — *executable* | `ci/signoff.yaml` `unsupported:`. Run `python3 scripts/ci/signoff.py lint`: every gap carries a `refuted_by:` that must FAIL for the gap to still exist, so this one cannot rot silently. 9 gaps, all verified still real on 2026-08-18. |
+> | current Calibre DRC, like-for-like | [43 — Calibre DRC on `fp1505`](43-drc-fp1505.md) |
+> | every result assigned to fix or waive | [`docs/DRC_WAIVER_INVENTORY.md`](../DRC_WAIVER_INVENTORY.md) |
+> | the `PO.R.8` reversal | [39 — `PO.R.8` resolved](39-po-r8-resolved.md) |
+> | the PG-anchoring hazard behind the shorts | [36 — `split_row` PG anchoring](36-split-row-pg-anchoring-hazard.md) |
+
+---
+
+
 **Date:** 2026-08-09 · **Flow:** `ASIC/genus-innovus` (Genus 21.15 → Innovus 21.11-s130_1 stylus → Calibre → Conformal 22.10)
 
 Produced from four independent read-only audits (power grid, DRC/physical verification, GDS merge & signoff collateral, timing closure) plus a synthesis pass. Evidence markers: **[V]** verified against an artefact · **[I]** inferred, reasoning stated · **[U]** undetermined.

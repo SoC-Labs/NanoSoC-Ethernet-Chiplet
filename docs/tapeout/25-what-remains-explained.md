@@ -1,5 +1,29 @@
 # What actually stands between us and tapeout — the physical-verification picture
 
+> ## ⚠ STALE — a point-in-time report, not the current picture. Marked 2026-08-18.
+>
+> **The numbers below describe run `20260808T100330Z_route-setupopt` and nothing after
+> it.** The design has been re-streamed twice since, and the DRC population this document
+> explains no longer exists: the LEFOBS stream-map fix removed the phantom metal that was
+> 68.8% of everything Calibre measured, `io-pad-abstract` results went 140 → 0, and the 691
+> `PO.R.8` have since been shown to be a black-boxing artefact and waived by cell.
+>
+> **The explanations of the mechanisms are still worth reading. The counts are not.** Do not
+> quote a number from this file.
+>
+> **Live sources, in order of authority:**
+>
+> | what | where |
+> |---|---|
+> | what signoff does **not** cover — *executable* | `ci/signoff.yaml` `unsupported:`. Run `python3 scripts/ci/signoff.py lint`: every gap carries a `refuted_by:` that must FAIL for the gap to still exist, so this one cannot rot silently. 9 gaps, all verified still real on 2026-08-18. |
+> | current Calibre DRC, like-for-like | [43 — Calibre DRC on `fp1505`](43-drc-fp1505.md) |
+> | every result assigned to fix or waive | [`docs/DRC_WAIVER_INVENTORY.md`](../DRC_WAIVER_INVENTORY.md) |
+> | the `PO.R.8` reversal | [39 — `PO.R.8` resolved](39-po-r8-resolved.md) |
+> | the PG-anchoring hazard behind the shorts | [36 — `split_row` PG anchoring](36-split-row-pg-anchoring-hazard.md) |
+
+---
+
+
 Written 2026-08-08 against run `20260808T100330Z_route-setupopt`.
 Reports: `ASIC/genus-innovus/runs/20260808T100330Z_route-setupopt/reports/eval/`
 
