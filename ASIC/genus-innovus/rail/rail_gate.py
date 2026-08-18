@@ -37,6 +37,12 @@ quoted at all, whatever they say. BUDGET means measured, and over a threshold.
 The distinction matters because they have different remedies - a HARD failure
 is re-run the analysis, a BUDGET failure is change the design.
 
+REFUSAL is a third outcome and not a third tier, because it is not a statement
+about the design at all. The gate refuses when it has been handed something it
+must not judge - a ratcheted budget file, or a census that DECLARES itself a
+negative control. A refusal prints no VERDICT line, writes no verdict.json and
+exits 3, so it cannot be mistaken for either a PASS or a FAIL of this design.
+
 USAGE
   rail_gate.py --census <dir-or-census.txt> [--budgets rail_budgets.txt]
                [--json verdict.json] [--tier signoff|report]
@@ -82,6 +88,87 @@ def load_kv(path):
             k, v = line.split("=", 1)
             out[k.strip()] = v.strip()
     return out
+
+
+# A census that DECLARES itself a negative control is not evidence about this
+# design in EITHER direction. rail_negative_control.tcl deliberately injects a
+# known fault so that the numbers come out wrong, and writes
+# `stage.negative_control true` to say so. Nothing read that key until now,
+# while ci/signoff.yaml selects a census by newest mtime - so the one run built
+# to be wrong was the one being consumed as evidence.
+NEGCTL_FALSE = {"", "false", "0", "no", "off"}
+NEGCTL_TRUE = {"true", "1", "yes", "on"}
+
+
+def refuse_if_negative_control(cen, census_path):
+    """Refuse to judge a census that declares itself a control. At LOAD time,
+    before a budget is read or a single check is evaluated, for the same reason
+    the anti-ratchet rule is enforced there: so it cannot be argued about later.
+
+    WHY A GateError AND NOT A HARD CHECK. A HARD check would print FAIL_HARD,
+    write a verdict.json and exit 2 - at a glance indistinguishable from this
+    design having a power delivery problem, and it would send the next person
+    debugging a fault that was injected on purpose. Failing for the wrong
+    reason costs exactly what passing for the wrong reason costs. A GateError
+    produces no verdict at all, which is the only correct output for a control:
+    a control is evidence about the GATE, never about the design.
+
+    WHY THE MISSING verdict.json IS NOT THE TRIGGER. Control directories have
+    no verdict.json and it is tempting to key off that. It is the wrong signal
+    twice over. It is this gate's own OUTPUT, so a perfectly genuine run that
+    has simply never been gated also lacks one - keying on it would refuse the
+    first gating of every real run, and a guard that cannot pass is worth as
+    little as one that cannot fail. And it is writable by `--json`, so the
+    marker self-erases: gate a control once with --json and it would look
+    judgeable forever after. A marker destroyed by the act of checking it is
+    worse than none. The declared key is used instead, because the run that
+    knows it is a control is the thing that writes it.
+
+    The absence is still worth one thing, in the other direction: raising here
+    is BEFORE emit() and before main()'s --json write, so a control can never
+    acquire a verdict.json. If one is nevertheless found beside a control
+    census it is residue from before this interlock existed, and the refusal
+    names it - a consumer reading that FILE rather than running the gate is
+    reading a verdict for a deliberately broken run."""
+    raw = cen.get("stage.negative_control")
+    if raw is None:
+        return
+    val = raw.strip().lower()
+    if val in NEGCTL_FALSE:
+        return
+
+    out = [
+        "NEGATIVE CONTROL - NO VERDICT COMPUTED, AND NONE CAN BE.",
+        f"  census        : {census_path}",
+        f"  declares      : stage.negative_control={raw}",
+    ]
+    if val not in NEGCTL_TRUE:
+        out.append(
+            f"  unrecognised  : '{raw}' is not a value this gate knows. On a key "
+            f"whose entire purpose is to say 'do not believe me', an "
+            f"unrecognised value is read as a control and never as a clearance.")
+    if cen.get("stage.script"):
+        out.append(f"  produced by   : {cen['stage.script']}")
+    if cen.get("stage.fault"):
+        out.append(f"  injected fault: {cen['stage.fault']}")
+    out += [
+        "  This run was BUILT TO BE WRONG. Its numbers are evidence about the",
+        "  gate, not about the design, so they must not become a signoff result",
+        "  in either direction: a PASS would clear the design on a fabricated",
+        "  margin, and a FAIL would send someone debugging power delivery for a",
+        "  fault that was injected on purpose.",
+        "  ==> THIS IS NOT A POWER DELIVERY FAILURE. Nothing about this design",
+        "      has been measured here. Point the stage at a real rail run.",
+    ]
+    stale = os.path.join(os.path.dirname(os.path.abspath(census_path)),
+                         "verdict.json")
+    if os.path.exists(stale):
+        out.append(
+            f"  RESIDUE       : {stale} sits beside a control census. This gate "
+            f"did not write it and will not update it - delete it, because "
+            f"anything reading that file instead of running the gate is reading "
+            f"a verdict for a deliberately broken run.")
+    raise GateError("\n".join(out))
 
 
 def load_budgets(path):
@@ -399,6 +486,12 @@ def run_gate(census_path, budget_path, tier="signoff"):
         raise GateError(f"no census at {census_path} - the stage did not run")
 
     cen = load_kv(census_path)
+
+    # ---- THE CONTROL INTERLOCK. First, and before the budget file is even
+    # opened, so that the refusal cannot be masked by a second problem and does
+    # not depend on a budget file being present or valid.
+    refuse_if_negative_control(cen, census_path)
+
     bud, src = load_budgets(budget_path)
     base = os.path.dirname(os.path.abspath(census_path))
     for k in list(cen):
@@ -805,7 +898,7 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
                  vconf="1.08", vrail="1.08", vagree="true", n_dc=0,
                  iv_present=True, spread=False, completed="true",
                  tool_vmin=None, floor_frac=0.33,
-                 flow_vdd_mw=None, demand_mw=54.5906):
+                 flow_vdd_mw=None, demand_mw=54.5906, negative_control=None):
     """A synthetic run directory. Ranks the drops so the distribution is a real
     one rather than a single value, and places instances so the spatial
     classification has something to work on.
@@ -828,7 +921,14 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
     either direction. The rail table is cut from the real fp1505 imp_power.rep,
     per the fixtures' own rule: a fixture derived from a real artefact is
     evidence, one derived from what we believe the tool prints is a second copy
-    of our belief."""
+    of our belief.
+
+    `negative_control` stamps the three `stage.*` keys exactly as
+    rail_negative_control.tcl writes them, whatever the value - so the FALSE
+    case declares the control SCRIPT and the control FAULT and differs from the
+    refused case in one token. That is deliberate: it pins the trigger to the
+    declared key and proves neither `stage.script` nor `stage.fault` is a
+    covert second trigger that would refuse a real run for its provenance."""
     os.makedirs(d, exist_ok=True)
     ivp = os.path.join(d, "VDD_VSS.avg.iv")
     xyp = os.path.join(d, "inst_xy.txt")
@@ -884,6 +984,11 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
         "artefact.main_vdd": mvp, "artefact.main_vss": msp,
         "inst_xy": xyp,
     }
+    if negative_control is not None:
+        cen["stage.script"] = "rail_negative_control.tcl"
+        cen["stage.negative_control"] = negative_control
+        cen["stage.fault"] = ("set_power_pads -format padcell without "
+                              "-short_pin_nodes true (option default is FALSE)")
     cp = os.path.join(d, "census.txt")
     with open(cp, "w") as fh:
         for k, val in cen.items():
@@ -1013,6 +1118,31 @@ def selftest():
          "the budget while the combined figure still looks fine",
          worst=0.0290, vdd_share=0.15)
 
+    # --- THE CONTROL INTERLOCK, both ways. ci/signoff.yaml picks a census by
+    # newest mtime, which resolved to work/fp1505-negctl - a run built to be
+    # WRONG, consumed as evidence by a signoff gate. Note the expectation is
+    # GATE_ERROR and not FAIL_HARD: a control must not produce a verdict in
+    # EITHER direction, because a wrong FAIL sends someone debugging an
+    # injected fault and costs what a wrong PASS costs.
+    case("declared_negative_control", "GATE_ERROR",
+         "the fp1505-negctl census: set_power_pads without -short_pin_nodes, a "
+         "fault injected on purpose, declaring stage.negative_control=true and "
+         "read by nothing until now",
+         negative_control="true")
+    case("negative_control_unrecognised_value", "GATE_ERROR",
+         "the same declaration written 'yes', or one day misspelt. A key whose "
+         "purpose is to say 'do not believe me' must fail SAFE - an unparsed "
+         "value that read as a clearance would be the whole defect again",
+         negative_control="Yes")
+    case("negative_control_false_is_judged", "PASS",
+         "the positive control for the interlock: a census carrying the key, "
+         "the control SCRIPT and the control FAULT but declaring "
+         "negative_control=false is a real run and must still get a verdict. "
+         "Without this case the interlock is satisfied by any guard that "
+         "refuses everything, which would swallow every genuine run",
+         passes=("budget.eff_worst_pct", "vsrc.count", "run.completed"),
+         negative_control="false")
+
     tmp = tempfile.mkdtemp(prefix="rail_gate_selftest_")
     npass = nfail = 0
     print("rail_gate.py mutation battery")
@@ -1040,7 +1170,9 @@ def selftest():
                 elif not seen[nm]:
                     why_bad.append(f"{nm} should have PASSED and did not")
         except GateError as e:
-            got, note = "GATE_ERROR", f" ({e})"
+            # Refusals are deliberately multi-line and loud in CI; the battery
+            # table wants one line, so show the headline only.
+            got, note = "GATE_ERROR", " (" + str(e).splitlines()[0] + ")"
         ok = got == expect and not why_bad
         if why_bad:
             note += "  !! " + "; ".join(why_bad)
@@ -1115,8 +1247,11 @@ def main():
             json.dump({"status": status, "tier": v.tier,
                        "checks": v.checks, "metrics": v.metrics}, fh, indent=2)
         print(f"  json: {a.json}")
-    # 0 pass, 1 budget exceeded, 2 hard failure. A caller that only checks
-    # "non-zero" still does the right thing.
+    # 0 pass, 1 budget exceeded, 2 hard failure - and 3, above, when the gate
+    # REFUSED to judge (ratcheted budget, or a declared negative control). A
+    # caller that only checks "non-zero" still does the right thing; one that
+    # reports WHY should distinguish 3, because it is the one code that says
+    # nothing whatever about this design.
     return {"PASS": 0, "FAIL_BUDGET": 1, "FAIL_HARD": 2}[status]
 
 
