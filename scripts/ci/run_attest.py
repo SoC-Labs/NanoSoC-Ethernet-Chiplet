@@ -328,20 +328,51 @@ def g_lec_chain(run_dir):
     attributable to the same things.
     """
     lec = run_dir / "reports" / "lec"
-    legs, started, reads = {}, [], []
+    legs, started, reads, notes = {}, [], [], []
     for leg in ("syn", "gate", "pnr"):
         d = lec / leg
         v = d / "verdict.txt"
         if v.is_file():
             txt = v.read_text(errors="replace")
-            legs[leg] = "clean" if (("nonequivalent=0" in txt) and ("abort=0" in txt)) else "not-clean"
+            ok = ("nonequivalent=0" in txt) and ("abort=0" in txt)
+            legs[leg] = "clean" if ok else "not-clean"
+            # UNCOMPARED POINTS TRAVEL WITH THE VERDICT. "PASS" while N points
+            # were never compared is a claim with a footnote, and the footnote
+            # is part of the result. Conformal reports several different
+            # unmapped counts per run; the operative one is the one that says
+            # "which will not be compared".
+            for tok in txt.split():
+                if tok.startswith("notcompared=") and tok != "notcompared=0":
+                    notes.append("%s leg: %s" % (leg, tok))
         elif (d / "inputs.txt").is_file():
             # NOT "running" - this program cannot see processes, only files.
             # An earlier version said RUNNING here and was wrong on
             # full-20260814, whose syn leg has inputs.txt from the previous
             # night. Asserting liveness from a file's existence is the exact
             # class this artefact exists to police, committed by the artefact.
-            noneq = sorted(x.name for x in d.glob("noneq.*"))
+            # READ THEM, DO NOT NAME-MATCH THEM. A file called noneq.* is not
+            # evidence of non-equivalence. On full-20260814 the three noneq.*
+            # files contain "# 0 compared points written", "// Warning: No
+            # result" and a bare header - the harness's report step firing over
+            # an EMPTY result after the compare was killed. Reading the
+            # filenames as findings is the same defect as reading a verdict
+            # from the wrong part of a log.
+            noneq = []
+            for x in sorted(d.glob("noneq.*")):
+                try:
+                    body = x.read_text(errors="replace")
+                except OSError:
+                    continue
+                # A file carries a FINDING only if it has a data row. Known
+                # empty markers, plus the general rule: every line a comment or
+                # a header means nothing was written. noneq.test_vector..rpt is
+                # 46 bytes of "// Confirm all Non-equivalent compared points" -
+                # a header, and matching on the word "Non-equivalent" in it
+                # would report a non-equivalence that does not exist.
+                data = [ln for ln in body.splitlines()
+                        if ln.strip() and not ln.lstrip().startswith(("#", "//"))]
+                empty = (not data) or ("0 compared points" in body) or ("No result" in body)
+                noneq.append((x.name, "empty" if empty else "has content"))
             started.append((leg, noneq))
 
         fields, inputs = _lec_inputs(d)
@@ -376,10 +407,18 @@ def g_lec_chain(run_dir):
             noneq = syn_started[0][1]
             extra = ""
             if noneq:
-                extra = (" It DID produce non-equivalence artefacts (%s) without "
-                         "writing a verdict, so this is an incomplete or failed "
-                         "attempt rather than one that has not begun."
-                         % ", ".join(noneq[:3]))
+                empties = [n for n, k in noneq if k == "empty"]
+                real = [n for n, k in noneq if k != "empty"]
+                if real:
+                    extra = (" %d noneq.* file(s) carry CONTENT (%s), so a "
+                             "non-equivalence may be recorded here - read them."
+                             % (len(real), ", ".join(real[:2])))
+                else:
+                    extra = (" It left %d noneq.* file(s), but all are EMPTY "
+                             "(\"0 compared points written\" / \"No result\") - "
+                             "the report step firing over an empty result, NOT "
+                             "evidence of non-equivalence. This is an attempt "
+                             "that began and did not finish." % len(empties))
             return (NM, "the RTL->gate.v leg has inputs pinned and NO verdict "
                     "file.%s Legs with verdicts: %s. Until a verdict lands "
                     "nothing proves the netlist implements the RTL"
@@ -388,8 +427,12 @@ def g_lec_chain(run_dir):
                 "proves the netlist implements the RTL, so the chain is OPEN at "
                 "the RTL end" % (", ".join(have) or "none"), S_NETLIST, None, read)
     if all(legs[k] == "clean" for k in have):
-        return (PASS, "legs %s all equivalent (nonequivalent=0 and abort=0)"
-                % ", ".join(have), S_NETLIST, None, read)
+        foot = ""
+        if notes:
+            foot = (" FOOTNOTE: %s - points that were never compared are"
+                    " not points that matched." % "; ".join(notes))
+        return (PASS, "legs %s all equivalent (nonequivalent=0 and abort=0).%s"
+                % (", ".join(have), foot), S_NETLIST, None, read)
     return (FAIL, "legs %s" % ", ".join("%s=%s" % (k, legs[k]) for k in have),
             S_NETLIST, None, read)
 
