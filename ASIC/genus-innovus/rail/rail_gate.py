@@ -785,26 +785,69 @@ Number of Violations: 0
 """
 
 
+RAIL_TABLE_RPT = """  Group                 Internal   Switching     Leakage       Total  Percentage
+------------------------------------------------------------------------------------------
+Total                              53.31       25.02      0.3828       78.72         100
+------------------------------------------------------------------------------------------
+
+
+Rail                  Voltage   Internal   Switching     Leakage       Total  Percentage
+                                Power      Power         Power         Power  (%)
+------------------------------------------------------------------------------------------
+Default                  1.08      16.31           0     0.01318       16.33       20.74
+VDD                      1.08         37       17.22      0.3697    {vdd:8.4g}       69.35
+"""
+
+
 def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
                  insts=1010, current_a=0.0505, demand_ma=50.7, em="",
                  method="static", era="false", stream="none",
                  vconf="1.08", vrail="1.08", vagree="true", n_dc=0,
                  iv_present=True, spread=False, completed="true",
-                 tool_vmin=None):
+                 tool_vmin=None, floor_frac=0.33,
+                 flow_vdd_mw=None, demand_mw=54.5906):
     """A synthetic run directory. Ranks the drops so the distribution is a real
     one rather than a single value, and places instances so the spatial
-    classification has something to work on."""
+    classification has something to work on.
+
+    `floor_frac` is the ramp's bottom as a fraction of `worst`, and it is the
+    knob that makes the DISTRIBUTION SHAPE testable rather than fixed. The
+    default 0.33 gives mean/max = 0.665 and p99/mean = 1.494 - a grid with a
+    tail, which was the only shape this battery could produce until the real
+    fp1505 result arrived with mean/max = 0.849 and p99/mean = 1.151. Every
+    fixture having the same shape meant no case could ever fail the MEAN budget
+    while passing p99, which is precisely the real design's situation. A
+    fixture generator that cannot express the measured distribution is a second
+    copy of what we expected, not a test of the gate.
+
+    `flow_vdd_mw` builds a fake run tree so that db.path resolves a
+    reports/imp_power.rep two levels up, which is the ONLY way to exercise the
+    HARD arm of coverage.demand_vs_flow_power. Without it every fixture leaves
+    that check degraded to ADVISORY ("skipped, which is not passed"), so the
+    one genuinely independent check on the demand file had no coverage in
+    either direction. The rail table is cut from the real fp1505 imp_power.rep,
+    per the fixtures' own rule: a fixture derived from a real artefact is
+    evidence, one derived from what we believe the tool prints is a second copy
+    of our belief."""
     os.makedirs(d, exist_ok=True)
     ivp = os.path.join(d, "VDD_VSS.avg.iv")
     xyp = os.path.join(d, "inst_xy.txt")
     mvp = os.path.join(d, "VDD.main.rpt")
     msp = os.path.join(d, "VSS.main.rpt")
+    db_path = "/fixture"
+    if flow_vdd_mw is not None:
+        db_path = os.path.join(d, "db", "work", "top_routed")
+        os.makedirs(db_path, exist_ok=True)
+        rep = os.path.join(d, "db", "reports")
+        os.makedirs(rep, exist_ok=True)
+        with open(os.path.join(rep, "imp_power.rep"), "w") as fh:
+            fh.write(RAIL_TABLE_RPT.format(vdd=flow_vdd_mw))
     if iv_present:
         with open(ivp, "w") as fh:
             fh.write(IV_HEADER.format(n=n))
             for i in range(n):
-                # linear ramp from a third of worst up to worst
-                d_i = worst * (0.33 + 0.67 * (i / max(1, n - 1)))
+                # linear ramp from floor_frac*worst up to worst
+                d_i = worst * (floor_frac + (1.0 - floor_frac) * (i / max(1, n - 1)))
                 p_i = d_i * vdd_share
                 g_i = d_i - p_i
                 fh.write(f"- inst{i} {d_i:.5f} {p_i:.5f} {g_i:.5f} DFCNQD1\n")
@@ -825,7 +868,8 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
     cen = {
         "result.completed": completed,
         "design.name": "selftest",
-        "db.path": "/fixture",
+        "db.path": db_path,
+        "demand.core_mw": demand_mw,
         "db.insts_total": insts,
         "method.rail": method, "method.era": era, "method.stream_file": stream,
         "method.activity": "assumed", "method.package_model": "none",
@@ -852,8 +896,14 @@ def selftest():
     budgets = os.path.join(HERE, "rail_budgets.txt")
     cases = []
 
-    def case(name, expect, why, **kw):
-        cases.append((name, expect, why, kw))
+    def case(name, expect, why, fails=(), passes=(), **kw):
+        """`fails` / `passes` name the checks this case must trip and must NOT
+        trip. A status-only comparison lets a case pass for the wrong reason:
+        `over_p99_only` is named for p99 and in fact breaks the mean budget as
+        well, because the fixture ramp fixes p99/mean at 1.494 for every case.
+        Naming the checks is what turns "the verdict came out FAIL_BUDGET" into
+        "it came out FAIL_BUDGET FOR THIS REASON"."""
+        cases.append((name, expect, why, tuple(fails), tuple(passes), kw))
 
     # --- the positive control. If this does not pass, every FAIL below is
     # meaningless, because a gate that fails everything is not a gate.
@@ -904,7 +954,48 @@ def selftest():
          "4.6% collapse against a 3% budget, confined to a few tiles", worst=0.050)
     case("over_p99_only", "FAIL_BUDGET",
          "the peak is inside budget but the population is not - the case a "
-         "worst-only gate passes", worst=0.0323, vdd_share=0.5)
+         "worst-only gate passes. NOTE it breaks the MEAN too: the ramp's fixed "
+         "shape makes that unavoidable, which is why the flat cases below exist",
+         fails=("budget.eff_p99_pct", "budget.eff_mean_pct"),
+         passes=("budget.eff_worst_pct",),
+         worst=0.0323, vdd_share=0.5)
+    # --- THE SHAPE CASES. Until these existed every fixture had mean/max =
+    # 0.665, so no case in this battery could fail the MEAN budget while
+    # passing p99 - which is exactly what the real fp1505 run does. The one
+    # criterion actually blocking this design was the one criterion the battery
+    # never demonstrated firing on its own.
+    case("flat_grid_mean_over_budget", "FAIL_BUDGET",
+         "a RING-FED grid with no tail: peak 1.39% against a 3% budget and p99 "
+         "1.39% against 2%, both comfortable, while the mean breaks 1%. This is "
+         "the fp1505 shape (mean/max 0.85), and a 3:1 peak-to-mean ladder is the "
+         "wrong model for it",
+         fails=("budget.eff_mean_pct",),
+         passes=("budget.eff_worst_pct", "budget.eff_p99_pct",
+                 "budget.vdd_droop_worst_pct", "budget.vss_rise_worst_pct"),
+         worst=0.0150, floor_frac=0.85)
+    case("flat_grid_within_budget", "PASS",
+         "the positive control for the shape above: the SAME flat distribution "
+         "with its mean inside budget must pass. Without it, the case above is "
+         "satisfied by any gate that rejects every flat grid",
+         passes=("budget.eff_mean_pct", "budget.eff_worst_pct",
+                 "budget.eff_p99_pct"),
+         worst=0.0115, floor_frac=0.85)
+    # --- THE INDEPENDENT DEMAND CHECK, in both directions. Every other fixture
+    # points db.path at a directory with no reports/ beside it, so this check
+    # degrades to ADVISORY and the battery has never exercised its HARD arm.
+    # A skipped check that reads as a passed one is this stage's whole subject.
+    case("demand_vs_flow_agrees", "PASS",
+         "the demand file reproduces report_power's OWN VDD-rail attribution - "
+         "the one check on the demand that the rail stage did not also produce",
+         passes=("coverage.demand_vs_flow_power",),
+         flow_vdd_mw=54.59, demand_mw=54.5906)
+    case("demand_vs_flow_disagrees", "FAIL_HARD",
+         "a core-box filter that kept the IO ring: the demand file is 40% above "
+         "the flow's own VDD-rail attribution, and the solver-vs-demand ratio "
+         "cannot see it because both sides descend from the same file",
+         fails=("coverage.demand_vs_flow_power",),
+         passes=("coverage.current",),
+         flow_vdd_mw=54.59, demand_mw=76.4)
     # --- EM, at the tier where it is required. The `em=""` default reproduces
     # the real report's EMPTY J/Jmax field, which a `\\s*` regex read as the NEXT
     # line and reported as ANALYSED on the first real artefact this gate saw.
@@ -926,20 +1017,33 @@ def selftest():
     npass = nfail = 0
     print("rail_gate.py mutation battery")
     print("=" * 78)
-    for name, expect, why, kw in cases:
+    for name, expect, why, must_fail, must_pass, kw in cases:
         d = os.path.join(tmp, name)
         tier = kw.pop("tier", "report")
         cp = make_fixture(d, **kw)
+        why_bad = []
         try:
             v = run_gate(cp, budgets, tier=tier)
             got = v.status
             note = ""
+            seen = {c["name"]: c["ok"] for c in v.checks}
             bad = [c["name"] for c in v.checks if not c["ok"]]
             if bad:
                 note = " via " + ",".join(bad[:3])
+            # A status match is not enough: assert WHICH checks decided it.
+            for nm in must_fail:
+                if seen.get(nm, True):
+                    why_bad.append(f"{nm} should have FAILED and did not")
+            for nm in must_pass:
+                if nm not in seen:
+                    why_bad.append(f"{nm} was never evaluated")
+                elif not seen[nm]:
+                    why_bad.append(f"{nm} should have PASSED and did not")
         except GateError as e:
             got, note = "GATE_ERROR", f" ({e})"
-        ok = got == expect
+        ok = got == expect and not why_bad
+        if why_bad:
+            note += "  !! " + "; ".join(why_bad)
         npass += ok
         nfail += (not ok)
         print(f"  [{'ok  ' if ok else 'FAIL'}] {name:26s} expect {expect:12s} got {got:12s}{note}")
