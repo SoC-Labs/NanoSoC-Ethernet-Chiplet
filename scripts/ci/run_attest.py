@@ -276,33 +276,122 @@ def g_pg_shorts(run_dir):
     return PASS, "no VDD-VSS SHORT records in check_drc", S_SIGNOFF
 
 
+def _lec_inputs(leg_dir):
+    """Parse a leg's inputs.txt into (fields, [(path, algo, hash)]).
+
+    THE ALGORITHM IS CARRIED, NEVER ASSUMED. This file records **sha1**; the
+    ROM path records sha256. Printing a bare "hash" from both would invite a
+    reader to compare two different algorithms over the same bytes, see a total
+    mismatch, and diagnose the provenance defect we have spent the evening
+    closing. So every hash surfaced here is labelled with its algorithm.
+    """
+    f = leg_dir / "inputs.txt"
+    if not f.is_file():
+        return {}, []
+    fields, inputs = {}, []
+    for line in f.read_text(errors="replace").splitlines():
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        if k == "input":
+            path = v.split(" size=")[0].strip()
+            algo = hsh = None
+            for tok in v.split():
+                for a in ("sha256", "sha1", "md5"):
+                    if tok.startswith(a + "="):
+                        algo, hsh = a, tok.split("=", 1)[1]
+            inputs.append((path, algo, hsh))
+        else:
+            fields.setdefault(k, v.strip())
+    return fields, inputs
+
+
 def g_lec_chain(run_dir):
     """THE CHAIN IS A CHAIN, and a chain with a hole proves nothing end to end.
 
-    `gate` compares gate.v -> gate_power.v (PG decoration).
-    `pnr`  compares gate_power.v -> pnr.v   (place and route).
-    Neither compares RTL to gate.v, so nothing here says the netlist implements
-    the design. Two green legs still leave the RTL end open, and that is exactly
-    the shape that reads as a closed chain to somebody skimming.
+    `syn`  compares RTL -> gate.v      (the leg this project has never had)
+    `gate` compares gate.v -> gate_power.v (PG decoration)
+    `pnr`  compares gate_power.v -> pnr.v  (place and route)
+
+    Without `syn`, nothing says the netlist implements the design, and two green
+    legs still read as a closed chain to somebody skimming.
+
+    A LEG IN FLIGHT IS NOT A MISSING LEG. If inputs.txt exists and verdict.txt
+    does not, the leg is running: that is a different fact from never having run
+    and produces a different next action.
+
+    THE ATTRIBUTION AVAILABLE HERE IS NOT THE ATTRIBUTION THE ROM PATH GIVES,
+    and the asymmetry is shown rather than papered over. ROM records stream path
+    + sha256 + toolkit head. This records input path + sha1 + syn_provenance,
+    with NO toolkit head field at all. Both are attributable; they are not
+    attributable to the same things.
     """
     lec = run_dir / "reports" / "lec"
-    legs = {}
+    legs, started, reads = {}, [], []
     for leg in ("syn", "gate", "pnr"):
-        v = lec / leg / "verdict.txt"
-        if not v.is_file():
-            legs[leg] = None
+        d = lec / leg
+        v = d / "verdict.txt"
+        if v.is_file():
+            txt = v.read_text(errors="replace")
+            legs[leg] = "clean" if (("nonequivalent=0" in txt) and ("abort=0" in txt)) else "not-clean"
+        elif (d / "inputs.txt").is_file():
+            # NOT "running" - this program cannot see processes, only files.
+            # An earlier version said RUNNING here and was wrong on
+            # full-20260814, whose syn leg has inputs.txt from the previous
+            # night. Asserting liveness from a file's existence is the exact
+            # class this artefact exists to police, committed by the artefact.
+            noneq = sorted(x.name for x in d.glob("noneq.*"))
+            started.append((leg, noneq))
+
+        fields, inputs = _lec_inputs(d)
+        if not fields:
             continue
-        txt = v.read_text(errors="replace")
-        clean = ("nonequivalent=0" in txt) and ("abort=0" in txt)
-        legs[leg] = "clean" if clean else "not-clean"
+        prov = fields.get("syn_provenance", "")
+        # THE DIRTY FLAG TRAVELS WITH THE SHA. A clean-looking 7-char
+        # provenance on a dirty tree is another looks-attributable state.
+        bits = ["%s: %s" % (leg, prov or "no syn_provenance")]
+        for path, algo, hsh in inputs:
+            if not hsh:
+                bits.append("%s (no hash recorded)" % pathlib.Path(path).name)
+                continue
+            rc, o, _ = sh("%ssum %s" % (algo, path), timeout=600) if algo else (1, "", "")
+            actual = o.split()[0].lower() if (rc == 0 and o) else None
+            if actual and actual != hsh.lower():
+                bits.append("%s %s=%s RECORDED but disk is %s"
+                            % (pathlib.Path(path).name, algo, hsh[:12], actual[:12]))
+            else:
+                bits.append("%s %s=%s%s" % (pathlib.Path(path).name, algo, hsh[:12],
+                                            ", re-hashed and matching" if actual else ""))
+        if "toolkit_head" not in fields:
+            bits.append("(no toolkit_head field in this leg - unlike the ROM path)")
+        reads.append("; ".join(bits))
+
+    read = " | ".join(reads) if reads else None
     have = [k for k in ("syn", "gate", "pnr") if legs.get(k)]
+
     if "syn" not in have:
-        return NM, ("no RTL->gate.v leg anywhere: legs present = %s. Nothing "
-                    "proves the netlist implements the RTL, so the chain is OPEN "
-                    "at the RTL end" % (", ".join(have) or "none")), S_NETLIST
+        syn_started = [x for x in started if x[0] == "syn"]
+        if syn_started:
+            noneq = syn_started[0][1]
+            extra = ""
+            if noneq:
+                extra = (" It DID produce non-equivalence artefacts (%s) without "
+                         "writing a verdict, so this is an incomplete or failed "
+                         "attempt rather than one that has not begun."
+                         % ", ".join(noneq[:3]))
+            return (NM, "the RTL->gate.v leg has inputs pinned and NO verdict "
+                    "file.%s Legs with verdicts: %s. Until a verdict lands "
+                    "nothing proves the netlist implements the RTL"
+                    % (extra, ", ".join(have) or "none"), S_NETLIST, None, read)
+        return (NM, "no RTL->gate.v leg anywhere: legs present = %s. Nothing "
+                "proves the netlist implements the RTL, so the chain is OPEN at "
+                "the RTL end" % (", ".join(have) or "none"), S_NETLIST, None, read)
     if all(legs[k] == "clean" for k in have):
-        return PASS, "legs %s all equivalent" % ", ".join(have), S_NETLIST
-    return FAIL, "legs %s" % ", ".join("%s=%s" % (k, legs[k]) for k in have), S_NETLIST
+        return (PASS, "legs %s all equivalent (nonequivalent=0 and abort=0)"
+                % ", ".join(have), S_NETLIST, None, read)
+    return (FAIL, "legs %s" % ", ".join("%s=%s" % (k, legs[k]) for k in have),
+            S_NETLIST, None, read)
 
 
 def g_rom_content(run_dir):
