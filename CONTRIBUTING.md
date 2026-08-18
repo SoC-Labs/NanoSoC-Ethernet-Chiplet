@@ -172,7 +172,55 @@ The worked examples behind this section are in
 
 ---
 
-## 4. Other things that bite
+## 4. Landing a fix — the gate is the authority, the sign-off is not
+
+A fix that is peer-reviewed, mutation-tested, and green in its own prototype
+bench can still be wrong in the tree. On 2026-08-18 the peer-write burst fix was
+landed on exactly that evidence and had to be reverted the same hour: the
+integration gate scored 8/14 with the primary case failing **byte-identically to
+the original bug**. The fix was fine. Its guard, landed in the same commit, was
+breaking it — and "the guard regresses the fix" and "the fix never worked" look
+the same from outside. Rerunning the two separately settled it in one step: fix
+plus guard 8/14, fix alone **14/14**.
+
+1. **A fix is not land-ready until the OWNING integration gate is green on a
+   clean rebuild.** Isolated-bench evidence and a sign-off are necessary and
+   never sufficient. The gate here is the pair bench, whole default `MODULE` set
+   — not just the one test you care about, or you will not see what you broke.
+
+2. **Show red-to-green in one session, on one build.** The bug's regression test
+   must fail before your change and pass after. A test that was already red and
+   stays red is not evidence of anything, and it is what a broken fix looks like.
+
+3. **A fix and its guard are SEPARATE commits, each gated on its own.** This is
+   the rule that cost a full land-and-revert cycle to learn. A guard exists to
+   catch the case the fix does not cover; if it also regresses the case the fix
+   *does* cover, bundling them makes the failure undiagnosable.
+
+4. **Declare what your prototype harness forced.** Every `force` and tie-off in a
+   proto bench is a premise about what the integration supplies. The burst
+   prototype forced `s_axi_wready`; the pair bench forces nothing on that path.
+   List the forcings next to the result, and check each against the real bench
+   before calling the shape proven.
+
+5. **Whoever lands, runs the gate.** Not the reviewer, not the author of the
+   prototype — the person moving it into the tree.
+
+6. **Red means revert, and the revert message carries the diagnosis.** Say what
+   you ruled out and with which command, so the next attempt does not re-walk it.
+   Leaving a non-working fix in the tree is worse than leaving the bug, because
+   the commit message now claims the bug is closed.
+
+7. **Two build-and-repo traps fire here specifically**, both of which caught a
+   real mistake on 2026-08-18:
+   - `rm -rf` the sim build first and confirm `recompiling module <your dut>` in
+     the log. Flist RTL is not a make dependency; a stale binary reproduces the
+     previous result perfectly.
+   - Verify against **your own commit's parent** (`git diff <sha>^ <sha>`), never
+     `HEAD~1`. Two sessions committed on top mid-simulation, so `HEAD~1` was a
+     stranger's commit and a revert against it was a silent no-op.
+
+## 5. Other things that bite
 
 - **Never modify anything under the shared IP library trees** — the roots behind
   `$IP_LIBRARY_ROOT`, `$ARM_IP_LIBRARY_PATH` and the physical-IP equivalent.
