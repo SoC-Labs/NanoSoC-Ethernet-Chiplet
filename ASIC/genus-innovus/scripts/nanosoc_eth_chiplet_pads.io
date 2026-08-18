@@ -20,7 +20,7 @@
 )
 (iopad
 	( topleft 
-		(inst name="uPAD_CORNER_TL" orientation=R90 cell=PCORNER_G)
+		(inst name="uPAD_CORNER_TL" orientation=R270 cell=PCORNER_G)
 	)
     (top
 		(inst  name="uPAD_VDDIO_T_0"	place_status=fixed offset=150 )
@@ -44,7 +44,7 @@
 
     )
 	(bottomleft
-		(inst name="uPAD_CORNER_BL" orientation=R180 cell=PCORNER_G)
+		(inst name="uPAD_CORNER_BL" orientation=R0 cell=PCORNER_G)
 	)
     (left
 		(inst  name="uPAD_TL_RX_0"			place_status=fixed  offset=150 )
@@ -75,7 +75,7 @@
 		(inst  name="uPAD_TL_TX_7"	 		place_status=fixed )
     )
 	(bottomright
-		(inst name="uPAD_CORNER_BR" orientation=R270 cell=PCORNER_G)
+		(inst name="uPAD_CORNER_BR" orientation=R90 cell=PCORNER_G)
 	)
     (bottom
 		(inst  name="uPAD_VDDIO_B_0"	 	place_status=fixed  offset=150 )
@@ -98,7 +98,7 @@
 
     )
 	(topright
-		(inst name="uPAD_CORNER_TR" orientation=R0 cell=PCORNER_G)
+		(inst name="uPAD_CORNER_TR" orientation=R180 cell=PCORNER_G)
 	)
     (right
 		(inst  name="uPAD_VDDIO_R_0"	 	place_status=fixed   offset=150)
