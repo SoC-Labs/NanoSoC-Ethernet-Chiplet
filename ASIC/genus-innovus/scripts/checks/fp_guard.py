@@ -679,8 +679,11 @@ def feed_sets(islands, m8, margin):
 
     which is non-empty exactly when b - a >= S + 2m. The fewest sets that cover
     every island is the classic interval-stabbing greedy - stab the interval
-    that ENDS first - and each set then goes at the middle of its group's
-    intersection, the x that maximises the smallest overlap in the group.
+    that ENDS first - and each set then goes at the LEFT END of its group's
+    intersection, because every island is bounded on its right by the macro halo
+    that made it and an M5 rung TERMINATES on the feed stripe's edge. See the
+    `PG ISLAND FEED` comment in power_plan.tcl: the middle of the window is
+    0.2 um further right and puts seven M1/M3 vias into a macro blockage.
     """
     W, S = m8["W"], m8["S"]
     ivs, too_narrow = [], []
@@ -700,9 +703,9 @@ def feed_sets(islands, m8, margin):
         ivs = [t for t in ivs if id(t) not in keep]
         lo = max(t[0] for t in grp)
         hi = min(t[1] for t in grp)
-        x = round((lo + hi) / 2.0, 1)
-        if x < lo or x > hi:
-            x = (lo + hi) / 2.0
+        x = math.ceil(lo * 10.0 - 1e-6) / 10.0
+        if x > hi:
+            x = lo
         out.append({"x": x, "lo": lo, "hi": hi, "islands": [t[2] for t in grp]})
     return out, too_narrow
 
@@ -733,6 +736,9 @@ def main(argv=None):
                     help="make FP-CORRIDOR findings hard (default: warn)")
     ap.add_argument("--strict-island", action="store_true",
                     help="make FP-ISLAND findings hard (default: warn)")
+    ap.add_argument("--no-feed", action="store_true",
+                    help="model the power plan WITHOUT its island feed - the A/B leg, "
+                         "and what EVP_NO_PG_ISLAND_FEED=1 would build")
     ap.add_argument("--json", default=None)
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true",
@@ -808,7 +814,7 @@ def run(args, capture=False):
     # which ladders can meet. Checking the shorts against the old grid would be
     # checking a power plan that is not the one being built.
     feed, feed_narrow = [], []
-    if pp.get("feed") and not pp.get("feed_disabled"):
+    if pp.get("feed") and not pp.get("feed_disabled") and not getattr(args, "no_feed", False):
         feed, feed_narrow = feed_sets(prefeed, m8, pp.get("feed_margin", 0.8))
     vsets = {n: list(grid_vsets[n]) for n in grid_vsets}
     for f in feed:
@@ -831,7 +837,7 @@ def run(args, capture=False):
            "corridors": corridors, "islands": islands,
            "islands_prefeed": prefeed,
            "feed": feed, "feed_present": bool(pp.get("feed")),
-           "feed_disabled": bool(pp.get("feed_disabled")),
+           "feed_disabled": bool(pp.get("feed_disabled") or getattr(args, "no_feed", False)),
            "feed_unfeedable": feed_narrow,
            "narrow_segments": all_narrow}
 
@@ -986,12 +992,21 @@ def selftest(args):
         base = argparse.Namespace(**vars(args))
         base.selftest = False
 
-        def once(**moves):
+        def once(_no_feed=False, **moves):
             a = argparse.Namespace(**vars(base))
             a.move = ["%s=%s" % (k, v) for k, v in moves.items()]
+            a.no_feed = _no_feed
             return run(a, capture=True)
 
         bad = once(**{SELFTEST_FALLBACK: 1506.12})
+        # The four coordinates below were measured by check_drc on a build whose
+        # power plan had NO island feed. A feed set is a same-net vertical
+        # target, and an M5 stripe stops at the FIRST one past its end, so with
+        # the feed those same four shorts are 21 um shorter. Asserting the
+        # historical numbers therefore has to be done against the historical
+        # power plan - hence _no_feed - and the feed's own effect on that
+        # floorplan is asserted separately below.
+        bad_nofeed = once(_no_feed=True, **{SELFTEST_FALLBACK: 1506.12})
         good = once(**{SELFTEST_FALLBACK: 1505.60})
         edge = once(**{SELFTEST_FALLBACK: 1506.10})
         old_fp = once(**{SELFTEST_FALLBACK: 1503.40, "region_eth_scratch_tx_0": 1633.80})
@@ -1010,11 +1025,14 @@ def selftest(args):
     case("short_fires_on_1506.12", len(bad["shorts"]) == 4,
          "predicted %d rail-to-rail shorts, expected 4" % len(bad["shorts"]))
     got = sorted((round(x["x1"], 3), round(x["y1"], 3), round(x["x2"], 3), round(x["y2"], 3))
-                 for x in bad["shorts"])
+                 for x in bad_nofeed["shorts"])
     coords_ok = len(got) == len(EXPECTED_BAD) and all(
         all(abs(a - b) < 0.0011 for a, b in zip(w, h)) for w, h in zip(EXPECTED_BAD, got))
     case("short_coords_match_check_drc", coords_ok,
          "; ".join("(%.3f, %.3f) (%.3f, %.3f)" % h for h in got) if got else "no coordinates")
+    case("island_feed_creates_no_short_on_1506.12", len(bad["shorts"]) == len(bad_nofeed["shorts"]),
+         "the feed neither adds nor hides a short on the known-bad floorplan: %d with, %d without"
+         % (len(bad["shorts"]), len(bad_nofeed["shorts"])))
     case("short_quiet_on_1505.60", not good["shorts"],
          "predicted %d rail-to-rail shorts, expected 0 over %d pairs that can meet"
          % (len(good["shorts"]), good["phase_census_pairs"]))

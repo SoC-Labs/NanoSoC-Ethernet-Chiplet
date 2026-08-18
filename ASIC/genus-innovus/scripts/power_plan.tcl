@@ -409,8 +409,21 @@ if {!$PG_ISLAND_FEED} {
 
     ## Fewest sets that cover every feasible island: stab the interval that ENDS
     ## first, take everything that interval's endpoint also stabs as one group,
-    ## repeat. Then place the set at the middle of the group's intersection,
-    ## which is the x that maximises the SMALLEST overlap in the group.
+    ## repeat. Then place the set at the LEFT end of the group's intersection.
+    ##
+    ## LEFT END, NOT THE MIDDLE, AND THIS WAS MEASURED THE HARD WAY. Every one of
+    ## these islands is bounded on its RIGHT by the macro halo that created it,
+    ## so the left end of the window is the placement that keeps the set furthest
+    ## from that macro. It matters at 0.2um: an M5 rung runs out to the FAR EDGE
+    ## of the nearest same-net vertical stripe (-extend_to_closest_target
+    ## {ring stripe}, set below), so the feed stripe's edge is where the rung
+    ## TERMINATES, and it terminates with a via stack down to M1. On the probe,
+    ## the middle of the x window put the VDD edge at 1052.800, which is 0.400
+    ## inside u_shared_sram_0's footprint (x1 = 1052.400) -- SEVEN M1/M3
+    ## `Special Wire of Net VDD & Blockage of Cell ...u_shared_sram_0...` shorts,
+    ## one per M5 rung, at y 514.4 through 651.0. The left end puts that same edge
+    ## at 1052.600 and the shorts are ZERO. Same island coverage either way
+    ## (3 rail-class open boxes, 30 stranded, 0 functional, both times).
     set _pif_iv [lsort -real -index 1 $_pif_iv]
     set _pif_starts {}
     while {[llength $_pif_iv]} {
@@ -430,10 +443,10 @@ if {!$PG_ISLAND_FEED} {
             if {[lindex $_pif_e 0] > $_pif_lo} { set _pif_lo [lindex $_pif_e 0] }
             if {[lindex $_pif_e 1] < $_pif_hi} { set _pif_hi [lindex $_pif_e 1] }
         }
-        set _pif_x [expr {round((($_pif_lo + $_pif_hi)/2.0) * 10.0)/10.0}]
-        if {$_pif_x < $_pif_lo || $_pif_x > $_pif_hi} {
-            set _pif_x [expr {($_pif_lo + $_pif_hi)/2.0}]
-        }
+        ## On the 0.1um grid, the first grid point at or right of the window's
+        ## left end; the exact left end if the window is narrower than a step.
+        set _pif_x [expr {ceil($_pif_lo * 10.0 - 1e-6)/10.0}]
+        if {$_pif_x > $_pif_hi} { set _pif_x $_pif_lo }
         lappend _pif_starts $_pif_x
         puts [format "POWER-PLAN:   feed set at x=%.3f  (VDD %.3f-%.3f, VSS %.3f-%.3f) feeds %d island(s), x window \[%.3f,%.3f\]" \
               $_pif_x $_pif_x [expr {$_pif_x + $_pif_w}] \
