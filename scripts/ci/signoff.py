@@ -97,6 +97,27 @@ def load():
     return m, stages
 
 
+def _stamp():
+    """When, and AT WHICH COMMIT, a stage result was produced.
+
+    NOTHING USED TO EXPIRE A status.json. `report` globbed them all and stamped
+    ONE provenance header over rows that in practice spanned eleven days and 191
+    commits — a reader saw a single commit id above a table whose rows were
+    measured against entirely different trees, and two of the PASS rows were
+    known false. Recording the commit per row is what lets `report` say which
+    rows describe the tree it is describing.
+    """
+    def git(*a):
+        try:
+            return subprocess.run(("git",) + a, cwd=str(ROOT), capture_output=True,
+                                  text=True, timeout=20).stdout.strip()
+        except Exception:
+            return ""
+    return {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "repo_sha": git("rev-parse", "HEAD") or "unknown",
+            "repo_dirty": bool(git("status", "--porcelain"))}
+
+
 def sh(cmd, log_path, env=None, timeout=None, cwd=None):
     """Run cmd, tee to log_path, return (rc, seconds). Never raises on failure.
 
@@ -358,6 +379,7 @@ def cmd_run(args):
                    # Kept under its old name too: docs/tapeout/09-signoff-
                    # checklist.md and any log scraper predate `status`.
                    "skipped_reason": reason}
+            rec.update(_stamp())
             rec.update(extra or {})
             (dest / "status.json").write_text(json.dumps(rec, indent=2))
 
@@ -430,6 +452,7 @@ def cmd_run(args):
                   "passed": rc == 0, "phase": s.get("phase", "rtl"),
                   "description": s.get("description", ""),
                   "artifacts_copied": len(copied), "artifacts_missing": missing}
+        status.update(_stamp())
         (dest / "status.json").write_text(json.dumps(status, indent=2))
 
         verdict = verdict_text(status["status"], gate)
@@ -447,32 +470,103 @@ def cmd_report(_args):
     m, _ = load()
     rows, blocking, unmeasured = [], 0, 0
     for st in sorted(OUT.glob("*/status.json")):
-        rows.append(json.loads(st.read_text()))
+        r = json.loads(st.read_text())
+        # mtime is the FALLBACK only. Rows written before 2026-08-18 carry no
+        # stamp of their own, and a file mtime survives a `cp -p` that the
+        # measurement it describes does not.
+        r.setdefault("utc", time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                          time.gmtime(st.stat().st_mtime)) + " (mtime)")
+        r.setdefault("repo_sha", "")
+        rows.append(r)
     prov_p = OUT / "provenance" / "provenance.json"
     prov = json.loads(prov_p.read_text()) if prov_p.exists() else {}
 
+    # ── NOTHING EXPIRED A status.json, AND THAT IS WHY THIS REPORT LIED ──────
+    # `report` renders whatever is in build/signoff/, and those directories are
+    # only ever overwritten, never invalidated. Measured 2026-08-18: a header of
+    # commit 3f3e6c3 (191 commits behind HEAD, and not an ancestor of it) over
+    # rows spanning Aug 7 -> Aug 18, two of whose PASS rows were known false —
+    # lec-selftest's was from Aug 7 and predates the three-state driver.
+    # A result measured at another commit is not a result about this one, so it
+    # is now marked STALE and is NOT counted as a pass. Rows with no recorded
+    # commit (every row written before today) cannot be shown current and are
+    # stale by the same rule: unprovable freshness is not freshness.
+    def _head():
+        try:
+            return subprocess.run(("git", "rev-parse", "HEAD"), cwd=str(ROOT),
+                                  capture_output=True, text=True,
+                                  timeout=20).stdout.strip()
+        except Exception:
+            return ""
+    head = _head()
+    def _stale(r):
+        if not head:
+            return False, ""          # no git here: cannot judge, do not invent
+        if not r.get("repo_sha"):
+            return True, "no commit recorded — predates per-row provenance"
+        if r["repo_sha"] != head:
+            return True, f"measured at {r['repo_sha'][:12]}, HEAD is {head[:12]}"
+        return False, ""
+
     md = [f"# ASIC signoff report — {m.get('design','?')}", ""]
+    if head:
+        md += [f"**Rendered against HEAD** `{head[:12]}`. Each row records the "
+               f"commit it was measured at; rows measured elsewhere are marked "
+               f"**STALE** and are not counted as passes.", ""]
     if prov:
-        md += [f"**Commit** `{prov.get('repo_sha','?')[:12]}`"
+        md += [f"Provenance capture (a SEPARATE artefact, and not the age of any "
+               f"row below): commit `{prov.get('repo_sha','?')[:12]}`"
                f"{' — WORKING TREE DIRTY' if prov.get('repo_dirty') else ''}"
-               f" · **Host** {prov.get('host','?')} · **{prov.get('utc','?')}**", ""]
-    md += ["| stage | phase | gate | result | time | why |",
-           "|---|---|---|---|---|---|"]
+               f" · host {prov.get('host','?')} · {prov.get('utc','?')}", ""]
+    md += ["| stage | phase | gate | result | measured at | time | why |",
+           "|---|---|---|---|---|---|---|"]
+    stale_block = []
     for r in rows:
         res = result_of(r)
+        old, why_stale = _stale(r)
         mark = verdict_text(res, r["gate"], markdown=True)
+        if old:
+            mark += " · **STALE**"
+        elif r.get("repo_dirty"):
+            # Current commit, but the tree it ran against was not that commit.
+            # Not counted as stale — every build in this repo is dirty, and a
+            # permanently red report is one nobody reads — but never silent.
+            mark += " · dirty tree"
         # UNVERIFIED is counted apart from FAIL. Both block, but a reader who
         # cannot tell them apart cannot tell "fix the design" from "fix the run".
-        if res == UNVERIFIED:
-            unmeasured += 1
-        elif res == FAIL and r["gate"] == "block":
+        #
+        # STALENESS IS DELIBERATELY ASYMMETRIC. A stale PASS is not evidence of
+        # health at this commit and is not counted as one. A stale FAIL still
+        # counts as a blocking failure: a defect does not become unknown because
+        # the tree moved, and burying a real red under a staleness verdict is the
+        # exact failure this whole change exists to remove. Re-running is what
+        # clears it, in both directions.
+        if res == FAIL and r["gate"] == "block":
             blocking += 1
+        elif old:
+            if r["gate"] == "block":
+                stale_block.append((r, why_stale))
+        elif res == UNVERIFIED:
+            unmeasured += 1
         why = r.get("unverified_reason", "") if res == UNVERIFIED else ""
+        if old:
+            why = (why + "; " if why else "") + why_stale
+        when = f"`{r.get('repo_sha','')[:12] or '?'}` {r.get('utc','?')}"
         md.append(f"| {r['id']} | {r['phase']} | {r['gate']} | {mark} | "
-                  f"{r['seconds']}s | {why} |")
+                  f"{when} | {r['seconds']}s | {why} |")
 
+    if stale_block:
+        md += ["", "## Blocking stages whose result was measured elsewhere", "",
+               "These rows are real results — of a **different tree**. They are "
+               "not passes for this commit; nothing here has been measured "
+               "against what is checked out now. (A stale FAIL is listed as a "
+               "failure instead, not here: a defect does not expire.)", ""]
+        md += [f"- `{r['id']}` — {w}" for r, w in stale_block]
+
+    stale_ids = {r["id"] for r, _ in stale_block}
     unv_block = [r for r in rows
-                 if result_of(r) == UNVERIFIED and r["gate"] == "block"]
+                 if result_of(r) == UNVERIFIED and r["gate"] == "block"
+                 and r["id"] not in stale_ids]
     if unv_block:
         md += ["", "## Blocking stages that were NOT MEASURED", "",
                "These did not run — no tool on this host, or no implementation "
@@ -505,12 +599,16 @@ def cmd_report(_args):
 
     md += ["", "## Verdict", ""]
     n_unv_block = len(unv_block)
-    if blocking or n_unv_block:
+    n_stale_block = len(stale_block)
+    if blocking or n_unv_block or n_stale_block:
         parts = []
         if blocking:
             parts.append(f"{blocking} blocking stage(s) FAILED")
         if n_unv_block:
             parts.append(f"{n_unv_block} blocking stage(s) were NOT MEASURED")
+        if n_stale_block:
+            parts.append(f"{n_stale_block} blocking stage(s) were measured at "
+                         f"another commit")
         md += ["**NOT SIGNED OFF** — " + " and ".join(parts) + ".",
                "",
                "An unmeasured gate is not a lesser failure and not a pass: the "
@@ -529,10 +627,12 @@ def cmd_report(_args):
         {"design": m.get("design"), "provenance": prov, "stages": rows,
          "not_run": notrun, "unsupported": uns,
          "blocking_failures": blocking,
-         "unverified": unmeasured, "blocking_unverified": n_unv_block}, indent=2))
+         "unverified": unmeasured, "blocking_unverified": n_unv_block,
+         "head": head,
+         "blocking_stale": [r["id"] for r, _ in stale_block]}, indent=2))
     print("\n".join(md))
     print(f"\nreport -> {(OUT / 'signoff_report.md').relative_to(ROOT)}")
-    return 1 if (blocking or n_unv_block) else 0
+    return 1 if (blocking or n_unv_block or n_stale_block) else 0
 
 
 # -----------------------------------------------------------------------------
