@@ -126,53 +126,7 @@ top-level supply ports / pad wildcards                 : 4 / 4
 
 The already-correct bootrom and pad lines were left untouched.
 
-## 6. Does it change what P&R BUILDS? No — measured 2026-08-18
-
-**It cannot, and the reason is that the UPF is not the binding artefact.** Synthesis
-writes *two* power-intent outputs:
-
-```
-1_synthesis.tcl:1180   write_power_intent -cpf ...  ->  gate1.cpf   (what P&R reads)
-1_synthesis.tcl:1181   write_power_intent      ...  ->  gate2.upf   (a UPF round-trip)
-```
-
-| | input UPF | `gate2.upf` round-trip | `gate1.cpf` P&R reads |
-|---|---:|---:|---:|
-| `create_supply_port` | 4 | 4 | **0** |
-| `create_supply_net` | 4 | 4 | **0** |
-| `create_supply_set` | 2 | 2 | **0** |
-| `create_pst` | 1 | 1 | **0** |
-| `connect_supply_net` | 48 | **14** | **0** |
-| correct bootrom refs | 6 | 6 | **0** |
-| dead-hierarchy refs | 34 | **0** | 0 |
-| size | | 3,733 B | **730 B** |
-
-**The round-trip is the control, and it refutes the obvious theory.** One might assume the
-34 errors degraded the CPF emission and took the good constructs with it. They did not:
-Genus ingested the UPF correctly and kept exactly `48 − 34 = 14` connections, with all six
-correct bootrom paths present and zero dead-hierarchy references. It resolved precisely the
-valid statements and discarded precisely the invalid ones.
-
-So the CPF drops constructs that Genus demonstrably holds internally — **including four
-top-level `create_supply_port` statements that no instance-path error could affect.**
-`write_power_intent -cpf` simply does not translate them.
-
-> **Prediction, logged before any run:** regenerating the UPF takes `gate2.upf` from 14 to 52
-> `connect_supply_net` and leaves `gate1.cpf` byte-identical apart from its header timestamp.
-> If the CPF changes, this section is wrong.
-
-### Two consequences that matter more than the grid
-
-- **`cpf-patch` is not a workaround for a broken UPF.** It is a workaround for a translation
-  that emits nothing regardless of input quality. **Repairing the UPF does not make the patch
-  redundant** — anyone who fixes the UPF and then removes the patch returns the design to zero
-  fillers and 95,568 free-site gaps.
-- **The UPF is not a trustworthy description of what was built**, and never has been. That is
-  the durable risk here. The PG grid is fine; the *document* of it is fiction.
-
----
-
-## 7. What is NOT established
+## 6. What is NOT established
 
 - The **54 `LIB_NO_PG_PIN`** errors may simply be the expected consequence of reading
   libraries without PG pins. Not investigated. Do not add them to the 34 as if they

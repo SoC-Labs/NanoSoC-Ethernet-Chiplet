@@ -92,7 +92,70 @@ route_special -connect {pad_pin pad_ring} \
             -nets { VSS } -allow_layer_change 1 \
             -pad_pin_width 1.5 -target_via_layer_range { M1(1) AP(10) }
 
-### Adding Stripes 
+################################################################################
+# VDDIO / VSSIO -- THE IO-SUPPLY SPECIAL NETS WERE NEVER GIVEN ANY GEOMETRY
+################################################################################
+#
+# docs/tapeout/51-erc-pg-labels.md section 5.2 measured zero GDS text anywhere
+# in the hierarchy for VDDIO/VSSIO on fp1505, and named
+# ASIC/eth-chiplet/config/design_config.tcl:177-189 (which just points at the
+# already-applied io_lef_pg_pin_override / TSMC65_IO_DRIVER_LEF fix) as the
+# suspected cause. VERIFIED AND REFUTED 2026-08-18 against fp1505's own
+# work/innovus.log1: the patched LEF loads, and Innovus itself prints
+#     Pin 'VDDPST' of cell 'PVDD2POC_G' is declared as power/ground in LEF
+#     but as signal in timing library. Treat it as power/ground.
+# for all three pins -- the LEF fix is landed and IS taking effect. That is not
+# the open defect.
+#
+# THE REAL DEFECT IS RIGHT HERE. connect_global_net above (line 68, 70) binds
+# VDDPST/VSSPST pins to nets VDDIO/VSSIO -- that is PIN MEMBERSHIP, not
+# geometry. Every add_rings / add_stripes / route_special call in this file,
+# checked end to end, names only {VDD VSS}. Nothing ever routes VDDIO/VSSIO.
+# grep -c '{ VDDIO }\|{ VSSIO }\|nets {VDDIO\|nets {VSSIO' against this file
+# was 0 before this change. So the two IO-supply nets reach write_stream with
+# pins but zero special wires -- which is exactly "empty special nets", and
+# exactly why gdsmap_derive's NAME <layer>/SPNET rules (which fixed VDD/VSS)
+# have no VDDIO/VSSIO geometry to attach a label to: SPNET text is emitted
+# where there is routed special-net metal, and here there is none.
+#
+# THE FIX is the same route_special {pad_pin pad_ring} call already used for
+# VDD/VSS immediately above, extended to VDDIO/VSSIO. -pad_pin_width is
+# DELIBERATELY OMITTED: TCRcom/route_special.html is explicit that leaving it
+# unset lets the tool compute the pad pin width itself and that specifying one
+# "is usually not necessary" -- there is no measured/vendor-quoted VDDPST wire
+# width for these nets the way 1.63/1.5 above were derived for VDD/VSS, and
+# guessing one is how the M9 stripe spacing defect (see the note below on
+# M9) started life as a plausible-looking number nobody had re-derived.
+#
+# VALIDATED 2026-08-18: replayed against fp1505's OWN routed database
+# (work/nanosoc_eth_chiplet_pads_routed, read-only, via a restream-style
+# read_db + route_special + write_stream -- no P&R re-run) rather than
+# reasoned about. Before: 0 special wires on VDDIO, 0 on VSSIO. After: both
+# nets carry real routed metal, and a re-run of run_erc.sh against the
+# resulting GDS reads VDD/VSS/VDDIO/VSSIO all labelled, OVERALL: OK. See
+# docs/tapeout/51-erc-pg-labels.md section 5.5 for the full before/after and
+# the exact commands. This has NOT been through a full place/cts/route of
+# fp1505 itself -- that re-run is still owed before this can replace fp1505 as
+# the promoted build.
+route_special -connect {pad_pin pad_ring} \
+            -layer_change_range { M1(1) AP(10) } \
+            -block_pin_target nearest_target \
+            -pad_pin_port_connect {all_port all_geom} \
+            -pad_pin_target nearest_target -allow_jogging 1 \
+            -crossover_via_layer_range { M1(1) AP(10) } \
+            -nets { VDDIO } -allow_layer_change 1 \
+            -target_via_layer_range { M1(1) AP(10) }
+
+route_special -connect {pad_pin pad_ring} \
+            -layer_change_range { M1(1) AP(10) } \
+            -block_pin_target nearest_target \
+            -pad_pin_port_connect {all_port all_geom} \
+            -pad_pin_target nearest_target -allow_jogging 1 \
+            -crossover_via_layer_range { M1(1) AP(10) } \
+            -nets { VSSIO } -allow_layer_change 1 \
+            -target_via_layer_range { M1(1) AP(10) }
+
+### Adding Stripes
 set_db add_stripes_ignore_block_check true
 set_db add_stripes_break_at none
 set_db add_stripes_route_over_rows_only false
