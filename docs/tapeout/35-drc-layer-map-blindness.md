@@ -64,7 +64,11 @@ a leak, so the answer is already in the bundle when they ask.
 Two things, neither expensive:
 
 1. **Census the stream's layers against the deck's mapped set.** Any layer carrying
-   geometry that the deck maps no rule to is unmeasured — not clean.
+   geometry that the deck maps no rule to is unmeasured — not clean. Built 2026-08-18:
+   `make -C ASIC/genus-innovus layer-map-check` — see [doc 49](49-layer-map-coverage-check.md).
+   It runs before `make drc` now, diffs `asic-flow-gds-layer-census`'s output against
+   `$(GDSMAP)` (and, when given `LAYER_MAP_EXTRA`, a foundry/IMEC report too), and is
+   what item 1 here used to mean before it existed.
 2. **Re-run the corner census** if the map, the floorplan or the pad ring moves.
 
 Method note, because the obvious approach does not finish: a
@@ -76,6 +80,8 @@ klayout script that buffers tells you nothing while it runs.
 
 ## Related
 
+- doc 49 — Layer-map coverage check (the tool built to do exactly what "How to re-check
+  after any map change" above describes, validated against a real IMEC foundry report)
 - doc 28 — DRC status and attribution (the `CSR.R.1` = 0 result and its positive control)
 - doc 12 — Calibre DRC (how the project deck header clears the two switches the wrapper
   cannot reach; without those, every boundary-derived check measures a synthetic outline)

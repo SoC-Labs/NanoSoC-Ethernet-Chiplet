@@ -88,7 +88,7 @@ Calibre v2023.1_18.8, `-drc -hier -turbo N`, `DRC CELL NAME YES CELL SPACE XFORM
 |---|---|---|
 | DRC | **2,508** (0 rulechecks capped) | decomposed below; ~500 are ours |
 | ANT | **1,549** — all `A.R.8.3`, all on **one net** | under investigation, see §5 |
-| BND | **3** (83 flat) | effectively clean |
+| BND | **3** (83 flat) | effectively clean — **stale figure, from before the 2026-08-09 pitch-switch fix; see [50](50-bnd-and-logo-checks.md) for the current, `make bnd`-driven, IMEC-compared numbers** |
 | LUP | **0** | **NOT A RESULT — the checks are not armed.** See §6 |
 
 **The single most important caveat.** Our submitted GDS contains no standard-cell, IO-driver or

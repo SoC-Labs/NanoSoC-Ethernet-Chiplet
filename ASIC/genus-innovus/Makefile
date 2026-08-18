@@ -136,7 +136,9 @@ export ROMLIBS_DIR := $(ROM_RUN_DIR)
         pnr_place pnr_cts pnr_route pnr_all pnr_setup gui \
         pnr_place_eval pnr_cts_eval pnr_route_eval pnr_all_eval \
         gdsmap gdsmap-parity restream restream-census \
-        drc drc-census logo drc-logo \
+        layer-map-check \
+        drc drc-census logo drc-logo drc-logo-check bnd \
+        padring-gds erc erc-quick erc-preflight \
         status clean distclean help
 
 # `pad-lef` (../common.mk) derives the patched TSMC IO-driver LEF from the
@@ -780,7 +782,80 @@ DRC_DECK_ENV = BLOCK=$(BLOCK) FOUNDRY_DECK=$(DRC_FOUNDRY_DECK) \
                DIE_XLB=$(DRC_DIE_XLB) DIE_YLB=$(DRC_DIE_YLB) \
                DIE_XRT=$(DRC_DIE_XRT) DIE_YRT=$(DRC_DIE_YRT)
 
-drc:
+#-----------------------------------------------------------------------------
+# Layer-map coverage — the pre-flight doc 35 says this repo has never had
+#
+# Calibre can only check a (layer, datatype) pair the DECK maps a rule to.
+# scripts/ci/drc_census.py (drc-census below) judges what a run FOUND; this
+# judges what it was even ABLE TO SEE, by diffing the stream's own
+# (layer, datatype) usage — asic-flow-gds-layer-census, no licence, no
+# geometry built — against a declared map. No tool run, seconds, and it is
+# meant to run BEFORE drc, not after: a clean Calibre run over an unmapped
+# layer is not a clean result, it is an unmeasured one wearing one.
+# See docs/tapeout/49-layer-map-coverage-check.md for the full argument,
+# including why $(GDSMAP) ALONE is not a complete map for a merged chip
+# stream — read the NOTE this target prints before trusting a bare pass.
+#
+# LAYER_MAP_EXTRA — space-separated extra map(s)/report(s) to union in.
+#   ASIC/asic-toolkit/scripts/check-layer-map-coverage --imec-report auto-
+#   detects a foundry Final_Report (it greps for "LayerMapCadence"); anything
+#   else is read as a plain GdsOutMap-shaped file. Point it at a broker's
+#   Final_Report when you have one — that is the one source in this project
+#   that names the front-end and library-merged layers $(GDSMAP) does not.
+# LAYER_MAP_STRICT — 0 (default) prints the finding and does not fail the
+#   build; 1 fails `make drc` on any UNMAPPED, POPULATED finding. Defaults to
+#   0 because $(GDSMAP) alone WILL report every front-end/library layer
+#   (NW, OD, PO, PP, NP, CO, dummy fill, seal ring, LOGO, SRAM markers) as
+#   unmapped on any real merged stream — those arrive pre-drawn from vendor
+#   GDS content this map was never meant to name, and a gate that is red on
+#   every good run is the "gates that cannot discriminate" failure this
+#   project has been burned by before (docs/tapeout/35, 39). Turn it on once
+#   LAYER_MAP_EXTRA gives the check a source complete enough to trust.
+LAYER_MAP_EXTRA         ?=
+LAYER_MAP_STRICT        ?= 0
+LAYER_MAP_CHECK_SCRIPT  := $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/asic-toolkit/scripts/check-layer-map-coverage
+
+layer-map-check: gdsmap
+	@test -s $(GDS) || { echo "FAIL: no GDS at $(GDS) — run 'make pnr_route' first."; exit 1; }
+	@test -x $(LAYER_MAP_CHECK_SCRIPT) || { \
+	    echo "FAIL: no executable check at $(LAYER_MAP_CHECK_SCRIPT)."; \
+	    echo "      git submodule update --init ASIC/asic-toolkit ?"; exit 1; }
+	@extra=""; \
+	for f in $(LAYER_MAP_EXTRA); do \
+	    test -s "$$f" || { echo "FAIL: LAYER_MAP_EXTRA names unreadable file: $$f"; exit 1; }; \
+	    if grep -q "LayerMapCadence" "$$f" 2>/dev/null; \
+	        then extra="$$extra --imec-report $$f"; \
+	        else extra="$$extra --map $$f"; fi; \
+	done; \
+	python3 $(LAYER_MAP_CHECK_SCRIPT) $(GDS) --map $(GDSMAP) $$extra; rc=$$?; \
+	if [ -z "$(LAYER_MAP_EXTRA)" ]; then \
+	    echo ""; \
+	    echo "  NOTE: only the derived stream-out map (\$$GDSMAP) was supplied."; \
+	    echo "  It declares the layers INNOVUS ITSELF constructs — routing metal,"; \
+	    echo "  vias, AP, pin-name text, the die outline. Front-end and library-"; \
+	    echo "  merged layers (std cells, macros, pads, dummy fill, seal ring,"; \
+	    echo "  LOGO, SRAM markers) stream in pre-drawn from vendor GDS content"; \
+	    echo "  and are NOT named by this map — they are EXPECTED to show as"; \
+	    echo "  unmapped below, and that is not a defect. Set LAYER_MAP_EXTRA to"; \
+	    echo "  a foundry/IMEC layer table for a complete check."; \
+	fi; \
+	echo ""; \
+	if [ "$$rc" != 0 ]; then \
+	    if [ "$(LAYER_MAP_STRICT)" = "1" ]; then \
+	        echo "  LAYER_MAP_STRICT=1 — failing on the UNMAPPED, POPULATED finding(s) above."; \
+	        exit 1; \
+	    else \
+	        echo "  Not failing the build (LAYER_MAP_STRICT=0). Read the finding(s)"; \
+	        echo "  above; set LAYER_MAP_STRICT=1 once the map(s) supplied are"; \
+	        echo "  complete enough to gate on."; \
+	    fi; \
+	fi
+
+## Signoff DRC (Calibre). `layer-map-check` runs first — advisory by default
+## (see LAYER_MAP_STRICT above) — so its finding is on screen before Calibre
+## ever starts, not discovered afterwards while reading a summary that cannot
+## tell you what it never had a rule for.
+drc: layer-map-check
 	DRC_GDS=$(GDS) DRC_RUNDIR=$(DRC_RUNDIR) DRC_CPUS=$(DRC_CPUS) \
 	$(DRC_DECK_ENV) \
 	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
@@ -793,6 +868,39 @@ drc-census:
 	DRC_DESIGN_BUDGET=$(DRC_DESIGN_BUDGET) DRC_DENSITY_BUDGET=$(DRC_DENSITY_BUDGET) \
 	    python3 $(DESIGN_HOME)/scripts/ci/drc_census.py $(DRC_RUNDIR)
 
+## Calibre BND (bond-pad / seal-ring BEOL) on the built GDS, headless. This is a
+## SEPARATE foundry deck from `make drc` -- see docs/tapeout/50-bnd-and-logo-checks.md
+## for what it checks that the core DRC deck does not (PM/AP/CB2 pad-ring and
+## after-passivation-RDL rules) and why the two are kept apart rather than
+## merged into one run. `make -n bnd` prints the resolved values.
+##   make bnd                        — check $(GDS)
+##   make bnd BND_GDS=some/other.gds — check a different stream
+##   make bnd BND_DECK=/tmp/pitch80.bnd.rules — switch A/B against a scratch
+##                                     copy of the wrapper (never on signoff)
+bnd:
+	BND_GDS=$(GDS) BND_RUNDIR=$(BND_RUNDIR) BND_CPUS=$(BND_CPUS) \
+	BLOCK=$(BLOCK) BND_FOUNDRY_DECK=$(BND_FOUNDRY_DECK) \
+	    $(DESIGN_DIR)/scripts/calibre/run_bnd.sh
+
+#-----------------------------------------------------------------------------
+# Padring GDS check -- the local, license-free analog of the foundry's
+# CompareCells + Padringcheck, run BEFORE a stream goes to a broker.
+#-----------------------------------------------------------------------------
+## padring-gds: check the padframe cell names/counts/order actually STREAMED
+## into $(GDS) against the pad ring's own sources (pads.v, the .io floorplan
+## file, place_bondpads.tcl) -- see scripts/check_padring_gds.py for what this
+## can and cannot verify (names/counts/order over anonymous GDS structures;
+## NOT real geometry or DRC, since we hold no usable tpbn65v/tphn65lpgv2od3
+## GDS to compare against). No PDK mount needed, just python3 + the GDS. See
+## docs/tapeout/52-padring-gds-check.md.
+.PHONY: padring-gds
+padring-gds:
+	@test -s $(GDS) || { \
+	    echo "FAIL: no GDSII at $(GDS) — run 'make pnr_route' first."; exit 1; }
+	mkdir -p $(REPORT_DIR)
+	python3 $(NANOSOC_ETH_CHIPLET_HOME)/scripts/check_padring_gds.py \
+	    --gds $(GDS) --json $(REPORT_DIR)/padring_gds_report.json
+
 #-----------------------------------------------------------------------------
 # Logo merge (klayout — no EDA licence)
 #-----------------------------------------------------------------------------
@@ -801,17 +909,48 @@ drc-census:
 ## the signoff artefact and the logoed one is the submission artefact, so a DRC
 ## count can never be quoted against the wrong file.
 ##
-## STRIP THE JACK BY DEFAULT. The broker requires the 158/LOGO marker, and in
-## the foundry deck 158 is NOT passive:
+## THREE MODES, ONE SOURCE CELL. logos/nanosoc_eth_Logo.gds is the only
+## hand-authored artwork; logo_text.gds (jack dropped) and logo_aponly.gds
+## (every layer but AP dropped) are both DERIVED from it at merge time by
+## strip_logo_jack.py / strip_logo_layers.py, never hand-edited copies, so
+## there is exactly one place to fix the artwork.
+##
+## The broker requires the 158/LOGO marker, and in the foundry deck 158 is NOT
+## passive:
 ##     LOGO.S.1  min clearance LOGO -> OD/PO/M1..M9 = 10.0um   (deck :20450)
 ##     LOGO.R.4  OD/PO/M1x..M9x CUT LOGO is not allowed        (deck :20498)
 ## The full 727.75x320.25um logo therefore needs 747.75x340.25um clear of ALL
-## routing. Measured 2026-08-10: dropped at die centre it cost >= 2020 extra DRC
-## results (2509 -> 4529), with LOGO.S.1 and LOGO.R.4 both SATURATED at the
-## 1000-result cap, landing on an rf_01k register file. Text-only is
-## 360.25x290.25um and needs 380.25x310.25um — a keep-out a floorplan can host.
+## routing, and text-only needs 380.25x310.25um. NEITHER placement satisfies
+## it on a placed-and-routed die: three explicit A/B runs
+## (calibre_runs/drc_logo, drc_logo_text, drc_logo_L300 — 2026-08-10) drove
+## the TRUE (uncapped) LOGO.R.4 count from 5497 -> 1186 -> 1134 by dropping the
+## jack graphic and moving the logo, and never reached zero, because the core
+## is fully placed and routed and there is no 340um-square (or even
+## 310um-square) hole in it, wherever the logo goes; the residual is
+## overwhelmingly at the top-level cell (763-973 of the true count), i.e. real
+## chip routing under the mark, not one unlucky macro placement.
+##
+## LOGO_AP_ONLY IS THE MEASURED FIX, DEFAULT SINCE 2026-08-18. Dropping every
+## layer except AP (74/0) removes LOGO.S.1/LOGO.R.4's OWN INPUT: both rules
+## only ever compare the 158/LOGO marker against OD/PO/M1-M9, and AP is none of
+## those. RE-MEASURED 2026-08-18 against the current-toolkit signoff deck
+## (calibre_runs/drc_logo_aponly_verify/nanosoc_eth_chiplet_pads.drc.summary):
+## LOGO.S.1 = 0 (0), LOGO.R.4 = 0 (0), LOGO.O.1 = 0 (0) — a REAL zero, not a
+## 1000-result cap hiding a larger true count. This also reproduces, on a real
+## run rather than trusting the comment, strip_logo_layers.py's 2026-08-10
+## claim of "+20 results, all cosmetic, none capped".
+##
+## THE TRADE-OFF, NOT SWEPT UNDER THE RUG: strip_logo_layers.py's KEEP list is
+## AP (74/0) only, so logo_aponly.gds carries NO 158/0 shape at all — the zero
+## above is "the marker isn't there to violate", not "a marked logo passed".
+## Whether Europractice's intake accepts an AP-only mark with no 158/LOGO tag,
+## or requires the marker regardless of DRC outcome, is a question for the
+## broker/design-team liaison, NOT something a Calibre run can answer. See
+## docs/tapeout/50-bnd-and-logo-checks.md for the full writeup before treating
+## this as unconditionally closed.
 LOGO_GDS        ?= $(DESIGN_DIR)/logos/nanosoc_eth_Logo.gds
 LOGO_STRIP_JACK ?= 0
+LOGO_AP_ONLY    ?= 1
 ## PLACEMENT. LOGO_X is the logo's bbox CENTRE, not its left edge — the cell is
 ## drawn centred on its own origin, so anchoring by corner would silently offset
 ## it by half its width. 663.875 puts the FULL logo (727.75x320.25um) at
@@ -821,24 +960,32 @@ LOGO_STRIP_JACK ?= 0
 ##   anything below that is rejected by merge_logo.py: at LOGO_X=300 the left
 ##   edge lands at -63.9, off the die and inside the pad band.
 ##
-## STRIP_JACK defaults OFF: the pictures are wanted. Keeping them costs a bigger
-## LOGO.S.1 keep-out (747.75x340.25um vs 380.25x310.25 text-only), which the
-## floorplan must reserve rather than the merge step avoid.
+## LOGO_AP_ONLY takes priority over LOGO_STRIP_JACK when both are set — an
+## AP-only mark has already dropped everything STRIP_JACK would drop and more.
 LOGO_X          ?= 663.875
 LOGO_Y          ?= 1000.0
-LOGO_SRC        := $(if $(filter 1,$(LOGO_STRIP_JACK)),$(OUT_DIR)/logo_text.gds,$(LOGO_GDS))
+LOGO_SRC        := $(if $(filter 1,$(LOGO_AP_ONLY)),$(OUT_DIR)/logo_aponly.gds,\
+                     $(if $(filter 1,$(LOGO_STRIP_JACK)),$(OUT_DIR)/logo_text.gds,$(LOGO_GDS)))
 LOGO_GDS_OUT    ?= $(OUT_DIR)/$(BLOCK)_logo.gds
 
-## make logo                 — merge into the current $(GDS)
-## make logo LOGO_X=700      — move it
-## make logo LOGO_STRIP_JACK=0 — keep the ethernet jack (expect LOGO.S.1 to fire)
+## make logo                     — merge into the current $(GDS); AP-only by default
+## make logo LOGO_X=700          — move it
+## make logo LOGO_AP_ONLY=0 LOGO_STRIP_JACK=0 — full logo, jack and all
+##                                  (expect LOGO.S.1/LOGO.R.4 to fire, capped at 1000)
+## make logo LOGO_AP_ONLY=0 LOGO_STRIP_JACK=1 — text-only, marker kept
+##                                  (expect ~1134 true LOGO.R.4 results, capped)
 logo:
 	@test -s $(GDS) || { echo "FAIL: no GDS at $(GDS) — run 'make pnr_route' first."; exit 1; }
 	@test -s $(LOGO_GDS) || { echo "FAIL: no logo GDS at $(LOGO_GDS)"; exit 1; }
 	@mkdir -p $(OUT_DIR)
+ifeq ($(LOGO_AP_ONLY),1)
+	klayout -b -r $(DESIGN_DIR)/scripts/strip_logo_layers.py \
+	    -rd inp=$(LOGO_GDS) -rd out=$(LOGO_SRC) < /dev/null
+else
 ifeq ($(LOGO_STRIP_JACK),1)
 	klayout -b -r $(DESIGN_DIR)/scripts/strip_logo_jack.py \
 	    -rd inp=$(LOGO_GDS) -rd out=$(LOGO_SRC) < /dev/null
+endif
 endif
 	klayout -b -r $(DESIGN_DIR)/scripts/merge_logo.py \
 	    -rd chip=$(GDS) -rd logo=$(LOGO_SRC) -rd out=$(LOGO_GDS_OUT) \
@@ -853,6 +1000,31 @@ drc-logo: logo
 	DRC_GDS=$(LOGO_GDS_OUT) DRC_RUNDIR=$(WORK_DIR)/../calibre_runs/drc_logo_flow \
 	DRC_CPUS=$(DRC_CPUS) $(DRC_DECK_ENV) \
 	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
+
+## THE ONE COMMAND THIS SECTION EXISTS TO REPLACE. Merges the logo (AP-only by
+## default), runs the full signoff DRC deck on the result, and prints the
+## LOGO.* verdict on its own so nobody has to go find it in an 8000-rulecheck
+## summary. Consolidates what used to be three unlabelled one-off directories
+## (calibre_runs/drc_logo, drc_logo_L300, drc_logo_text) into a single
+## reproducible target — see docs/tapeout/50-bnd-and-logo-checks.md.
+drc-logo-check: drc-logo
+	@SUMMARY=$(WORK_DIR)/../calibre_runs/drc_logo_flow/$(BLOCK).drc.summary; \
+	if [ ! -s "$$SUMMARY" ]; then \
+	    echo "FAIL: no summary at $$SUMMARY"; exit 1; \
+	fi; \
+	echo "== LOGO rulecheck verdict ($$SUMMARY) =="; \
+	awk '/^--- RULECHECK RESULTS STATISTICS$$/,/^--- RULECHECK RESULTS STATISTICS \(BY CELL\)/' \
+	    "$$SUMMARY" | grep -E "RULECHECK LOGO\.(S\.1|R\.4|O\.1) "; \
+	true_nonzero=$$(awk '/^--- RULECHECK RESULTS STATISTICS$$/,/^--- RULECHECK RESULTS STATISTICS \(BY CELL\)/' \
+	    "$$SUMMARY" | grep -E "RULECHECK LOGO\.(S\.1|R\.4) " | \
+	    awk '{gsub(/[()]/,"",$$NF); if ($$NF+0>0) print}' | wc -l); \
+	if [ "$$true_nonzero" -eq 0 ]; then \
+	    echo "PASS: LOGO.S.1 and LOGO.R.4 are both a real zero (not capped)."; \
+	else \
+	    echo "FAIL: LOGO.S.1/LOGO.R.4 have a non-zero TRUE count above — this"; \
+	    echo "      logo placement/mode is not clean. See the full summary."; \
+	    exit 1; \
+	fi
 
 ## Calibre nmLVS, from the portable flow in ../lvs-flow. lvs_project.mk holds
 ## this design's values and includes ../lvs-flow/lvs.mk, which supplies the
@@ -872,6 +1044,38 @@ drc-logo: logo
 ##     _pnr.v come from a timestamped run dir -- switch with one variable:
 ##       make lvs_batch LVS_RUN=20260810T092257Z_derate-check3
 include $(DESIGN_DIR)/lvs_project.mk
+
+## Standalone Calibre ERC -- does the GDS carry power/ground TEXT LABELS at
+## all? See scripts/calibre/run_erc.sh and docs/tapeout/51-erc-pg-labels.md.
+## Unlike `lvs` above, this needs NO post-P&R netlist and NO leaf-cell CDLs:
+## it drives Calibre with a throwaway empty source so LAYOUT extraction and
+## the deck's own ERC checks run standalone, and folds in a licence-free
+## klayout structural cross-check because the two signals can disagree (see
+## the script header) -- this is exactly the gap IMEC's signoff run found on
+## 2026-08-17/18 ("No labels found in topcell") that nothing local caught.
+##
+## ERC_GDS defaults to $(GDS) (the legacy tree's own output), which almost
+## certainly does not exist for a toolkit build -- override it:
+##   make erc ERC_GDS=../eth-chiplet/build/fp1505/outputs/$(BLOCK).gds \
+##             ERC_RUNDIR=../eth-chiplet/build/fp1505/work/erc_run
+## so the evidence lands inside the build tree being graded, not beside it
+## (ci/signoff.yaml's drc stage note explains why that distinction matters:
+## CI clones the repo and only ever sees the build tree).
+ERC_GDS     ?= $(GDS)
+ERC_RUNDIR  ?= $(WORK_DIR)/erc_run
+
+erc:
+	ERC_GDS=$(ERC_GDS) ERC_RUNDIR=$(ERC_RUNDIR) ERC_DECK=$(LVS_DECK) \
+	ERC_POWER="$(LVS_POWER)" ERC_GROUND="$(LVS_GROUND)" \
+	    $(DESIGN_DIR)/scripts/calibre/run_erc.sh $(ERC_GDS) $(BLOCK)
+
+## Licence-free triage: klayout-only text scan, no Calibre seat needed.
+erc-quick:
+	ERC_POWER="$(LVS_POWER)" ERC_GROUND="$(LVS_GROUND)" \
+	    $(DESIGN_DIR)/scripts/calibre/run_erc.sh --quick $(ERC_GDS)
+
+erc-preflight:
+	ERC_DECK=$(LVS_DECK) $(DESIGN_DIR)/scripts/calibre/run_erc.sh --check
 
 ## Static rail (IR-drop) analysis: rail_project.mk supplies `rail`, `rail-gate`,
 ## `rail-selftest`, `rail-status`, `rail-clean`. It is pure data plus five
@@ -963,6 +1167,9 @@ help:
 	@echo "    make pnr_cts       clock tree synthesis       (Innovus)"
 	@echo "    make pnr_route     route + fill + GDSII       -> $(GDS)"
 	@echo "    make drc           Calibre DRC on that GDS    (headless)"
+	@echo "    make bnd           Calibre BND (bond-pad/seal-ring BEOL), separate deck from drc"
+	@echo "    make padring-gds   padframe name/count/order check on that GDS (no PDK needed)"
+	@echo "    make erc           Calibre ERC: power/ground TEXT LABELS present? (see doc 51)"
 	@echo ""
 	@echo "    make pnr_all       syn + all three P&R stages, unattended. Multi-hour."
 	@echo ""

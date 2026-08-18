@@ -166,6 +166,7 @@ endef
 $(eval $(call pdk_resolve,PDK_TECH_LEF,tech-lef))
 $(eval $(call pdk_resolve,PDK_GDSMAP,gdsout-map))
 $(eval $(call pdk_resolve,PDK_DRC_DECK,drc-ruledeck))
+$(eval $(call pdk_resolve,PDK_BND_DECK,bnd-ruledeck))
 $(eval $(call pdk_resolve,PDK_BASE_LEF,base-lef))
 $(eval $(call pdk_resolve,PDK_IO_PAD_LEF,io-pad-lef))
 $(eval $(call pdk_resolve,PDK_STDCELL_VLOG,stdcell-vlog))

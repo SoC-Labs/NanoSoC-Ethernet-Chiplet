@@ -57,6 +57,7 @@
 #   tech-lef            routing tech LEF (the anchor; also read by gen_deck.py)
 #   gdsout-map          foundry GDS stream-out layer map for this metal option
 #   drc-ruledeck        foundry Calibre DRC rule deck for this metal stack
+#   bnd-ruledeck        foundry Calibre BND (wire-bond pad-ring) deck, same stack
 #   base-lef            standard-cell abstract LEF
 #   io-pad-lef          bond-pad LEF for this metal stack
 #   stdcell-vlog        standard-cell Verilog (power-aware) for GLS
@@ -196,6 +197,14 @@ resolve() {
         pick_one "the foundry DRC rule deck for metal stack $stack_full" \
             "$TSMC_65_HOME"/CMOS/util/MAIN_DRC_TopMu/CLN65S_"$stack_full".*
         ;;
+    bnd-ruledeck)
+        # Same anchor and stack as drc-ruledeck, different foundry deck family:
+        # the wire-bond pad-ring rules live in their own directory, one file
+        # per metal stack, versioned independently of MAIN_DRC_TopMu.
+        resolve_anchor
+        pick_one "the foundry BND (wire-bond) rule deck for metal stack $stack_full" \
+            "$TSMC_65_HOME"/CMOS/LP/pdk/Calibre/drc/wire_bond/CN65_WIRE_BOND_"$stack_full".*
+        ;;
 
     base-lef)
         pick_one "the standard-cell LEF" \
@@ -324,7 +333,7 @@ resolve() {
     esac
 }
 
-ALL_KEYS="tech-lef gdsout-map drc-ruledeck base-lef io-pad-lef stdcell-vlog
+ALL_KEYS="tech-lef gdsout-map drc-ruledeck bnd-ruledeck base-lef io-pad-lef stdcell-vlog
           io-vlog lvs-deck lvs-source-added stdcell-cdl iodrv-cdl pad-cdl
           metal-stack metal-option
           arm-target-lib arm-db-dir arm-stdcell-verilog-dir arm-tf-file

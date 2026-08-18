@@ -72,8 +72,14 @@ self-documentation commands that make Innovus stop being opaque.
 | 43 | [DRC on `fp1505`](43-drc-fp1505.md) | The uncapped Calibre run over the short-free build, like-for-like against the shipping stream, and every check classified measured / unmeasurable |
 | 44 | [eth ROM sim/silicon divergence](44-eth-rom-sim-divergence.md) | Why the eth `sim_divergence` WARN is a declared, deliberate divergence and not a defect, and why regenerating the slot would be a false green |
 | 45 | [Measured status, 2026-08-18](45-measured-status-2026-08-18.md) | A freshly measured, whole-project status: git and pin reachability, the build inventory, every signoff verdict with what it actually measured, the physical numbers with their build named, and the flist that really builds |
+| 48 | [IMEC signoff results analysis](48-imec-signoff-results-analysis.md) | Cross-check of IMEC's foundry DRC/ERC/antenna results against our own local Calibre checks, with GDS provenance, root causes, and a prioritized punch list |
+| 49 | [Layer-map coverage check](49-layer-map-coverage-check.md) | `check-layer-map-coverage`: diffs a GDS's actual layer/datatype census against a declared layer map before any Calibre run, closing the doc-35 blind spot; validated against a real IMEC foundry report |
+| 50 | [BND and LOGO checks](50-bnd-and-logo-checks.md) | The bond-pad/seal-ring BEOL deck, consolidated into `make bnd` and compared rule-by-rule against IMEC's real report; the LOGO keep-out rules, three ad hoc experiments consolidated into `make drc-logo-check`, and the measured AP-only fix |
+| 51 | [Calibre ERC: power/ground labels](51-erc-pg-labels.md) | The standalone ERC flow (`run_erc.sh`) built after IMEC's "No labels found in topcell" signoff error; what ERC checks here vs. historically; measured validation against IMEC's own GDS and against `fp1505`/`full-20260814` |
+| 52 | [Padring GDS check](52-padring-gds-check.md) | The broker's CompareCells/Padringcheck surprise, and the local GDS-level check that would have caught its class |
+| 53 | [Gate-promotion plan](53-gate-promotion-plan.md) | Phased plan from four report-only gates to a trustworthy blocking system: promotion criteria, new orientation/CSR/PVDD2POC gates, sequencing, and the full IMEC-tool parity map |
 
-*(29–38, 40–42 exist but are not yet listed here.)*
+*(29–38, 40–42, 46–47 exist but are not yet listed here.)*
 
 **Pages 22 and 23 are companions to the evaluation scripts.** Those scripts are written
 to be read by someone learning the flow, so their comments explain *what each stage

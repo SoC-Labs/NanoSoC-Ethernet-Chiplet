@@ -477,4 +477,6 @@ separate, core-side problem and will not be touched by the pad clearance — see
 [08-debugging.md](08-debugging.md) ·
 [09-signoff-checklist.md](09-signoff-checklist.md) ·
 [10-tapeout-submission.md](10-tapeout-submission.md) ·
-[11-known-issues.md](11-known-issues.md)
+[11-known-issues.md](11-known-issues.md) ·
+[52-padring-gds-check.md](52-padring-gds-check.md) — the GDS-level check
+that reads this ring's names/counts/order back out of the streamed file

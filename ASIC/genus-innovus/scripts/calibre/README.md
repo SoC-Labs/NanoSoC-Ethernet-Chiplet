@@ -1,11 +1,18 @@
-# Calibre DRC for `nanosoc_eth_chiplet_pads`
+# Calibre DRC / BND / ERC for `nanosoc_eth_chiplet_pads`
 
 Full write-up: [`docs/tapeout/12-calibre-drc.md`](../../../../docs/tapeout/12-calibre-drc.md)
+(core DRC), [`docs/tapeout/50-bnd-and-logo-checks.md`](../../../../docs/tapeout/50-bnd-and-logo-checks.md)
+(BND and the LOGO keep-out rules — what they are, why they are separate decks
+from core DRC, and the IMEC signoff comparison), and
+[`docs/tapeout/51-erc-pg-labels.md`](../../../../docs/tapeout/51-erc-pg-labels.md)
+(power/ground text-label ERC).
 
 ```sh
 make drc                              # from ASIC/genus-innovus/ — the normal way
 make drc GDS=some/other.gds           # check a different stream
 make drc-census                       # count and gate what that run produced
+make bnd                              # bond-pad / seal-ring BEOL — a SEPARATE deck
+make erc                              # power/ground TEXT LABELS present?
 ```
 
 **Run it through `make`.** The scripts here no longer carry a copy of the
@@ -32,6 +39,9 @@ Headless. No `$DISPLAY`, no GUI packages, no runset.
 | `make_project_deck.sh` | substitutes the template, splices the foundry rule bodies below their own `/* SWITCH DEFINITION END */`, md5-checks the spliced body against the read-only foundry deck, and refuses to emit a deck with any placeholder left unfilled |
 | `nanosoc_eth_chiplet_pads.drc.rules` | the OLD project-owned SVRF wrapper: supplies layout, top cell and output paths, then `INCLUDE`s the TSMC deck. No longer the default — kept for `DRC_DECK=…` A/B runs against foundry switch defaults |
 | `run_drc.sh` | preflight + headless `calibre -drc -hier` driver; asserts the deck's `LAYOUT PRIMARY` equals `$BLOCK`, and summarises violations at the end |
+| `nanosoc_eth_chiplet_pads.bnd.rules` | project-owned SVRF wrapper for the **BND** (wire-bond pad-ring) deck — a different foundry rule family from DRC, see the write-up. Sets `#DEFINE PITCH_70_STAGGER` (this design's PAD70GU/PAD70NU cells; see the file's own header for the evidence and the `PITCH_OPTION.ERROR.1` "fabricated clean" failure mode it fixed) |
+| `run_bnd.sh` | same shape as `run_drc.sh`, for the BND deck. No `make_project_deck.sh` splice needed — the BND wrapper sets no foundry default this design must override, so a plain `INCLUDE` suffices |
+| `run_erc.sh` | standalone Calibre ERC driver — does the GDS carry power/ground TEXT LABELS? Needs no post-P&R netlist or leaf-cell CDLs (drives Calibre with a throwaway empty source), and folds in a licence-free klayout structural cross-check because the two signals can disagree — see the script header and doc 51 |
 
 ## Environment
 
@@ -44,6 +54,14 @@ Headless. No `$DISPLAY`, no GUI packages, no runset.
 | `DRC_RUNDIR` | `../work/drc_run` |
 | `DRC_CPUS` | `8` |
 | `DRC_NOWAIT` | unset — queue for a licence. Set `1` to fail fast. |
+| `BND_FOUNDRY_DECK` | **required** by `run_bnd.sh` — from `drc_project.mk` (`PDK_BND_DECK`, resolved by `pdk_paths.sh bnd-ruledeck`) |
+| `BND_GDS` | `../outputs/$BLOCK.gds` |
+| `BND_RUNDIR` | `../work/bnd_run` |
+| `BND_CPUS` | `8` |
+| `BND_NOWAIT` | unset — queue for a licence. Set `1` to fail fast. |
+| `BND_DECK` | run this deck file instead of the project wrapper — switch A/B experiments only, never signoff |
+| `ERC_GDS` | `../outputs/$BLOCK.gds` |
+| `ERC_RUNDIR` | `../work/erc_run` |
 
 ## Two things not to break
 

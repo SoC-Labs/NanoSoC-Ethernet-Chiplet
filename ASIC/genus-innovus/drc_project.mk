@@ -133,6 +133,23 @@ DRC_DIE_YRT ?= $(call drc_dec,$(word 2,$(DRC_DIE_SIZE)))
 #       never writes to it.
 DRC_FOUNDRY_DECK ?= $(PDK_DRC_DECK)
 
+# [PDK] The foundry BND (wire-bond pad-ring / BEOL) deck — a SEPARATE rule
+#       family from DRC_FOUNDRY_DECK above, not an alternative name for it. See
+#       docs/tapeout/50-bnd-and-logo-checks.md for what BND checks that the
+#       core DRC deck does not (PM/AP/CB2 pad-ring and RDL rules) and why the
+#       two are run and gated separately rather than merged.
+#
+#       Same anchor, same stack derivation as DRC_FOUNDRY_DECK — resolved by
+#       the same pdk_paths.sh off the one installed tech LEF, just a different
+#       foundry directory (bnd-ruledeck vs drc-ruledeck). Never spelled here
+#       for the same public-repository reason as DRC_FOUNDRY_DECK.
+#
+#       Unlike DRC_FOUNDRY_DECK, this needs no make_project_deck.sh splice: the
+#       project wrapper (scripts/calibre/nanosoc_eth_chiplet_pads.bnd.rules)
+#       sets no foundry default this design must override, so a plain
+#       `INCLUDE "$BND_FOUNDRY_DECK"` wrapper is sufficient. See run_bnd.sh.
+BND_FOUNDRY_DECK ?= $(PDK_BND_DECK)
+
 # The project-owned switch/environment block that replaces the foundry deck's
 # own is NOT a variable here, on purpose. It lives beside its assembler as
 #     scripts/calibre/tsmc65_minisic_header.svrf.in
@@ -154,9 +171,15 @@ DRC_FOUNDRY_DECK ?= $(PDK_DRC_DECK)
 #        the submission artefact's count can never overwrite the signoff one's.
 DRC_RUNDIR ?= $(WORK_DIR)/drc_run
 
+# [FLOW] BND rundir. Separate from DRC_RUNDIR for the same reason drc-logo's
+#        is separate from drc's: two Calibre decks writing into one directory
+#        would each overwrite pieces of the other's results/summary/log.
+BND_RUNDIR ?= $(WORK_DIR)/bnd_run
+
 # [SITE] Calibre -turbo processor count. Lower it on a shared host or where the
 #        site licence caps parallel CPUs.
 DRC_CPUS ?= 8
+BND_CPUS ?= 8
 
 #-----------------------------------------------------------------------------
 # 5. Census budgets — what counts as a pass

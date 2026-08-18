@@ -57,7 +57,7 @@ TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
 .PHONY: vendor-check hooks
-.PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc
+.PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc asic-padring-gds
 .PHONY: asic-lvs asic-lvs-pre asic-lec-pnr asic-pipeline asic-pipeline-resume
 .PHONY: asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy
 .PHONY: asic-gds-legacy asic-lec-pnr-legacy asic-drc-legacy
@@ -101,6 +101,7 @@ help:
 	@echo "                       A superset of asic-gds; no legacy equivalent."
 	@echo "                       asic-pipeline-resume re-runs only what has not passed."
 	@echo "    make asic-drc      Calibre DRC on the built GDS"
+	@echo "    make asic-padring-gds  padframe name/count/order check on the built GDS"
 	@echo "    make asic          the flow's own help, with every target"
 	@echo ""
 	@echo ""
@@ -171,6 +172,19 @@ asic-lec-pnr: ; $(MAKE) -C $(ASIC_DIR) lec-pnr
 ## invocation out with the tag rather than calling this target.
 asic-drc:        ; $(MAKE) -C $(ASIC_DIR) drc
 asic-drc-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) drc
+## asic-padring-gds: the local, license-free analog of the foundry's
+## CompareCells + Padringcheck -- checks the padframe cell names/counts/order
+## actually streamed into a GDS against the pad ring's own sources. See
+## scripts/check_padring_gds.py for what it can and cannot verify.
+##
+## LEGACY_ASIC_DIR, LIKE asic-drc-legacy ABOVE, NOT ASIC_DIR. The target this
+## forwards to (`padring-gds` in ASIC/genus-innovus/Makefile) was built and
+## validated there — where the bnd/logo/drc infrastructure it reuses already
+## lives, and where the exact GDS IMEC evaluated could be checked against —
+## and has not yet been ported into the current ASIC/eth-chiplet toolkit. A
+## fresh eth-chiplet build must be pointed at explicitly until it is:
+##   make asic-padring-gds GDS=ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+asic-padring-gds: ; $(MAKE) -C $(LEGACY_ASIC_DIR) padring-gds
 
 ## LVS MOVED 2026-08-18, and the reason it could not move before is gone.
 ## The note that stood here said design.mk "sets none of them", so repointing
