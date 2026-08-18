@@ -1025,7 +1025,33 @@ stages:
     # explicit "LVS BLOCKED - standard cells, IO drivers, bond pads" and turns
     # green by itself the day the packages land.
     # See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+    #
+    # DELIBERATELY NOT REPOINTED, 2026-08-18, and the reason is a measurement
+    # rather than inertia. The `drc` stage below moved to the toolkit in the
+    # same commit; this one is in the same bundle and stayed, because the
+    # toolkit side of it grades nothing:
+    #
+    #   make -C ASIC/genus-innovus lvs-preflight   (scripts/calibre/run_lvs.sh
+    #     --check, the recipe at HEAD)  ->  exit 1, "LVS BLOCKED: no transistor
+    #     netlist for standard cells IO drivers bond pads" — the sentence this
+    #     stage's description promises, naming the missing collateral.
+    #   make -C ASIC/eth-chiplet lvs-preflight RUN_TAG=full-20260814
+    #     ->  exit 2, "UNSET LVS_DECK / UNSET STDCELL_VLOG".
+    #
+    # That second failure is a make variable nobody set, not a fact about this
+    # design: LVS_DECK, STDCELL_VLOG, IO_VLOG and MACRO_CDLS are declared in
+    # ASIC/genus-innovus/lvs_project.mk, which is where this project's LVS
+    # configuration lives and which includes the portable flow in ASIC/lvs-flow.
+    # ASIC/eth-chiplet/design.mk declares none of them. Moving the entry point
+    # would swap a stage that reports the real blocker for one that reports a
+    # missing assignment, and both are red, so the report would look unchanged
+    # while saying something much weaker. Same category as `rail`,
+    # `rail-selftest` and `romlibs-check`: evidence that genuinely lives in
+    # ASIC/genus-innovus.
     run: make asic-lvs-pre
+    # $(LOG_DIR)/calibre_lvs.log — LOG_DIR is ASIC/genus-innovus/logs and
+    # scripts/calibre/run_lvs.sh:179 writes there. Produced by `make lvs`, not
+    # by this stage's own `--check`, which launches no tool and writes nothing.
     artifacts:
       - ASIC/genus-innovus/logs/calibre_lvs*.log
 
@@ -1033,11 +1059,42 @@ stages:
     phase: physical
     gate: block
     label: soclabs-pdk
-    # $(GDS) in ASIC/genus-innovus/Makefile:41 — the stream run_drc.sh reads.
+    # REPOINTED 2026-08-18, run:, check:, needs_implementation: and artifacts:
+    # TOGETHER, because that is the only way this stage can be moved without
+    # making it worse. It used to declare ASIC/genus-innovus/outputs/…gds, run
+    # `make asic-drc` (which reached the legacy flow) and grade
+    # ASIC/genus-innovus/work/drc_run. The legacy outputs/ holds no GDS — it has
+    # two subdirectories, eval/ and romlibs/, and nothing else — and
+    # ASIC/genus-innovus/work has no drc_run at all, so the stage went
+    # UNVERIFIED on the missing stream and its check: was never reached to
+    # notice that it was also grading a directory that does not exist. Moving
+    # the entry point alone would have left it running one tree and grading
+    # another, which is worse than not running.
+    #
+    # $(GDS) as the toolkit resolves it — measured, not assumed:
+    #   make -C ASIC/eth-chiplet RUN_TAG=full-20260814 … GDS
+    #     -> build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds  (313 MB)
+    #   … DRC_RUNDIR -> build/full-20260814/work/drc_run               (177 files)
+    #   … DRC_SCRIPT -> ASIC/genus-innovus/scripts/calibre/run_drc.sh
+    # THE DECK IS UNCHANGED BY THIS MOVE. The toolkit dispatches `drc` to
+    # drc-project, whose runner is that same legacy run_drc.sh (design.mk:434),
+    # with DRC_DECK deliberately empty so it takes its assembling branch exactly
+    # as `make -C ASIC/genus-innovus drc` did. This changes WHICH GDS IS READ,
+    # not which rules are applied.
+    #
+    # THIS STAGE STAYS RED, and that is the point. Run over the evidence it now
+    # names, the census reports 140 design-owned results and 6149 CORE-ONLY
+    # failing density windows against budgets of 0 — a MEASURED failure where
+    # there was previously an unmeasured one. No green is manufactured here.
     needs_implementation:
-      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre DRC on the routed GDS (signoff-grade ruledeck)"
-    run: make asic-drc
+    # NOT `make asic-drc`, for the reason spelled out in rom-gds and lec-pnr: that
+    # root forwarder now reaches the toolkit, but it carries no run tag, so it
+    # resolves to RUN_TAG=default — a different build directory from the one
+    # needs_implementation declares and check: reads. A stage must not declare
+    # one run and measure another.
+    run: make -C ASIC/eth-chiplet drc RUN_TAG=full-20260814
     # Calibre exits 0 whether or not it found violations, and the Makefile does
     # not parse the result. Count them here or this stage means nothing.
     #
@@ -1068,7 +1125,7 @@ stages:
     # in code — and it FAILS the gate if it goes stale or if any waived count
     # moves. See the fail-waiver-stale fixture below.
     check: |
-      python3 scripts/ci/drc_census.py ASIC/genus-innovus/work/drc_run
+      python3 scripts/ci/drc_census.py ASIC/eth-chiplet/build/full-20260814/work/drc_run
     # NOTE these fixtures are also a live test of DRC_DESIGN_BUDGET /
     # DRC_DENSITY_BUDGET: fail-design-results carries 7 design-owned results, so
     # if the environment has raised the budget past 7 the must-fail case PASSES
@@ -1088,9 +1145,19 @@ stages:
         # reads as coverage it does not have. If someone widens that file to a
         # rule-scoped suppression, this case stops failing and `prove` goes red.
         - ci/fixtures/drc/fail-waiver-stale
+    # 6.6 MB, 177 files: the summary, the results database, the assembled
+    # deck.svrf, calibre_drc.log and every per-check .density file the census
+    # counts windows out of.
+    #
+    # ASIC/genus-innovus/work/calibre_drc.runset IS GONE FROM THIS LIST rather
+    # than repointed. Nothing in either flow has ever written a runset — a
+    # runset is a Calibre GUI artefact and run_drc.sh is headless by design
+    # (scripts/calibre/README.md:25, "No $DISPLAY, no GUI packages, no runset").
+    # A declared artefact that no run can produce is a permanent entry in the
+    # report's `artifacts_missing` list, which trains a reader to skim that list
+    # instead of reading it.
     artifacts:
-      - ASIC/genus-innovus/work/drc_run/**
-      - ASIC/genus-innovus/work/calibre_drc.runset
+      - ASIC/eth-chiplet/build/full-20260814/work/drc_run/**
 
   # --- Power delivery ---------------------------------------------------------
   # THE FIRST VOLTAGE THIS PIPELINE HAS EVER COMPUTED. Before this row the

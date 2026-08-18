@@ -60,7 +60,7 @@ TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 .PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc
 .PHONY: asic-lvs asic-lvs-pre asic-lec-pnr asic-pipeline asic-pipeline-resume
 .PHONY: asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy
-.PHONY: asic-gds-legacy asic-lec-pnr-legacy
+.PHONY: asic-gds-legacy asic-lec-pnr-legacy asic-drc-legacy
 
 # Bare `make` used to run `bootstrap` — a 42-submodule fetch — because it was
 # the first target in the file. Show what is available instead.
@@ -99,19 +99,19 @@ help:
 	@echo "                       order, CONTINUING PAST FAILURES, then collated."
 	@echo "                       A superset of asic-gds; no legacy equivalent."
 	@echo "                       asic-pipeline-resume re-runs only what has not passed."
+	@echo "    make asic-drc      Calibre DRC on the built GDS"
 	@echo "    make asic          the flow's own help, with every target"
 	@echo ""
 	@echo ""
-	@echo "  Signoff checks that still run out of ASIC/genus-innovus, because that"
-	@echo "  is where ci/signoff.yaml reads their evidence from:"
-	@echo "    make asic-drc      Calibre DRC on the built GDS"
+	@echo "  LVS still runs out of ASIC/genus-innovus: this design's LVS inputs are"
+	@echo "  declared in its lvs_project.mk and nowhere else."
 	@echo "    make asic-lvs      Calibre nmLVS (asic-lvs-pre for the preflight alone)"
 	@echo ""
 	@echo "  The legacy IMPLEMENTATION flow is kept runnable but is no longer what"
 	@echo "  ships — it last drove a tool on 2026-08-13 and its outputs/ has no"
 	@echo "  netlist and no GDS. Reach it with the same names plus -legacy:"
 	@echo "    asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy"
-	@echo "    asic-gds-legacy asic-lec-pnr-legacy"
+	@echo "    asic-gds-legacy asic-lec-pnr-legacy asic-drc-legacy"
 	@echo ""
 	@echo "    make asic-flist    re-render the generated ASIC sub-flists"
 	@echo "    make clean         remove build/elab"
@@ -137,7 +137,7 @@ help:
 #     asic-gds          all                     pnr_all
 #     asic-lec-pnr      lec-pnr                 lec-pnr
 #     asic-pipeline     pipeline                - none; see below
-#     asic-drc          (still legacy)          drc          <- see note below
+#     asic-drc          drc                     drc          <- asic-drc-legacy
 #     asic-lvs          (still legacy)          lvs          <- see note below
 #     asic-lvs-pre      (still legacy)          lvs-preflight<- see note below
 #
@@ -152,23 +152,40 @@ asic-pnr:    ; $(MAKE) -C $(ASIC_DIR) place cts route
 asic-gds:    ; $(MAKE) -C $(ASIC_DIR) all
 asic-lec-pnr: ; $(MAKE) -C $(ASIC_DIR) lec-pnr
 
-## DRC AND LVS DELIBERATELY STILL POINT AT THE LEGACY TREE, and this is the one
-## place in this block where "name the real flow" loses to something else.
+## DRC MOVED 2026-08-18; LVS DID NOT, AND THE SPLIT IS THE POINT OF THIS BLOCK.
+## Until that date all three named $(LEGACY_ASIC_DIR), with a note here saying
+## they could only move once the drc stage's census path, artefact globs and
+## fixtures moved in the same commit. They now have: ci/signoff.yaml's `drc`
+## reads ASIC/eth-chiplet/build/$(RUN_TAG)/work/drc_run and declares the
+## toolkit's GDS, so this forwarder is no longer the odd one out.
 ##
-## ci/signoff.yaml calls `make asic-drc` and `make asic-lvs-pre` directly, and
-## the stages behind them read their evidence out of ASIC/genus-innovus:
-## the drc stage's check: is `drc_census.py ASIC/genus-innovus/work/drc_run` and
-## lvs-preflight's artefacts are ASIC/genus-innovus/logs/calibre_lvs*.log. The
-## toolkit writes its own $(RUN_TAG)/work/drc_run, so repointing THESE two
-## without moving the census path and the artefact globs in the same commit
-## would leave each stage running one tree and grading another - the exact
-## split this repository has been bitten by before. That move is a separate
-## change with its own fixtures; it is not free, so it is not smuggled in here.
+## The deck did not change with it. The toolkit dispatches `drc` to drc-project,
+## whose runner is $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh (design.mk:434)
+## with DRC_DECK empty so it takes its assembling branch — the same script, the
+## same foundry deck, a different GDS.
 ##
-## The deck itself is common to both: the toolkit resolves DRC_SCRIPT to
-## $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh (design.mk:434), so when these
-## are repointed it will change which GDS is read, not which rules are applied.
-asic-drc:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) drc
+## NOTE ON THE RUN TAG. Like every toolkit forwarder here, this one carries no
+## RUN_TAG, so it resolves to build/default. That is the right default for a
+## human typing `make asic-drc`, and it is why ci/signoff.yaml spells its own
+## invocation out with the tag rather than calling this target.
+asic-drc:        ; $(MAKE) -C $(ASIC_DIR) drc
+asic-drc-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) drc
+
+## LVS STAYS LEGACY, and this is the one place in this block where "name the
+## real flow" still loses to something else. Measured 2026-08-18, both sides:
+##
+##   make -C $(LEGACY_ASIC_DIR) lvs-preflight -> exit 1, "LVS BLOCKED: no
+##     transistor netlist for standard cells IO drivers bond pads" — the real
+##     coverage statement, naming the missing collateral.
+##   make -C $(ASIC_DIR) lvs-preflight        -> exit 2, "UNSET LVS_DECK /
+##     UNSET STDCELL_VLOG".
+##
+## This design's LVS configuration is $(LEGACY_ASIC_DIR)/lvs_project.mk, which
+## sets LVS_DECK, STDCELL_VLOG, IO_VLOG and MACRO_CDLS and includes the portable
+## flow in ASIC/lvs-flow. ASIC/eth-chiplet/design.mk sets none of them, so the
+## toolkit's lvs targets resolve to nothing to check. Repointing would swap a
+## stage that reports the blocker for one that reports a missing assignment —
+## red either way, which is exactly why it would go unnoticed.
 asic-lvs:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs
 asic-lvs-pre: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs-preflight
 asic-pipeline:        ; $(MAKE) -C $(ASIC_DIR) pipeline
