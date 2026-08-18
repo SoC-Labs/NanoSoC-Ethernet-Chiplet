@@ -157,7 +157,7 @@ set_output_delay -max  8.0 -clock [get_clocks rmii_ref_clk] [get_ports {RMII_TXD
 # next to the 10.0 ns [RMII] ceiling — two independent documents agreeing is why
 # 25 pF is the standard's design load. This uses the GUARANTEED DC current, so
 # it is the slow bound; real transient drive is 2-3x higher and the true edge
-# correspondingly faster. 3.0 ns also needs no interpolation in [LIB].
+# correspondingly faster. 3.0
 set_input_transition -max 3.0 [get_ports {RMII_REF_CLK RMII_RXD[*] RMII_CRS_DV}] ; # (b) VO8 @8mA into 10pF, 10-90% @3.0V; = 1.5ns in [RMII] 0.8-2.0V terms, inside the 1-5ns band
 # Hold direction: a FASTER input edge crosses the 50% input threshold sooner and
 # so arrives earlier — the pessimistic direction for hold. 1.0 ns is 2x faster
@@ -200,9 +200,9 @@ set_input_transition -min 1.0 [get_ports {RMII_REF_CLK RMII_RXD[*] RMII_CRS_DV}]
 # These four pins are driven by PDDW16DGZ_G (16 mA) in
 # ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v — already the strongest
 # driver in the ring. 25 pF is the load that choice was presumably made for.
-set_load -max 25.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (a) [RMII] 7.4.1 AC Load = 25pF; == [DS] 5.5.1 test load; needs no [LIB] interpolation
+set_load -max 25.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (a) [RMII] 7.4.1 AC Load = 25pF; == [DS] 5.5.1 test load
 # Hold uses the LIGHT load: least output delay, earliest arrival, worst hold at
-# the PHY. 5 pF = 2 pF CIN (a) + package + a short trace (b); low end of [LIB].
+# the PHY. 5 pF = 2 pF CIN (a) + package + a short trace (b).
 set_load -min  5.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (b) light-load case for hold; 2pF CIN + package + short trace
 
 # --- RMII_MDIO is bidirectional, and its INPUT edge is RC-LIMITED ------------
