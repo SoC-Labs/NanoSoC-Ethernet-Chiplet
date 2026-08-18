@@ -198,11 +198,11 @@ not rebased:
 Whether to accept that bypass is David's call; this section only fixes the
 evidence offered for it.
 
-The figure in circulation — *"121 `/tsmc65pdk` hits before and after"* — **does
+The figure in circulation — *"121 `$TSMC_65_HOME` hits before and after"* — **does
 not reproduce.** Measured `cd8b47d` → `fd3085b`: **126 → 127** matching lines.
 
 The +1 is fully explained and benign. A documentation sentence naming the
-`/tsmc65pdk` mount and the `tsmc65pdkgrp` unix group was **re-wrapped across two
+`$TSMC_65_HOME` mount and the `tsmc65pdkgrp` unix group was **re-wrapped across two
 lines** by the `ASIC_DIR` rewrite, so one matching line became two. Same tokens,
 no foundry value, no geometry, no new file. **Net new disclosure: zero.** The
 conclusion the bypass rested on holds; the number quoted for it does not.

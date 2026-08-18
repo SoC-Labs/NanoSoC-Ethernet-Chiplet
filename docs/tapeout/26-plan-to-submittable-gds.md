@@ -59,7 +59,7 @@ place+CTS: 81.5 min stage time, 87 min end-to-end
 - Metal fill has already run (`EVR_METAL_FILL=1` in two manifests) and added **zero** DRC violations. Every doc says otherwise.
 - Post-P&R LEC is logically clean: 61,375/61,375 equivalent, 0 non-equivalent, 0 abort. `RESULT=FAIL` is harness policy on 34 points matched on both sides.
 - GDS stream-out is the best-executed part of the downstream flow: unmodified foundry map file, correct `-unit 1000`, layers agreeing with the deck.
-- **The QRC deck for the exact stack exists on this machine**: `/tsmc65pdk/65/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile`, 178 MiB. The comment at `scripts/preplace.tcl:31-34` ("No correct dataset exists here") is **wrong** — it looked only in `CMOS/util/`. StarRC `.nxtgrd`/`.itf` for the same stack at `/tsmc65pdk/65/CMOS/LP/pdk/CCI/online/1p9m_6X1Z1U/`.
+- **The QRC deck for the exact stack exists on this machine**: `$TSMC_65_HOME/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile`, 178 MiB. The comment at `scripts/preplace.tcl:31-34` ("No correct dataset exists here") is **wrong** — it looked only in `CMOS/util/`. StarRC `.nxtgrd`/`.itf` for the same stack at `$TSMC_65_HOME/CMOS/LP/pdk/CCI/online/1p9m_6X1Z1U/`.
 
 ---
 
@@ -67,7 +67,7 @@ place+CTS: 81.5 min stage time, 87 min end-to-end
 
 ### 2.0 The route question [U] — settle this first
 
-Evidence points hard at Europractice/imec **mini@sic**: the manual is installed at `/tsmc65pdk/65/doc/TSMC_28nm_40nm_65nm_mini@sic_manual_ver_03_2026.pdf`, watermarked to the Southampton PDK admin, and `docs/TSMC_BACKEND_PACKAGE_REQUEST.md:7` names the Europractice licence. But the repo says "broker" in fourteen places, **never names one, and records no shuttle date**. [V]
+Evidence points hard at Europractice/imec **mini@sic**: the manual is installed at `$TSMC_65_HOME/doc/TSMC_28nm_40nm_65nm_mini@sic_manual_ver_03_2026.pdf`, watermarked to the Southampton PDK admin, and `docs/TSMC_BACKEND_PACKAGE_REQUEST.md:7` names the Europractice licence. But the repo says "broker" in fourteen places, **never names one, and records no shuttle date**. [V]
 
 Load-bearing sentences from the manual:
 
@@ -99,11 +99,11 @@ Load-bearing sentences from the manual:
 
 ### 2.2 Branch B — direct foundry / broker wanting a complete GDS
 
-Everything in A **plus** `tcbn65lp_220a_BE`, `tphn65lpgv2od3_sl_210a_BE`, `tpbn65v_200b_BE` (GDS + CDL) procured and merged; seal ring added; full front-end DRC (`LUP.6`, `PO.R.19`, `SSD.DN.1`) clean. **4–8 weeks larger, unknown procurement lead.** Do not plan for it; do send an insurance request.
+Everything in A **plus** `tcbn65lp_<rev>_BE`, `tphn65lpgv2od3_sl_<rev>_BE`, `tpbn65v_<rev>_BE` (GDS + CDL) procured and merged; seal ring added; full front-end DRC (`LUP.6`, `PO.R.19`, `SSD.DN.1`) clean. **4–8 weeks larger, unknown procurement lead.** Do not plan for it; do send an insurance request.
 
 ### 2.3 The corner criterion, and a trap in how you would check it
 
-`/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a`:
+`$TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/CLN65S_<stack>.<rev>`:
 
 ```
 40:    #DEFINE FULL_CHIP                    // active — CSR.R.1 WILL run
@@ -277,7 +277,7 @@ set_timing_derate -early -clock 0.97
 set_timing_derate -late  -clock 1.03
 ```
 
-Spelling verified in `/eda/cadence/innovus/doc/UGcom/Timing_Analysis.html`. The four values already exist as `EVC_DERATE_*` at `3b:130-133` with exactly these defaults and `EVC_DERATE 0` — **simply off**. All four arms, always: `3b:747` documents that specifying some leaves the others inheriting the last defined value.
+Spelling verified in `$INNOVUS_HOME/doc/UGcom/Timing_Analysis.html`. The four values already exist as `EVC_DERATE_*` at `3b:130-133` with exactly these defaults and `EVC_DERATE 0` — **simply off**. All four arms, always: `3b:747` documents that specifying some leaves the others inheriting the last defined value.
 
 **Order matters and this flow has been burned by it.** `cts_setup.tcl:26-67` records that enabling OCV *after* ccopt cost 96,545 fictional hold violations and ~37,000 hold buffers.
 
@@ -518,14 +518,14 @@ Test: cocotb, back-to-back zero-wait-state APB accesses to the same accumulator.
 1. **Confirm the route.** Is this Europractice/imec mini@sic 65 nm? If not, who, and does the flow require a complete GDS with imported cell layouts and a seal ring?
 2. **Confirm the black-box model.** We will ship a GDS in which TSMC standard cells, IO drivers and bond pads are empty cell references, with only our routing, vias and the 8 compiled memory macros as real geometry. Confirm you import the TSMC layouts.
 3. **Corners.** Our pad ring places `PCORNER_G` (135 × 135 µm) at all four corners of a 1600 × 2000 µm die. The deck's `EMPTY_AREA` is `INT CHIP_NOSR < 74 ABUT == 90`. **What exactly must be empty, and what is your accepted remedy?** Delete the corner cells (and what about pad-ring bus continuity and the ESD guidance on p.33)? Move the ring inward? A chamfer you apply at import? *Largest schedule leverage of any question here.*
-4. **Deck switches.** Send your exact `#DEFINE` set for `CLN65S_9M_6X1Z1U.26_2a`. Specifically: is `LP` on? Is `WLCSP_SEALRING` off for a wire-bond design? `FULL_CHIP`, `MIXED_SCHEME`, `CHECK_LOW_DENSITY`, `ChipWindowUsed`?
+4. **Deck switches.** Send your exact `#DEFINE` set for `CLN65S_<stack>.<rev>`. Specifically: is `LP` on? Is `WLCSP_SEALRING` off for a wire-bond design? `FULL_CHIP`, `MIXED_SCHEME`, `CHECK_LOW_DENSITY`, `ChipWindowUsed`?
 5. **Tap cells / LUP.6.** We use `tcbn65lp` 9-track with `add_endcaps DCAP4` and no explicit well-tap insertion. Will LUP.6 fire after your import, and what tap spacing do you require?
 6. **Dummy fill.** Do you run it, or do we? Our M8 density is ~7.6% at 20×20 against a 20% foundry floor at 75×75.
 7. **Antenna and BND.** Do you run ANT and BND as part of acceptance, or are they ours to clean before submission?
 8. **LVS.** We hold Front-End packages only — no CDL for standard cells, IO or bond pads. Confirm black-box LVS is acceptable and send the application note. Our DRC waivers for macro-`OBS`-vs-PG spacing would normally need LVS evidence we cannot produce; how do you want that handled?
 9. **Preliminary GDS.** We would like to submit one early. What is the deadline and what must it contain?
 10. **Area and seat.** 1600 × 2000 µm = 3.2 mm², aspect 1:1.25. Quote the extra-area charge and confirm the next available 65 nm shuttle date and the cut-off for a revised stream.
-11. **RC deck.** We have `/tsmc65pdk/65/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile` locally. Confirm this is the right dataset for the 9M 6X1Z1U stack, or send yours.
+11. **RC deck.** We have `$TSMC_65_HOME/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile` locally. Confirm this is the right dataset for the 9M 6X1Z1U stack, or send yours.
 
 ---
 

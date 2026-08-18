@@ -17,10 +17,10 @@ interchangeable:
 
 | Directory | Which UI |
 |---|---|
-| `/eda/cadence/innovus/doc/TCRcom/` | Innovus **Stylus Common UI** Text Command Reference — `opt_design.html`, `route_design.html`, `ccopt_design.html`, `write_db.html`, the `*_Category_Attributes.html` pages |
-| `/eda/cadence/innovus/doc/UGcom/` | Innovus **Stylus Common UI** User Guide — `Clock_Tree_Synthesis.html`, `Using_the_NanoRoute_Router.html` |
-| `/eda/cadence/innovus/doc/innovusTCR/` | **Legacy UI** — `optDesign.html`, `routeDesign.html`, `setAnalysisMode.html`, `setNanoRouteMode.html`, `saveDesign.html` … |
-| `/eda/cadence/innovus/doc/innovusUG/` | Legacy UG, including `CCOpt_Properties.html` |
+| `$INNOVUS_HOME/doc/TCRcom/` | Innovus **Stylus Common UI** Text Command Reference — `opt_design.html`, `route_design.html`, `ccopt_design.html`, `write_db.html`, the `*_Category_Attributes.html` pages |
+| `$INNOVUS_HOME/doc/UGcom/` | Innovus **Stylus Common UI** User Guide — `Clock_Tree_Synthesis.html`, `Using_the_NanoRoute_Router.html` |
+| `$INNOVUS_HOME/doc/innovusTCR/` | **Legacy UI** — `optDesign.html`, `routeDesign.html`, `setAnalysisMode.html`, `setNanoRouteMode.html`, `saveDesign.html` … |
+| `$INNOVUS_HOME/doc/innovusUG/` | Legacy UG, including `CCOpt_Properties.html` |
 
 This flow runs `innovus -stylus`, so `TCRcom/` and `UGcom/` are authoritative. Searching
 `innovusTCR/` for `set_route_attributes` or `create_clock_tree_spec` returns nothing —
@@ -417,7 +417,7 @@ Same warning at `baseline_2026-08-06/logs/pnr_run_core70.log:30262`,
 `baseline_2026-08-05/logs/pnr_stages.log:30685` and
 `baseline_2026-08-05/logs/pnr_all.log:34895`. **No clock net has ever received extra
 spacing on this design.** (`NRDB-537` has no page in
-`/eda/cadence/innovus/doc/innovuserrmsg/`; the message text is self-explanatory.)
+`$INNOVUS_HOME/doc/innovuserrmsg/`; the message text is self-explanatory.)
 
 The cause is a name-space confusion: `-nets` takes a **net** name, and `clk` is the name of
 an **SDC clock**. `work/design_clk.spec:139` records `create_clock_tree -name clk -source
@@ -898,7 +898,7 @@ system is in simultaneous setup/hold mode. Ignoring '-early' and using '-late' a
 The tool tells you exactly what happened: it wanted both sides, could not have both, and
 **silently kept the late (setup) side**. The report that follows has a SETUP block, a DRV
 block and a Clock-checks block, and no hold block at all. `TCLCMD-1130` has no page in
-`/eda/cadence/innovus/doc/innovuserrmsg/`.
+`$INNOVUS_HOME/doc/innovuserrmsg/`.
 
 The remedy the message names carries a heavy caveat, and a second one from elsewhere:
 enabling `timing_enable_simultaneous_setup_hold_mode` disables all non-timing commands, and
@@ -1189,7 +1189,7 @@ this flow. [05-place-cts-route.md](../05-place-cts-route.md) suggests two of the
 
 Every manual page cited above was opened and read. Nothing here is cited from memory.
 
-**Innovus Stylus Common UI Text Command Reference**, `/eda/cadence/innovus/doc/TCRcom/`:
+**Innovus Stylus Common UI Text Command Reference**, `$INNOVUS_HOME/doc/TCRcom/`:
 
 | Page | Cited for |
 |---|---|
@@ -1207,21 +1207,21 @@ Every manual page cited above was opened and read. Nothing here is cited from me
 | `timing_Category_Attributes.html` | `timing_analysis_type` |
 | `opt_Category_Attributes.html` | the `opt_hold_*` family and `opt_post_route_hold_recovery` |
 
-**Innovus Stylus Common UI User Guide**, `/eda/cadence/innovus/doc/UGcom/`:
+**Innovus Stylus Common UI User Guide**, `$INNOVUS_HOME/doc/UGcom/`:
 
 | Page | Cited for |
 |---|---|
 | `Clock_Tree_Synthesis.html` | CCOpt vs `clock_design`; why skew balancing does not close timing; the pre-CTS configuration requirement ("OCV timing derates or AOCV enabled"); Source Latency Update; `cts_update_io_latency`; Library Cells recommendations; Transition Target; Skew Target; `cts`/`ccopt` attribute categories |
 | `Using_the_NanoRoute_Router.html` | SMART routing definition; timing-driven routing caveats; automatic crosstalk prevention |
 
-**Innovus User Guide (legacy)**, `/eda/cadence/innovus/doc/innovusUG/`:
+**Innovus User Guide (legacy)**, `$INNOVUS_HOME/doc/innovusUG/`:
 
 | Page | Cited for |
 |---|---|
 | `CCOpt_Properties.html` | `set_ccopt_property`/`get_ccopt_property` syntax; `update_io_latency` (default `true`); `force_update_io_latency`; the property↔attribute mapping |
 
 **Not found.** `TCLCMD-1130`, `TCLCMD-1048`, `TCLCMD-917`, `IMPDBTCL-248` and `NRDB-537`
-have no pages in `/eda/cadence/innovus/doc/innovuserrmsg/`. Their text is quoted from the
+have no pages in `$INNOVUS_HOME/doc/innovuserrmsg/`. Their text is quoted from the
 logs and reports in this repository, not from a manual.
 
 **Repository evidence used.** `ASIC/genus-innovus/scripts/cts_setup.tcl`,

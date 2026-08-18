@@ -116,7 +116,7 @@ Split by pad type:
 
 **Root cause — measured, not assumed.** `PAD70NU`'s `OBS` is solid over its whole
 footprint on **M8 and M9** — read the `MACRO PAD70NU` `OBS` section of the vendor bond-pad
-LEF, `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef` (geometry not reproduced
+LEF, `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef` (geometry not reproduced
 here, TSMC licence). Those are exactly the core-ring layers (`add_rings … -layer {top M9 bottom M9 left M8
 right M8}`). `add_rings` draws geometrically and **does not honour `OBS`**, so at
 `CORE_TO_IO = 50` the rings were drawn straight through the inner bond pads on all four
@@ -384,7 +384,7 @@ Four independent reasons, in descending order of strength:
    ships its 2.5 V IO liberty without `pg_pin()` groups — which is true, and is also why
    [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl) carries a three-line LEF
    override adding `USE POWER ;` / `USE GROUND ;`. We cannot fix a vendor liberty, and
-   `/tsmc65pdk` is a read-only, lab-shared mount that must not be edited in place — the
+   `$TSMC_65_HOME` is a read-only, lab-shared mount that must not be edited in place — the
    deviation is applied to a copy the build generates from it
    (`ASIC/tech_wrappers/tsmc65/generated/`, produced by `patch_pad_lef.py`; formerly a
    committed copy under `local_overrides/`, changed in `bf619f1`). 34 more say the memory

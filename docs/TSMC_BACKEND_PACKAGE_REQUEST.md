@@ -20,14 +20,14 @@ revision, so this is an extension of an existing licence rather than a new one.
 
 | Package | Supplies | Cells it unblocks |
 |---|---|---|
-| **`tcbn65lp_220a_BE`** | standard-cell GDS + CDL | the 9-track SVT core (`config.tcl` `BASE_LIB = tcbn65lpwc.lib`) |
-| **`tphn65lpgv2od3_sl_210a_BE`** | 2.5 V staggered IO driver GDS + CDL | `PDDW16DGZ_G` ×36, `PVSS2DGZ_G` ×12, `PDDW04DGZ_G` ×9, `PVDD2DGZ_G` ×8, `PVDD1DGZ_G` ×6, `PVSS1DGZ_G` ×4, `PVDD2POC_G` ×4, `PDUW16DGZ_G` ×2, `PDUW08DGZ_G` ×1, `PCORNER_G`, `PFILLER{1,5,10,20}_G` |
-| **`tpbn65v_200b_BE`** | bond-pad GDS + CDL | `PAD70GU` ×42, `PAD70NU` ×40 |
+| **`tcbn65lp_<rev>_BE`** | standard-cell GDS + CDL | the 9-track SVT core (`config.tcl` `BASE_LIB = tcbn65lpwc.lib`) |
+| **`tphn65lpgv2od3_sl_<rev>_BE`** | 2.5 V staggered IO driver GDS + CDL | `PDDW16DGZ_G` ×36, `PVSS2DGZ_G` ×12, `PDDW04DGZ_G` ×9, `PVDD2DGZ_G` ×8, `PVDD1DGZ_G` ×6, `PVSS1DGZ_G` ×4, `PVDD2POC_G` ×4, `PDUW16DGZ_G` ×2, `PDUW08DGZ_G` ×1, `PCORNER_G`, `PFILLER{1,5,10,20}_G` |
+| **`tpbn65v_<rev>_BE`** | bond-pad GDS + CDL | `PAD70GU` ×42, `PAD70NU` ×40 |
 
 ### Worth adding to the same request (no marginal effort, avoids a second round)
 
-`tcbn65lphvt_220a_BE`, `tcbn65lplvt_220a_BE`, `tcbn65lpcg_220a_BE`,
-`tcbn65lpcghvt_220a_BE`, `tcbn65lpcglvt_220a_BE`.
+`tcbn65lphvt_<rev>_BE`, `tcbn65lplvt_<rev>_BE`, `tcbn65lpcg_<rev>_BE`,
+`tcbn65lpcghvt_<rev>_BE`, `tcbn65lpcglvt_<rev>_BE`.
 
 ### Phrasing that gets the right thing
 
@@ -69,11 +69,11 @@ obstruction shapes — so every cell name resolves and nothing errors:
 Consequently any DRC result obtained from this stream must be **withdrawn, not
 caveated** — Calibre is checking routing geometry over M1-only shells.
 
-Confirmed absent, exhaustively: `find /tsmc65pdk -iname '*.cdl' -o -iname
+Confirmed absent, exhaustively: `find $TSMC_65_HOME -iname '*.cdl' -o -iname
 '*.gds*'` returns exactly **one** file, `util/unit.cdl` (92 bytes, a units
 header). Every TSMC 65 package on this system carries the `_FE` suffix; no
-`*_BE` directory exists anywhere on `/tsmc65pdk`, `/research`, `/opt/cad`,
-`/srv`, `/eda` or `/apps`.
+`*_BE` directory exists anywhere on `$TSMC_65_HOME`, `/research`, `/opt/cad`,
+`/srv`, `$CDS_INSTALL` or `/apps`.
 
 Reconstruction from installed views was checked and is impossible: Milkyway
 `frame_only` holds 855 FRAM abstracts against 2 CEL entries (both filler
@@ -82,7 +82,7 @@ staggered-IO `Back_End/` directory contains **only** `lef`.
 
 Two flow files already point at data we do not have, which suggests this was
 hit before and parked:
-- `ASIC/common.mk:106` — `TCBN65LP_BE ?= /home/dwn1c21/SoC-Labs/phys_ip/.../tcbn65lp_220a_BE` (does not exist)
+- `ASIC/common.mk:106` — `TCBN65LP_BE ?= /home/dwn1c21/SoC-Labs/phys_ip/.../tcbn65lp_<rev>_BE` (does not exist)
 - `ahb_qspi/syn/asic/pdk_paths.tcl:47,62` — expect `*.gds` under `Back_End/celtic/` (none there)
 
 ---
@@ -109,9 +109,9 @@ licensed and completely idle:
 | Synopsys IC Validator U-2022.12 | `ICValidator2-CompareEngine` | 192 | **0** |
 | Cadence Pegasus 23.11.000 | `Pegasus_LVS` / `Pegasus_advlvs` | 41 / 41 | **0** |
 
-Rule decks are on disk: `/tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/calibre.lvs`
+Rule decks are on disk: `$TSMC_65_HOME/CMOS/LP/pdk/Calibre/lvs/calibre.lvs`
 (854 KB) with `source.added` and `xcell`, plus
-`util/MAIN_DECK/CALIBRE_FLOW/UTM/DFM_LVS_RC_CAL_N65_ALRDL_UTM_v16a.9m` matching
+`util/MAIN_DECK/CALIBRE_FLOW/UTM/DFM_LVS_RC_CAL_N65_ALRDL_UTM_<rev>` matching
 our `9M_6X1Z1U` stack. (Assura and PVS are installed but have **no** licence
 features on the server — do not plan around them.)
 
@@ -119,14 +119,14 @@ features on the server — do not plan around them.)
 
 ## 4. Routes considered and rejected
 
-**Retarget to the Arm sc12 library.** `/research/AAA/phys_ip_library/arm/tsmc/cln65lp/`
+**Retarget to the Arm sc12 library.** `$PHYS_IP/arm/tsmc/cln65lp/`
 does ship complete standard cells — `sc12_base_rvt` has real layout
 (`gds2` 11.6 MB, 967 `*_A12TR` structures with genuine NW/OD/PO/CO/M1 polygons)
 and a real Calibre-format transistor netlist (`cdl` 1.1 MB). **But it is only
 half a kit: ARM's cln65lp node ships no IO library and no bond-pad library.**
 164 pad-ring instances across 11 TSMC cell types would still have no GDS and no
 CDL, so full-chip LVS remains impossible. It also forces 9-track → 12-track rows
-(new floorplan and power plan) and a metal-stack change — `arm_tech/r2p0` offers
+(new floorplan and power plan) and a metal-stack change — `arm_tech/<rev>` offers
 `1p9m_6x2z` but **not** our `6X1Z1U`, which would invalidate the DRC deck
 selection and the GDS-out layer map. 1–2 weeks of work that still does not
 produce a bondable die.
@@ -139,8 +139,8 @@ produce a bondable die.
 
 - **The seal ring is already on-site.** `docs/PHYSICAL_HANDOFF.md` and the
   signoff checklist record it as not started and the broker's responsibility.
-  In fact `/tsmc65pdk/65/CMOS/doc/sealring/sealring.zip` (1.26 MB) contains
-  `N65_Mu_SR_03152013.gds` (1.45 MB), whose "Mu" matches the `MAIN_DRC_TopMu`
+  In fact `$TSMC_65_HOME/CMOS/doc/sealring/sealring.zip` (1.26 MB) contains
+  `N65_Mu_SR_<date>.gds` (1.45 MB), whose "Mu" matches the `MAIN_DRC_TopMu`
   deck this design uses. **Decide now whether the 1600 × 2000 µm die outline has
   to grow to accommodate it** — the pad ring currently starts at (0,0) with no
   space reserved, and that answer changes the floorplan. Far cheaper to learn

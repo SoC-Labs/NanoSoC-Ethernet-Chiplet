@@ -18,11 +18,11 @@ Only pages actually opened while writing this are cited. Paths are on this machi
 
 | Short form | Full title / version | Path |
 |---|---|---|
-| **Stylus TCR** | Innovus Stylus Common UI Text Command Reference, Product Version **21.11**, July 2021 | `/eda/cadence/innovus/doc/TCRcom/` |
-| **Stylus UG** | Innovus Stylus Common UI User Guide | `/eda/cadence/innovus/doc/UGcom/` |
-| **Legacy TCR** | Innovus Text Command Reference (native UI), Product Version 21.11, July 2021 | `/eda/cadence/innovus/doc/innovusTCR/` |
-| **Msg Ref** | Innovus Error Message Reference, Product Version **21.10**, May 2021 | `/eda/cadence/innovus/doc/innovuserrmsg/` |
-| **CPF Ref** | Common Power Format Language Reference, Product Version 2.0, October 2019 | `/eda/cadence/innovus/doc/cpf_ref/` |
+| **Stylus TCR** | Innovus Stylus Common UI Text Command Reference, Product Version **21.11**, July 2021 | `$INNOVUS_HOME/doc/TCRcom/` |
+| **Stylus UG** | Innovus Stylus Common UI User Guide | `$INNOVUS_HOME/doc/UGcom/` |
+| **Legacy TCR** | Innovus Text Command Reference (native UI), Product Version 21.11, July 2021 | `$INNOVUS_HOME/doc/innovusTCR/` |
+| **Msg Ref** | Innovus Error Message Reference, Product Version **21.10**, May 2021 | `$INNOVUS_HOME/doc/innovuserrmsg/` |
+| **CPF Ref** | Common Power Format Language Reference, Product Version 2.0, October 2019 | `$INNOVUS_HOME/doc/cpf_ref/` |
 
 > This flow is **stylus**, so every command below is cited from `TCRcom/`. The legacy `innovusTCR/`
 > edition is a *different command set* (`addRing`, `addStripe`, `sroute`, `globalNetConnect`) and is
@@ -149,7 +149,7 @@ this paragraph.
 ### 1.3 Cross-section
 
 Layer data below is read from the tech LEF named by `config.tcl:131`,
-`/tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`.
+`$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`.
 
 ```
  layer  class        dir   role in this power plan
@@ -744,7 +744,7 @@ place.
 
 The override is **three added lines and nothing else** — verified by diffing it against the PDK
 original at
-`/tsmc65pdk/65/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Back_End/lef/tphn65lpgv2od3_sl_210a/mt_2/9lm/lef/tphn65lpgv2od3_sl_9lm.lef`:
+`$TSMC_65_HOME/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_<rev>_FE/TSMCHOME/digital/Back_End/lef/tphn65lpgv2od3_sl_<rev>/mt_2/9lm/lef/tphn65lpgv2od3_sl_9lm.lef`:
 
 ```
 10102a10103
@@ -759,7 +759,7 @@ Three lines, three macros, three pins. `PVDD1DGZ_G` `PIN VDD` and `PVSS1DGZ_G` `
 carried `USE POWER ;` / `USE GROUND ;` in the vendor LEF — which is precisely why the *core*
 supplies never had this problem and the *IO* supplies did.
 
-The shared PDK under `/tsmc65pdk` is read-only and is not modified; re-copy and re-diff if the PDK
+The shared PDK under `$TSMC_65_HOME` is read-only and is not modified; re-copy and re-diff if the PDK
 revs.
 
 **How to prove the fix is live**, in order of cost:
@@ -974,7 +974,7 @@ but every link is a hard number:
 
 The stack string itself appears in three places that must move together: `config.tcl:131`
 (`TECH_LEF`), `config.tcl:134` (`IO_PAD_LEF`, whose path contains `9M_6X1Z1U`), and
-`config.tcl:209` (`drc_ruledeck`, `CLN65S_9M_6X1Z1U.26_2a`).
+`config.tcl:209` (`drc_ruledeck`, `CLN65S_<stack>.<rev>`).
 
 ---
 

@@ -77,7 +77,7 @@
 questions; this one is the evidence to send with them. Written 2026-08-10.
 
 Design: TSMC 65nm LP (CLN65LP), 9M_6X1Z1U, die 1600 × 2000 µm.
-Decks: `CLN65S_9M_6X1Z1U.26_2a` (DRD VER 2.6_2, 2024) · `CN65S_9M_ANT.26_2a` · `CN65_WIRE_BOND_9M_6X1Z1U.20a`.
+Decks: `CLN65S_<stack>.<rev>` (DRD VER 2.6_2, 2024) · `CN65S_<stack>_ANT.<rev>` · `CN65_WIRE_BOND_<stack>.<rev>`.
 Calibre v2023.1_18.8, `-drc -hier -turbo N`, `DRC CELL NAME YES CELL SPACE XFORM`.
 
 ---
@@ -210,8 +210,8 @@ same mechanism rather than their own control.
 
 | deck | DRD version | `PO.R.8` |
 |---|---|---|
-| `CLN65S_9M_6X1Z1U.26_2a` | VER 2.6_2 (2024) | **691** |
-| `CLN65S_9M_6X1Z1U.21b` | VER 2.1 (2012) | **691** |
+| `CLN65S_<stack>.<rev>` | VER 2.6_2 (2024) | **691** |
+| `CLN65S_<stack>.<rev>` | VER 2.1 (2012) | **691** |
 
 Identical. The memories have carried these since at least 2012.
 
@@ -269,7 +269,7 @@ successively larger area tiers. What matters here is the shape of the rule, not 
 power mesh that Calibre believes is floating will clear the smallest tier easily.
 
 > Foundry `A.R.8` accumulated-area thresholds and spacing window redacted — TSMC licence forbids
-> reproduction. Source: the `A.R.8` rules in `MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a`. Read them
+> reproduction. Source: the `A.R.8` rules in `MAIN_DRC_TopMu/CLN65S_<stack>.<rev>`. Read them
 > there before judging any antenna result.
 
 **All 1,549 are one net** (`NET=3`), whose largest M7 polygon is exactly **1600.000 × 2000.000 µm —
@@ -343,7 +343,7 @@ the fill (Q4 in doc 27).
 ## Appendix A — stream-out map measurements (2026-08-13)
 
 Preserved here because they were previously recorded only in the header of
-`ASIC/tech_wrappers/tsmc65/local_overrides/PRTF_EDI_N65_gdsout_6X1Z1U.24a.tapeout.map`,
+`ASIC/tech_wrappers/tsmc65/local_overrides/PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.tapeout.map`,
 an **untracked** file which has since been deleted in favour of a generator
 (`ASIC/genus-innovus/scripts/gdsmap_derive.py`). There was no git history to
 recover them from. Regenerate any of them with
@@ -378,7 +378,7 @@ shapes, enormous area. A record-count check would never have surfaced it.
 Full GDSII record parse, current default map:
 
 Text layer/datatype numbers redacted — TSMC licence forbids reproduction. Source:
-`PRTF_EDI_N65_gdsout_6X1Z1U.24a.map`; the census is keyed by the text layer each
+`PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map`; the census is keyed by the text layer each
 routing layer maps to there.
 
 | text layer for | records | source |
@@ -406,7 +406,7 @@ is an untested alternative.
 `LEFPIN` rows now populate. It still cannot fire, for a reason upstream of the text:
 
 Tracing the deck (do not reproduce foundry rule text here — read
-`MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a` directly, and see §5 of the deck's
+`MAIN_DRC_TopMu/CLN65S_<stack>.<rev>` directly, and see §5 of the deck's
 latch-up section): the post-driver active layer is derived by intersecting
 **source/drain diffusion** with the text-identified pad metal, and every one of
 the five expressions that consume a `*_BY_TEXT` layer takes diffusion or n-well
@@ -418,7 +418,7 @@ diffusion the chain is empty and every latch-up rule downstream reports zero
 whether the define is on or off. That is NOT-CHECKED, not clean. Unblocking it
 needs the IO/pad **layout**, which is the §27 broker question.
 
-`CHECK_FLOATING_GATE_BY_TEXT` does not exist in `CLN65S_9M_6X1Z1U.26_2a`, and
+`CHECK_FLOATING_GATE_BY_TEXT` does not exist in `CLN65S_<stack>.<rev>`, and
 neither does `PO.R.19`. This deck has `PO.R.1/2/3/4/6/8` only. Guidance citing
 those names is for a deck revision this site does not have — worth raising with
 the broker directly.

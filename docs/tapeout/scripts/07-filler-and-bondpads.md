@@ -11,7 +11,7 @@ Companion to [`../06-fill-antenna-bondpads.md`](../06-fill-antenna-bondpads.md),
 which is the *stage* narrative. This page is the *command* reference, and where
 the two disagree, this page states so explicitly.
 
-**Manual paths used here** (all under `/eda/cadence/innovus/doc/`):
+**Manual paths used here** (all under `$INNOVUS_HOME/doc/`):
 
 | Short form | Path | Product version string on the page |
 |---|---|---|
@@ -59,7 +59,7 @@ keywords per `LAYER` block: `MINIMUMDENSITY`, `MAXIMUMDENSITY`,
 `DENSITYCHECKWINDOW` and `DENSITYCHECKSTEP`.
 
 > Vendor tech-LEF rule values redacted — TSMC licence forbids reproduction. Source:
-> `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`, the `LAYER` blocks for M1–M9 and AP. Read
+> `PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`, the `LAYER` blocks for M1–M9 and AP. Read
 > the four density keywords there before planning any fill.
 
 So each layer must reach a minimum metal fraction inside a sliding window, and must
@@ -111,7 +111,7 @@ A wire-bond die needs an aluminium opening per signal, large enough for a
 capillary to land a ball on. The openings, not the drivers, set the pitch.
 
 Both cells used here come from TSMC's `tpbn65v` bond-pad library
-(`config.tcl:134` → `.../iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`). Read
+(`config.tcl:134` → `.../iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`). Read
 out of that LEF:
 
 | | `PAD70GU` (outer) | `PAD70NU` (inner) |
@@ -124,7 +124,7 @@ out of that LEF:
 
 > Vendor LEF geometry redacted — TSMC licence forbids reproduction. The AP-opening
 > rectangles, the polygon wings and the full `SIZE`/`OBS` statements are in
-> `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`, macros `PAD70GU`
+> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, macros `PAD70GU`
 > and `PAD70NU`.
 
 The two cells carry the **same aluminium opening**; the only difference is where
@@ -547,13 +547,13 @@ The task of quoting it properly runs into a wall, and the wall is worth
 recording. **There is no `IMPSP-5110.html` in this install.**
 
 ```sh
-$ ls /eda/cadence/innovus/doc/innovuserrmsg/ | grep -E '^IMPSP-51'
+$ ls $INNOVUS_HOME/doc/innovuserrmsg/ | grep -E '^IMPSP-51'
 IMPSP-5101.html
 IMPSP-5106.html
 IMPSP-5113.html
 IMPSP-5119.html
 ...
-$ grep -rl "IMPSP-5110" /eda/cadence/innovus/doc/
+$ grep -rl "IMPSP-5110" $INNOVUS_HOME/doc/
 (no output)
 ```
 
@@ -907,7 +907,7 @@ polygon capping each of those — and on **AP** a single wide rectangle with a
 chamfered polygon at each end. No pins, no routing targets, blockage only.
 
 > Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
-> `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`,
+> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`,
 > the `OBS` section.
 
 > **A second correction.** `floorplan.tcl:18-19` and
@@ -1093,7 +1093,7 @@ cosmetic one; the UG's capacitance warning above is the reason
 `-timing_aware {on|off|sta}` exists.
 
 **One encouraging detail: the layer map is already ready for it.** The GDS-out map
-(`PRTF_EDI_N65_gdsout_6X1Z1U.24a.map`) carries a full `FILL` row for every routing
+(`PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map`) carries a full `FILL` row for every routing
 layer and for AP, in the form:
 
 ```
@@ -1158,7 +1158,7 @@ inert `FILL*` could have held decap instead. Not a blocker; an unexamined choice
 
 ```tcl
 60: write_stream $OUT_DIR/${block_name}.gds \
-61:     -map_file /tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map \
+61:     -map_file $TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map \
 62:     -lib_name DesignLib \
 63:     -merge $gds_merge_list\
 64:     -output_macros -unit 1000 -mode all

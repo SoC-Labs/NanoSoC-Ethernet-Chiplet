@@ -274,7 +274,7 @@ STRUCT_UNDRIVEN_PIN_MACRO: Macro cell input/inout direction pin with receiver(s)
 `flash_cache_tag` is a TSMC65 compiled macro built with `write_mask = on`
 (`nanosoc-multicore-system/ahb_qspi/asic/TSMC65nm/flash_cache_tag.spec:32`), which is what
 creates the per-bit `WEN[10:0]` **and** a separate global `GWEN`. From the macro's own
-structural model, `/research/precompiled_mems/TSMC65/flash_cache_tag/flash_cache_tag.mdt`:
+structural model, `$MEM_BASE/flash_cache_tag/flash_cache_tag.mdt`:
 
 ```
 primitive = _and aWRITE0(NOT_GWEN, NOT_SPLIT_WEN[0], NOT_CEN, WRITE[0]);
@@ -353,7 +353,7 @@ with the 'VDDIO' name pattern to a global net. Unable to establish connection be
 'power' pin with the name pattern doesn't match in any cell.
 ```
 
-The local-override LEF (`config.tcl:135–160`, adding `USE POWER ;` / `USE GROUND ;` to
+The patched IO driver LEF (set in `config.tcl`, adding `USE POWER ;` / `USE GROUND ;` to
 `VDDPST`/`VSSPST`) fixed it. Today `restorePlace` reports `*** Checked 8 GNC rules.` with
 no error, and the 81 `Regular Wire of Net VDDIO/VSSIO` DRC records the old behaviour
 produced are **gone** (81 → 0).
@@ -650,7 +650,7 @@ Neither was in scope; both are recorded so they are not lost.
 `IMPSYT-6692: Invalid return code while executing 4_pnr_route.tcl ... script processing
 was stopped`, from the `exec calibre -drc` block at the end of that file. The underlying
 cause is `IMPSE-110: can't find package Tk 8.0` while loading
-`/eda/mentor/calibre/shared/pkgs/icv/tools/queryenc/encounter.tcl`. **Everything of value
+`<mentor install>/calibre/shared<icv install>/tools/queryenc/encounter.tcl`. **Everything of value
 was already written** — `write_stream`, `report_area`, `report_power`, `write_netlist`,
 `write_sdf` and `write_db` all precede the Calibre call, and the output timestamps (GDS
 17:42, netlist 17:45, SDF 17:47) confirm it. But the run's exit status is a failure and

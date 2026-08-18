@@ -557,11 +557,11 @@ Run from `ASIC/genus-innovus/`:
 make drc          # headless — no X display, no GUI packages
 ```
 
-Ruledeck: `/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a`. Results land in
+Ruledeck: `$TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/CLN65S_<stack>.<rev>`. Results land in
 `work/drc_run/`.
 
 `scripts/calibre/run_drc.sh` preflights and fails loudly if there is no licence, no GDS,
-or an unreadable deck (the last needs the `/tsmc65pdk` mount and group `tsmc65pdkgrp`).
+or an unreadable deck (the last needs the `$TSMC_65_HOME` mount and group `tsmc65pdkgrp`).
 
 The TSMC deck ships with `LAYOUT PATH "GDSFILENAME"` / `LAYOUT PRIMARY "TOPCELLNAME"`
 placeholders, and `calibre -drc` has no command-line override for them, so layout and top
@@ -592,7 +592,7 @@ placeholders are never overridden. The companion `source .../cal_enc.tcl` at the
 the same script fails outright in the baseline log:
 
 ```
-**ERROR: (IMPSE-110):	File '/eda/mentor/calibre/shared/pkgs/icv/tools/queryenc/encounter.tcl'
+**ERROR: (IMPSE-110):	File '<mentor install>/calibre/shared<icv install>/tools/queryenc/encounter.tcl'
 line 47: can't find package Tk 8.0.
 ```
 

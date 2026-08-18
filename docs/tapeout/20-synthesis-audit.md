@@ -381,10 +381,10 @@ Three consequences, all of which make a clean log misleading:
 library-setup defect and belongs with this audit.
 
 - `config.tcl:131` — tech LEF:
-  `PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_**9M_6X1Z1U**_RDL.24a.tlef`
+  `PRTF_EDI_65nm_<rev>/PRTF_EDI_N65_**9M_6X1Z1U**_RDL.24a.tlef`
 - `scripts/nanosoc_eth_chiplet_pads.mmmc:65,74,83` — all three RC corners:
   `${tech_path}/cadence_captable/**1p9m_6x2z**/{rcworst,rcbest,typical}.captbl`
-  where `tech_path = /research/AAA/phys_ip_library/arm/tsmc/cln65lp/arm_tech/r2p0`
+  where `tech_path = $PHYS_IP/arm/tsmc/cln65lp/arm_tech/<rev>`
 
 `6X1Z1U` (6 thick + 1 Z + 1 U) and `6X2Z` (6 thick + 2 Z) are **different back-end
 stacks**. Extraction is being done against a stack the design is not routed in.
@@ -411,7 +411,7 @@ names by **last read wins**, announcing it only at Warning grade. It fired 10 ti
 Warning : Replacing previously read Verilog module or VHDL entity. [HPT-76]
         : Replacing Verilog module 'cmsdk_ahb_to_apb' in library 'default' with newly read
           Verilog module 'cmsdk_ahb_to_apb' in the same library in file
-          '/research/AAA/ip_library/BP210/.../cmsdk_ahb_to_apb.v' on line 31.
+          '$IP_LIBRARY_ROOT/ip_library/BP210/.../cmsdk_ahb_to_apb.v' on line 31.
 ```
 
 All 10 are **same-file re-reads** caused by duplicate flist entries (`cmsdk_ahb_to_apb`
@@ -596,7 +596,7 @@ flash_cache_tag  u_qspi_flash_0_..._u_way1_cache_ram_tag_ram_0_i   .GWEN = 1'b0
 > On that reading write control simply lives in `WEN[10:0]` + `CEN` rather than `GWEN`,
 > writes remain gated, and the tie is redundant rather than harmful — **INFERRED, not
 > verified.** Deciding this needs the `flash_cache_tag` datasheet's stated `GWEN`/`WEN`
-> precedence, which is not in `/research/precompiled_mems/TSMC65/flash_cache_tag/`.
+> precedence, which is not in `$MEM_BASE/flash_cache_tag/`.
 > **Do not downgrade the existing defect on the strength of this note** — but do not
 > assume the original verdict is right either. One of the two is wrong.
 
@@ -605,7 +605,7 @@ Two further items fell out that were **not** previously reported.
 ### J1. `EMA` is inconsistent across the three SRAM wrappers
 
 **VERIFIED as an inconsistency. Which value is correct: CANNOT BE DETERMINED** without the
-Arm memory-compiler datasheet, which is not present in `/research/precompiled_mems/TSMC65/`.
+Arm memory-compiler datasheet, which is not present in `$MEM_BASE/`.
 
 `EMA` is the Extra Margin Adjustment — it trims the internal read/write timing margin of
 the compiled RAM. Three wrappers set it independently and they disagree:
@@ -622,7 +622,7 @@ Confirmed in the netlist: 19 macros carry `.EMA = 3'b10`, and exactly two carry
 `u_tidelink_fifo_u_fifo_mem_u_sram_u_rf`.
 
 **Why nothing has caught this and nothing will.** The Arm behavioural models declare the
-pin unused — `/research/precompiled_mems/TSMC65/rf_16k/rf_16k.mdt`:
+pin unused — `$MEM_BASE/rf_16k/rf_16k.mdt`:
 
 ```
   input (EMA) (array = 2 : 0; used=false;fault=none;)

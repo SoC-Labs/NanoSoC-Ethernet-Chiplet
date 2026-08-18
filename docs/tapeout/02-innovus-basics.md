@@ -50,8 +50,8 @@ and *every library path* live. It sets
 
 - `set block_name nanosoc_eth_chiplet_pads` — so `read_db $block_name` works at all
 - `lib_search_path_list`, `syn_lib_list` — the `.lib` timing libraries
-- `lef_file_list` — tech LEF, `tcbn65lp` std cells, TSMC IO, the local-override IO driver
-  LEF, and the six RF/ROM/flash-cache macro LEFs
+- `lef_file_list` — tech LEF, `tcbn65lp` std cells, TSMC IO, the patched IO driver
+  LEF (generated from the read-only PDK, not committed), and the six RF/ROM/flash-cache macro LEFs
 - `gds_merge_list`, `drc_ruledeck`, `power_nets` / `ground_nets`, `process_node`
 - `soclabs_setup_multi_cpu` — the CPU/distribution proc every stage calls
 
@@ -329,7 +329,7 @@ on purpose, use `make pnr_setup`.
 write_db  nanosoc_eth_chiplet_pads_myexperiment
 write_netlist  ../outputs/nanosoc_eth_chiplet_pads_pnr.v
 write_stream   ../outputs/nanosoc_eth_chiplet_pads.gds \
-    -map_file $env(TSMC_65_HOME)/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map \
+    -map_file $env(TSMC_65_HOME)/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map \
     -lib_name DesignLib -merge $gds_merge_list \
     -output_macros -unit 1000 -mode all
 write_sdf -min_view default_analysis_view_hold \

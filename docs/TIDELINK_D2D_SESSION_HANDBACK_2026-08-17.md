@@ -87,6 +87,17 @@ the downstream Wlink target stops asserting `awready` (the D2D link bug, upstrea
 and implementing + sim-validating the chosen wrapper recovery. XHB500 RTL is vendor read-only; the
 wrapper fix goes through the local-override route, never the upstream IP.
 
+**PROTOTYPED (2026-08-17) — Option 1 recovers in sim (proof-of-mechanism, NOT land-ready).** Isolated scratch
+bench `tidelink/imp/hw_gate/tl042_recovery_proto/` (8-hunk patch vs a HEAD copy; shared `tidelink_top.sv`
+md5-proven untouched). Control reproduces the hang; the fix recovers with a legal AHB **OKAY** termination
+(`rose_at=966`, synth-AW@963, non-vacuous); the double-accept edge is masked (`dbl_aw=0 dbl_w=0`). **KEY
+refinement for the owner:** a *one-shot* synthetic accept re-wedges — the wrapper's own address pipe
+(`pipe_valid_r`/`pipe_hsel_r` holding `xhb_sub_hsel` high) re-latches the address into a phantom second AW, so
+the accept must be **held across the whole flush** (`rec_active`). Before landing, close: multi-beat bursts,
+the hazard-list `sub_wr_os_ctr` drain-to-0 (phantom-AW leak → make `rec_active` self-releasing), reconciling
+the prototype's simplified synth-B clear with the shipped F-1/F-2 (`os<=1 & bready`) semantics, the
+non-bufferable path, and an *organically* (not force-) wedged link. Approach confidence HIGH; current RTL LOW.
+
 ---
 
 ## 3. v2 HW no-harm campaign  ·  STATUS: queued, execution-ready
@@ -121,11 +132,12 @@ David scheduling the KR260 pair. Design essentials (do not re-derive):
 | Fusion-compiler re-land (`9d1b2ea`) moot for the parent | two independent repo derivations |
 
 | Raw co-hold mechanism characterized (RESP-FSM hang; synth-B blind) | static RTL trace + wrapper-side re-check |
+| Option-1 recovery proven-in-mechanism (control hangs, fix recovers, edge masked) | isolated cocotb scratch bench |
 
 | Open | Owner |
 |---|---|
 | The *real* root: why the Wlink target stops asserting `awready` (upstream link bug) | peer / rig |
-| Implement + sim-validate the wrapper recovery (Option 1/2) | peer / this session |
+| Harden the Option-1 prototype to land-ready (bursts, hazard drain, self-release `rec_active`, F-1/F-2 reconcile) | peer / TL-042 owner |
 | v2 HW no-harm on silicon | gated on rig (David) |
 | v2 full `sim_gate` before any land | — |
 

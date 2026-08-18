@@ -133,7 +133,7 @@ gate came to mean nothing:
 | `value.map` | 1 | a GDS layer/datatype pair |
 | `value.libtag` | 5 | `[LIB]`-style provenance annotations carrying numbers |
 | `ident` | 257 | revision-coded release names — concentrated in `ASIC/common.mk` and the four `inputs/*.sdc` |
-| `path` | 266 | absolute site paths (`/tsmc65pdk`, `/research/AAA`, `/research/precompiled_mems`, `/eda`) — in `ASIC/common.mk`, the config and eval Tcl, and four of the five workflow files |
+| `path` | 266 | absolute site paths (`$TSMC_65_HOME`, `$IP_LIBRARY_ROOT`, `$MEM_BASE`, `$CDS_INSTALL`) — in `ASIC/common.mk`, the config and eval Tcl, and four of the five workflow files |
 
 **574 findings, 7 failing gates, exit 1.** The `path` and `ident` rows are the
 consequential ones and they are *not* noise: `VENDOR_COLLATERAL.md` names

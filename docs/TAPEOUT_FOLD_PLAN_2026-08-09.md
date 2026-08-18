@@ -23,7 +23,7 @@ and summarised at the end.
 - The shared checkout is on `fix/tag-ram-gwen`; the concurrent ASIC session is editing
   **ASIC/\*\*** RIGHT NOW (working tree shows `M` on `ASIC/genus-innovus/{Makefile, inputs/*.sdc,
   scripts/*.tcl, scripts/lec/*}` plus new `?? scripts/probe_*.tcl`, `2b/3b/4b_pnr_*_eval.tcl`,
-  `selftest_route_gate.tcl`, `lec_*_shadow/`). **Do not touch ASIC/\*\* or `/research/AAA/\*\*`.**
+  `selftest_route_gate.tcl`, `lec_*_shadow/`). **Do not touch ASIC/\*\* or `$IP_LIBRARY_ROOT/\*\*`.**
 - All folds here live in the **tidelink submodule** (`tidelink/flists/*`) or **parent `src/rtl/`** —
   never in ASIC/**, so file-level collision is avoidable.
 - Per memory `concurrent-sessions-mutate-repo`: re-`git status` immediately before any stage,

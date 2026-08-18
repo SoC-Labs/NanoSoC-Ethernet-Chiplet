@@ -181,7 +181,7 @@ Script: [`2_pnr_setup.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e78454
 3. `read_mmmc ../scripts/nanosoc_eth_chiplet_pads.mmmc` — the MMMC view set
    (`default_analysis_view_setup` / `_hold`, `typical_analysis_view`, …)
 4. `read_physical -lef $lef_file_list` — tech LEF, `tcbn65lp` std cells, TSMC IO,
-   the **local-override** IO driver LEF, the six RF/ROM/flash-cache macro LEFs
+   the **patched** IO driver LEF (generated, see §above), the six RF/ROM/flash-cache macro LEFs
 5. `read_netlist ../outputs/nanosoc_eth_chiplet_pads_gate_power.v`
 6. `init_design`, then `read_power_intent -cpf ../outputs/..._gate1.cpf` + `commit_power_intent`
 7. `source ../scripts/floorplan.tcl` → die/core box, IO placement from
@@ -434,18 +434,27 @@ ASIC/romlibs/eth_rom/eth_rom_via.lef
 
 | var | default | why it matters |
 |---|---|---|
-| `TSMC_65_HOME` | `/tsmc65pdk/65` | every std-cell / IO / tech-LEF path in `config.tcl` hangs off it. Group-shared PDK, **read-only** |
-| `PHYS_IP` | `/research/AAA/phys_ip_library` | Arm phys-IP. **Read-only** |
+| `TSMC_65_HOME` | `$TSMC_65_HOME` | every std-cell / IO / tech-LEF path in `config.tcl` hangs off it. Group-shared PDK, **read-only** |
+| `PHYS_IP` | `$PHYS_IP` | Arm phys-IP. **Read-only** |
 | `SOCLABS_ASIC_FLOW_DIR` | `<repo>/ASIC/asic-flows` | stages 2–4 `source` through it; nothing else sets it |
-| `NANOSOC_ETH_CHIPLET_HOME` | repo root | `config.tcl` builds the ROM-lib, top-HDL and local-override-LEF paths from it |
+| `NANOSOC_ETH_CHIPLET_HOME` | repo root | `config.tcl` builds the ROM-lib, top-HDL and patched-IO-LEF paths from it |
 | `TIDELINK_HOME`, `TIDECHART_HOME` | repo subdirs | without them Genus reads the whole SoC and *then* dies at the end of `read_flist.tcl`, ~10 min in |
 | `CALIBRE_HOME` | unset | if set, `4_pnr_route.tcl` sources Calibre's Tcl and runs `exec calibre` at the end |
 | `INNOVUS_LOCAL_CPU` | `14` | `set_multi_cpu_usage -local_cpu`. Distribution is off by default and should stay off — the measured inter-host link is ~25 MB/s |
 
-Never write under `/tsmc65pdk/**` or `/research/AAA/**`. Where the flow needed a fix in
+Never write under `$TSMC_65_HOME/**` or `$IP_LIBRARY_ROOT/**`. Where the flow needed a fix in
 vendor collateral — the IO driver LEF, which declares its supply pins without
-`USE POWER ;` / `USE GROUND ;` — the file was **copied** into
-`ASIC/tech_wrappers/tsmc65/local_overrides/` and `config.tcl` points at the copy. That
-deviation is documented in `config.tcl` itself; follow the same pattern for any future
-one. See [04-power-plan](04-power-plan.md) for why it mattered (76 DRC violations from
-VDDIO/VSSIO being routed as ordinary signal nets).
+`USE POWER ;` / `USE GROUND ;` — the fix is applied to a **generated copy**:
+`patch_pad_lef.py` reads the vendor file from `$TSMC_65_HOME`, inserts three lines, and
+writes `ASIC/tech_wrappers/tsmc65/generated/`, which is gitignored and rebuilt by
+`make -C ASIC -f common.mk pad-lef`. `config.tcl` points there. That deviation is
+documented in `config.tcl` itself. See [04-power-plan](04-power-plan.md) for why it
+mattered (76 DRC violations from VDDIO/VSSIO being routed as ordinary signal nets).
+
+**Follow the pattern, not the old location.** This repository is public and TSMC's licence
+forbids reproducing their collateral, so the rule for any future vendor-file fix is *ship
+the transform, not the result* — commit a script that derives the patched file from the
+read-only PDK, and gitignore its output. A verbatim copy of this LEF was committed here
+until `bf619f1`, under `ASIC/tech_wrappers/tsmc65/local_overrides/`; that is what the older
+descriptions elsewhere in these docs are referring to, and it is no longer the live path.
+See [29-private-tsmc-tech-repo](29-private-tsmc-tech-repo.md) §2a.

@@ -424,7 +424,7 @@ macro's resolved hierarchical name, and **stops without writing a DB**:
 
 ```bash
 cd ASIC/genus-innovus/work
-TSMC_65_HOME=/tsmc65pdk/65 \
+TSMC_65_HOME=$TSMC_65_HOME \
 NANOSOC_ETH_CHIPLET_HOME=/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet \
   innovus -stylus -files ../scripts/probe_macros.tcl < /dev/null
 # -> ../logs/macro_insts.txt

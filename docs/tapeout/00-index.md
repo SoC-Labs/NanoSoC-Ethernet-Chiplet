@@ -5,6 +5,18 @@ can actually submit. It documents **this** design on **this** site — real path
 message IDs, real numbers measured from real runs — not generic Innovus tutorial
 material. Where something has not been verified, it says so.
 
+> **A note on paths and release names.** This repository is **public**, and TSMC's
+> collateral is licensed to this site — an absolute mount point plus a revision-coded
+> release directory together form an *inventory* of what the site holds, which the
+> licence does not permit publishing. So these pages write site locations as the
+> variable the flow already defines (`$TSMC_65_HOME`, `$MEM_BASE`, `$PHYS_IP`,
+> `$IP_LIBRARY_ROOT`, `$CDS_INSTALL`, `$INNOVUS_HOME`) and replace vendor release codes
+> with `<rev>`. **These are redactions, not real shell variables** — resolve them against
+> your own installation with `ls`, or use
+> `ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh`, which globs the release directory
+> rather than naming it. `ci/check-vendor-collateral.sh` enforces this on every commit
+> and every push.
+
 **Design:** `nanosoc_eth_chiplet_pads` — TSMC 65nm LP, 9 metal (`9M_6X1Z1U`),
 die 1600 × 2000 µm, `tcbn65lp` standard cells, `tphn65lpgv2od3_sl` IO, `tpbn65v`
 staggered bond pads.
@@ -58,6 +70,7 @@ self-documentation commands that make Innovus stop being opaque.
 | 28 | [DRC status and attribution](28-drc-status-and-attribution.md) | Every DRC/ANT/BND result, decomposed by who owns it |
 | 39 | [`PO.R.8` resolved](39-po-r8-resolved.md) | Why 691 of 837 DRC results are a black-boxing artefact, how that was proved, and the cell-scoped waiver built on it |
 | 43 | [DRC on `fp1505`](43-drc-fp1505.md) | The uncapped Calibre run over the short-free build, like-for-like against the shipping stream, and every check classified measured / unmeasurable |
+| 44 | [eth ROM sim/silicon divergence](44-eth-rom-sim-divergence.md) | Why the eth `sim_divergence` WARN is a declared, deliberate divergence and not a defect, and why regenerating the slot would be a false green |
 
 *(29–38, 40–42 exist but are not yet listed here.)*
 

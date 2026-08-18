@@ -167,7 +167,7 @@ two-board ethernet demo:
 ## 5. Constraints honoured
 
 - No pushes to any remote (local branch/commits only).
-- MAC upstream (`/research/AAA/ip_library/OpenCores-EthMAC`) is read-only,
+- MAC upstream (`$IP_LIBRARY_ROOT/ip_library/OpenCores-EthMAC`) is read-only,
   flist-reference only — never copied or modified.
 - This repo's submodules (`tidelink`, `tidechart`, `nanosoc-multicore-system`)
   are not edited by this plan; only this `docs/` file is added.

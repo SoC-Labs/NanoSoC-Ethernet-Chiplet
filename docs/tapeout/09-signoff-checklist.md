@@ -105,17 +105,51 @@ scripts/ci/signoff.py run chip-boundary lint elab elab-strict
 ```
 
 **Pass:** each stage reports `PASS`; `build/signoff/<stage>/status.json` has
-`"passed": true`.
+`"status": "pass"`.
+
+> **Read `status`, not `passed` — changed 2026-08-17.** `status.json` now carries a
+> three-state `status`: `"pass"` / `"fail"` / `"unverified"`. `"passed"` is still written,
+> but only so an artefact bundle from an older run still collates (`scripts/ci/signoff.py`,
+> `result_of()`), and the two are **not** interchangeable. A stage whose check never ran —
+> no tool on the host, no artefact to read — is recorded `"status": "unverified"` with
+> `"passed": false`, which is the same `passed` value a genuine violation gets. Scoring on
+> `passed` alone therefore cannot tell "this design has a violation" from "nobody measured",
+> and sends someone to debug a defect that was never reported. `unverified` still blocks
+> signoff; it is not a quiet pass.
 
 **`elab-strict` has a documented false-green** and the manifest guards against it: the
 gate greps `verif/elab_strict/build/xrun_hal.log` for `MLTDRV`, so a HAL run that
 **aborted before the multi-driver rules ran** finds nothing and reports OK. The `check:`
-block asserts `Analysis complete` and rejects `BLDSTP` / `Analysis failed` first.
+block rejects `*E,BLDSTP` / `Analysis failed` first, then demands positive evidence that
+the rule engine actually ran — `grep -aq '^halstruct:'`.
+
+> **Correction, 2026-08-17 — this gate used to assert `Analysis complete`, and that string
+> does not exist.** HAL 22.03 prints no such banner on success in this mode; on abort it
+> prints only `Analysis failed.` Measured on the 43 MB log of a **completed** run,
+> `Analysis complete` occurs **zero** times while `^halstruct:` occurs **60,493** times — so
+> the old assertion could not pass on a good run, and this blocking gate was failing for a
+> reason that had nothing to do with the design. `halstruct` is the engine that **owns** the
+> `MLTDRV` rule, which is what makes its output the right completion evidence: thousands of
+> lines on a complete run, none on an aborted one.
+>
+> **The `-a` is load-bearing on the exit status, not on the output.** The log carries NUL
+> bytes, and GNU grep without `-a` treats the file as binary and stops matching at the first
+> one. In the must-pass fixture the first NUL is at byte 278 and the first `halstruct:` line
+> begins at byte 292 — so `grep -q '^halstruct:'` returns 1 on a log where `grep -aq`
+> returns 0. Dropping the `-a` reinstates the false-red.
+>
+> The `check:` block mirrors `verif/elab_strict/run.sh` line for line, deliberately, and is
+> proven against `ci/fixtures/elab-strict/` by `scripts/ci/signoff.py prove`: a must-pass
+> fixture that contains no `Analysis complete` and does contain a NUL — the exact log the
+> old check rejected — plus three must-fail fixtures (`fail-aborted`,
+> `fail-halstruct-never-ran`, `fail-no-log`).
+
 If you run `make elab-strict` by hand, apply the same test yourself:
 
 ```bash
-grep -q 'Analysis complete' verif/elab_strict/build/xrun_hal.log \
-  && ! grep -q 'BLDSTP\|Analysis failed' verif/elab_strict/build/xrun_hal.log \
+L=verif/elab_strict/build/xrun_hal.log
+! grep -aqE '\*E,BLDSTP|Analysis failed' "$L" \
+  && grep -aq '^halstruct:' "$L" \
   && echo OK
 ```
 
@@ -283,7 +317,7 @@ cat reports/nanosoc_eth_chiplet_pads_imp_antenna.rep
 
 **Do not call this antenna signoff.** It is Innovus `check_process_antenna` against
 LEF-derived antenna rules, over an incomplete GDS. The foundry decks are present but not
-wired into anything here: `/tsmc65pdk/65/CMOS/util/ANTENNA_DRC/CN65S_9M_ANT.26_2a`.
+wired into anything here: `$TSMC_65_HOME/CMOS/util/ANTENNA_DRC/CN65S_<stack>_ANT.<rev>`.
 Declared as the `antenna-signoff` coverage gap in `ci/signoff.yaml`. See item 14.
 
 ### 9. PG connectivity
@@ -397,7 +431,7 @@ make asic-drc                     # equivalent, from the repo root
 scripts/ci/signoff.py run drc     # same, with the violation count enforced
 ```
 
-Deck: `/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a`
+Deck: `$TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/CLN65S_<stack>.<rev>`
 (also `drc_ruledeck` in [`config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl)).
 Results land in `work/drc_run/`.
 
@@ -449,7 +483,7 @@ restated in the bundle's `MANIFEST.txt`. Take them to
 ### 14. Antenna signoff against the foundry deck — **never run**
 
 The 9-metal antenna deck exists at
-`/tsmc65pdk/65/CMOS/util/ANTENNA_DRC/CN65S_9M_ANT.26_2a`, but nothing in this flow invokes
+`$TSMC_65_HOME/CMOS/util/ANTENNA_DRC/CN65S_<stack>_ANT.<rev>`, but nothing in this flow invokes
 it, and it would run over the incomplete GDS anyway. Item 8 is a router-level check only.
 
 **Ask the broker:** do they run antenna as part of their acceptance flow, or is it ours?
@@ -470,7 +504,7 @@ This is the item most likely to stop a submission. **Settle it before you send a
 ### 16. LVS — **never run, and cannot run here**
 
 LVS needs a CDL netlist for **every leaf cell**. On this site only the 8 memory macros
-ship `.cdl`, under `/research/precompiled_mems/TSMC65/`. There is no CDL for `tcbn65lp`,
+ship `.cdl`, under `$MEM_BASE/`. There is no CDL for `tcbn65lp`,
 `tphn65lpgv2od3_sl` or `tpbn65v`. `ASIC/genus-innovus/scripts/calibre_lvs` is a
 **zero-byte file**.
 
@@ -483,7 +517,7 @@ foundry data. **They run LVS; we cannot.**
 **only the 8 memory macros** (`rf_32k`, `rf_16k`, `rf_08k`, `rf_01k`, `cc_rom`, `eth_rom`,
 `flash_cache_data`, `flash_cache_tag`) — those ship `.gds2` *and* `.cdl` locally.
 
-`/tsmc65pdk/65` ships LEF, liberty, Milkyway and layer maps but **no GDS and no CDL** for
+`$TSMC_65_HOME` ships LEF, liberty, Milkyway and layer maps but **no GDS and no CDL** for
 `tcbn65lp` or the IO libraries. That is the normal academic-PDK arrangement: polygon data
 stays at the foundry. **Standard cells, IO drivers and bond pads are therefore empty cell
 references in our stream.**
@@ -492,7 +526,7 @@ Layer map used by `write_stream`
 ([`4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl)):
 
 ```
-/tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map
+$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map
 ```
 
 ### 18. Seal ring and scribe — **not in the design data**
@@ -502,11 +536,25 @@ ring and no scribe structure in the stream, and no space reserved for one inside
 box. **Confirm with the broker who adds them, and whether that changes the die outline we
 must draw to.**
 
-### 19. IR drop / power signoff — **never run**
+### 19. IR drop / power signoff — **never run until 2026-08-17; the licence claim here was false**
 
-No Voltus, no RedHawk. `reports/nanosoc_eth_chiplet_pads_imp_power.rep` is
-`report_power` — an estimate, not an IR-drop analysis. Given item 9's 329 PG opens and
-89.45 % utilisation, this is not a gap to wave through quietly.
+~~No Voltus, no RedHawk.~~ **Voltus is installed and licensed on this site.**
+`SSV_21.11.000` sits beside the `INNOVUS_21.11.000` in use — version-matched —
+at `$CDS_INSTALL/2021-22/RHELx86/SSV_21.11.000`, and `lmstat` reports 41 issued
+/ 0 in use on every `Voltus_Power_Integrity_*` feature. This is not an
+inference from the licence server: launching the tool prints
+`vtsxl Voltus Power Integrity Solution XL 21.1 checkout succeeded`.
+The same commands (`set_rail_analysis_mode`, `set_power_pads`,
+`report_resistance`, `write_pg_library`) are also present inside the Innovus
+binary this flow already runs.
+
+`reports/nanosoc_eth_chiplet_pads_imp_power.rep` is still `report_power` — an
+estimate, not an IR-drop analysis. But the reason no rail analysis had been run
+was never the licence. See `31-power-delivery-measured.md` for what has now
+been measured, and for the one thing that genuinely is out of reach here: a
+cell-accurate PGV, which needs cell SPICE or cell GDS that this site does not
+have. Static rail at an assumed activity is the strongest claim available;
+dynamic is not reachable.
 
 ---
 
@@ -524,7 +572,7 @@ scripts/ci/signoff.py report              # one collated report + declared gaps
 table: **stages not run in this session**, **declared coverage gaps**, and a verdict that
 distinguishes `NOT SIGNED OFF` from `PARTIAL` from "all executed gates passed".
 
-The physical stages need `/tsmc65pdk`, so only `srv03335` can run them
+The physical stages need `$TSMC_65_HOME`, so only `srv03335` can run them
 (`label: soclabs-pdk`, enforced by [`scripts/ci/preflight.sh`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/scripts/ci/preflight.sh)).
 Implementation itself is **not** in this pipeline — it is
 `.github/workflows/asic-gds.yml`. Run order:

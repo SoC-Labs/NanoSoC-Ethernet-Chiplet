@@ -10,8 +10,8 @@ powered by what**. It is a reference, not a tutorial: every claim is tied to a l
 this repository, a line in a real run log, or a page in the installed Cadence manuals.
 
 **Manual citations are Common UI.** This flow runs `innovus -stylus`, so commands are cited
-from `/eda/cadence/innovus/doc/TCRcom/` (Stylus Common UI Text Command Reference, product
-version 21.11) and `/eda/cadence/innovus/doc/UGcom/` (Common UI User Guide). The legacy-UI
+from `$INNOVUS_HOME/doc/TCRcom/` (Stylus Common UI Text Command Reference, product
+version 21.11) and `$INNOVUS_HOME/doc/UGcom/` (Common UI User Guide). The legacy-UI
 editions (`innovusTCR/`, `innovusUG/`) document a different option spelling — see
 [§2.3](#24-a-note-on-option-spelling). Only pages actually opened are cited; where the manuals
 say nothing, this page says so.
@@ -169,16 +169,16 @@ Source: [`ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc`](https://git
 ### 3.1 Lines 1–13 — path variables
 
 ```tcl
- 1  set phys_lib /research/AAA/phys_ip_library
- 3  set base_path $::env(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/...
- 4  set tech_path ${phys_lib}/arm/tsmc/cln65lp/arm_tech/r2p0
- 5  set rf_32k_path /research/precompiled_mems/TSMC65/rf_32k
+ 1  set phys_lib $PHYS_IP
+ 3  set base_path $::env(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_<rev>_FE/...
+ 4  set tech_path ${phys_lib}/arm/tsmc/cln65lp/arm_tech/<rev>
+ 5  set rf_32k_path $MEM_BASE/rf_32k
 ...
 11  set bootrom_path $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs/cc_rom
 13  set IO_driver_path $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/...
 ```
 
-`TSMC_65_HOME` defaults to `/tsmc65pdk/65` (`ASIC/common.mk:79`). Lines 1 and 5–10 are
+`TSMC_65_HOME` defaults to `$TSMC_65_HOME` (`ASIC/common.mk:79`). Lines 1 and 5–10 are
 **absolute paths into shared, read-only lab trees** — the design is not relocatable without
 these mounts. The ROM libraries (11–12) are the exception: they are inside the repo, and
 `make romlibs-check` fails early if they are missing (`ASIC/genus-innovus/Makefile:73`).
@@ -193,7 +193,7 @@ these mounts. The ROM libraries (11–12) are the exception: they are inside the
 ...
 26      ${IO_driver_path}/tphn65lpgv2od3_slwc.lib] \
 27     -si\
-28      [list ${base_path}/Back_End/celtic/tcbn65lp_200c/tcbn65lpwc.cdb]
+28      [list ${base_path}/Back_End/celtic/tcbn65lp_<rev>/tcbn65lpwc.cdb]
 ```
 
 `create_library_set` "associates a TCL list of timing and cdB/UDN libraries with a specified
@@ -1292,12 +1292,12 @@ and there is no message page for the "Unable to translate command" text in
 #### `IMPSP-5110`, quoted properly
 
 **`IMPSP-5110` has no page in the installed Innovus Error Message Reference.**
-`/eda/cadence/innovus/doc/innovuserrmsg/` contains 1,992 pages including `IMPSP-5101.html`,
+`$INNOVUS_HOME/doc/innovuserrmsg/` contains 1,992 pages including `IMPSP-5101.html`,
 `IMPSP-5106.html` and `IMPSP-5113.html`, but **not** `IMPSP-5110.html`. Do not go looking for
 it; it is not there.
 
 It *is* in the tool's own message database. From
-`/eda/cadence/innovus/share/cdssetup/errormessages/innovus/spEms.msg`, line 1311, verbatim:
+`$INNOVUS_HOME/share/cdssetup/errormessages/innovus/spEms.msg`, line 1311, verbatim:
 
 ```
 5110 "No supply-net names for Power Domain '%s'.\n"
@@ -1493,7 +1493,7 @@ active analysis views that are associated with these constraint modes"*) — and
 ## 8. Manual pages cited
 
 Every page below was opened and read for this document. Paths are relative to
-`/eda/cadence/`.
+`$CDS_INSTALL/`.
 
 **Innovus Stylus Common UI Text Command Reference** (`innovus/doc/TCRcom/`, product version
 21.11):

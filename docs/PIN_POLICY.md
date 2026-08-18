@@ -224,5 +224,5 @@ the `deps/` one lacks the a2l reset-skew fix. The earlier audit that concluded
 "`AddrSync_18` is the only shadowed module" was scoped to TideLink's own flist;
 across the *integrated* elaboration there are five more, all currently harmless.
 
-If you tighten this, do it flist-side. `/research/AAA/ip_library/**` is shared,
+If you tighten this, do it flist-side. `$IP_LIBRARY_ROOT/ip_library/**` is shared,
 read-only, lab-wide collateral — never edit it.

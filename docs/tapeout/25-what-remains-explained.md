@@ -24,7 +24,7 @@ RTL, simulation and FPGA flows, and no Innovus physical-design jargon.
        MINIMUMDENSITY <min> ; MAXIMUMDENSITY <max> ; DENSITYCHECKWINDOW <w> <w> ;  <- used
 
    > Vendor tech-LEF density values redacted — TSMC licence forbids reproduction.
-   > Source: `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`, the `LAYER` blocks for M1–M8.
+   > Source: `PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`, the `LAYER` blocks for M1–M8.
    > The first spec in each block is the foundry one; read all three there.
 
    Fill genuinely worked (every layer now 33-44% mean, up from 12-33%), but the
@@ -255,8 +255,8 @@ in at stream-out.
 
 Searching the entire PDK:
 
-    $ find /tsmc65pdk/65 \( -iname '*.cdl' -o -iname '*.gds*' \)
-    /tsmc65pdk/65/CMOS/util/unit.cdl        <- a units header. That is all.
+    $ find $TSMC_65_HOME \( -iname '*.cdl' -o -iname '*.gds*' \)
+    $TSMC_65_HOME/CMOS/util/unit.cdl        <- a units header. That is all.
 
 Zero GDS files. The Milkyway library is literally named `frame_only`: 855 FRAM
 views (abstracts, same as LEF) and 2 dummy CEL tiles. Consequently our run log

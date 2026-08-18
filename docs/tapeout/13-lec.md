@@ -8,7 +8,7 @@ verified.
 
 Harness: `ASIC/genus-innovus/scripts/lec/`
 (`README.md` there is the operating manual). Tool: `lec 22.10-s200` at
-`/eda/cadence/confrml/bin/lec`.
+`$CDS_INSTALL/confrml/bin/lec`.
 
 > Every number in §§1–5 was measured from `outputs/` as written by the run that
 > finished 2026-08-06 17:45. Where something has not been run, it says so.
@@ -321,7 +321,7 @@ fails the check.
 
 **What it does not:** memory *behaviour*. The array is out of scope, and no reasonable
 setup on this site would bring it in. Arm PIP behavioural models do exist
-(`/research/precompiled_mems/TSMC65/<macro>/<macro>.v`, `ASIC/romlibs/*/…_via.v`) but
+(`$MEM_BASE/<macro>/<macro>.v`, `ASIC/romlibs/*/…_via.v`) but
 they are `reg [31:0] mem [0:255]` models with x-handling and timing checks: compiling
 them needs Conformal GXL memory support, and putting the same model on both sides could
 only ever prove the model equals itself.
@@ -590,7 +590,7 @@ shipped netlist has been equivalence-checked when it has not. It should name bot
 and both scopes.
 
 Also worth adding while nearby: `make lec-selftest` in the RTL phase would catch harness
-rot cheaply, but it needs `soclabs-pdk` (it reads `/tsmc65pdk` and takes a Conformal
+rot cheaply, but it needs `soclabs-pdk` (it reads `$TSMC_65_HOME` and takes a Conformal
 licence), so it belongs in the physical phase immediately before `lec-pnr`.
 
 ---

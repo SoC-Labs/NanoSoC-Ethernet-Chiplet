@@ -65,7 +65,7 @@ Come here when you want to know what a specific line does and whether it is righ
 
 Everything cited below was opened on this machine. Nothing is quoted from memory.
 
-| Short form used here | Path under `/eda/cadence/` | Title on the page | Version on the page |
+| Short form used here | Path under `$CDS_INSTALL/` | Title on the page | Version on the page |
 |---|---|---|---|
 | **Stylus TCR** | `innovus/doc/TCRcom/<cmd>.html` | Innovus Stylus Common UI Text Command Reference | 21.11, July 2021 |
 | **Stylus UG** | `innovus/doc/UGcom/<Chapter>.html` | Innovus Stylus Common UI User Guide | 21.11 |
@@ -516,7 +516,7 @@ in the loaded CPF file… To run this command you need to have access to Conform
 > ```
 > The braces (not brackets) around `{-pre_synthesis | -post_synthesis | -post_pg}` mark that
 > group as required. The script passes none of them. **Observed:** the command ran anyway,
-> took a Conformal license (`Using Conformal version /eda/cadence/confrml/bin/lec.`), wrote
+> took a Conformal license (`Using Conformal version $CDS_INSTALL/confrml/bin/lec.`), wrote
 > `./.clp/RC.upf`, and produced a 112,105-byte `logs/syn_pow_check.log`. So either the tool
 > defaults the stage or the manual's braces overstate the requirement. Either way the
 > **flow is not saying which stage it is checking**, and the report's meaning depends on
@@ -846,9 +846,10 @@ command is optional for Synthesis and STA, but is required for Implementation."
 (**Stylus TCR — `read_physical`**, `TCRcom/read_physical.html`.)
 
 `$lef_file_list` (`config.tcl:173-186`) puts `$TECH_LEF` first, satisfying that rule, then
-`tcbn65lp` std cells, the TSMC bond-pad LEF, the **local-override IO driver LEF**, and the
-eight macro LEFs. The override — a project-owned copy of the TSMC IO LEF with three added
-`USE POWER ;` / `USE GROUND ;` lines — is documented in `config.tcl:135-160` and
+`tcbn65lp` std cells, the TSMC bond-pad LEF, the **patched IO driver LEF**, and the
+eight macro LEFs. That LEF — the TSMC IO LEF with three added `USE POWER ;` /
+`USE GROUND ;` lines, generated at build time from the read-only PDK into
+`ASIC/tech_wrappers/tsmc65/generated/` rather than committed — is documented in `config.tcl` and
 [04-power-plan §2.1](../04-power-plan.md). Without it, `connect_global_net -type pg_pin`
 cannot match `VDDPST`/`VSSPST` and the IO supplies get routed as ordinary signals.
 
@@ -1272,7 +1273,7 @@ Sources Mentor's query-encryption Tcl into the Innovus interpreter, which is wha
 `calibre` be driven from inside the session.
 
 > **BROKEN ON THIS SITE, AND SUPPRESSED BY THE MAKEFILE.** `CALIBRE_HOME` is always set here
-> (`/eda/mentor/calibre`), so the guard always passes, and the `source` then fails with
+> (`<mentor install>/calibre`), so the guard always passes, and the `source` then fails with
 > `IMPSE-110 … can't find package Tk 8.0`. The Makefile therefore runs this stage under
 > `env -u CALIBRE_HOME` ([§7.7](#77-the-three-pr-stage-targets)). Fixed project-side rather
 > than by editing the shared submodule. Full account in
@@ -1473,7 +1474,7 @@ be recalculated.**" (**Stylus TCR — `set_analysis_view`**, `TCRcom/set_analysi
 
 ```tcl
  60  write_stream $OUT_DIR/${block_name}.gds \
- 61      -map_file /tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map \
+ 61      -map_file $TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map \
  62      -lib_name DesignLib \
  63      -merge $gds_merge_list\
  64      -output_macros -unit 1000 -mode all
@@ -1681,7 +1682,7 @@ recipe's `cd`. See [§1.4](#14-the-cwd-work-convention) for the two-`LOG_DIR` wr
 DRC can be pointed at a stream built elsewhere: `make drc GDS=/path/to/other.gds`.
 
 ```make
- 42  DRC_RULEDECK ?= /tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a
+ 42  DRC_RULEDECK ?= $TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/CLN65S_<stack>.<rev>
  43  DRC_RUNSET   := $(WORK_DIR)/calibre_drc.runset
  44  DRC_RUNDIR   := $(WORK_DIR)/drc_run
  50  ROMLIBS_REF ?= /home/dwn1c21/SoC-Labs/TAPEOUT/2026july/.../ASIC/romlibs
@@ -1991,7 +1992,7 @@ Deriving both from `$(GDS)`/`$(BLOCK)` in one place makes disagreement impossibl
 ```make
 328  drc-preflight:
 329      @test -s $(GDS) || { ... }
-331      @test -r $(DRC_RULEDECK) || { ... needs the /tsmc65pdk mount and group tsmc65pdkgrp. }
+331      @test -r $(DRC_RULEDECK) || { ... needs the $TSMC_65_HOME mount and group tsmc65pdkgrp. }
 362  drc: drc-preflight
 363      DRC_GDS=$(GDS) DRC_RUNDIR=$(DRC_RUNDIR) DRC_CPUS=$(DRC_CPUS) \
 364          $(DESIGN_DIR)/scripts/calibre/run_drc.sh
@@ -2090,9 +2091,9 @@ What the Cadence flow actually consumes:
 
 | `common.mk` line | Export | Consumed by | If missing |
 |---|---|---|---|
-| 25 | `NANOSOC_ETH_CHIPLET_HOME` | `config.tcl:83,84,120,160`; `Makefile:68,421` | ROM-lib, top-HDL and local-override-LEF paths all break |
-| 79 | `TSMC_65_HOME` (`/tsmc65pdk/65`) | `config.tcl:72,73,131,133,134` | every std-cell / IO / tech-LEF path breaks |
-| 80 | `PHYS_IP` (`/research/AAA/phys_ip_library`) | `config.tcl:132` (commented-out alternative only) | nothing today |
+| 25 | `NANOSOC_ETH_CHIPLET_HOME` | `config.tcl:83,84,120,160`; `Makefile:68,421` | ROM-lib, top-HDL and patched-IO-LEF paths all break |
+| 79 | `TSMC_65_HOME` (`$TSMC_65_HOME`) | `config.tcl:72,73,131,133,134` | every std-cell / IO / tech-LEF path breaks |
+| 80 | `PHYS_IP` (`$PHYS_IP`) | `config.tcl:132` (commented-out alternative only) | nothing today |
 | 87 | `SOCLABS_ASIC_FLOW_DIR` | `2_pnr_setup.tcl:49`, `3_pnr_clock.tcl:20`, `4_pnr_route.tcl:19` | stages 2-4 abort on the `source` |
 | 109 | `ASIC_FLIST` | `read_flist.tcl:46` (`$::env(ASIC_FLIST)`) | synthesis reads no RTL |
 | 60-61 | `TIDELINK_HOME`, `TIDECHART_HOME` | inside the flists | **Genus reads the whole SoC, then dies at the END of `read_flist.tcl` ~10 min in** — reads as a link-stage problem |

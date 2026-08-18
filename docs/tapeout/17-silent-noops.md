@@ -209,11 +209,11 @@ considers correct for the node, and nothing in the flow says so.
 a script today. There is no Quantus/QRC technology file installed:~~
 *(struck 2026-08-18 — see correction above. The search evidence follows.)*
 
-- nothing matching `*qrc*` or `*.tch` under `/tsmc65pdk`;
-- `/tsmc65pdk/.../PRTF_EDI_65nm_001_Cad_V24a/` ships `GdsOutMap`, `LefHeader`
+- nothing matching `*qrc*` or `*.tch` under `$TSMC_65_HOME`;
+- `$TSMC_65_HOME/.../PRTF_EDI_65nm_<rev>/` ships `GdsOutMap`, `LefHeader`
   and the `.tlef` only;
 - the ARM tech tree the cap tables come from,
-  `/research/AAA/phys_ip_library/arm/tsmc/cln65lp/arm_tech/r2p0/`, contains
+  `$PHYS_IP/arm/tsmc/cln65lp/arm_tech/<rev>/`, contains
   `cadence_captable`, `synopsys_tluplus`, `magma_parasitic_rules`, `milkyway`,
   `volcano`, `voltagestorm`, `lef` — no QRC directory.
 
@@ -337,7 +337,7 @@ the eth ROM's library string anyway to stop the warning recurring.
 **IMPOGDS-4004 — "Ignoring duplicate structure ..."**
 
 ```
-**WARN: (IMPOGDS-4004):	Ignoring duplicate structure 065_LP_M3_v1d1_corner_edge_ARM found in /research/precompiled_mems/TSMC65/rf_16k//rf_16k.gds2. To avoid the warning message, use the option -uniquifyCellNames to disable cells duplication.
+**WARN: (IMPOGDS-4004):	Ignoring duplicate structure 065_LP_M3_v1d1_corner_edge_ARM found in $MEM_BASE/rf_16k//rf_16k.gds2. To avoid the warning message, use the option -uniquifyCellNames to disable cells duplication.
 ```
 
 This one would change silicon if the ignored copies differed. They do not. All

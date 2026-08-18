@@ -84,11 +84,11 @@ Consequence: `create_floorplan -core_margins_by io` **does not see them**. It in
 let alone that they overhang. The clearance has to be added by hand, which is exactly what
 `CORE_TO_IO` is doing.
 
-Verified directly in the PDK LEF (read-only, `.../tpbn65v_200b/cup/9m/9M_6X1Z1U/lef/tpbn65v_9lm.lef`):
+Verified directly in the PDK LEF (read-only, `.../tpbn65v_<rev>/cup/9m/9M_6X1Z1U/lef/tpbn65v_9lm.lef`):
 `MACRO PAD70NU` is declared `CLASS BLOCK`, 171 µm tall — the number the floorplan has to clear.
 
 > Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
-> `$TSMC_65_HOME/iolib/tpbn65v_200b_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`.
+> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`.
 
 ### 2.2 `PAD70NU` blocks M8 and M9 solidly — the core-ring layers
 
@@ -112,7 +112,7 @@ left / right / bottom / top.
 | **70** | 175 / 1425 / 175 / 1825 | | **4.00 µm clear, every side** |
 
 4 µm clears both wide-metal rules, confirmed against the tech LEF
-(`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`):
+(`PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`):
 
 - **M8** — its `SPACINGTABLE` requirement, at its very worst width band, is well under 4 µm.
 - **M9** — a single flat `SPACING` rule, also under 4 µm.
@@ -215,7 +215,7 @@ If a pattern does go stale, **do not guess** — dump the current names with
 
 ```sh
 cd ASIC/genus-innovus/work
-TSMC_65_HOME=/tsmc65pdk/65 NANOSOC_ETH_CHIPLET_HOME=<repo> \
+TSMC_65_HOME=$TSMC_65_HOME NANOSOC_ETH_CHIPLET_HOME=<repo> \
   innovus -stylus -files ../scripts/probe_macros.tcl < /dev/null
 ```
 
@@ -419,7 +419,7 @@ margin change, this is why — it is not a placer regression.
   `tpbn65v_9lm.lef`. These three heights are the only vendor dimensions this floorplan depends on.
 - `PAD70NU` `OBS` solid on M8 **and** M9 over its full footprint — read from the same LEF.
 - M9's flat spacing/area rules and M8's `SPACINGTABLE` were both read from
-  `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`, and 4 µm clears both. (Values not reproduced — TSMC
+  `PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`, and 4 µm clears both. (Values not reproduced — TSMC
   licence.)
 - 42 `PAD70GU` + 40 `PAD70NU`, matching the `.io` per-side counts exactly.
 - 366 / 318 / 32 / **0** DRC breakdown across the two bond-pad rows — independently parsed from the

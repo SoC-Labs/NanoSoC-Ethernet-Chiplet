@@ -106,7 +106,7 @@ riser is 0.330 µm wide **and** why the GUI fragment reported earlier (an M5 VSS
 special wire 14.6 µm long and **0.33 µm tall**) has the same number — same mechanism,
 horizontal leg instead of vertical.
 
-Four rule families in the tech LEF (`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`) bite at
+Four rule families in the tech LEF (`PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`) bite at
 this width, and between them they set up the whole failure:
 
 - **`MINIMUMCUT` on M1–M5.** A 0.33 µm wire is over the threshold, so every via
@@ -122,7 +122,7 @@ this width, and between them they set up the whole failure:
   depend on which one viaGen happens to pick. §3.
 
 > Vendor tech-LEF rule values redacted — TSMC licence forbids reproduction. Source:
-> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`.
+> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`.
 
 ### 2.3 Position: a delta function at ±0.300 µm from macro vertical edges
 
@@ -213,7 +213,7 @@ of those three LEFs:
   by **1.86 µm**, and it is the only layer left open.
 
 > Vendor macro LEF geometry redacted — licence forbids reproduction. Source: the
-> compiled-memory LEFs under `/research/precompiled_mems/TSMC65/<macro>/<macro>.lef`
+> compiled-memory LEFs under `$MEM_BASE/<macro>/<macro>.lef`
 > (ARM-confidential, TSMC 65 nm).
 
 The macro PG pins are **M4, vertical, full macro height** (rf_08k: 158 VDD rects, 82 VSS
@@ -232,7 +232,7 @@ is exactly consistent with the observed ~11 % scatter.
 
 > The enclosure and spacing figures behind this arithmetic are vendor tech-LEF values and
 > are not reproduced — TSMC licence. Re-derive from
-> `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef` if you need to re-check the 5 nm.
+> `PRTF_EDI_N65_<stack>_RDL.<rev>.tlef` if you need to re-check the 5 nm.
 
 ---
 
@@ -487,6 +487,6 @@ currently invisible in both shipped reports.**
 
 *Analysis scripts (throwaway) lived in the session scratchpad; all numbers above are
 reproducible from the four report files, the two logs, `scripts/floorplan.tcl`,
-`scripts/power_plan.tcl`, the memory LEFs under `/research/precompiled_mems/TSMC65/`,
+`scripts/power_plan.tcl`, the memory LEFs under `$MEM_BASE/`,
 `ASIC/romlibs/*/`, and the tech/std-cell LEFs under
 `ASIC/genus-innovus/work/nanosoc_eth_chiplet_pads/libs/lef/`.*

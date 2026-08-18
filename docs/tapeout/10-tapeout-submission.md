@@ -106,18 +106,18 @@ somebody downstream to assume they were covered.**
 
 `gds_merge_list` in
 [`ASIC/genus-innovus/scripts/config.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/config.tcl)
-merges **8 files**, all memory macros under `/research/precompiled_mems/TSMC65/` and
+merges **8 files**, all memory macros under `$MEM_BASE/` and
 `ASIC/romlibs/`:
 
 | Macro | Source |
 |---|---|
-| `rf_32k`, `rf_16k`, `rf_08k`, `rf_01k` | `/research/precompiled_mems/TSMC65/rf_*/` |
-| `flash_cache_data`, `flash_cache_tag` | `/research/precompiled_mems/TSMC65/flash_cache_*/` |
+| `rf_32k`, `rf_16k`, `rf_08k`, `rf_01k` | `$MEM_BASE/rf_*/` |
+| `flash_cache_data`, `flash_cache_tag` | `$MEM_BASE/flash_cache_*/` |
 | `cc_rom` (`rom_via`), `eth_rom` (`eth_rom_via`) | `ASIC/romlibs/` |
 
 Those are the only cells in this design that ship both `.gds2` **and** `.cdl` on this site.
 
-`/tsmc65pdk/65` ships LEF, liberty, Milkyway and layer maps — and **no GDS, no CDL** — for:
+`$TSMC_65_HOME` ships LEF, liberty, Milkyway and layer maps — and **no GDS, no CDL** — for:
 
 - `tcbn65lp` standard cells (9-track)
 - `tphn65lpgv2od3_sl` staggered IO drivers
@@ -133,13 +133,13 @@ not signoff DRC, and why LVS cannot run here at all.
 
 ```tcl
 write_stream $OUT_DIR/${block_name}.gds \
-    -map_file /tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map \
+    -map_file $TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map \
     -lib_name DesignLib \
     -merge $gds_merge_list \
     -output_macros -unit 1000 -mode all
 ```
 
-- **Layer map:** `PRTF_EDI_N65_gdsout_6X1Z1U.24a.map` — the 9-metal `6X1Z1U` stack.
+- **Layer map:** `PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map` — the 9-metal `6X1Z1U` stack.
   Sibling maps for other stacks sit in the same directory; picking the wrong one silently
   produces a stream on the wrong layer numbers.
 - **Units:** `-unit 1000` → 1 nm database grid.
@@ -157,21 +157,29 @@ scheduling. Get answers in writing.
 
 **Why it matters:** without it there is no chip — just routing over empty boxes.
 
-**What to tell them:** we stream with `PRTF_EDI_N65_gdsout_6X1Z1U.24a.map`, 1 nm units,
-top cell `nanosoc_eth_chiplet_pads`, libraries `tcbn65lp` (9-track, `tcbn65lp_220a`),
+**What to tell them:** we stream with `PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map`, 1 nm units,
+top cell `nanosoc_eth_chiplet_pads`, libraries `tcbn65lp` (9-track, `tcbn65lp_<rev>`),
 `tphn65lpgv2od3_sl` (`210a`, staggered, 2.5 V IO), `tpbn65v` (`200b`, `cup/9m/9M_6X1Z1U`).
 Our 8 memory macros are **already merged in** — they must not double-merge them.
 
 **What to ask:** which library revisions do they hold, and do they want our stream with the
 memories merged (as shipped) or stripped out so they merge everything themselves?
 
-**Watch for:** one **local override** exists in the LEF set —
-`ASIC/tech_wrappers/tsmc65/local_overrides/tphn65lpgv2od3_sl_9lm.lef`, a copy of the TSMC
-IO driver LEF with `USE POWER ;` / `USE GROUND ;` added to exactly three pins
-(`VDDPST` on `PVDD2DGZ_G` and `PVDD2POC_G`, `VSSPST` on `PVSS2DGZ_G`). It is a
-**LEF-only, abstract-only** change made so `connect_global_net -type pg_pin` could match
-them; it does not alter any polygon and the shared PDK was not modified. Mention it anyway
-— it is a deviation from the shipped library and they should know.
+**Watch for:** one **patched LEF** is in the LEF set — the TSMC IO driver LEF with
+`USE POWER ;` / `USE GROUND ;` added to exactly three pins (`VDDPST` on `PVDD2DGZ_G` and
+`PVDD2POC_G`, `VSSPST` on `PVSS2DGZ_G`). It is a **LEF-only, abstract-only** change made so
+`connect_global_net -type pg_pin` could match them; it does not alter any polygon and the
+shared PDK was not modified. Mention it anyway — it is a deviation from the shipped library
+and they should know.
+
+We do not redistribute the patched file. It is generated at build time from the licensee's
+own PDK by `ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py` into a gitignored
+`ASIC/tech_wrappers/tsmc65/generated/`; only the three-line transform is committed. If the
+broker asks for the delta, send them the script or the three lines — not the LEF. (Retiring
+this patch entirely, so the flow reads the unmodified vendor LEF, is planned but **not yet
+done**; see [29-private-tsmc-tech-repo](29-private-tsmc-tech-repo.md) §2a. Any database
+already streamed was built with the patch in place, so the deviation stands for what has
+shipped regardless.)
 
 ### 4.2 Who adds metal density fill?
 
@@ -224,7 +232,7 @@ out of it? **If it must come out of it, the floorplan changes and everything re-
 
 ### 4.5 What layer map do they expect?
 
-We stream with `PRTF_EDI_N65_gdsout_6X1Z1U.24a.map`. Confirm they expect `6X1Z1U`
+We stream with `PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map`. Confirm they expect `6X1Z1U`
 (9-metal: 6 thin + 1Z + 1U + AP) and the TSMC PRTF layer numbering rather than a
 broker-specific map. Ask whether they want the `.map` file itself included in the bundle —
 it is PDK material, so check the licence before shipping it, but they need to know which

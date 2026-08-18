@@ -256,7 +256,7 @@ ones the flow now measures every run:
 
 **The query trap.** P2's "confirming experiment" asks for `RV` in the
 `.via_def.bottom_layer.name` slot. `RV` is a **cut** layer (`LAYER RV / TYPE CUT ;` in
-`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`), and `DBcom/via_def.html` defines `bottom_layer`
+`PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`), and `DBcom/via_def.html` defines `bottom_layer`
 as "the bottom **routing** layer" — M9 for a `VIA9AP_*`, never RV. So the documented query
 matches nothing and returns 0, which reads as catastrophic power delivery rather than as a
 typo. Use `.via_def.cut_layer.name`. P2's stated falsification criterion does not

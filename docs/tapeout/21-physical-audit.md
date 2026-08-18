@@ -93,7 +93,7 @@ diagnostic is total VIA8 count per rail into the pad ring — already in the log
 
 ### P2 — The whole core PG grid reaches top metal through **8 RV vias and 5 AP shapes**, and that dropped 14 → 8 between the two runs
 
-`RV` is the M9→AP via in `PRTF_EDI_N65_9M_6X1Z1U_RDL`. Every ViaGen table in both runs,
+`RV` is the M9→AP via in `PRTF_EDI_N65_<stack>_RDL`. Every ViaGen table in both runs,
 `RV`/`AP` rows only:
 
 | pass | 08-05 RV created/deleted | 08-05 AP | 08-06 RV created/deleted | 08-06 AP |

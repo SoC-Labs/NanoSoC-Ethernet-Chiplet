@@ -42,16 +42,15 @@ Three independent faults, all on the same code path.
 
 ### 1. The rule deck ships with placeholders, not variables
 
-Lines 230–235 of `/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a`:
+In the ENVIRONMENT SETUP block of the foundry deck
+(`$TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/CLN65S_<stack>.<rev>`, at its
+`LAYOUT PATH` / `LAYOUT PRIMARY` statements — locate them by name, not by line
+number), the layout to check and the cell to check it in are given as the
+literal placeholder strings `GDSFILENAME` and `TOPCELLNAME`, and the results
+database and summary report are given fixed default filenames.
 
-```svrf
-LAYOUT SYSTEM GDSII
-LAYOUT PATH "GDSFILENAME"
-LAYOUT PRIMARY "TOPCELLNAME"
-
-DRC RESULTS DATABASE "DRC_RES.db"
-DRC SUMMARY REPORT "DRC.rep"  // HIER
-```
+The deck's own text is not reproduced here: this repository is public and TSMC's
+licence does not permit it. Read the block in your own PDK.
 
 `GDSFILENAME` and `TOPCELLNAME` are **literal strings**. TSMC expects you to supply the
 real values. Nothing substitutes them — not the shell, not Innovus, not Tcl. Point
@@ -79,7 +78,7 @@ the results database named on line 234, then died opening the layout.
 ### 2. The `source` of `cal_enc.tcl` needs Tk
 
 The other `CALIBRE_HOME`-guarded block in `4_pnr_route.tcl` sources
-`$CALIBRE_HOME/shared/pkgs/icv/tools/queryenc/cal_enc.tcl`, which fails with
+`$CALIBRE_HOME/shared<icv install>/tools/queryenc/cal_enc.tcl`, which fails with
 `(IMPSE-110) ... can't find package Tk 8.0` under a non-GUI Innovus.
 
 ### 3. The failure held a Cadence seat
@@ -98,7 +97,7 @@ modified.
 
 `ASIC/genus-innovus/scripts/calibre/nanosoc_eth_chiplet_pads.drc.rules` is a small
 project-owned SVRF file that supplies the real values and then `INCLUDE`s the foundry
-deck. **The foundry deck is never copied, patched or `sed`-ed** — `/tsmc65pdk` is shared,
+deck. **The foundry deck is never copied, patched or `sed`-ed** — `$TSMC_65_HOME` is shared,
 lab-wide collateral and stays read-only.
 
 ```svrf
@@ -112,7 +111,7 @@ DRC RESULTS DATABASE "nanosoc_eth_chiplet_pads.drc.results" ASCII
 DRC SUMMARY REPORT   "nanosoc_eth_chiplet_pads.drc.summary" REPLACE HIER
 DRC MAXIMUM RESULTS 1000
 
-INCLUDE "/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a"
+INCLUDE "$TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/CLN65S_<stack>.<rev>"
 ```
 
 ### `DRC ICSTATION YES` is what makes this legal — do not remove it
@@ -181,7 +180,7 @@ a laptop.
 
 ```sh
 cd ASIC/klayout-drc
-make deck                            # once, on a machine with /tsmc65pdk
+make deck                            # once, on a machine with $TSMC_65_HOME
 make drc CLIP=650,300,700,350        # anywhere
 make compare                         # its counts next to this page's
 ```
@@ -201,7 +200,7 @@ families are known to over-report, and it says which.
 
 `calibre -gui -drc -batch -runset <runset>` also works, **including headless with
 `DISPLAY` unset** — verified end-to-end against the real TSMC deck. It solves the
-placeholder problem the same way, by generating `_CLN65S_9M_6X1Z1U.26_2a_` in the run
+placeholder problem the same way, by generating `_CLN65S_<stack>.<rev>_` in the run
 directory containing exactly the wrapper pattern above.
 
 The wrapper deck is preferred because it is version-controlled, greppable, reviewable in

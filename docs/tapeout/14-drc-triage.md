@@ -90,7 +90,7 @@ The geometry checks out exactly:
 
 | | value | source |
 |---|---|---|
-| macro | `rf_16k`, `311.8 × 285.25` µm | `/research/precompiled_mems/TSMC65/rf_16k/rf_16k.lef` |
+| macro | `rf_16k`, `311.8 × 285.25` µm | `$MEM_BASE/rf_16k/rf_16k.lef` |
 | placement | `place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6 1340.4 MY` | [`floorplan.tcl:172`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/floorplan.tcl) |
 | macro bbox | `(1058.6, 1340.4) – (1370.4, 1625.65)` | 1340.4 + 285.25 = **1625.65** |
 | short | `y 1624.500 – 1625.650` | ends **on** the macro top edge |

@@ -110,7 +110,7 @@ tool-specific when a stage script invokes it.
 > **`IMPDBTCL-247` is in none of the three installed Innovus error-message references.**
 > Absent from `EMRcom/` (Stylus, 21.10), from `innovuserrmsg/` (legacy, 21.10), and from
 > the 16.13 tree at
-> `/eda/cadence/2016-17/RHELx86/INNOVUS_16.13.000/doc/innovuserrmsg/`. The claim in
+> `$CDS_INSTALL/2016-17/RHELx86/INNOVUS_16.13.000/doc/innovuserrmsg/`. The claim in
 > `config.tcl`'s comment is therefore not verifiable from the manuals on this box — it is
 > an observation from a real run, and should be treated as such. `man IMPDBTCL-247` at a
 > live `@innovus` prompt may still resolve it; see
@@ -124,7 +124,7 @@ Everything cited below was opened on this machine. Three things about the instal
 knowing before you go looking yourself, because they cost time otherwise:
 
 **Innovus ships TWO complete, parallel documentation sets, one per UI.** This is the trap.
-Under `/eda/cadence/innovus/doc/` there are:
+Under `$INNOVUS_HOME/doc/` there are:
 
 | set | directories | commands documented |
 |---|---|---|
@@ -372,7 +372,7 @@ command, not a Cadence one) and it is the only way to intercept a command from *
 the script that calls it.
 
 **`info commands check_cpf` — the Innovus guard.** Verified: `check_cpf` appears in **no
-file** under `/eda/cadence/innovus/doc/TCRcom/` or `/eda/cadence/innovus/doc/UGcom/` (the
+file** under `$INNOVUS_HOME/doc/TCRcom/` or `$INNOVUS_HOME/doc/UGcom/` (the
 Stylus set), nor in the legacy `innovusTCR/`. Under Innovus the command does not
 exist, `info commands` returns the empty list, the whole `if` body is skipped, and nothing
 tool-specific is executed. Without the guard, `rename check_cpf ...` would raise
@@ -422,11 +422,11 @@ RTL-reading strategy is a one-line change here.
 ### L71–86 — the library search path
 
 ```tcl
-72: set io_lib_dir $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/
-73: set sc_lib_dir $::env(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_220a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tcbn65lp_220a
-76: set rf_32k_dir /research/precompiled_mems/TSMC65/rf_32k
-77: set rf_16k_dir /research/precompiled_mems/TSMC65/rf_16k/
-80: set flash_cache_data_dir /research/precompiled_mems/TSMC65/flash_cache_data
+72: set io_lib_dir $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_<rev>_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_<rev>/
+73: set sc_lib_dir $::env(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_<rev>_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tcbn65lp_<rev>
+76: set rf_32k_dir $MEM_BASE/rf_32k
+77: set rf_16k_dir $MEM_BASE/rf_16k/
+80: set flash_cache_data_dir $MEM_BASE/flash_cache_data
 83: set bootrom_dir $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs/cc_rom
 84: set eth_rom_dir $::env(NANOSOC_ETH_CHIPLET_HOME)/ASIC/romlibs/eth_rom
 86: set lib_search_path_list "$io_lib_dir $sc_lib_dir $rf_32k_dir $rf_16k_dir $rf_08k_dir $rf_01k_dir $bootrom_dir $eth_rom_dir $flash_cache_data_dir $flash_cache_tag_dir"
@@ -459,7 +459,7 @@ Two small facts about the layout:
   [01-flow-overview](../01-flow-overview.md#make-romlibs-fetch).
 - **Inconsistent trailing slashes.** L76 has none, L77–79 have one. The derived LEF/GDS
   paths at L164–171 concatenate `$dir/name`, so half of them come out with a doubled
-  slash (`/research/precompiled_mems/TSMC65/rf_16k//rf_16k.lef`). POSIX collapses it;
+  slash (`$MEM_BASE/rf_16k//rf_16k.lef`). POSIX collapses it;
   cosmetic only. All ten directories and all files derived from them were checked to exist
   on this host.
 
@@ -688,6 +688,15 @@ by the global-net pass.
 
 ### L129–186 — the LEF list, and the local-override IO driver LEF
 
+> **The quoted listing in this section predates `bf619f1` (2026-08-13).** It is kept as an
+> accurate transcript of `config.tcl` as it stood, and the *reasoning* it annotates is
+> unchanged and still correct. Two things in it have since moved: `IO_PAD_DRIVER_LEF` now
+> reads `$::design_home/ASIC/tech_wrappers/tsmc65/generated/tphn65lpgv2od3_sl_9lm.patched.lef`
+> — a build product generated from the read-only PDK, not a committed copy under
+> `local_overrides/` — and the L129–186 line numbers have shifted with the rewritten comment
+> block. Read this section for *why*; read `config.tcl` for *where*. See
+> [29-private-tsmc-tech-repo](../29-private-tsmc-tech-repo.md) §2a.
+
 #### The three kinds of LEF
 
 LEF is the **physical abstract**: geometry, layers, routing rules. It is disjoint from
@@ -695,7 +704,7 @@ LEF is the **physical abstract**: geometry, layers, routing rules. It is disjoin
 
 | kind | file here | what it contributes |
 |---|---|---|
-| **technology LEF** | `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef` (L131) | process-level data with no cells in it: `LAYER` definitions for all 9 metals and their cuts, minimum width/spacing/area rules, `VIA` and `VIARULE GENERATE` rules, `SITE` definitions, `UNITS`, `MANUFACTURINGGRID`. Everything the router and the ring/stripe commands need to know about the *process*. |
+| **technology LEF** | `PRTF_EDI_N65_<stack>_RDL.<rev>.tlef` (L131) | process-level data with no cells in it: `LAYER` definitions for all 9 metals and their cuts, minimum width/spacing/area rules, `VIA` and `VIARULE GENERATE` rules, `SITE` definitions, `UNITS`, `MANUFACTURINGGRID`. Everything the router and the ring/stripe commands need to know about the *process*. |
 | **cell (standard-cell) LEF** | `tcbn65lp_9lmT2.lef` (L133) | one `MACRO` per standard cell: `SIZE`, `SITE`, `SYMMETRY`, `PIN` shapes with layer geometry, and `OBS` obstructions. The placeable, routable abstract of each leaf cell. |
 | **macro (block) LEF** | the 8 RF/ROM/flash-cache LEFs (L164–171), plus the two IO libraries (L134, L160) | same `MACRO` syntax, but for hard blocks: `CLASS BLOCK` or `CLASS PAD`, much larger, with pin ports on upper metals and large obstructions. |
 
@@ -793,7 +802,7 @@ far as Innovus was concerned, signal pins.
 *is* installed in the older tree on this box:
 
 > **Innovus Error Message Reference (16.13) — IMPDB-1221
-> (`/eda/cadence/2016-17/RHELx86/INNOVUS_16.13.000/doc/innovuserrmsg/IMPDB-1221.html`):**
+> (`$CDS_INSTALL/2016-17/RHELx86/INNOVUS_16.13.000/doc/innovuserrmsg/IMPDB-1221.html`):**
 > "A global net connection rule was specified to connect `%s` pins with the name pattern
 > `'%s'` to a global net. But the connections cannot be made because **there is no such
 > `%s` pin with name matching the pattern in any cell.** Check the pin name pattern and
@@ -889,7 +898,7 @@ class-of-failure as the empty-CPF/no-filler problem in
 valid-looking GDSII, a broken die.
 
 **4 — the diff is exactly three lines.** Verified against the read-only PDK source
-(`$TSMC_65_HOME/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Back_End/lef/tphn65lpgv2od3_sl_210a/mt_2/9lm/lef/tphn65lpgv2od3_sl_9lm.lef`):
+(`$TSMC_65_HOME/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_<rev>_FE/TSMCHOME/digital/Back_End/lef/tphn65lpgv2od3_sl_<rev>/mt_2/9lm/lef/tphn65lpgv2od3_sl_9lm.lef`):
 
 ```
 10102a10103
@@ -914,11 +923,32 @@ and all three macros are instantiated in the pad ring
 `uPAD_VDDIO_*` / `uPAD_VSSIO_*`). Each insertion sits immediately after `DIRECTION INOUT ;`
 and before `PORT`, which is where the LEF grammar puts `USE`.
 
-**5 — the copy-don't-edit rule.** L155–159 states it: `/tsmc65pdk` is read-only shared
-collateral and is not modified. This is the pattern to repeat for any future vendor-file
-fix — copy into `ASIC/tech_wrappers/tsmc65/local_overrides/`, point `config.tcl` at the
-copy, document the deviation, and `diff` against upstream to prove the delta. The
-re-application procedure after a PDK rev is the `diff`.
+**5 — the copy-don't-edit rule.** L155–159 states it: `$TSMC_65_HOME` is read-only shared
+collateral and is not modified. That half still stands.
+
+**The rest of this rule has been superseded — do not repeat the pattern as written.** The
+original instruction was to copy the vendor file into
+`ASIC/tech_wrappers/tsmc65/local_overrides/`, point `config.tcl` at the copy, and `diff`
+against upstream to re-apply after a PDK rev. That put a 414 kB verbatim vendor LEF into a
+**public** repository, which TSMC's licence does not permit. The current rule is *ship the
+transform, not the result*:
+
+1. Commit a script that reads the vendor file from `$TSMC_65_HOME` and applies the delta by
+   **exact-match anchor**, not by line number — here,
+   `ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py`.
+2. Write its output to a **gitignored** generated directory, and give it a `make` target
+   (`make -C ASIC -f common.mk pad-lef`).
+3. Pin the SHA-256 of both input and output, so a PDK rev fails loudly instead of being
+   absorbed silently. That, not a `diff`, is the re-application procedure.
+4. `scripts/ci/check_no_vendor_collateral.sh` enforces it, keyed on **content** — renaming
+   or relocating a vendor copy does not evade it.
+
+Landed in `bf619f1`. The same principle at process-node scale is
+[29-private-tsmc-tech-repo](../29-private-tsmc-tech-repo.md) §3.
+
+*This supersedes the destination only for **foundry/PDK** collateral. The repo-wide
+`local_overrides/` convention for third-party **RTL** — `tidelink/src/rtl/local_overrides/`
+and friends — is unaffected and still current.*
 
 ---
 
@@ -939,7 +969,7 @@ eight verified present. Used exactly once, at
 
 ```tcl
 60: write_stream $OUT_DIR/${block_name}.gds \
-61:     -map_file /tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.24a.map \
+61:     -map_file $TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PR_tech/Cadence/GdsOutMap/PRTF_EDI_N65_gdsout_6X1Z1U.<rev>.map \
 62:     -lib_name DesignLib \
 63:     -merge $gds_merge_list\
 64:     -output_macros -unit 1000 -mode all
@@ -994,7 +1024,7 @@ The remaining options, all from the same page:
 ### L209 — the DRC ruledeck
 
 ```tcl
-209: set drc_ruledeck /tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a
+209: set drc_ruledeck $TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/CLN65S_<stack>.<rev>
 ```
 
 An **absolute** path, not built from `$::env(TSMC_65_HOME)` like everything else in the
@@ -1146,7 +1176,7 @@ conjunct earns its place:
 That third one is verified in both directions:
 
 - **`set_distributed_hosts` appears in no Genus HTML manual on this box** (searched the
-  whole `/eda/cadence/genus/doc` tree at depth 2). Genus has no distributed-processing
+  whole `$CDS_INSTALL/genus/doc` tree at depth 2). Genus has no distributed-processing
   command; the comment at L239–240 ("Degrades to local-only under Genus, which has no
   `set_distributed_hosts`") is exactly right.
 - **`set_multi_cpu_usage` *does* exist in Genus** — and its option set is much smaller:
@@ -1310,11 +1340,11 @@ files of the subsystem that needs it, and `read_hdl` fires inline as the parser 
 
 ```
 115: +incdir+.../ethernet-mac-ahb/src/rtl
-116: +incdir+/research/AAA/ip_library/OpenCores-EthMAC/rtl/verilog
+116: +incdir+$IP_LIBRARY_ROOT/ip_library/OpenCores-EthMAC/rtl/verilog
 117: +define+ETH_WISHBONE_B3
    … the EthMAC source files …
 148: +incdir+.../ethernet-mac-ahb/src/rtl
-149: +incdir+/research/AAA/ip_library/OpenCores-HA1588/rtl/tsu
+149: +incdir+$IP_LIBRARY_ROOT/ip_library/OpenCores-HA1588/rtl/tsu
 ```
 
 Note line 115 vs 148 — the *same* directory re-stated, because the emitter knows the
@@ -1345,7 +1375,7 @@ if it were reached.**
 
 - **Measured: there are 0 `-y` lines** in the four flists this flow parses.
 - **`set_app_var` and `get_app_var` appear in no Genus manual on this box.** Searched every
-  HTML file under `/eda/cadence/genus/doc` to depth 2; zero hits, while a control search
+  HTML file under `$CDS_INSTALL/genus/doc` to depth 2; zero hits, while a control search
   for `read_hdl` over the identical file set returns matches. They are Synopsys
   Design Compiler / PrimeTime commands, and `search_path` is a DC variable. This branch is
   a leftover from the Design Compiler ancestor of this script — as the `+libext+` branch's
@@ -1455,7 +1485,7 @@ test, and vanish. One of them is compensated for: L39 hardcodes
 `+define+TIDELINK_PHY_V2` being dropped does not matter. **`ETH_WISHBONE_B3` has no such
 compensation.** Consequences, traced through the RTL:
 
-- `/research/AAA/ip_library/OpenCores-EthMAC/rtl/verilog/eth_defines.v:320` has it
+- `$IP_LIBRARY_ROOT/ip_library/OpenCores-EthMAC/rtl/verilog/eth_defines.v:320` has it
   **commented out** (`` //`define ETH_WISHBONE_B3 ``), so the only way to define it is from
   the command line — which is exactly what the flist line is for.
 - It is `` `ifdef ``-guarded in 14 places across `eth_top.v` and `eth_wishbone.v`,
@@ -1614,7 +1644,7 @@ present on this host at the time of writing:
 - 8 macro GDS2 files for the stream-out merge
 - `ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v` (the top)
 - `ASIC/genus-innovus/inputs/constraints.sdc`
-- the Calibre ruledeck at the hardcoded `/tsmc65pdk` path
+- the Calibre ruledeck at the hardcoded `$TSMC_65_HOME` path
 - **not** `ASIC/genus-innovus/scripts/dft_setup.tcl` — absent, and only reachable if
   `DFT` is changed to 1
 
@@ -1652,7 +1682,7 @@ is the best-documented thing in the flow and it is right.
 
 Every page below was opened on this machine. Nothing here is quoted from memory.
 
-**Genus** — `/eda/cadence/genus/doc/`
+**Genus** — `$CDS_INSTALL/genus/doc/`
 
 | citation | file |
 |---|---|
@@ -1666,7 +1696,7 @@ Every page below was opened on this machine. Nothing here is quoted from memory.
 | Genus Library Guide — "Liberty Support" (2009.06 attribute support matrix) | `genus_library/liberty_support.html` |
 | LEF/DEF 5.8 Language Reference — Macro Pin Statement, `USE`, `SUPPLYSENSITIVITY`, MACRO CLASS | `lefdefref/LEFSyntax.html` |
 
-**Innovus — Stylus / Common UI** (`/eda/cadence/innovus/doc/`). These are the ones that
+**Innovus — Stylus / Common UI** (`$INNOVUS_HOME/doc/`). These are the ones that
 apply to this flow.
 
 | citation | file |
@@ -1692,7 +1722,7 @@ legacy at each use site.
 | Innovus User Guide (legacy) — Importing and Exporting Designs | `innovusUG/Importing_and_Exporting_Designs.html` | the **"if a cell is defined multiple times … only the first definition"** rule; searched for and **not present** anywhere in `UGcom/` or `TCRcom/` |
 | Innovus Text Command Reference (legacy) — `setMultiCpuUsage` | `innovusTCR/setMultiCpuUsage.html` | the explicit **"cannot be more than the number of CPUs available in the local computer"** ceiling, which `TCRcom/set_multi_cpu_usage.html` drops |
 | Innovus Error Message Reference (legacy) — NRDB-51 | `innovuserrmsg/NRDB-51.html` | only to show the remedy-command naming differs between the two sets |
-| Innovus **16.13** Error Message Reference — IMPDB-1221 | `/eda/cadence/2016-17/RHELx86/INNOVUS_16.13.000/doc/innovuserrmsg/IMPDB-1221.html` | the page exists in **no** 21.x set, Stylus or legacy |
+| Innovus **16.13** Error Message Reference — IMPDB-1221 | `$CDS_INSTALL/2016-17/RHELx86/INNOVUS_16.13.000/doc/innovuserrmsg/IMPDB-1221.html` | the page exists in **no** 21.x set, Stylus or legacy |
 
 **Explicitly not found in any installed manual**, and therefore not cited as documented
 anywhere above:

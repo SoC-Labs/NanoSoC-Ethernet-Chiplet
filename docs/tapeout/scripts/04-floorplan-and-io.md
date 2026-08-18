@@ -56,16 +56,16 @@ because the two UIs ship as **separate manual sets**:
 
 | Set | Path | UI |
 |---|---|---|
-| Text Command Reference | `/eda/cadence/innovus/doc/innovusTCR/` | **legacy** — `floorPlan`, `addIoFiller`, `loadIoFile` |
-| Text Command Reference | `/eda/cadence/innovus/doc/TCRcom/` | **stylus** — `create_floorplan`, `add_io_fillers`, `read_io_file` |
-| User Guide | `/eda/cadence/innovus/doc/innovusUG/` | legacy |
-| User Guide | `/eda/cadence/innovus/doc/UGcom/` | **stylus** |
+| Text Command Reference | `$INNOVUS_HOME/doc/innovusTCR/` | **legacy** — `floorPlan`, `addIoFiller`, `loadIoFile` |
+| Text Command Reference | `$INNOVUS_HOME/doc/TCRcom/` | **stylus** — `create_floorplan`, `add_io_fillers`, `read_io_file` |
+| User Guide | `$INNOVUS_HOME/doc/innovusUG/` | legacy |
+| User Guide | `$INNOVUS_HOME/doc/UGcom/` | **stylus** |
 
-`ls /eda/cadence/innovus/doc/innovusTCR/create_floorplan.html` fails; the file you want is
+`ls $INNOVUS_HOME/doc/innovusTCR/create_floorplan.html` fails; the file you want is
 `TCRcom/create_floorplan.html`. Every citation on this page is to `TCRcom` / `UGcom` and every
 one was opened. Where the legacy page says something different it is called out explicitly.
 
-The message-explanation tree `/eda/cadence/innovus/doc/innovuserrmsg/` (1,992 pages) does **not**
+The message-explanation tree `$INNOVUS_HOME/doc/innovuserrmsg/` (1,992 pages) does **not**
 contain `IMPFP-325`, `IMPSP-196`, `IMPTCM-162` or `IMPTCM-165` — the only `IMPTCM` page installed
 is `IMPTCM-42.html`. For those IDs, `man <MSGID>` inside a live Innovus session is the only route;
 there is nothing to grep.
@@ -108,10 +108,10 @@ applies. This is the single most misread line in the flow and the manual settles
 ### 1.2 Rows, sites and flip
 
 `create_floorplan -site core` selects the row site, which is declared `CLASS CORE` with `SYMMETRY Y`
-in the tech LEF (`PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`).
+in the tech LEF (`PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`).
 
 > Vendor tech-LEF `SITE` geometry redacted — TSMC licence forbids reproduction. Source:
-> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`,
+> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`,
 > `SITE core`.
 
 The placement grid that falls out of it is **0.2 µm horizontally, 1.8 µm vertically** — the two
@@ -1050,7 +1050,7 @@ Ranked by what would cost the most to discover late.
 
 Every page below was opened and read. Nothing is cited that was not.
 
-**Innovus Stylus Common UI Text Command Reference, Product Version 21.11** — `/eda/cadence/innovus/doc/TCRcom/`
+**Innovus Stylus Common UI Text Command Reference, Product Version 21.11** — `$INNOVUS_HOME/doc/TCRcom/`
 
 - `create_floorplan` (`TCRcom/create_floorplan.html`) — `-die_size` margin semantics, `-core_margins_by` default `io`, `-floorplan_origin` default `llcorner`, `-flip` default `f`, `add_tracks` side effect
 - `read_io_file` (`TCRcom/read_io_file.html`) — automatic die-size adjustment, `-no_die_size_adjust`
@@ -1067,7 +1067,7 @@ Every page below was opened and read. Nothing is cited that was not.
 - `design` category attributes (`TCRcom/design_Category_Attributes.html`) — `design_process_node`
 - `add_tieoffs` category attributes (`TCRcom/add_tieoffs_Category_Attributes.html`) — `add_tieoffs_max_fanout`, `add_tieoffs_max_distance`
 
-**Innovus Stylus Common UI User Guide, Product Version 21.11** — `/eda/cadence/innovus/doc/UGcom/`
+**Innovus Stylus Common UI User Guide, Product Version 21.11** — `$INNOVUS_HOME/doc/UGcom/`
 
 - Data Preparation, "Generating the I/O Assignment File" (`UGcom/Data_Preparation.html`) — file
   template, `globals`/`iopad locals`/`iopad instance` attribute tables, `io_order = default`
@@ -1075,7 +1075,7 @@ Every page below was opened and read. Nothing is cited that was not.
 - Floorplanning the Design (`UGcom/Floorplanning_the_Design.html`) — Orientation Key, I/O SITE and
   `CLASS PAD` requirements
 
-**Legacy Text Command Reference** — `/eda/cadence/innovus/doc/innovusTCR/`
+**Legacy Text Command Reference** — `$INNOVUS_HOME/doc/innovusTCR/`
 
 - `addIoFiller` (`innovusTCR/addIoFiller.html`) — consulted only to confirm that `-side` is
   `{top | bottom | left | right}` in the legacy UI too
@@ -1088,9 +1088,9 @@ Every page below was opened and read. Nothing is cited that was not.
 - `logs/pnr_run_ocvfix.log` — `IMPFP-325`, `IMPSP-196`, per-side filler counts, `#ioInst=411`,
   `#block=21`, `Density for the design = 0.807`, `Options: No distance constraint, Max Fan-out = 10`
 - `outputs/nanosoc_eth_chiplet_pads_gate_power.v` — 82 `uPAD_*` instances, 0 `PCORNER_G`, 21 macros
-- `/tsmc65pdk/65/.../PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef` — `SITE core 0.200 BY 1.800`,
+- `$TSMC_65_HOME/.../PRTF_EDI_N65_<stack>_RDL.<rev>.tlef` — `SITE core 0.200 BY 1.800`,
   `MANUFACTURINGGRID 0.005`
-- Macro LEFs under `/research/precompiled_mems/TSMC65/` and `ASIC/romlibs/` — `SIZE`, `CLASS BLOCK`,
+- Macro LEFs under `$MEM_BASE/` and `ASIC/romlibs/` — `SIZE`, `CLASS BLOCK`,
   `SYMMETRY X Y R90`
 
 ---

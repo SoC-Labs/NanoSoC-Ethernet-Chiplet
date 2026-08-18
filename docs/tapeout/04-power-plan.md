@@ -178,7 +178,7 @@ set IO_PAD_DRIVER_LEF $::design_home/ASIC/tech_wrappers/tsmc65/generated/tphn65l
 ```
 
 `USE POWER ;` / `USE GROUND ;` are inserted after `DIRECTION` on exactly those three pins —
-**three added lines, nothing else**. The shared PDK under `/tsmc65pdk` is read-only and is not
+**three added lines, nothing else**. The shared PDK under `$TSMC_65_HOME` is read-only and is not
 modified.
 
 The patched file is a **build product, not a committed file**: `patch_pad_lef.py` reads the vendor
@@ -254,7 +254,7 @@ falls in its middle width band, where the worst-case requirement is **comfortabl
 **This is not a copy-paste that survived by luck — leave it at 1.2.**
 
 > Vendor tech-LEF rule table redacted — TSMC licence forbids reproduction. Source:
-> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`,
+> `$TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_<rev>/PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`,
 > `LAYER M8`. Re-read it there before changing any stripe width or spacing.
 
 ### 4.2 M9 — horizontal, spacing 3.05 (NOT 1.2)
@@ -383,7 +383,7 @@ where a `PD_TOP` that lacks supply nets would misbehave (§1).
 **Verified this week against the PDK LEFs, the CPF, and the run logs:**
 
 - M9's flat `WIDTH` / `SPACING` / `MAXWIDTH` / `AREA` / `MINENCLOSEDAREA` rules were read directly
-  from `PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef`. A 1.2 µm gap at width 3.6 is definitively illegal
+  from the PR tech LEF. A gap narrower than the minimum for that width is definitively illegal
   against them. (Rule values not reproduced here — TSMC licence.)
 - M8's `SPACINGTABLE` was read from the same file. Its requirement at a 3.6 µm wire is well under
   1.2, so the M8 spacing is legal.

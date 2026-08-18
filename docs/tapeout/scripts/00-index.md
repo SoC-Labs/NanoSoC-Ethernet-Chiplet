@@ -19,10 +19,10 @@ installed on this site.
 
 | Set | Path | Use |
 |---|---|---|
-| **Common UI (stylus)** | `/eda/cadence/innovus/doc/TCRcom/`, `UGcom/` | **The one this flow uses** |
-| Legacy UI | `/eda/cadence/innovus/doc/innovusTCR/`, `innovusUG/` | Different commands; cited only to prove an absence |
-| Genus | `/eda/cadence/genus/doc/genus_comref/`, `genus_attref/`, `genus_lowpower/` | Synthesis stage |
-| Messages | `/eda/cadence/innovus/doc/EMRcom/`, `innovuserrmsg/` | Message IDs — **selective**, many IDs have no page |
+| **Common UI (stylus)** | `$INNOVUS_HOME/doc/TCRcom/`, `UGcom/` | **The one this flow uses** |
+| Legacy UI | `$INNOVUS_HOME/doc/innovusTCR/`, `innovusUG/` | Different commands; cited only to prove an absence |
+| Genus | `$CDS_INSTALL/genus/doc/genus_comref/`, `genus_attref/`, `genus_lowpower/` | Synthesis stage |
+| Messages | `$INNOVUS_HOME/doc/EMRcom/`, `innovuserrmsg/` | Message IDs — **selective**, many IDs have no page |
 
 `innovusTCR/create_floorplan.html` does not exist; `TCRcom/create_floorplan.html` does.
 If you are reading a page that cites the legacy tree for a command this flow calls, that
