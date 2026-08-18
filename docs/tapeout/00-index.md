@@ -79,6 +79,7 @@ self-documentation commands that make Innovus stop being opaque.
 | 52 | [Padring GDS check](52-padring-gds-check.md) | The broker's CompareCells/Padringcheck surprise, and the local GDS-level check that would have caught its class |
 | 53 | [Gate-promotion plan](53-gate-promotion-plan.md) | Phased plan from four report-only gates to a trustworthy blocking system: promotion criteria, new orientation/CSR/PVDD2POC gates, sequencing, and the full IMEC-tool parity map |
 | 54 | [`check_fp_pg.tcl` vs. the toolkit's macro-stripe census](54-fp-pg-vs-macro-stripe-census.md) | What each PG/floorplan check actually measures, worked geometry showing they are not redundant, integration-robustness comparison, and today's live status: the toolkit gate is not disabled, it is unproven and was actively blocking |
+| 55 | [IMEC preliminary-GDS submission checklist](55-imec-preliminary-gds-submission-checklist.md) | What eptsmc actually require (verified section by section, including what they do *not*), which stream to send and in what form, the pre-send gate, the covering mail, and the six things to read in the returned report before any violation count — plus the `package_submission.sh` gap list and the pruned broker questions |
 
 *(29–38, 40–42, 46–47 exist but are not yet listed here.)*
 
