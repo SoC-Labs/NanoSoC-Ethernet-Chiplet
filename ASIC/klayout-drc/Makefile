@@ -12,23 +12,38 @@
 # binary, one deck and one GDS, and no licence.
 # ---------------------------------------------------------------------------
 
-FLOW_DIR   := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-DESIGN_DIR := $(FLOW_DIR)/../genus-innovus
-BLOCK      := nanosoc_eth_chiplet_pads
+FLOW_DIR    := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+DESIGN_DIR  := $(FLOW_DIR)/../genus-innovus
+TOOLKIT_DIR := $(FLOW_DIR)/../eth-chiplet
+BLOCK       := nanosoc_eth_chiplet_pads
 
 DECK   ?= $(FLOW_DIR)/decks/tsmc65_rough.drc
 
 ## THE SIGNOFF STREAM IS NOT IN outputs/. `make logo` made outputs/ the home of
 ## the *submission* artefact (logo-merged) so that "a DRC count can never be
 ## quoted against the wrong file" (../genus-innovus/Makefile:429). The un-logoed
-## signoff stream lives under runs/<stamp>/outputs/, which is also what every
-## Calibre run in calibre_runs/ was pointed at. So default to the newest run's
-## stream, not to outputs/ — and say so rather than resolving to a missing path.
-RUN_GDS := $(firstword $(shell ls -t $(DESIGN_DIR)/runs/*/outputs/$(BLOCK).gds 2>/dev/null))
-GDS    ?= $(RUN_GDS)
-TAG     = $(notdir $(basename $(GDS)))
+## signoff stream lives one directory deeper, per run.
+##
+## IT ALSO IS NOT IN genus-innovus ANY MORE. The implementation flow moved to
+## the toolkit, so streams are now at ../eth-chiplet/build/<RUN_TAG>/outputs/.
+## Search there FIRST and fall back to the legacy runs/, because
+## ../genus-innovus/outputs/ currently holds no GDS at all: a default pointing
+## only at the legacy tree cannot find the stream anyone is actually checking.
+TOOLKIT_GDS := $(firstword $(shell ls -t $(TOOLKIT_DIR)/build/*/outputs/$(BLOCK).gds 2>/dev/null))
+LEGACY_GDS  := $(firstword $(shell ls -t $(DESIGN_DIR)/runs/*/outputs/$(BLOCK).gds 2>/dev/null))
+GDS    ?= $(if $(TOOLKIT_GDS),$(TOOLKIT_GDS),$(LEGACY_GDS))
+
+## THE RUN THIS STREAM BELONGS TO, not the file's basename. Every stream in this
+## project is called $(BLOCK).gds, so `basename` named every run identically:
+## work/ collided between runs, one run's counts silently satisfied the next
+## run's `make compare`, and `make pack` overwrote the previous tarball.
+## .../build/fp1505/outputs/x.gds -> fp1505 ; .../runs/<stamp>/outputs/x.gds -> <stamp>
+TAG     = $(if $(GDS),$(shell d='$(GDS)'; d=$${d%/*}; d=$${d%/eval}; d=$${d%/outputs}; basename "$$d"),)
 RUNDIR ?= $(FLOW_DIR)/work/$(TAG)
-COUNTS  = $(RUNDIR)/$(TAG).counts
+## run_drc.sh names its outputs after the GDS BASENAME, not after $(TAG).
+## Keep this in step with scripts/run_drc.sh:63 or `make compare` stops finding them.
+COUNTS  = $(RUNDIR)/$(BLOCK).counts
+PROV    = $(RUNDIR)/provenance.txt
 
 ## Calibre's summary for the SAME GDS. Newest run under calibre_runs/ by
 ## default — the Calibre deck is under active development (the switch set moved
@@ -76,12 +91,38 @@ clip:
 	klayout -b -r $(FLOW_DIR)/scripts/clip_gds.rb \
 	    -rd in=$(GDS) -rd out=$(PACKDIR)/$(TAG)_clip.gds -rd box=$(BOX)
 
-## Put the two tools' counts side by side. Both must have run on the SAME GDS;
-## nothing here checks that for you, so check it yourself.
+## Put the two tools' counts side by side. Both must have run on the SAME GDS.
+##
+## THIS USED TO SAY "nothing here checks that for you, so check it yourself",
+## and that was survivable while both defaults globbed one tree. It is not now.
+## The KLayout side globs the newest stream and the Calibre side globs the
+## newest summary, INDEPENDENTLY — so once Calibre runs moved to the toolkit
+## builds while the stream default still searched the legacy runs/, the two
+## defaults pointed at different designs and the comparison stayed silent.
+## Measured 2026-08-18: KLayout would have read an Aug-10 legacy stream
+## (311,998,380 B) and Calibre a toolkit fp1505 stream (312,343,330 B).
+## The stream is recorded on both sides, so it is asserted rather than trusted.
+## ALLOW_STREAM_MISMATCH=1 to compare two streams deliberately.
 compare:
 	@test -s $(COUNTS) || { echo "FAIL: no KLayout counts at $(COUNTS) - run 'make drc'"; exit 1; }
 	@test -s $(CAL_SUMMARY) || { echo "FAIL: no Calibre summary at $(CAL_SUMMARY)"; \
 	    echo "      run 'make drc' in ../genus-innovus, or set CAL_SUMMARY=<path>"; exit 1; }
+	@k=""; [ -s "$(PROV)" ] && k=$$(sed -n 's/^gds=//p' "$(PROV)" | head -1); \
+	 c=$$(grep -hoE '/[^ "]*\.gds' "$(CAL_SUMMARY)" 2>/dev/null | head -1); \
+	 if [ -z "$$k" ]; then \
+	     echo "FAIL: no provenance at $(PROV) — cannot prove both tools read one stream."; \
+	     echo "      These counts predate the provenance stamp. Re-run 'make drc',"; \
+	     echo "      or set ALLOW_STREAM_MISMATCH=1 to compare them unverified."; \
+	     [ "$(ALLOW_STREAM_MISMATCH)" = "1" ] || exit 1; \
+	 elif [ -n "$$c" ] && [ "$$(readlink -f "$$k")" != "$$(readlink -f "$$c")" ]; then \
+	     echo "FAIL: the two tools did not read the same stream."; \
+	     echo "      KLayout : $$k"; \
+	     echo "      Calibre : $$c"; \
+	     echo "      Counts from different designs are not comparable. Either run"; \
+	     echo "      'make drc GDS=$$c', or point CAL_SUMMARY at the run for $$k."; \
+	     echo "      ALLOW_STREAM_MISMATCH=1 to compare them anyway."; \
+	     [ "$(ALLOW_STREAM_MISMATCH)" = "1" ] || exit 1; \
+	 else echo "== same stream on both sides: $$k =="; fi
 	$(FLOW_DIR)/scripts/compare_calibre.py $(COUNTS) $(CAL_SUMMARY)
 
 ## Everything a laptop needs, in one tarball: the deck and a GDS window.

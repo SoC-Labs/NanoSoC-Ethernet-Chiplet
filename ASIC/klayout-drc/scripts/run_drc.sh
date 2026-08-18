@@ -5,7 +5,7 @@
 #   ASIC/klayout-drc/scripts/run_drc.sh [gds]
 #
 # Environment overrides:
-#   KL_GDS      layout to check     (default: ASIC/genus-innovus/outputs/<block>.gds)
+#   KL_GDS      layout to check     (default: newest ASIC/eth-chiplet/build/*/outputs/)
 #   KL_DECK     generated deck      (default: ../decks/tsmc65_rough.drc)
 #   KL_RUNDIR   where results land  (default: ../work/<gds basename>)
 #   KL_THREADS  worker threads      (default: nproc, capped at 8)
@@ -42,11 +42,25 @@ if [ -z "${KL_DECK:-}" ]; then
 fi
 
 # The default GDS only resolves on the lab server. On a laptop you pass one.
-DEFAULT_GDS=$FLOW_DIR/../genus-innovus/outputs/$BLOCK.gds
+# It follows the TOOLKIT layout: implementation moved to ../eth-chiplet, and
+# ../genus-innovus/outputs/ holds no GDS at all any more, so the old default
+# could only ever resolve to a missing path. Newest build wins; the legacy
+# runs/ tree is the fallback so an archived stream is still reachable by name.
+DEFAULT_GDS=$(ls -t "$FLOW_DIR"/../eth-chiplet/build/*/outputs/$BLOCK.gds \
+                    "$FLOW_DIR"/../genus-innovus/runs/*/outputs/$BLOCK.gds \
+              2>/dev/null | head -1)
 KL_GDS=${1:-${KL_GDS:-$DEFAULT_GDS}}
 
 command -v "$KLAYOUT" >/dev/null 2>&1 || fail "no '$KLAYOUT' on PATH.
       Install from klayout.de -- it is a single binary, no licence."
+if [ -z "$KL_GDS" ]; then
+    fail "no layout, and no default found.
+      Looked for the newest of:
+        <repo>/ASIC/eth-chiplet/build/*/outputs/$BLOCK.gds
+        <repo>/ASIC/genus-innovus/runs/*/outputs/$BLOCK.gds
+      Neither exists from here — expected off the lab server.
+      Pass one:  $0 /path/to.gds"
+fi
 [ -s "$KL_GDS" ] || fail "no layout at $KL_GDS
       Pass one:  $0 /path/to.gds"
 [ -r "$KL_DECK" ] || fail "no deck at $KL_DECK
@@ -101,6 +115,18 @@ echo "== klayout exit status: $rc  (${ELAPSED}s) =="
 # Calibre. A run that wrote no counts file did not get as far as checking
 # anything, and must not read as a pass.
 if [ -s "$COUNTS" ]; then
+    # PROVENANCE. `make compare` puts these counts next to Calibre's, and the
+    # two are only comparable if both tools read the SAME stream. That used to
+    # be the reader's job to check; it is checkable, so it is checked. Written
+    # only on a run that produced counts, so a stamp never outlives its result.
+    { echo "gds=$KL_GDS"
+      echo "gds_bytes=$(stat -c%s "$KL_GDS" 2>/dev/null || echo unknown)"
+      echo "deck=$KL_DECK"
+      echo "clip=${KL_CLIP:-<whole die>}"
+      echo "only=${KL_ONLY:-<all>}"
+      echo "flat=${KL_FLAT:-0}"
+      echo "when=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$KL_RUNDIR/provenance.txt"
     echo "== markers  : $RDB"
     echo "   open with: klayout $KL_GDS -m $RDB"
     echo "== counts   : $COUNTS"
