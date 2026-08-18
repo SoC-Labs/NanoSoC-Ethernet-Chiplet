@@ -78,6 +78,7 @@ self-documentation commands that make Innovus stop being opaque.
 | 51 | [Calibre ERC: power/ground labels](51-erc-pg-labels.md) | The standalone ERC flow (`run_erc.sh`) built after IMEC's "No labels found in topcell" signoff error; what ERC checks here vs. historically; measured validation against IMEC's own GDS and against `fp1505`/`full-20260814` |
 | 52 | [Padring GDS check](52-padring-gds-check.md) | The broker's CompareCells/Padringcheck surprise, and the local GDS-level check that would have caught its class |
 | 53 | [Gate-promotion plan](53-gate-promotion-plan.md) | Phased plan from four report-only gates to a trustworthy blocking system: promotion criteria, new orientation/CSR/PVDD2POC gates, sequencing, and the full IMEC-tool parity map |
+| 54 | [`check_fp_pg.tcl` vs. the toolkit's macro-stripe census](54-fp-pg-vs-macro-stripe-census.md) | What each PG/floorplan check actually measures, worked geometry showing they are not redundant, integration-robustness comparison, and today's live status: the toolkit gate is not disabled, it is unproven and was actively blocking |
 
 *(29–38, 40–42, 46–47 exist but are not yet listed here.)*
 
