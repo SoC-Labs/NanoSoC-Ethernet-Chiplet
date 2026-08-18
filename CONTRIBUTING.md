@@ -172,53 +172,58 @@ The worked examples behind this section are in
 
 ---
 
-## 4. Landing a fix — the gate is the authority, the sign-off is not
+## 4. Landing a fix — the gate is the authority, and clean the right directory
 
-A fix that is peer-reviewed, mutation-tested, and green in its own prototype
-bench can still be wrong in the tree. On 2026-08-18 the peer-write burst fix was
-landed on exactly that evidence and had to be reverted the same hour: the
-integration gate scored 8/14 with the primary case failing **byte-identically to
-the original bug**. The fix was fine. Its guard, landed in the same commit, was
-breaking it — and "the guard regresses the fix" and "the fix never worked" look
-the same from outside. Rerunning the two separately settled it in one step: fix
-plus guard 8/14, fix alone **14/14**.
+On 2026-08-18 the peer-write burst fix was landed, reverted, re-landed, and its
+guard blamed and then exonerated — four commits to land one correct change. The
+RTL was right the whole time. Every wrong turn came from **one stale binary**:
+this pair bench compiles into `build/`, the clean removed only `sim_build*`, and
+the run executed a `simv` from before the fix existed. It scored 8/14, which was
+read as "the fix does not work", then as "the guard breaks the fix". With both
+`build/` and `sim_build*` removed, fix and guard together are 14/14. The log had
+said `simv_g2 up to date` and nobody read it.
 
-1. **A fix is not land-ready until the OWNING integration gate is green on a
-   clean rebuild.** Isolated-bench evidence and a sign-off are necessary and
-   never sufficient. The gate here is the pair bench, whole default `MODULE` set
-   — not just the one test you care about, or you will not see what you broke.
+1. **Clean the directory this bench actually builds into, then prove the clean
+   took.** `rm -rf build sim_build*` — check with `ls -d` which of those exist
+   rather than assuming, because they differ per bench. Then confirm
+   `recompiling module <your dut>` in the log, and treat `up to date` on the
+   simulator binary as a failed clean, not a convenience. Flist RTL is not a make
+   dependency, so nothing else will tell you.
 
-2. **Show red-to-green in one session, on one build.** The bug's regression test
-   must fail before your change and pass after. A test that was already red and
-   stays red is not evidence of anything, and it is what a broken fix looks like.
+2. **A fix is not land-ready until the OWNING integration gate is green on a
+   verified-clean rebuild.** Isolated-bench evidence and a peer sign-off are
+   necessary and never sufficient. Run the whole default `MODULE` set, not just
+   the test you care about, or you will not see what you broke.
 
-3. **A fix and its guard are SEPARATE commits, each gated on its own.** This is
-   the rule that cost a full land-and-revert cycle to learn. A guard exists to
-   catch the case the fix does not cover; if it also regresses the case the fix
-   *does* cover, bundling them makes the failure undiagnosable.
+3. **Show red-to-green in one session, on one build.** The bug's regression test
+   must fail before your change and pass after. An already-red test that stays
+   red is not evidence — and a stale binary makes *everything* look already-red.
 
-4. **Declare what your prototype harness forced.** Every `force` and tie-off in a
-   proto bench is a premise about what the integration supplies. The burst
-   prototype forced `s_axi_wready`; the pair bench forces nothing on that path.
-   List the forcings next to the result, and check each against the real bench
-   before calling the shape proven.
+4. **A fix and its guard are separate commits, each gated on its own — AND the
+   combined state gets its own gate run before either is called done.** Two
+   independently-green changes are not a green composite; "both parts passed
+   alone" quietly substitutes for rule 2 on the combination.
 
-5. **Whoever lands, runs the gate.** Not the reviewer, not the author of the
-   prototype — the person moving it into the tree.
+5. **Declare what your prototype harness forced, and what your fix assumes.**
+   Every `force` or tie-off in a proto bench is a premise the integration may not
+   supply (the burst prototype forced `s_axi_wready`; the pair bench forces
+   nothing there). Name the shared signals your correctness depends on staying
+   stable, too — here `dph_peer` and `d2d_ahb_m_hready` — so the next person
+   changing that logic knows what they are standing on.
 
-6. **Red means revert, and the revert message carries the diagnosis.** Say what
-   you ruled out and with which command, so the next attempt does not re-walk it.
-   Leaving a non-working fix in the tree is worse than leaving the bug, because
-   the commit message now claims the bug is closed.
+6. **Whoever lands, runs the gate.** Not the reviewer, not the prototype's author.
 
-7. **Two build-and-repo traps fire here specifically**, both of which caught a
-   real mistake on 2026-08-18:
-   - `rm -rf` the sim build first and confirm `recompiling module <your dut>` in
-     the log. Flist RTL is not a make dependency; a stale binary reproduces the
-     previous result perfectly.
-   - Verify against **your own commit's parent** (`git diff <sha>^ <sha>`), never
-     `HEAD~1`. Two sessions committed on top mid-simulation, so `HEAD~1` was a
-     stranger's commit and a revert against it was a silent no-op.
+7. **Red means revert, and the revert message carries the diagnosis** — what you
+   ruled out and with which command. But before you attribute a red to a
+   component, re-derive it from a build you have proven fresh. Blaming the guard
+   cost an entire extra land-and-revert cycle and an incorrect commit message that
+   needed its own correction commit.
+
+8. **Verify against your own commit's parent** (`git diff <sha>^ <sha>`), never
+   `HEAD~1`. Other sessions commit while your simulation runs — during this one,
+   `HEAD~1` was a stranger's commit twice, and a revert against it was a silent
+   no-op. Re-check `git diff --cached` for foreign paths the shared index primed;
+   mine held three doc deletions from another session that I never staged.
 
 ## 5. Other things that bite
 
