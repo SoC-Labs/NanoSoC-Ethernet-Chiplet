@@ -85,30 +85,66 @@ LOG_DIR    := $(DESIGN_DIR)/logs
 OUT_DIR    := $(DESIGN_DIR)/outputs
 WORK_DIR   := $(DESIGN_DIR)/work
 
-# Design top; everything the flow writes is named after it.
-BLOCK := nanosoc_eth_chiplet_pads
+# Per-design identity for physical verification: top cell, die box, foundry
+# deck, rundir, census budgets. ONE file to edit to point this flow at another
+# chiplet. Included HERE rather than beside lvs_project.mk at the bottom because
+# everything below consumes $(BLOCK), and a `?=` manifest read after its first
+# consumer is silently discarded — drc_project.mk's own header explains it.
+include $(DESIGN_DIR)/drc_project.mk
+
+# Design top; everything the flow writes is named after it. $(BLOCK) comes from
+# drc_project.mk above — deliberately not restated here, so there is one name.
 # `?=`: DRC/LVS can be pointed at a stream built elsewhere.
 GDS   ?= $(OUT_DIR)/$(BLOCK).gds
 
-DRC_RUNDIR := $(WORK_DIR)/drc_run
-DRC_CPUS   ?= 8
-
-# Source for `romlibs-fetch`. The ROM libs cannot be rebuilt on srv03335 — the
-# Arm compiler lists zero generators since RHEL 8.10 (romlibs-preflight in
-# common.mk explains it) — so this tree is the only built copy.
+# Source for `romlibs-fetch`, which is now a LAST RESORT — see that target.
+#
+# The comment that used to sit here said the ROM libs "cannot be rebuilt on
+# srv03335" because "the Arm compiler lists zero generators since RHEL 8.10".
+# That is false, and it was false because of a parsing bug in the check that
+# reported it: `romlibs-preflight` read the generator names off the wrong line
+# of the compiler's own help output and therefore found none, on an install that
+# lists fifteen and compiles both ROMs in under three minutes each. Fixed in
+# ../common.mk on 2026-08-14. Rebuilding here is the normal path now.
 ROMLIBS_REF ?= /home/dwn1c21/SoC-Labs/TAPEOUT/2026july/NanoSoC-Ethernet-Chiplet/ASIC/romlibs
+
+# ── THIS RUN'S BOOT ROMs ────────────────────────────────────────────────────
+# The macros are compiled per run into $(OUT_DIR)/romlibs and the run is pinned
+# to that build (../rom_build.mk). $(OUT_DIR) is where the netlist, the CPF and
+# the GDS already live and is what gets archived into runs/, so the ROMs travel
+# with the results they produced — a finished run describes its own silicon.
+#
+# ROMLIBS_DIR is EXPORTED because it is read by scripts/config.tcl, which every
+# Genus and Innovus stage sources. That single export is what makes synthesis,
+# P&R and stream-out open one build: they resolve $bootrom_dir/$eth_rom_dir to
+# this run's directory rather than to a shared drop that may have been replaced
+# between two stages that are hours apart.
+#
+# `:=`, NOT `?=`. ../rom_build.mk (reached through the common.mk include above)
+# has already given ROM_RUN_DIR a default of the shared drop, so a `?=` here
+# would be a silent no-op and every run would keep using ASIC/romlibs. A command
+# line `make syn ROM_RUN_DIR=...` still wins — command-line variables beat any
+# makefile assignment.
+ROM_RUN_DIR       := $(OUT_DIR)/romlibs
+export ROMLIBS_DIR := $(ROM_RUN_DIR)
 
 .DEFAULT_GOAL := help
 
-.PHONY: setup_dirs asic-flist romlibs-check romlibs-fetch cpf-patch _cpf-patch-one sdc-check \
+.PHONY: setup_dirs asic-flist romlibs-check romlibs-gds-check romlibs-fetch cpf-patch _cpf-patch-one sdc-check \
         syn syn_norun syn_eval syn_compare \
         lec lec-pnr lec-gate lec-selftest route-gate-selftest \
         pnr_place pnr_cts pnr_route pnr_all pnr_setup gui \
         pnr_place_eval pnr_cts_eval pnr_route_eval pnr_all_eval \
-        drc lvs lvs-preflight logo drc-logo \
+        gdsmap gdsmap-parity restream restream-census \
+        drc drc-census logo drc-logo \
         status clean distclean help
 
-setup_dirs:
+# `pad-lef` (../common.mk) derives the patched TSMC IO-driver LEF from the
+# read-only PDK into a gitignored build directory. config.tcl:187 reads it as
+# IO_PAD_DRIVER_LEF, so it must exist before any stage opens a tool. It is
+# hung off setup_dirs because every stage already depends on setup_dirs, and
+# the generator is idempotent and needs no licence (~0.01s).
+setup_dirs: pad-lef
 	mkdir -p $(REPORT_DIR) $(LOG_DIR) $(OUT_DIR) $(WORK_DIR)
 
 ## Re-render the generated sub-flists every run, so the TideLink V2 / SoC
@@ -119,14 +155,73 @@ asic-flist:
 
 ## Genus reads the ROM .libs via config.tcl's lib_search_path_list; without them
 ## `syn` dies inside set_db with "Cannot open file rom_via_*.lib".
+##
+## SINCE 2026-08-14 THIS IS ALSO A CONTENT GATE, and it is the reason `syn` can
+## refuse to start. ../rom_gate.mk compares both compiled ROMs word for word
+## against the firmware code files. It costs ~1.5 s; a synthesis run that
+## discovers a dead ROM (if it ever did) costs a licence hour and finds nothing,
+## because nothing downstream of here reads ROM contents at all.
+##
+## The message below no longer says "not built": a ROM that is present, valid,
+## loadable by Genus and FULL OF THE WRONG BITS is the failure that actually
+## happened, and it reads as a build problem only if the gate says so.
+##
+## AND SINCE 2026-08-14 IT ALSO BUILDS THEM. `rom-run` compiles both macros for
+## THIS run into $(ROM_RUN_DIR) — from a content-addressed cache, so an
+## unchanged firmware costs seconds and a changed one costs ~3 min per ROM — and
+## then runs the gate against what it just built, not against a shared drop. A
+## firmware change can no longer reach the .bintxt without reaching the macro,
+## which is the failure this whole gate exists because of.
+##
+## ROM_RUN_DIR is passed on the SUB-MAKE COMMAND LINE, not left to the exported
+## environment: ../common.mk assigns ROMLIBS_DIR with `:=`, and a makefile
+## assignment beats an environment variable. Exported-only, the sub-make would
+## cheerfully build and verify the shared drop while Genus read the run.
 romlibs-check:
-	@$(MAKE) -C $(DESIGN_DIR)/.. -f common.mk --no-print-directory romlibs-verify || { \
+	@$(MAKE) -C $(DESIGN_DIR)/.. -f common.mk --no-print-directory \
+	    rom-run ROM_RUN_DIR=$(ROM_RUN_DIR) || { \
 	    echo ""; \
-	    echo "The ROM libraries are not built. Build them with:"; \
-	    echo "    make -C $(DESIGN_DIR)/.. -f common.mk tsmc_65_romlibs MEM_COMPILER_DIR=PATH_TO_COMPLETE_PHYS_IP"; \
-	    echo "This needs (a) the bootloader firmware built, for the ROM code_files, and"; \
-	    echo "(b) a WORKING Arm mem compiler — see the MEM_COMPILER_DIR note in common.mk."; \
+	    echo "SYNTHESIS REFUSED: the boot ROMs did not pass verification (above)."; \
+	    echo ""; \
+	    echo "  * COULD NOT BUILD        -- the compiler could not run. It needs a"; \
+	    echo "      LOCAL-DISK mirror (make -C $(DESIGN_DIR)/.. -f common.mk rom-compiler-stage)"; \
+	    echo "      and the bootloader firmware built, for the code files."; \
+	    echo "      On a host with no compiler at all, adopt a prebuilt tree instead:"; \
+	    echo "        make -C $(DESIGN_DIR)/.. -f common.mk rom-run ROM_RUN_DIR=$(ROM_RUN_DIR) \\"; \
+	    echo "             ROM_IMPORT_FROM=$(ROMLIBS_REF)"; \
+	    echo "      That is recorded as origin=imported and still has to pass this gate."; \
+	    echo "  * CONTENT MISMATCH       -- the macros exist and are wrong. Do NOT proceed."; \
+	    echo "      These ROMs are mask programmed; wrong bits are a dead die, and no later"; \
+	    echo "      stage of this flow looks at them. Read $(ROM_RUN_DIR)/verify/*.log."; \
+	    echo "  * DEPTH/ADDRESS DISAGREEMENT -- spec, wrapper and macro do not agree."; \
+	    echo "      512 words / A[8:0] is the RTL wrapper, the HADDR[10:2] decode and the"; \
+	    echo "      2 KB linker cap. Settle the depth BEFORE recompiling — an 11-bit macro"; \
+	    echo "      matches neither the wrapper nor the placed abstract."; \
+	    echo "  * PIN CONFLICT           -- this run is already pinned to a different ROM"; \
+	    echo "      build. That is the gate working: synthesis, P&R and stream-out must see"; \
+	    echo "      ONE build. Start a new run rather than re-pinning this one."; \
+	    echo ""; \
+	    echo "  This gate is mutation-tested: make -C $(DESIGN_DIR)/.. -f common.mk romlibs-selftest"; \
 	    exit 1; }
+
+## The SAME question, asked of the streamed GDS — because a ROM that was correct
+## when Genus read its .lib proves nothing about the bits that reached the mask.
+## The macro is merged into the stream by write_stream, from a hand-maintained
+## $gds_merge_list in scripts/config.tcl: a dropped entry, a stale path or a
+## substituted macro all produce a GDS that opens cleanly and boots nothing.
+##
+## Called with ROM_GDS=<stream> after `pnr_route` and after `restream`. It fires
+## AFTER the GDS artefact assertion, so a failure here always leaves the stream
+## on disk to inspect.
+##
+## It extracts the programmed words from the merged stream and compares them to
+## the firmware code file. With no extractor installed it reports UNVERIFIED and
+## FAILS — "we could not check" must never render as a pass. Override with
+## ROM_GDS_GATE=report to downgrade UNVERIFIED only; a DETECTED mismatch fails
+## in every mode.
+romlibs-gds-check:
+	@$(MAKE) -C $(DESIGN_DIR)/.. -f common.mk --no-print-directory \
+	    romlibs-verify-gds ROM_GDS=$(ROM_GDS) ROM_GDS_GATE=$(ROM_GDS_GATE)
 
 ## Repair the CPF Genus writes, so the die actually gets filled. Genus cannot
 ## translate this design's UPF supply commands and emits a power domain with no
@@ -303,15 +398,33 @@ sdc-check:
 	fi; \
 	echo "OK: $(BLOCK)_syn.sdc is at least as new as every inputs/*.sdc"
 
+## ── rom-ensure — WHY EVERY P&R STAGE DEPENDS ON IT ─────────────────────────
+## Innovus reads this run's ROM LEF at placement and its GDS at stream-out,
+## hours after Genus read its .lib. Those three must be ONE build; a run whose
+## netlist and whose mask describe different programs is undetectable by every
+## other check in this flow, because nothing downstream reads ROM contents.
+##
+## `rom-run-ensure` (../rom_build.mk) is the guard, and it is deliberately the
+## CHEAP one rather than `rom-run`: if this run's macros are staged and pinned it
+## prints one line and returns, touching no compiler and needing no firmware
+## checkout. It only falls through to a real build when the run has none — a
+## resumed run, or a cleaned outputs/ — and then it re-materialises the SAME
+## cache entry rather than inventing a new one. A CHANGED key is refused by the
+## pin, which is the case worth failing on.
+.PHONY: rom-ensure
+rom-ensure:
+	@$(MAKE) -C $(DESIGN_DIR)/.. -f common.mk --no-print-directory \
+	    rom-run-ensure ROM_RUN_DIR=$(ROM_RUN_DIR)
+
 ## cpf-patch is idempotent and cheap; running it here means a hand-run or
 ## resumed placement cannot proceed on an unpatched CPF. See power_plan.tcl.
-pnr_place: setup_dirs sdc-check cpf-patch
+pnr_place: setup_dirs rom-ensure sdc-check cpf-patch
 	$(call legacy_notice,pnr_place,place)
 	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/2_pnr_setup.tcl
 	@test -d $(WORK_DIR)/$(BLOCK) || { \
 	    echo "FAIL: placement wrote no DB at $(WORK_DIR)/$(BLOCK)"; exit 1; }
 
-pnr_cts:
+pnr_cts: rom-ensure
 	$(call legacy_notice,pnr_cts,cts)
 	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/3_pnr_clock.tcl
 	@test -s $(REPORT_DIR)/timing_summary_03_cts_opt.rep || { \
@@ -323,7 +436,20 @@ pnr_cts:
 ## seat, so make never returns. Everything of value is written before them, and
 ## `make drc` is the working Calibre path. Fixed here rather than in asic-flows,
 ## which other designs share.
-pnr_route:
+##
+## gdsmap: 4_pnr_route.tcl's write_stream takes -map_file from $gds_layer_map,
+## which scripts/config.tcl points at the DERIVED map — a build product, not a
+## committed file. Without this prerequisite the stage routes for hours and then
+## dies at write_stream having written no GDS (measured 2026-08-14). Same
+## dependency `pnr_route_eval` already carries; the two stages stream the same
+## map on purpose.
+pnr_route: rom-ensure gdsmap
+	@# Cheap, licence-free, and BEFORE Innovus starts. `gdsmap` above should have
+	@# just produced this; if it did not, say so now rather than at hour six.
+	@test -r $(GDSMAP) || { \
+	    echo "FAIL: no GDS stream-out map at $(GDSMAP)"; \
+	    echo "      'make gdsmap' should have derived it — re-run it and read its output."; \
+	    exit 1; }
 	$(call legacy_notice,pnr_route,route)
 	cd $(WORK_DIR)/; env -u CALIBRE_HOME $(INNOVUS) $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
 	@test -s $(OUT_DIR)/$(BLOCK).gds \
@@ -333,6 +459,7 @@ pnr_route:
 	         echo "      if the log looks clean, check ASIC/asic-flows is at b19e784+"; \
 	         echo "      — write_stream lives there; the earlier pin streams nothing."; \
 	         exit 1; }
+	@$(MAKE) --no-print-directory romlibs-gds-check ROM_GDS=$(OUT_DIR)/$(BLOCK).gds
 
 ## syn -> place -> CTS -> route -> GDSII, unattended. Multi-hour.
 pnr_all: syn pnr_place pnr_cts pnr_route
@@ -405,7 +532,7 @@ pnr_cts_eval: setup_dirs
 	@echo "OK: eval CTS $(WORK_DIR)/$(BLOCK)_eval_cts"
 	@echo "    read $(EVAL_REPORT_DIR)/cts_latency_writeback.rep"
 
-pnr_route_eval: setup_dirs
+pnr_route_eval: setup_dirs gdsmap
 	mkdir -p $(EVAL_LOG_DIR) $(EVAL_REPORT_DIR) $(EVAL_OUT_DIR)
 	cd $(WORK_DIR)/; \
 	    EVR_LOG_DIR=$(EVAL_LOG_DIR) \
@@ -427,9 +554,162 @@ pnr_route_eval: setup_dirs
 	    sed -n '/^HARD FAILURES/,/^$$/p' $(EVAL_REPORT_DIR)/route_gate.txt; exit 1; }
 	@echo "OK: eval GDSII $(EVAL_OUT_DIR)/$(BLOCK).gds ($$(du -h $(EVAL_OUT_DIR)/$(BLOCK).gds | cut -f1))"
 	@sed -n '/^SIGNOFF BUDGETS/,/^$$/p' $(EVAL_REPORT_DIR)/route_gate.txt
+	@# The eval streams are what the tapeout evaluation actually reads, so they
+	@# get the same ROM content gate as the production one. ~46 s against hours.
+	@$(MAKE) --no-print-directory romlibs-gds-check ROM_GDS=$(EVAL_OUT_DIR)/$(BLOCK).gds
 
 ## place -> CTS -> route, all three eval stages. Multi-hour.
 pnr_all_eval: pnr_place_eval pnr_cts_eval pnr_route_eval
+
+#-----------------------------------------------------------------------------
+# Stream-out map, and re-streaming without a P&R run
+#
+# The map used to be a committed hand-edit of the read-only PDK file. It is now
+# DERIVED at build time from two foundry inputs, so there is no fork to drift
+# and every deviation is argued in one place (scripts/gdsmap_derive.py).
+#
+# `gdsmap-parity` is the acceptance test: in strict-parity mode the generator
+# must reproduce TSMC's own row set exactly. It is cheap, needs no licence, and
+# it is what catches a PDK bump changing the map under us.
+#-----------------------------------------------------------------------------
+# PDK_GDSMAP and PDK_TECH_LEF are resolved by ASIC/common.mk (included at the
+# top of this file) via ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh, which
+# globs the installed PDK instead of spelling the deck/map release codes into a
+# public repository. Values are unchanged — `make pdk-paths` re-proves it.
+#
+# GDSMAP IS OUR OWN BUILD PRODUCT that merely inherited the vendor filename, so
+# it is found BY GLOB, not by name: nothing about the foundry release is
+# disclosed and the same file is selected. The exact-one check below matters
+# more here than anywhere else in the flow — this is the file whose identity
+# decides what the streamed GDS *is*, and a silent first-match would swap the
+# derived map (57 rows) for something else without a word. If it is not yet
+# built the glob is empty and the `gdsmap` target below creates it, which is the
+# same bootstrap the hardcoded name had.
+GDSMAP_GLOB  := $(WORK_DIR)/tech/*.derived.map
+GDSMAP_FOUND := $(wildcard $(GDSMAP_GLOB))
+ifneq ($(words $(GDSMAP_FOUND)),1)
+  ifneq ($(words $(GDSMAP_FOUND)),0)
+    $(error GDSMAP is AMBIGUOUS - $(words $(GDSMAP_FOUND)) files match \
+      $(GDSMAP_GLOB), expected exactly 1: $(GDSMAP_FOUND). Refusing to guess: \
+      picking the first would silently change which layer map the GDS is \
+      streamed with. Remove the stale one, or set GDSMAP explicitly)
+  endif
+endif
+# 0 matches -> the canonical name the `gdsmap` target will create.
+GDSMAP       ?= $(if $(GDSMAP_FOUND),$(GDSMAP_FOUND),$(WORK_DIR)/tech/$(notdir $(PDK_GDSMAP:.map=.derived.map)))
+GDSMAP_GEN   := $(DESIGN_DIR)/scripts/gdsmap_derive.py
+GDS_CENSUS   := $(DESIGN_DIR)/../../scripts/ci/gds_layer_census.py
+
+## make gdsmap        — derive the stream-out map (pnr_route_eval depends on it)
+gdsmap:
+	@mkdir -p $(dir $(GDSMAP))
+	@rm -f $(GDSMAP)
+	python3 $(GDSMAP_GEN) --pdk-map $(PDK_GDSMAP) --tech-lef $(PDK_TECH_LEF) -o $(GDSMAP)
+
+## make gdsmap-parity — prove the generator still reproduces the vendor row set.
+## Compares canonically: object-type lists sorted, LEFOBS removed from both
+## sides (we never emit it), comments and whitespace ignored. The only rows
+## allowed to differ are TSMC's two dead M10/M11 entries, which this stack
+## cannot use — anything else is a real divergence and fails the target.
+gdsmap-parity:
+	@mkdir -p $(WORK_DIR)/tech
+	@python3 $(GDSMAP_GEN) --pdk-map $(PDK_GDSMAP) --tech-lef $(PDK_TECH_LEF) \
+	    --strict-parity -o $(WORK_DIR)/tech/parity.map >/dev/null
+	@canon() { python3 -c "import sys;\
+	  [print(' '.join([f.split()[0], ','.join(sorted(x for x in f.split()[1].split(',') if x!='LEFOBS')), f.split()[2], f.split()[3]])) \
+	   for f in (l.strip() for l in open(sys.argv[1])) if f and not f.startswith('#')]" "$$1" | sort; }; \
+	 canon $(WORK_DIR)/tech/parity.map > $(WORK_DIR)/tech/.gen.txt; \
+	 canon $(PDK_GDSMAP)               > $(WORK_DIR)/tech/.pdk.txt; \
+	 same=$$(comm -12 $(WORK_DIR)/tech/.gen.txt $(WORK_DIR)/tech/.pdk.txt | wc -l); \
+	 extra=$$(comm -23 $(WORK_DIR)/tech/.gen.txt $(WORK_DIR)/tech/.pdk.txt); \
+	 missing=$$(comm -13 $(WORK_DIR)/tech/.gen.txt $(WORK_DIR)/tech/.pdk.txt | grep -vE "NAME M1[01]/PIN" || true); \
+	 echo "gdsmap-parity: $$same rows identical to the vendor map"; \
+	 if [ -n "$$extra" ];   then echo "FAIL: rows we emit that TSMC does not:"; echo "$$extra"; exit 1; fi; \
+	 if [ -n "$$missing" ]; then echo "FAIL: vendor rows we dropped:";          echo "$$missing"; exit 1; fi; \
+	 echo "gdsmap-parity: OK (only TSMC's dead M10/M11 rows differ, by design)"
+
+## make restream — write a new GDS from the EXISTING routed database, with the
+## current derived map. Minutes, not hours: a map change cannot alter placement
+## or routing, so re-running P&R to test one would prove nothing and produce a
+## different database to compare against. Override RESTREAM_MAP to A/B a map.
+RESTREAM_DB       ?= $(WORK_DIR)/$(BLOCK)_eval_route
+RESTREAM_MAP      ?= $(GDSMAP)
+RESTREAM_GDS_OUT  ?= $(EVAL_OUT_DIR)/$(BLOCK)_restream.gds
+## rom-ensure: restream MERGES the ROM GDS in (config.tcl's $gds_merge_list), so
+## it needs this run's macros present exactly as route did — and the stream it
+## writes is checked by romlibs-gds-check at the end of this recipe.
+restream: gdsmap rom-ensure
+	@test -d $(RESTREAM_DB) || { \
+	    echo "FAIL: no routed database at $(RESTREAM_DB)"; \
+	    echo "      run 'make pnr_route_eval', or set RESTREAM_DB to a saved run's."; exit 1; }
+	@mkdir -p $(EVAL_OUT_DIR)
+	@# RESTREAM_MERGE is deliberately NOT set here. restream.tcl sources
+	@# scripts/config.tcl and takes $gds_merge_list from it — the same eight
+	@# files 4b_pnr_route_eval.tcl streams with. Listing them again here would
+	@# be a second copy that drifts, and a short merge list produces a smaller
+	@# GDS that reads as a map regression.
+	@# $(INNOVUS) already carries `-stylus -files`; do not repeat them.
+	cd $(WORK_DIR)/; \
+	    RESTREAM_DB=$(RESTREAM_DB) \
+	    RESTREAM_MAP=$(RESTREAM_MAP) \
+	    RESTREAM_GDS_OUT=$(RESTREAM_GDS_OUT) \
+	    $(INNOVUS) $(DESIGN_DIR)/scripts/restream.tcl < /dev/null
+	@# INNOVUS EXITS 0 AFTER FAILING. Measured 2026-08-13: read_db aborted with
+	@# IMPIMEX-7023 (a library file inside the saved DB had been deleted), the
+	@# script never reached its own write_stream guard, and `make` still reported
+	@# success. Without this check the target is a silent no-op — the exact
+	@# failure mode docs/tapeout/17-silent-noops exists to stamp out. The
+	@# script's internal guard is not enough: it cannot run if the script dies
+	@# before it.
+	@test -s $(RESTREAM_GDS_OUT) || { \
+	    echo "FAIL: restream wrote no GDS at $(RESTREAM_GDS_OUT)"; \
+	    echo "      Innovus may have exited 0 anyway — read the log, do not trust the exit code:"; \
+	    echo "        grep -nE '\*\*ERROR|IMPIMEX-|IMPSYT-' $(WORK_DIR)/innovus.log*"; \
+	    echo "      A deleted file inside the saved DB (libs/lef/*, libs/mmmc/*) is the usual cause."; \
+	    exit 1; }
+	@echo "OK: restream wrote $(RESTREAM_GDS_OUT)"
+	@$(MAKE) --no-print-directory romlibs-gds-check ROM_GDS=$(RESTREAM_GDS_OUT)
+
+## make restream-census — per-layer record counts for the re-streamed GDS.
+## This is how you check a map change did what it claimed, and it is the ONLY
+## check that catches the failure that matters: a map row silently skipped, no
+## error raised, and the labels simply absent. "Innovus did not complain" is not
+## a verification.
+##
+## REFERENCE NUMBERS, measured 2026-08-13 on the routed DB of
+## runs/20260812T144334Z_route-baseline-gds-nonstrict, current default map
+## (LEFOBS moved to +9000, LEFPIN text on, NAME rows combined).
+##
+## These are counts of OUR geometry, so they are quoted by the METAL they sit
+## on, not by GDS layer number: the number/datatype table is TSMC's, it is not
+## reproduced in this repository, and `make gdsmap` derives it into $(GDSMAP)
+## where the reader can resolve any row against their own PDK licence. The
+## census script prints the numeric layers at runtime — read them there.
+##
+##     structures 2,579   geometry 3,587,844   text 351,775
+##
+##     pin-name text, by metal:  M1 11,826   M2 163,663   M3 65,616
+##                               M4  89,580  M5      25   M6     25
+##                               M7      25  M9       2
+##     obstruction (LEFOBS, re-mapped to base layer + 9000 — OBS_LAYER_BASE in
+##     scripts/gdsmap_derive.py), over the routing and via layers this stack
+##     uses:  6,631 records
+##
+## M5, M6 and M7 carry exactly 25 pin-name records each: one label per pin shape
+## on those metals in the pad drivers. If those come back 0, the NAME
+## <layer>/LEFPIN rows are not being honoured — that is the regression this
+## target exists to catch. (An earlier revision of this comment paired those
+## three counts with M7/M6/M5, in that order; the mapping is ascending, and the
+## count is 25 on each of the three, so nothing downstream was affected.)
+##
+## Takes the same RESTREAM_GDS_OUT as `make restream`, so overriding one and not
+## the other censuses the wrong file. Pass both or neither.
+restream-census:
+	@test -s $(RESTREAM_GDS_OUT) || { \
+	    echo "FAIL: no GDS at $(RESTREAM_GDS_OUT)"; \
+	    echo "      run 'make restream' first, or pass the SAME RESTREAM_GDS_OUT"; \
+	    echo "      you passed to it — the two targets share that variable."; exit 1; }
+	python3 $(GDS_CENSUS) $(RESTREAM_GDS_OUT)
 
 ## Interactive Innovus in work/, empty session — no config, no design.
 pnr_setup:
@@ -471,18 +751,47 @@ gui:
 #-----------------------------------------------------------------------------
 # Physical verification (Calibre) — see 12-calibre-drc.md, 14-drc-triage.md
 #-----------------------------------------------------------------------------
-## Calibre DRC on the built GDS, headless. The foundry deck's LAYOUT PATH /
-## LAYOUT PRIMARY are literal placeholders with no command-line override, so both
-## come from the project wrapper deck in scripts/calibre/, which INCLUDEs the
-## foundry deck untouched. run_drc.sh does its own preflight.
+## Calibre DRC on the built GDS, headless. run_drc.sh assembles the PROJECT deck
+## first (scripts/calibre/make_project_deck.sh: tsmc65_minisic_header.svrf.in,
+## with $(BLOCK) and the die box substituted in, + the foundry rule bodies below
+## the foundry's own /* SWITCH DEFINITION END */), drops it in the rundir as
+## deck.svrf and runs that. The read-only foundry deck is never modified; the
+## spliced body is md5-checked against it on every run.
+## Splicing rather than INCLUDEing is required: WLCSP_SEALRING must be OFF (we
+## are wire bond) and it is #DEFINEd unconditionally, and xLB/yLB/xRT/yRT must be
+## the real die box and are declared unconditionally as VARIABLE -- neither is
+## reachable from a wrapper. Those four numbers are not written down here: they
+## are read out of scripts/floorplan.tcl's create_floorplan by drc_project.mk,
+## which is the whole point. `make -n drc` prints the resolved values.
+## For the foundry-default A/B, set
+##   DRC_DECK=$(DESIGN_DIR)/scripts/calibre/$(BLOCK).drc.rules
+## run_drc.sh does its own preflight.
 ##
 ## CAVEAT ON ANY NUMBER THIS PRODUCES: the GDS carries routing, vias and macros
 ## but no standard-cell, IO or bond-pad geometry, no seal ring and no fill, so
 ## front-end, density and seal-ring rules are meaningless here. The back-end
 ## metal/via/antenna checks are the real signal.
+## Everything the deck assembler needs, in one place, so `drc` and `drc-logo`
+## cannot drift apart and so the values are visible at the call site rather than
+## smuggled in by a global `export`. All of it comes from drc_project.mk.
+## DECK_HEADER is deliberately NOT set here — it is the switch-experiment escape
+## hatch, and pushing a value every run would defeat it.
+DRC_DECK_ENV = BLOCK=$(BLOCK) FOUNDRY_DECK=$(DRC_FOUNDRY_DECK) \
+               DIE_XLB=$(DRC_DIE_XLB) DIE_YLB=$(DRC_DIE_YLB) \
+               DIE_XRT=$(DRC_DIE_XRT) DIE_YRT=$(DRC_DIE_YRT)
+
 drc:
 	DRC_GDS=$(GDS) DRC_RUNDIR=$(DRC_RUNDIR) DRC_CPUS=$(DRC_CPUS) \
+	$(DRC_DECK_ENV) \
 	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
+
+## Count and gate what the DRC run produced. Calibre exits 0 whether or not it
+## found violations, so `make drc` alone is not a verdict — this is. Same script
+## and same budgets the CI signoff stage uses (ci/signoff.yaml, id: drc), so a
+## local run and the gate cannot disagree.
+drc-census:
+	DRC_DESIGN_BUDGET=$(DRC_DESIGN_BUDGET) DRC_DENSITY_BUDGET=$(DRC_DENSITY_BUDGET) \
+	    python3 $(DESIGN_HOME)/scripts/ci/drc_census.py $(DRC_RUNDIR)
 
 #-----------------------------------------------------------------------------
 # Logo merge (klayout — no EDA licence)
@@ -542,34 +851,69 @@ endif
 ## run's results and the two counts can be compared.
 drc-logo: logo
 	DRC_GDS=$(LOGO_GDS_OUT) DRC_RUNDIR=$(WORK_DIR)/../calibre_runs/drc_logo_flow \
-	DRC_CPUS=$(DRC_CPUS) $(DESIGN_DIR)/scripts/calibre/run_drc.sh
+	DRC_CPUS=$(DRC_CPUS) $(DRC_DECK_ENV) \
+	    $(DESIGN_DIR)/scripts/calibre/run_drc.sh
 
-## Does this host have what LVS needs? Seconds, no tool launched. Expected to
-## FAIL today and to say why: every TSMC package installed here is Front End
-## (_FE), so there is no transistor netlist for cells, IO or pads. Procurement,
-## not engineering. See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
-lvs-preflight:
-	$(DESIGN_DIR)/scripts/calibre/run_lvs.sh --check
+## Calibre nmLVS, from the portable flow in ../lvs-flow. lvs_project.mk holds
+## this design's values and includes ../lvs-flow/lvs.mk, which supplies the
+## targets: lvs-preflight, lvs_source, lvs_pg_gds, lvs_batch (alias lvs),
+## lvs-report, lvs-rve, lvs-clean, lvs-help. `make lvs-help` prints every
+## resolved value.
+##
+## A Front-End-only PDK is NOT a blocker: LVS_BOX_LEAF=1 black-boxes the
+## model-less leaves on both sides and compares them as instances. That proves
+## connectivity, NOT cell interiors and NOT the pad ring -- always say
+## "clean modulo black boxes and modulo the pad ring". CONTRACT.md 5, 6c.
+##
+## Two things this design needs, both learned the hard way (CONTRACT.md 6a/6b):
+##   * the layout must be the PG-labelled stream, not the signoff GDS
+##       make lvs_pg_gds && make lvs_batch LVS_PG=1
+##   * outputs/ carries only logo-merged streams, so the GDS and its matching
+##     _pnr.v come from a timestamped run dir -- switch with one variable:
+##       make lvs_batch LVS_RUN=20260810T092257Z_derate-check3
+include $(DESIGN_DIR)/lvs_project.mk
 
-## Calibre nmLVS, gated on lvs-preflight so it fails with the missing-data list
-## rather than an obscure tool error. The GDS is incomplete for the same reason
-## (424 cell masters are LEF shells), so both unblock together.
-lvs: lvs-preflight
-	$(DESIGN_DIR)/scripts/calibre/run_lvs.sh --run \
-	    $(GDS) $(OUT_DIR)/$(BLOCK)_pnr.v $(BLOCK) $(WORK_DIR) $(LOG_DIR)
+## Static rail (IR-drop) analysis: rail_project.mk supplies `rail`, `rail-gate`,
+## `rail-selftest`, `rail-status`, `rail-clean`. It is pure data plus five
+## targets and includes no flow, so it can go last beside lvs_project.mk rather
+## than early beside drc_project.mk.
+##
+## `rail` takes an Innovus seat and a Voltus_Power_Integrity seat on demand —
+## the `voltus` binary itself cannot read this database (IMPESI-3490, CMMMC),
+## while the identical rail commands resolve inside the Innovus Stylus shell.
+## `rail-gate` and `rail-selftest` take NEITHER and need no database: the
+## verdict is recomputed from the artefacts a run left behind, because
+## report_rail prints `**ERROR` and returns SUCCESS and its exit code decides
+## nothing here.
+include $(DESIGN_DIR)/rail_project.mk
 
 #-----------------------------------------------------------------------------
 # Housekeeping
 #-----------------------------------------------------------------------------
-## Copy the built ROM libraries from a reference tree; override with ROMLIBS_REF.
+## Adopt ROM macros from a reference tree instead of compiling them. LAST
+## RESORT — override the tree with ROMLIBS_REF.
+##
+## THIS USED TO BE A BARE `cp -r` INTO ASIC/romlibs, and that is the mechanism
+## the whole per-run ROM build exists to replace: an untracked binary drop with
+## no recorded relationship to any firmware. It is how both macros came to hold
+## the wrong program, and nothing could tell afterwards where they came from.
+##
+## It now goes through the SAME cache and the SAME pin as a compiled ROM
+## (../rom_build.mk's ROM_IMPORT_FROM). The difference is one recorded field:
+## origin=imported, with the tree it was taken from, in this run's
+## .rom_build.json. It still faces the full word-for-word gate — importing
+## asserts nothing whatever about contents.
+##
+## Prefer `make syn`, which compiles them: the compiler works on this host
+## (~3 min per ROM, and seconds on a cache hit).
 romlibs-fetch:
 	@test -d "$(ROMLIBS_REF)" || { \
 	    echo "FAIL: no ROM-lib reference tree at $(ROMLIBS_REF)"; \
 	    echo "      point ROMLIBS_REF at a tree holding cc_rom/ and eth_rom/."; exit 1; }
-	@echo "== copying ROM libs from $(ROMLIBS_REF) =="
-	mkdir -p $(ROMLIBS_DIR)
-	cp -r $(ROMLIBS_REF)/cc_rom $(ROMLIBS_REF)/eth_rom $(ROMLIBS_DIR)/
-	@$(MAKE) --no-print-directory romlibs-check
+	@echo "== adopting ROM macros from $(ROMLIBS_REF) into $(ROM_RUN_DIR) =="
+	@echo "   (recorded as origin=imported — they still have to pass the content gate)"
+	@$(MAKE) -C $(DESIGN_DIR)/.. -f common.mk --no-print-directory \
+	    rom-run ROM_RUN_DIR=$(ROM_RUN_DIR) ROM_IMPORT_FROM=$(ROMLIBS_REF)
 
 ## Which flow stages have actually run, from the artefacts on disk.
 status:
@@ -577,7 +921,8 @@ status:
 	@printf '  %-14s %-4s %s\n' STAGE OK ARTEFACT
 	@for spec in \
 	    "flist:$(NANOSOC_ETH_CHIPLET_HOME)/build/chip/flist/soc.flist" \
-	    "romlibs:$(ROMLIBS_DIR)/cc_rom/rom_via.lef" \
+	    "romlib-files:$(ROMLIBS_DIR)/cc_rom/rom_via.lef" \
+	    "rom-verified:$(ROM_VERIFY_DIR)/last_pass.txt" \
 	    "syn:$(OUT_DIR)/$(BLOCK)_gate_power.v" \
 	    "place:$(REPORT_DIR)/timing_summary_01_place.rep" \
 	    "cts:$(REPORT_DIR)/timing_summary_03_cts_opt.rep" \
@@ -639,7 +984,11 @@ help:
 	@echo "    make lec           Conformal: RTL vs synthesis netlist"
 	@echo "    make lec-pnr       Conformal: synthesis vs post-P&R netlist"
 	@echo "    make lec-selftest  mutation-test the LEC harness (~15s)"
-	@echo "    make lvs           Calibre LVS   (lvs-preflight says what is missing)"
+	@echo "    make lvs_pg_gds    PG-labelled stream for LVS (run this first)"
+	@echo "    make lvs           Calibre LVS   (add LVS_PG=1 to use that stream)"
+	@echo "    make lvs-preflight assert every LVS input is readable (no licence)"
+	@echo "    make lvs-report    LVS artefact paths + the verdict from the report"
+	@echo "    make lvs-help      every value the LVS run will use"
 	@echo ""
 	@echo "  Synthesis A/B:"
 	@echo "    make syn_eval      variant run   -> outputs/eval/"
@@ -655,6 +1004,11 @@ help:
 	@echo "    is to resume a production snapshot instead of re-running upstream:"
 	@echo "      make pnr_cts_eval   EVC_IN_PREFIX=$(BLOCK)   # resume real placement"
 	@echo "      make pnr_route_eval EVR_IN_PREFIX=$(BLOCK)   # resume real CTS"
+	@echo ""
+	@echo "  Boot ROM contents — mask programmed, so wrong bits are a dead die:"
+	@echo "    make romlibs-check      the gate \`syn\` runs first (~2 s, no licence)"
+	@echo "    make romlibs-gds-check ROM_GDS=<stream>   the same, on a merged GDS"
+	@echo "    make -C .. -f common.mk romlibs-selftest  prove the gate can fail"
 	@echo ""
 	@echo "  Setup / inspection:"
 	@echo "    make status        which stages have run"

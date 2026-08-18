@@ -90,24 +90,22 @@
 # that does not write the JSON artefact fails the post-conditions below.
 ROM_VERIFY      ?= $(NANOSOC_ETH_CHIPLET_HOME)/scripts/ci/rom_verify.py
 
-# Bit extractor for the stream-out gate. Contract, deliberately narrow:
+# THE STREAM-OUT GATE IS THE TOOLKIT'S NOW. This file keeps the TABLE.
 #
-#     $(ROM_GDS_EXTRACT) --gds <stream.gds> --struct-prefix <eth_rom_via> \
-#                        --words <N> --bits <B> --out <file>
+# The mechanism -- extract, prove the artefacts belong to THIS stream, prove the
+# macro is actually instanced, stamp a verdict, collect the evidence -- moved to
+# ASIC/asic-toolkit/mk/rom.mk on 2026-08-18, because none of it is about this
+# die. What stays here is what only this project can say: which ROMs exist,
+# where their code files are, and what the stream being gated actually IS.
 #
-#   * writes exactly N lines of B characters from [01], MSB first, word 0 first
-#     — byte-for-byte the format of a .bintxt code file, so the comparison is a
-#     plain diff and nothing has to agree about endianness twice;
-#   * exits non-zero if it cannot recover EVERY word (a partial extraction is
-#     not a measurement).
-#
-# The method exists and is validated (all 16,384 bits of each ROM recovered from
-# three merged streams, 512/512 against the standalone macro). It has to be
-# landed at this path before the stream-out gate can return anything but
-# UNVERIFIED. Do NOT substitute a byte/hash comparison against the standalone
-# .gds2: Innovus re-encodes records on merge, so 0 of 126 structure hashes match
-# on a CORRECT chip. Content extraction is the only sound test here.
-ROM_GDS_EXTRACT ?= $(NANOSOC_ETH_CHIPLET_HOME)/scripts/ci/rom_gds_bits.py
+# The extractor moved with it, to
+# $(ASIC_TOOLKIT_DIR)/scripts/asic-flow-rom-gds-bits. scripts/ci/rom_gds_bits.py
+# is now a FORWARDER to that one program, so the path in docs/tapeout/34 still
+# works and there is exactly ONE implementation. Two copies of a decoder is a
+# trap this tree has already been caught in.
+ASIC_TOOLKIT_DIR ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/asic-toolkit
+ROM_TOOLKIT_MK   ?= $(ASIC_TOOLKIT_DIR)/mk/rom.mk
+ROM_GDS_EXTRACT  ?= $(ASIC_TOOLKIT_DIR)/scripts/asic-flow-rom-gds-bits
 
 # Evidence lands here: one .log, one .rc and one .json per ROM per gate. Under
 # build/, which is gitignored.
@@ -124,6 +122,63 @@ ROM_GDS_GATE    ?= block
 # CPU0 (ethernet subsystem) and CPU1 (chip-control core). Adding a third ROM is
 # one line here plus its ROM_*_<name> values.
 ROMS := eth cc
+
+# -- What the stream-out gate needs to know about THIS die -------------------
+#
+# WHICH ARTEFACT. This project deliberately produces two GDSs that are not the
+# same file: the un-logoed SIGNOFF stream at build/<tag>/outputs/<block>.gds,
+# which the DRC and LVS numbers are quoted against, and a logo-merged SUBMISSION
+# stream selected by SUBMIT_GDS, which is what actually ships. The logo is
+# merged in a SEPARATE step after write_stream, precisely so a DRC count can
+# never be quoted against the wrong file -- and a bundle has already once been
+# built carrying the wrong one.
+#
+# The defaults below describe THE WIRED INVOCATION: ASIC/genus-innovus/Makefile
+# runs this gate on the un-logoed signoff stream after route and after restream.
+# That is a true statement about what the flow gates today, not a guess about
+# whatever path a human passes on the command line -- which is why the basis
+# records where the label comes from rather than just asserting it.
+#
+# GATING THE STREAM THAT SHIPS is one line, and it is the line a promotion or a
+# submission step must use:
+#
+#   make -f ASIC/common.mk romlibs-verify-gds ROM_GDS=<logo-merged>.gds \
+#        ROM_GDS_CLASS=submission ROM_GDS_SHIPS=yes ROM_GDS_REQUIRE_SHIPPING=1
+#
+# No fp1505 logo-merged stream exists yet, so if fp1505 is promoted the logo
+# merge happens afterwards and THAT stream will never have been through this
+# gate. The ROM bits almost certainly survive a logo merge. "Almost certainly"
+# is the phrase this gate exists to remove.
+ROM_GDS_CLASS       ?= signoff
+ROM_GDS_CLASS_BASIS ?= declared:genus-innovus gates the un-logoed stream at build/<tag>/outputs
+ROM_GDS_SHIPS       ?= no
+
+# Both ROMs are instanced exactly once on this die.
+ROM_GDS_PLACEMENTS_eth ?= 1
+ROM_GDS_PLACEMENTS_cc  ?= 1
+
+# The compiler's own content view, for the independence report. Measured
+# 2026-08-18: *_verilog.rcf and the .bintxt are BYTE-IDENTICAL for both ROMs,
+# because the compiler produced one from the other. That does NOT weaken the
+# stream-out gate -- its other side is decoded out of the GDS -- but it does
+# mean any gate whose two sides are the .rcf and the .bintxt is a mirror, and
+# that belongs on the record rather than being rediscovered.
+ROM_CODE_PEER_eth ?= $(ROM_DIR_eth)/eth_rom_via_verilog.rcf
+ROM_CODE_PEER_cc  ?= $(ROM_DIR_cc)/rom_via_verilog.rcf
+
+# -- Declared sim/silicon divergence -----------------------------------------
+# The eth simulation boot ROM is a gitignored MUTABLE SLOT materialised per
+# environment: 55 cocotb environments install a smoke variant and 2 install the
+# silicon image, because the silicon bootloader requires a QSPI XiP handshake
+# that IMEM-preload environments do not model. Regenerating the slot would
+# self-revert on the next build and would be a false green. So this is a
+# DECLARED EXCEPTION, hash-scoped, and it stays visible as [ALLOW-LISTED].
+#
+# Reason and evidence: docs/tapeout/44-eth-rom-sim-divergence.md
+ROM_SIM_ALLOW_eth        ?= sha256:9d5fa954ceb646f51aaf5f40f615380dc4296760ca533846ebb553d20434d504
+ROM_SIM_ALLOW_REASON_eth ?= sim ROM is a per-environment smoke image; the silicon bootloader needs a QSPI XiP handshake. Evidence: docs/tapeout/44-eth-rom-sim-divergence.md
+ROM_SIM_ALLOW_cc         ?=
+ROM_SIM_ALLOW_REASON_cc  ?=
 
 # ── Geometry for the SIMULATION readback gate (mk/gls.mk, `make gls-rom`) ───
 #
@@ -404,6 +459,12 @@ rom-verify-%:
 	    echo "FAIL: [$(ROM_LABEL_$*)] no simulation boot ROM at $(ROM_SIM_$*)."; \
 	    echo "      Point ROM_SIM_$* at it, or set ROM_SIM_$*=none to state on the record"; \
 	    echo "      that the sim view is not being compared. Silence is not a statement."; exit 1; }
+	@# A declared exception is validated and PRINTED before the checker runs.
+	@# Past the checker an unjustified or pattern-shaped entry is
+	@# indistinguishable from a genuine clean result. Same assertion text as the
+	@# toolkit's mk/rom.mk; this file is a fork of that one, keep the two in step.
+	@printf '%s\n' "$$ROM_SIM_ALLOW_ASSERT" | python3 - \
+	    "$(ROM_LABEL_$*)" "$*" "$(ROM_SIM_ALLOW_REASON_$*)" "$(ROM_SIM_ALLOW_$*)" ""
 	@# No --view/--family flag: which content view is authoritative is the
 	@# checker's decision, made in one place. Five views exist in two families
 	@# that share no data, and picking one here would fork that decision.
@@ -416,6 +477,7 @@ rom-verify-%:
 	    --wrapper "$(ROM_WRAP_$*)" \
 	    $(if $(filter none,$(ROM_SIM_$*)),--no-sim-check,--sim-rtl "$(ROM_SIM_$*)") \
 	    $(if $(wildcard $(ROM_REGION_$*)),--region-rtl "$(ROM_REGION_$*)",) \
+	    $(foreach a,$(ROM_SIM_ALLOW_$*),--allow-sim-divergence "$(a)") \
 	    --var NANOSOC_MULTICORE_HOME="$(NANOSOC_MULTICORE_HOME)" \
 	    --program-search-root "$(NANOSOC_MULTICORE_HOME)/build" \
 	    --json "$(ROM_VERIFY_DIR)/$*.json" \
@@ -433,74 +495,72 @@ rom-verify-%:
 # macro is merged into the GDS by write_stream, from a $gds_merge_list that is
 # maintained by hand in scripts/config.tcl.
 #
-# Pass ROM_GDS=<stream>. ASIC/genus-innovus/Makefile wires this after
-# `pnr_route` and after `restream`.
+# THE MECHANISM IS NOT HERE ANY MORE. It is $(ROM_TOOLKIT_MK)'s `rom-gate-gds`,
+# which since 2026-08-18 also
+#
+#   * writes a per-ROM manifest recording WHICH STREAM was measured -- absolute
+#     path, sha256, size, mtime -- and refuses to report a pass from artefacts
+#     whose recorded stream is not the one being gated. Before that, the only
+#     record was free text on line 1 of a log in a single mutable slot, and on
+#     2026-08-18 at 08:21 a superseded build's artefacts sitting in that slot
+#     were read as a live failure of the current shipping candidate;
+#   * ASSERTS that the macro is actually INSTANCED in the stream, instead of
+#     printing the count. The standalone macro .gds2 extracts perfectly and
+#     diffs clean while saying nothing about the die;
+#   * refuses to measure a stream whose CLASS is undeclared, and names it in
+#     every verdict;
+#   * writes one portable evidence artefact a packager can collect.
+#
+# This target stays, because it is the documented entry point and
+# ASIC/genus-innovus/Makefile wires it after `pnr_route` and after `restream`.
+# It is now a thin delegation carrying this die's table across.
+#
+#   make -f ASIC/common.mk romlibs-verify-gds ROM_GDS=/path/to/design.gds
 #-----------------------------------------------------------------------------
 ROM_GDS ?=
 
-romlibs-verify-gds:
-	@echo "== ROM stream-out gate: ROM contents inside the merged GDS =="
-	@test -n "$(ROM_GDS)" || { \
-	    echo "FAIL: ROM_GDS is not set — nothing to check. Pass the merged stream:"; \
-	    echo "      make -f common.mk romlibs-verify-gds ROM_GDS=/path/to/design.gds"; exit 1; }
-	@test -s "$(ROM_GDS)" || { \
-	    echo "FAIL: no GDS at $(ROM_GDS) (missing or empty)."; \
-	    echo "      Innovus exits 0 after failing to write a stream — never take the"; \
-	    echo "      absence of an error as evidence that a file was produced."; exit 1; }
-	@echo "   stream: $(ROM_GDS) ($$(du -h $(ROM_GDS) | cut -f1))"
-	@if [ ! -f "$(ROM_GDS_EXTRACT)" ]; then \
-	    echo ""; \
-	    echo "  ***************************************************************"; \
-	    echo "  *  ROM CONTENT IN THE STREAM: UNVERIFIED                      *"; \
-	    echo "  ***************************************************************"; \
-	    echo "  No bit extractor at $(ROM_GDS_EXTRACT)."; \
-	    echo "  The ROMs are mask programmed. Nothing in this run has compared a"; \
-	    echo "  single bit of the streamed macro against the firmware."; \
-	    echo "  UNVERIFIED IS NOT A PASS. Land the extractor (contract in"; \
-	    echo "  ASIC/rom_gate.mk) — the method is validated and exists."; \
-	    if [ "$(ROM_GDS_GATE)" = "report" ]; then \
-	        echo "  (not failing: ROM_GDS_GATE=report. A DETECTED mismatch still fails.)"; \
-	        exit 0; \
-	    fi; \
-	    exit 1; \
-	fi; \
-	fail=""; for r in $(ROMS); do \
-	    $(MAKE) -f $(COMMON_MK) --no-print-directory rom-gds-$$r ROM_GDS=$(ROM_GDS) || fail="$$fail $$r"; \
-	done; \
-	if [ -n "$$fail" ]; then \
-	    echo "FAIL: THE ROM CONTENT IN THE STREAMED GDS IS WRONG FOR:$$fail"; \
-	    echo "      Extraction kept at $(ROM_VERIFY_DIR)/<rom>_gds.bits. Run"; \
-	    echo "      'make -f common.mk romlibs-verify' too — if the macro itself is wrong"; \
-	    echo "      the stream is only carrying that fault, and the fix is upstream."; \
-	    exit 1; \
-	fi; \
-	echo "OK: every ROM word in $(ROM_GDS) matches its code file"
+# Where the evidence lands. Pointed at the run's own reports tree, this is
+# collected by whatever packages a submission BY CONSTRUCTION rather than by
+# someone remembering; left at the default it is under build/, which is
+# gitignored and outside $(ASIC_DIR)/reports -- i.e. reachable on this host and
+# nowhere else. Not relocated by default here: an in-flight invocation whose
+# evidence silently moves is its own incident.
+#   make -f ASIC/common.mk romlibs-verify-gds ROM_GDS=... \
+#        ROM_VERIFY_DIR=$(NANOSOC_ETH_CHIPLET_HOME)/ASIC/eth-chiplet/build/<tag>/reports/rom
 
-rom-gds-%:
-	@test -n "$(ROM_DIR_$*)" || { echo "FAIL: unknown ROM '$*' — known ROMs: $(ROMS)"; exit 1; }
-	@test -s "$(ROM_CODE_$*)" || { \
-	    echo "FAIL: [$(ROM_LABEL_$*)] no code file at $(ROM_CODE_$*) — nothing to compare the stream against"; exit 1; }
-	@test -s "$(ROM_MEMLIB_$*)" || { \
-	    echo "FAIL: [$(ROM_LABEL_$*)] no macro metadata at $(ROM_MEMLIB_$*) — the depth to"; \
-	    echo "      extract is unknown, and this gate does not guess."; exit 1; }
-	@mkdir -p $(ROM_VERIFY_DIR)
-	@rm -f $(ROM_VERIFY_DIR)/$*_gds.bits $(ROM_VERIFY_DIR)/$*_gds.log
-	@# Depth and width come from the MACRO, not from the spec: the spec is a
-	@# request, the macro is what was built and placed. rom-static-% is what
-	@# fails when the two disagree.
-	@words=$$(grep -oE 'NumberOfWords[[:space:]]*:[[:space:]]*[0-9]+' $(ROM_MEMLIB_$*) | grep -oE '[0-9]+' | head -1); \
-	 bits=$$(grep -oE '^[[:space:]]*bits[[:space:]]*=[[:space:]]*[0-9]+' $(ROM_SPEC_$*) | grep -oE '[0-9]+' | head -1); \
-	 test -n "$$words" -a -n "$$bits" || { \
-	    echo "FAIL: [$(ROM_LABEL_$*)] could not read the macro depth/width from"; \
-	    echo "      $(ROM_MEMLIB_$*) / $(ROM_SPEC_$*) — refusing to extract against a guess"; exit 1; }; \
-	 echo "  [$(ROM_LABEL_$*)] extracting $$words x $$bits bits for $(ROM_INST_$*) from the stream"; \
-	 rc=0; python3 $(ROM_GDS_EXTRACT) --gds "$(ROM_GDS)" \
-	    --struct-prefix "$(ROM_INST_$*)" --words "$$words" --bits "$$bits" \
-	    --out $(ROM_VERIFY_DIR)/$*_gds.bits > $(ROM_VERIFY_DIR)/$*_gds.log 2>&1 || rc=$$?; \
-	 while IFS= read -r l; do echo "  | $$l"; done < $(ROM_VERIFY_DIR)/$*_gds.log; \
-	 printf '%s\n' "$$ROM_BITS_ASSERT" | python3 - \
-	    "$(ROM_LABEL_$*)" "$(ROM_VERIFY_DIR)/$*_gds.bits" "$(ROM_CODE_$*)" \
-	    "$$words" "$$bits" "$$rc"
+romlibs-verify-gds:
+	@test -f "$(ROM_TOOLKIT_MK)" || { \
+	    echo "FAIL: no toolkit ROM gate at $(ROM_TOOLKIT_MK)."; \
+	    echo "      The stream-out mechanism lives in the asic-toolkit submodule."; \
+	    echo "      A gate that cannot run is a FAILURE, not a skip: nothing else in"; \
+	    echo "      this flow compares a bit of the streamed macro against the firmware."; \
+	    echo "      git submodule update --init ASIC/asic-toolkit"; exit 1; }
+	@# Filename inference, used ONLY in the direction that makes the gate
+	@# stricter. A stream whose name says logo cannot be graded with the
+	@# signoff default; it has to be classified deliberately. Inference that can
+	@# only refuse, never bless, is safe -- the reverse is what mislabels a
+	@# submission artefact as a signoff one and passes.
+	@case "$(notdir $(ROM_GDS))" in *_logo*|*logo_*) \
+	    if [ "$(ROM_GDS_CLASS)" = "signoff" ]; then \
+	        echo "FAIL: $(notdir $(ROM_GDS)) looks like a logo-merged SUBMISSION stream, and"; \
+	        echo "      ROM_GDS_CLASS is still the signoff default. Say what it is:"; \
+	        echo "        ROM_GDS_CLASS=submission ROM_GDS_SHIPS=yes ROM_GDS_REQUIRE_SHIPPING=1"; \
+	        exit 1; \
+	    fi ;; esac
+	@$(MAKE) -f $(ROM_TOOLKIT_MK) --no-print-directory rom-gate-gds \
+	    ROMS="$(ROMS)" ROM_DESIGN="nanosoc-ethernet-chiplet" \
+	    $(foreach r,$(ROMS),ROM_LABEL_$(r)="$(ROM_LABEL_$(r))" \
+	      ROM_CODE_$(r)="$(ROM_CODE_$(r))" ROM_SPEC_$(r)="$(ROM_SPEC_$(r))" \
+	      ROM_MEMLIB_$(r)="$(ROM_MEMLIB_$(r))" ROM_INST_$(r)="$(ROM_INST_$(r))" \
+	      ROM_GDS_PLACEMENTS_$(r)="$(ROM_GDS_PLACEMENTS_$(r))" \
+	      ROM_CODE_PEER_$(r)="$(ROM_CODE_PEER_$(r))") \
+	    ROM_VERIFY_DIR="$(ROM_VERIFY_DIR)" ROM_GDS_EXTRACT="$(ROM_GDS_EXTRACT)" \
+	    ROM_GDS="$(ROM_GDS)" ROM_GDS_GATE="$(ROM_GDS_GATE)" \
+	    ROM_GDS_CLASS="$(ROM_GDS_CLASS)" \
+	    ROM_GDS_CLASS_BASIS="$(ROM_GDS_CLASS_BASIS)" \
+	    ROM_GDS_SHIPS="$(ROM_GDS_SHIPS)" \
+	    ROM_GDS_REQUIRE_SHIPPING="$(ROM_GDS_REQUIRE_SHIPPING)" \
+	    ROM_GDS_GEOM_ROOT="$(ROM_GDS_GEOM_ROOT)"
 
 #-----------------------------------------------------------------------------
 # Mutation test — can this gate fail, and can it still pass?
@@ -818,45 +878,55 @@ if not counts:
 endef
 export ROM_JSON_ASSERT
 
-# Extracted-from-GDS bits vs the firmware code file.
-define ROM_BITS_ASSERT
-import os, sys
+# ROM_BITS_ASSERT lived here until 2026-08-18. It is now
+# $(ROM_TOOLKIT_MK)'s, alongside the stream-identity and macro-reachability
+# assertions it grew. Deleted rather than left as a second copy: this tree has
+# already been bitten three times in one day by two copies of one source, where
+# only the wiring said which one ran.
 
-name, bits_file, code, words_s, bits_s, rcs = sys.argv[1:7]
-words = int(words_s); width = int(bits_s); rc = int(rcs)
+
+# Declared sim/silicon divergence: valid, justified, and PRINTED. A fork of the
+# toolkit's ROM_SIM_ALLOW_ASSERT (ASIC/asic-toolkit/mk/rom.mk) -- keep in step.
+define ROM_SIM_ALLOW_ASSERT
+import re, sys
+
+name, key, reason, narrow_s, broad_s = sys.argv[1:6]
+narrow = [x for x in narrow_s.split() if x]
+broad = [x for x in broad_s.split() if x]
+
 def die(m):
     print("  FAIL: [%s] %s" % (name, m)); sys.exit(1)
 
-if not os.path.exists(bits_file):
-    die("the extractor wrote no bits at %s (it exited %d).\n"
-        "        Nothing was compared, so nothing is verified." % (bits_file, rc))
-got = [l.strip() for l in open(bits_file) if l.strip()]
-if not got:
-    die("the extractor's output %s is empty" % bits_file)
-if len(got) != words:
-    die("the extractor recovered %d of %d words from the stream.\n"
-        "        A partial extraction is not a measurement: either the macro is not in\n"
-        "        the stream, or the extractor stopped early." % (len(got), words))
-bad = [i for i, w in enumerate(got) if len(w) != width or w.strip("01")]
-if bad:
-    die("extracted word %d is not %d binary digits: %r" % (bad[0], width, got[bad[0]][:48]))
-if rc != 0:
-    die("the extractor exited %d; refusing to compare a run it says failed" % rc)
+if not narrow and not broad:
+    sys.exit(0)
 
-want = [l.strip() for l in open(code) if l.strip()]
-if len(want) < words:
-    die("the code file %s holds %d words but the ROM is %d deep -- the stream cannot be\n"
-        "        verified against an image shorter than the ROM" % (code, len(want), words))
-diff = [i for i in range(words) if got[i] != want[i]]
-if diff:
-    show = "\n".join("          word %4d: stream %s  firmware %s" % (i, got[i], want[i])
-                     for i in diff[:5])
-    die("THE BITS IN THE STREAM ARE NOT THIS FIRMWARE.\n"
-        "        %d of %d words differ, first at word %d:\n%s\n"
-        "        (full extraction kept at %s)" % (len(diff), words, diff[0], show, bits_file))
-print("  OK:   [%s] all %d words in the stream match %s" % (name, words, code))
+# HASH-SCOPED, NEVER PATH-SCOPED. A pattern forgives the image you meant and
+# every future image that lands in the same place, including a stale one -- a
+# different defect wearing the same clothes. Naming the CONTENT is what makes
+# the gate speak up again when the content changes, which is the only reason a
+# declaration beats a suppression.
+for a in narrow:
+    if not re.match(r"^sha256:[0-9a-fA-F]{64}$$", a):
+        die("ROM_SIM_ALLOW_%s entry %r is not a sha256:<64 hex> token.\n"
+            "        This table forgives CONTENT, not locations. The checker prints the\n"
+            "        exact token to add when it finds an unforgiven divergence."
+            % (key, a))
+
+# An undocumented exception is refused: six months on, the only honest thing
+# anyone could say about it is that somebody once thought it was fine.
+if not reason.strip():
+    die("ROM_SIM_ALLOW_%s declares %d exception(s) and ROM_SIM_ALLOW_REASON_%s is\n"
+        "        empty. An entry nobody can review is one nobody can retire."
+        % (key, len(narrow) + len(broad), key))
+
+print("  ALLOW-LISTED: [%s] sim/silicon divergence is DECLARED for this ROM." % name)
+print("        reason: %s" % reason.strip())
+for a in narrow:
+    print("        content: %s" % a)
+print("        An exception, not a pass: the checker still reports it below,")
+print("        marked [ALLOW-LISTED].")
 endef
-export ROM_BITS_ASSERT
+export ROM_SIM_ALLOW_ASSERT
 
 # The mutation test. Every case states what it expects and why.
 define ROM_SELFTEST_PY

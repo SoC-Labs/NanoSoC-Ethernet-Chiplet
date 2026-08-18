@@ -462,6 +462,33 @@ stages:
   # These stages VERIFY what that flow BUILT, so they need a completed
   # implementation run in ASIC/genus-innovus/work first. Run order:
   #     asic-signoff (rtl)  ->  asic-gds  ->  asic-signoff (physical)
+  #
+  # WHICH BUILD THESE STAGES GRADE, AND HOW FAR THAT PROMOTION REACHES
+  # ------------------------------------------------------------------
+  # 2026-08-18: rom-gds and drc moved from full-20260814 to fp1505, and lec-pnr
+  # moved its REVISED side only. fp1505 is the promoted place-and-route build —
+  # Innovus check_drc reports 0 rail-to-rail VDD/VSS shorts on it against
+  # full-20260814's 4 (docs/tapeout/43-drc-fp1505.md).
+  #
+  # THE PROMOTION IS PHYSICAL ONLY. It does NOT extend to synthesis and it does
+  # NOT extend to timing, and both exclusions are properties of fp1505 rather
+  # than preferences:
+  #
+  #   * NO SYNTHESIS. build/fp1505/outputs/ holds no _gate.v and no
+  #     _gate_power.v; its work/innovus.log records it reading full-20260814's
+  #     _gate_power.v. So `lec` and lec-pnr's GOLDEN side stay put — the
+  #     synthesised netlist under signoff IS full-20260814's, unchanged.
+  #   * NO CONSTRAINTS OF ITS OWN. build/fp1505/outputs/
+  #     nanosoc_eth_chiplet_pads_syn.sdc is a SYMLINK to full-20260814's; fp1505
+  #     re-ran floorplan and P&R against the older synthesis SDC. AND
+  #     ASIC/sta/run_sta.sh:6-9 REFUSES fp1505 BY NAME ("the live route, netlist
+  #     written 21:33, no route_manifest.txt"), because reading a database that
+  #     is still being written produces a corrupt-DB report that reads like a
+  #     design bug. TREAT THAT REFUSAL AS A CORRECT GUARD. Any timing stage
+  #     added here stays on full-20260814 until fp1505 has its own closed
+  #     synthesis and its own route manifest. There is no STA stage in this
+  #     manifest today (sta-signoff sits in `unsupported` below), so nothing was
+  #     moved on the timing side and nothing needs to be.
 
   # --- Boot ROM contents ------------------------------------------------------
   # THERE WAS A `romlibs` CHECK IN THIS FLOW FOR MONTHS AND IT WAS NOT A CONTENT
@@ -589,7 +616,7 @@ stages:
     # the same defect class as a check that cannot fail. It is now the exact
     # input `run:` consumes below: absent, the stage is UNVERIFIED, not FAIL.
     needs_implementation:
-      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
     # Content-correct at synthesis does NOT prove the bits reached the mask. The
     # macro is merged into the stream by write_stream from a hand-maintained
     # $gds_merge_list in scripts/config.tcl; a dropped or stale entry produces a
@@ -628,10 +655,26 @@ stages:
     # THE RUN TAG IS PINNED, deliberately, the way ASIC/sta/run_sta.sh:53 pins
     # it and for the same reason: a glob over build/*/ grades whichever run
     # sorts first, which at any moment may be a half-written live one. When a
-    # run supersedes full-20260814, change it HERE AND IN needs_implementation
+    # run supersedes the pinned one, change it HERE AND IN needs_implementation
     # above -- they are the same string on purpose, so this stage cannot
     # declare one stream and measure another.
-    run: make -C ASIC -f common.mk romlibs-verify-gds ROM_GDS=$PWD/ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds
+    #
+    # MOVED full-20260814 -> fp1505, 2026-08-18, needs_implementation and run:
+    # together. fp1505 is the promoted place-and-route build: Innovus check_drc
+    # reports ZERO rail-to-rail VDD/VSS shorts on it against full-20260814's
+    # four (docs/tapeout/43-drc-fp1505.md), so fp1505's
+    # outputs/nanosoc_eth_chiplet_pads.gds is the stream that would be
+    # submitted, and it is the only one whose ROM contents are worth asking
+    # about. check: and artifacts: are NOT repointed with it, and that is not an
+    # oversight: both read $(ROM_VERIFY_DIR), which flow.mk:387 anchors at
+    # $(BUILD_DIR)/rom_verify -- one directory for all runs, no run tag in it.
+    # The only thing in this stage that names a build is ROM_GDS.
+    #
+    # THIS IS A RE-MEASUREMENT, NOT A CARRY-OVER. fp1505 is a fresh write_stream,
+    # so the 2026-08-17 verification of full-20260814's two boot ROMs says
+    # nothing about it; a dropped or stale $gds_merge_list entry is exactly the
+    # kind of fault a re-stream introduces.
+    run: make -C ASIC -f common.mk romlibs-verify-gds ROM_GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
     check: |
       python3 - <<'EOF'
       import os, subprocess, sys
@@ -689,6 +732,27 @@ stages:
     # before it takes a Conformal seat: the dofile Genus wrote during syn_map,
     # the gate netlist, and Genus's own fv model, which lives in work/ and which
     # `make clean` destroys.
+    #
+    # DELIBERATELY NOT MOVED TO fp1505, 2026-08-18 -- DO NOT "FIX" THIS.
+    # rom-gds, drc and the REVISED half of lec-pnr all moved to fp1505 in that
+    # edit; this stage did not, and the reason is a property of fp1505 rather
+    # than a preference:
+    #
+    #   * build/fp1505/outputs/ contains NO nanosoc_eth_chiplet_pads_gate.v and
+    #     no _gate_power.v. It is a place-and-route-only build -- its outputs
+    #     are the GDS, the SDF, _pnr.v, and a SYMLINK to full-20260814's
+    #     _syn.sdc. There is no synthesis in it to compare RTL against.
+    #   * build/fp1505/work/innovus.log records the run READING
+    #     full-20260814/outputs/nanosoc_eth_chiplet_pads_gate_power.v as its
+    #     input netlist.
+    #
+    # So the synthesised netlist under signoff IS full-20260814's, unchanged, and
+    # RTL-vs-gate equivalence proved against it carries over to fp1505 verbatim.
+    # Pointing this stage at fp1505 would not re-measure anything: it would make
+    # all three inputs below absent, and the stage would render UNVERIFIED --
+    # which is precisely the state it was rescued from on 2026-08-18. The same
+    # argument is what keeps lec-pnr's GOLDEN side on full-20260814 while its
+    # REVISED side moves; read the split note there.
     needs_implementation:
       - ASIC/eth-chiplet/build/full-20260814/outputs/lec.dofile
       - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate.v
@@ -853,6 +917,18 @@ stages:
     # is exactly what this stage exists to say out loud, and until it is
     # resolved in the toolkit the honest reading of `lec` and `lec-pnr` is that
     # their harness has a known-broken self-test case.
+    # DELIBERATELY NOT MOVED TO fp1505, 2026-08-18 -- DO NOT "FIX" THIS EITHER,
+    # and for a DIFFERENT reason from `lec` above. This stage does not grade the
+    # design at all. It pushes the toolkit's nine deliberately mutated netlists
+    # through the same Conformal harness to ask whether that harness can still
+    # tell equivalent from non-equivalent; its subject is
+    # flow/verify/run_lec.sh, not any build. RUN_TAG here only chooses the
+    # directory the transcripts and the summary are written into, and
+    # full-20260814 is where every recorded selftest of this harness already
+    # lives. Repointing it would scatter the harness's history across two trees
+    # and measure nothing new -- and note that check: reads that same directory,
+    # so moving one without the other would leave the stage grading a directory
+    # its own run never wrote to.
     pre:
       - mkdir -p ASIC/eth-chiplet/build/full-20260814/logs
     run: make -C ASIC/eth-chiplet lec-selftest RUN_TAG=full-20260814 2>&1 | tee ASIC/eth-chiplet/build/full-20260814/logs/lec_selftest_summary.log; exit ${PIPESTATUS[0]}
@@ -945,9 +1021,32 @@ stages:
     # the logic, has been reporting "not measured" while both netlists sat in
     # the toolkit's build tree and a real post-P&R LEC passed over them
     # (reports/lec/pnr/verdict.txt: 61674 compare points, 0 non-equivalent).
+    #
+    # SPLIT ACROSS TWO BUILDS, 2026-08-18, and the split IS the measurement.
+    #
+    #   GOLDEN  stays on full-20260814/outputs/*_gate_power.v, because that is
+    #           the netlist place-and-route actually consumed: fp1505 has no
+    #           _gate_power.v of its own, and build/fp1505/work/innovus.log
+    #           records it reading full-20260814's.
+    #   REVISED moves to fp1505/outputs/*_pnr.v, because fp1505 is the routed
+    #           database being promoted (0 rail-to-rail VDD/VSS shorts against
+    #           full-20260814's 4) and its _pnr.v is what write_stream turned
+    #           into the stream rom-gds and drc now grade.
+    #
+    # Pointing BOTH at fp1505 would fail on an absent golden; leaving both on
+    # full-20260814 would prove nothing about the netlist being shipped. The
+    # toolkit supports exactly this split already and it is not a workaround:
+    # ASIC/asic-toolkit/mk/flow.mk:222 drives SYN_OUT_DIR from SYN_RUN_TAG while
+    # :215-218 drive OUT_DIR / LOG_DIR / REPORT_DIR from RUN_TAG, and
+    # flow.mk:832-850 takes golden from $(SYN_OUT_DIR) and revised from
+    # $(OUT_DIR). Measured with `make -C ASIC/eth-chiplet env RUN_TAG=fp1505
+    # SYN_RUN_TAG=full-20260814`: SYN_OUT_DIR -> build/full-20260814/outputs,
+    # RUN_DIR -> build/fp1505. The log and the reports follow RUN_TAG, which is
+    # why check: and artifacts: below name fp1505 alone while
+    # needs_implementation names both.
     needs_implementation:
       - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate_power.v
-      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_pnr.v
+      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads_pnr.v
     timeout_s: 21600
     # Closes the gap this manifest previously declared under `unsupported`.
     # Golden is outputs/*_gate_power.v — the exact netlist 2_pnr_setup.tcl hands
@@ -959,12 +1058,15 @@ stages:
     # survives `make clean`.
     description: "Conformal LEC — synthesised netlist vs POST-P&R netlist"
     # NOT `make asic-lec-pnr`. That root forwarder now reaches the toolkit too,
-    # but it carries no run tag, so it would resolve to RUN_TAG=default -- a
-    # different build directory from the one needs_implementation above names
-    # and the one check: below reads. The tag is spelled out here for the same
-    # reason it is spelled out in rom-gds: a stage must not declare one run and
-    # measure another.
-    run: make -C ASIC/eth-chiplet lec-pnr RUN_TAG=full-20260814
+    # but it carries no run tag, so it would resolve to RUN_TAG=default AND
+    # SYN_RUN_TAG=default (flow.mk:129 defaults SYN_RUN_TAG to RUN_TAG) -- a
+    # different build directory from the ones needs_implementation above names
+    # and the one check: below reads. BOTH tags are spelled out here for the
+    # same reason one is spelled out in rom-gds: a stage must not declare one
+    # run and measure another. Omitting SYN_RUN_TAG would silently look for the
+    # golden in build/fp1505/outputs/, where it does not exist, and flow.mk:833
+    # would refuse in seconds -- a visible failure, but the wrong one.
+    run: make -C ASIC/eth-chiplet lec-pnr RUN_TAG=fp1505 SYN_RUN_TAG=full-20260814
     # SAME TOOL, SAME GRAMMAR, SAME CHECK AS `lec` — deliberately, and read the
     # note there for the measurement behind it. This stage held a Conformal seat
     # for up to six hours and then reported on an exit status the Makefile recipe
@@ -975,7 +1077,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import re, sys
-      L = "ASIC/eth-chiplet/build/full-20260814/logs/lec_pnr.log"
+      L = "ASIC/eth-chiplet/build/fp1505/logs/lec_pnr.log"
       try:
           t = open(L, errors="replace").read()
       except OSError:
@@ -1004,14 +1106,37 @@ stages:
           print("lec-pnr: FAIL —", b)
       sys.exit(1 if bad else 0)
       EOF
+    #
+    # !! check_proof IS VACUOUS UNTIL THE FIXTURES ARE MOVED — 2026-08-18 !!
+    # Same cause as the drc stage below; read the long note there for the
+    # mechanism. Symptom here is the mirror image: the real build/fp1505 has no
+    # logs/lec_pnr.log yet, so all three cases now report "no post-P&R LEC log
+    # at ASIC/eth-chiplet/build/fp1505/logs/lec_pnr.log". must_pass is BROKEN,
+    # and fail-nonequivalent — the case that is supposed to prove this gate
+    # notices Conformal saying NON-EQUIVALENT — now fails because a file is
+    # missing. It has stopped testing what it names.
+    #
+    # THE FIX IS FIXTURE-SIDE:
+    #   git mv ci/fixtures/lec-pnr/<case>/ASIC/eth-chiplet/build/full-20260814 \
+    #          ci/fixtures/lec-pnr/<case>/ASIC/eth-chiplet/build/fp1505
+    # for pass, fail-nonequivalent and fail-no-log. Owned by whoever owns
+    # ci/fixtures; not done here. And as with drc: do NOT restore the green by
+    # pointing check: back at full-20260814, which would leave this stage
+    # running fp1505 and grading a log full-20260814 wrote.
     check_proof:
       must_pass: ci/fixtures/lec-pnr/pass
       must_fail:
         - ci/fixtures/lec-pnr/fail-nonequivalent
         - ci/fixtures/lec-pnr/fail-no-log
+    # fp1505, matching check: and the REVISED half of needs_implementation --
+    # LOG_DIR and REPORT_DIR follow RUN_TAG, not SYN_RUN_TAG, so this run's
+    # transcript and verdict land under build/fp1505/ even though its golden
+    # came from full-20260814. Nothing under full-20260814/reports/lec/pnr/
+    # describes this comparison; that directory holds the older
+    # full-20260814-vs-full-20260814 run and would misattribute if collected.
     artifacts:
-      - ASIC/eth-chiplet/build/full-20260814/logs/lec_pnr*.log
-      - ASIC/eth-chiplet/build/full-20260814/reports/lec/pnr/**
+      - ASIC/eth-chiplet/build/fp1505/logs/lec_pnr*.log
+      - ASIC/eth-chiplet/build/fp1505/reports/lec/pnr/**
 
   - id: lvs-preflight
     phase: physical
@@ -1071,30 +1196,56 @@ stages:
     # the entry point alone would have left it running one tree and grading
     # another, which is worse than not running.
     #
+    # MOVED full-20260814 -> fp1505, 2026-08-18, all four keys together again
+    # and for the reason stated directly above. fp1505 is the promoted
+    # place-and-route build -- Innovus check_drc reports 0 SHORT on it against
+    # full-20260814's 4 rail-to-rail VDD/VSS shorts (docs/tapeout/43-drc-fp1505.md
+    # §3) -- so fp1505's stream is the one that would be submitted, and grading
+    # the superseded one is grading a stream nobody intends to ship.
+    #
     # $(GDS) as the toolkit resolves it — measured, not assumed:
-    #   make -C ASIC/eth-chiplet RUN_TAG=full-20260814 … GDS
-    #     -> build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds  (313 MB)
-    #   … DRC_RUNDIR -> build/full-20260814/work/drc_run               (177 files)
+    #   make -C ASIC/eth-chiplet RUN_TAG=fp1505 … GDS
+    #     -> build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds  (312 MB, present)
+    #   … DRC_RUNDIR -> build/fp1505/work/drc_run  (flow.mk:671, $(WORK_DIR)/drc_run)
     #   … DRC_SCRIPT -> ASIC/genus-innovus/scripts/calibre/run_drc.sh
+    # THAT RUNDIR IS POPULATED — 177 files, landed 2026-08-18 11:32 — and the
+    # census over it reproduces docs/tapeout/43-drc-fp1505.md exactly (837 raw,
+    # 691 waived, 146 reported, 140 design-owned, 6159 density windows), which
+    # is an independent confirmation that it is the same measurement and not a
+    # partial write. Cap 1000 against 837 results: NOT saturated, so the total
+    # is a real number rather than a truncation.
+    #
+    # It matters that this evidence is in the BUILD TREE. The uncapped run
+    # behind doc 43 was written to ASIC/genus-innovus/calibre_runs/
+    # drc_fp1505_20260818, which is GITIGNORED (.gitignore:23,
+    # `ASIC/*/calibre_runs`) and therefore could never be this stage's evidence:
+    # CI clones the repo and finds nothing there. Grade the build tree.
     # THE DECK IS UNCHANGED BY THIS MOVE. The toolkit dispatches `drc` to
     # drc-project, whose runner is that same legacy run_drc.sh (design.mk:434),
     # with DRC_DECK deliberately empty so it takes its assembling branch exactly
     # as `make -C ASIC/genus-innovus drc` did. This changes WHICH GDS IS READ,
     # not which rules are applied.
     #
-    # THIS STAGE STAYS RED, and that is the point. Run over the evidence it now
-    # names, the census reports 140 design-owned results and 6149 CORE-ONLY
+    # THIS STAGE STAYS RED, and that is the point. On fp1505 the census reports
+    # 837 raw / 146 post-waiver / 140 design-owned results and 6159 CORE-ONLY
     # failing density windows against budgets of 0 — a MEASURED failure where
-    # there was previously an unmeasured one. No green is manufactured here.
+    # there was previously an unmeasured one. No green is manufactured here, and
+    # the move does not manufacture one either: fp1505 does NOT improve any
+    # Calibre total (raw 837, post-waiver 146 and design-owned 140 are IDENTICAL
+    # on fp1505, full-20260814 and m5off5, and the core density windows are
+    # marginally WORSE at 6159 vs 6149). fp1505 is promoted for its zero
+    # rail-to-rail shorts, which Calibre does not see at all — that is an
+    # Innovus check_drc result. Anyone reading a still-red drc row after this
+    # move is reading it correctly.
     needs_implementation:
-      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre DRC on the routed GDS (signoff-grade ruledeck)"
     # NOT `make asic-drc`, for the reason spelled out in rom-gds and lec-pnr: that
     # root forwarder now reaches the toolkit, but it carries no run tag, so it
     # resolves to RUN_TAG=default — a different build directory from the one
     # needs_implementation declares and check: reads. A stage must not declare
     # one run and measure another.
-    run: make -C ASIC/eth-chiplet drc RUN_TAG=full-20260814
+    run: make -C ASIC/eth-chiplet drc RUN_TAG=fp1505
     # Calibre exits 0 whether or not it found violations, and the Makefile does
     # not parse the result. Count them here or this stage means nothing.
     #
@@ -1125,12 +1276,40 @@ stages:
     # in code — and it FAILS the gate if it goes stale or if any waived count
     # moves. See the fail-waiver-stale fixture below.
     check: |
-      python3 scripts/ci/drc_census.py ASIC/eth-chiplet/build/full-20260814/work/drc_run
+      python3 scripts/ci/drc_census.py ASIC/eth-chiplet/build/fp1505/work/drc_run
     # NOTE these fixtures are also a live test of DRC_DESIGN_BUDGET /
     # DRC_DENSITY_BUDGET: fail-design-results carries 7 design-owned results, so
     # if the environment has raised the budget past 7 the must-fail case PASSES
     # and `prove` goes red. That is the intended behaviour — a budget set high
     # enough to swallow real violations has made the gate blind.
+    #
+    # !! check_proof IS VACUOUS UNTIL THE FIXTURES ARE MOVED — 2026-08-18 !!
+    # Measured, not predicted: `signoff.py prove drc` reports must_pass BROKEN
+    # and all four must_fail cases "ok", and EVERY ONE of the five printed the
+    # same 837 results / 6159 density windows — the REAL fp1505 numbers.
+    # fail-no-summary included, which is the case that is supposed to have no
+    # summary at all. None of them read its own fixture.
+    #
+    # MECHANISM. These fixtures encode the build tag in their PATH:
+    # ci/fixtures/drc/*/ASIC/eth-chiplet/build/full-20260814/work/drc_run, with
+    # the .__exclusive__ marker inside that drc_run so the repo's real one
+    # cannot leak in. The marker defends the OLD path only. prove's sandbox
+    # symlinks every other build directory straight to the real tree — fp1505
+    # among them — so the moment check: names fp1505, the real (failing) rundir
+    # is what all five cases grade, and the proof stops discriminating.
+    # signoff.py:80-89 anticipates exactly this leak, for exactly this stage.
+    #
+    # THE FIX IS FIXTURE-SIDE, and is a rename, not a rewrite:
+    #   git mv ci/fixtures/drc/<case>/ASIC/eth-chiplet/build/full-20260814 \
+    #          ci/fixtures/drc/<case>/ASIC/eth-chiplet/build/fp1505
+    # for all five cases, keeping the .__exclusive__ marker where it is. Owned
+    # by whoever owns ci/fixtures; not done here.
+    #
+    # DO NOT "FIX" THIS BY POINTING check: BACK AT full-20260814. That would
+    # restore a green proof over a stage that runs fp1505 and grades
+    # full-20260814 — one tree implemented, another graded, which is the defect
+    # this stage's own comment block above exists to forbid. A red proof that
+    # names its cause is worth more than a green one that measures nothing.
     check_proof:
       must_pass: ci/fixtures/drc/pass
       must_fail:
@@ -1157,7 +1336,7 @@ stages:
     # report's `artifacts_missing` list, which trains a reader to skim that list
     # instead of reading it.
     artifacts:
-      - ASIC/eth-chiplet/build/full-20260814/work/drc_run/**
+      - ASIC/eth-chiplet/build/fp1505/work/drc_run/**
 
   # --- Power delivery ---------------------------------------------------------
   # THE FIRST VOLTAGE THIS PIPELINE HAS EVER COMPUTED. Before this row the
@@ -1187,7 +1366,25 @@ stages:
     gate: report
     label: soclabs-pdk
     description: "Static rail analysis (Voltus rail commands under Innovus): measured IR drop on the routed database, gated on the completeness assertions that decide whether the millivolts mean anything"
-    run: make -C ASIC/genus-innovus rail
+    # RAIL_RUN_TAG SPELLED OUT, 2026-08-18, though fp1505 is already
+    # rail_project.mk:54's default. The tag is what binds this line to the census
+    # path check: below pins; leaving it implicit means a one-word edit to the
+    # default in another file silently makes run: analyse one build while check:
+    # grades another, and both would still be green-looking.
+    #
+    # THIS TARGET DOES NOT EXIST AT HEAD — measured 2026-08-18, and NOT caused by
+    # the pin above. `rail` is defined in ASIC/genus-innovus/rail_project.mk:97,
+    # which IS committed, but the line that wires it in —
+    # `include $(DESIGN_DIR)/rail_project.mk`, worktree Makefile:888 — is in the
+    # WORKTREE ONLY. Measured at all three levels: worktree 1, index 0, HEAD 0.
+    # So `make -C ASIC/genus-innovus rail` resolves on this disk and dies with
+    # "No rule to make target 'rail'" in CI, which clones HEAD. Same defect the
+    # rom-gds stage records above for `romlibs-gds-check`, and the reason
+    # scripts/ci/audit_signoff_targets.py probes HEAD separately from the
+    # worktree. ir-drop-selftest's `rail-selftest` is unreachable for the
+    # identical reason. THE FIX IS TO COMMIT THAT INCLUDE, in
+    # ASIC/genus-innovus/Makefile — not to change anything here.
+    run: make -C ASIC/genus-innovus rail RAIL_RUN_TAG=fp1505
     # THE CHECK NEVER CONSULTS AN EXIT CODE — not the tool's and not the stage
     # script's. report_rail, report_resistance and set_power_pads have all been
     # observed printing `**ERROR` and returning SUCCESS on this design, so the
@@ -1198,20 +1395,124 @@ stages:
     # against is a rail solve that attached no current, completed successfully
     # and reported a SMALL drop — the best possible result produced from no
     # data. A missing census is the same class of event and is a failure here.
+    #
+    # THIS STAGE HAD A SELECTOR DEFECT, NOT A POINTER DEFECT — 2026-08-18.
+    # It is NOT part of the full-20260814 -> fp1505 re-point above and re-pointing
+    # would not have touched it, because IT NEVER NAMED A BUILD AT ALL. It read
+    #
+    #     CEN=$(ls -1t ASIC/genus-innovus/rail/work/*/census.txt | head -1)
+    #
+    # — newest by mtime, latched to whatever was written last, forever. Measured:
+    #
+    #     fp1505-negctl/census.txt    00:12   1718 b   <- SELECTED
+    #     full-20260814/census.txt    00:00   1907 b
+    #     fp1505/census.txt           23:50   3323 b   <- the real run
+    #
+    # The winner is a DELIBERATELY FAULTED NEGATIVE CONTROL. Its first three
+    # lines declare stage.script=rail_negative_control.tcl,
+    # stage.negative_control=true and stage.fault=set_power_pads -format padcell
+    # without -short_pin_nodes true, and the run left no verdict.json. So this
+    # gate was judging the die's power delivery on an injected fault, and would
+    # have gone on doing so after the re-point, because the newest file does not
+    # change when other stages change build.
+    #
+    # THE FIX IS NOT A DIFFERENT WINNER. A stage that silently picks one is the
+    # defect; picking a better one leaves the mechanism intact and re-breaks the
+    # next time anyone runs a control. Three changes, and note that renaming or
+    # deleting fp1505-negctl was DELIBERATELY NOT one of them — that works today
+    # and fails again the next time a control is written:
+    #
+    #   1. NAMED, NEVER SELECTED. The census path is spelled out, matching the
+    #      RAIL_RUN_TAG on run: above (rail_project.mk:54 defaults it to fp1505;
+    #      :64 writes the census to $(RAIL_WORK)/$(RAIL_TAG)), so run: and check:
+    #      name the same string on purpose — the discipline the drc stage states.
+    #      RAIL_CENSUS still overrides, for re-judging an archived run by hand.
+    #   2. FAIL ON AMBIGUITY. The one arm that still enumerates refuses outright
+    #      when more than one candidate exists, instead of ranking them. It
+    #      exists ONLY for the check_proof sandbox below, whose fixtures inject
+    #      their census at rail/work/fixture/census.txt — a name this manifest
+    #      cannot pin without editing files it does not own — and which is
+    #      exclusive, so exactly one is ever present there. Nothing in it can
+    #      order two candidates.
+    #   3. COMPLETENESS, ASSERTED INDEPENDENTLY. The faulted census is 44 keys
+    #      against the real run's 60 — it never wrote stage.started, db.mtime,
+    #      core.bbox, pgv.path or the pad masters. That gap catches this class of
+    #      substitution with no reference to mtime AND with no reference to the
+    #      negative_control marker, which matters because two people found this
+    #      by two different routes and neither was the obvious one. All six keys
+    #      are present in both real censuses and in all six must_fail fixtures,
+    #      so no fixture is diverted into failing for the wrong reason.
+    #
+    # The marker check below is the SELECTION side: this stage must not CHOOSE a
+    # control. rail_gate.py carries its own hard refusal for being HANDED one.
+    # Both are wanted; either alone leaves a route in.
     check: |
       set -u
+      # -- 1 -- WHICH CENSUS. Named, never ranked. --------------------------
+      RAIL_WORK=ASIC/genus-innovus/rail/work
+      PINNED=$RAIL_WORK/fp1505/census.txt
       CEN="${RAIL_CENSUS:-}"
-      if [ -z "$CEN" ]; then
-        CEN=$(ls -1t ASIC/genus-innovus/rail/work/*/census.txt 2>/dev/null | head -1)
-      fi
-      if [ -z "$CEN" ] || [ ! -f "$CEN" ]; then
-        echo "no rail census under ASIC/genus-innovus/rail/work/*/ — the stage did not run."
-        echo "An absent IR-drop result is NOT a pass. A rail run that fails to attach"
-        echo "current reports SMALL drops, which is the failure mode that looks like"
-        echo "good news; having no result at all is not better than that."
-        exit 1
+      case "$CEN" in
+        *'*'*|*'?'*|*'['*)
+          echo "ir-drop: FAIL — RAIL_CENSUS='$CEN' is a PATTERN, not a path."
+          echo "  This stage is GIVEN a census; it does not choose one. Name one file."
+          exit 1 ;;
+      esac
+      if [ -n "$CEN" ]; then
+        [ -f "$CEN" ] || {
+          echo "ir-drop: FAIL — RAIL_CENSUS names $CEN, which is not a file."
+          echo "  An override that resolves to nothing must not fall back to a guess."
+          exit 1; }
+      elif [ -f "$PINNED" ]; then
+        CEN=$PINNED
+      else
+        # Pinned run absent. DO NOT RANK. Sandbox-only arm; see note 2 above.
+        n=0; only=
+        for c in "$RAIL_WORK"/*/census.txt; do
+          [ -f "$c" ] || continue
+          n=$((n + 1)); only=$c
+        done
+        if [ "$n" -eq 0 ]; then
+          echo "ir-drop: FAIL — no rail census at $PINNED, and none under $RAIL_WORK/*/."
+          echo "  An absent IR-drop result is NOT a pass. A rail run that fails to attach"
+          echo "  current reports SMALL drops, which is the failure mode that looks like"
+          echo "  good news; having no result at all is not better than that."
+          exit 1
+        fi
+        if [ "$n" -gt 1 ]; then
+          echo "ir-drop: FAIL — $PINNED is absent and $n candidate censuses exist:"
+          for c in "$RAIL_WORK"/*/census.txt; do [ -f "$c" ] && echo "      $c"; done
+          echo "  REFUSING TO CHOOSE. Ranking them by date is the defect this stage was"
+          echo "  rewritten to remove — it is how a faulted negative control came to be"
+          echo "  graded as the die. Restore the pinned run, or set RAIL_CENSUS."
+          exit 1
+        fi
+        CEN=$only
       fi
       echo "census: $CEN"
+      # -- 2 -- IS IT A CONTROL? --------------------------------------------
+      if cut -d= -f1 "$CEN" | grep -qxF stage.negative_control ||
+         cut -d= -f1 "$CEN" | grep -qxF stage.fault; then
+        echo "ir-drop: FAIL — $CEN is a DELIBERATELY FAULTED NEGATIVE CONTROL:"
+        grep -E '^stage\.(script|negative_control|fault)=' "$CEN" | sed 's/^/      /'
+        echo "  A control exists to prove this gate CAN fail. Grading the design on one"
+        echo "  turns that proof into the verdict, and its millivolts describe an"
+        echo "  injected fault, not the die."
+        exit 1
+      fi
+      # -- 3 -- IS IT COMPLETE? ---------------------------------------------
+      missing=
+      for k in stage.started db.mtime core.bbox pgv.path pads.vdd_master pads.vss_master; do
+        cut -d= -f1 "$CEN" | grep -qxF "$k" || missing="$missing $k"
+      done
+      if [ -n "$missing" ]; then
+        echo "ir-drop: FAIL — $CEN is INCOMPLETE ($(wc -l < "$CEN") keys)."
+        echo "  Absent:$missing"
+        echo "  These name the database read, the grid view solved, the pad masters the"
+        echo "  sources attached to and the area analysed. Without them rail_gate.py"
+        echo "  judges a fragment of a run and reports on it as though it were the run."
+        exit 1
+      fi
       python3 ASIC/genus-innovus/rail/rail_gate.py \
           --census  "$CEN" \
           --budgets ASIC/genus-innovus/rail/rail_budgets.txt \
@@ -1228,12 +1529,18 @@ stages:
         - ci/fixtures/ir-drop/fail-disconnected-instances
         - ci/fixtures/ir-drop/fail-over-budget
         - ci/fixtures/ir-drop/fail-no-census
+    # PINNED TO MATCH run: AND check:, for the reason the drc stage states:
+    # artifacts: must collect the evidence the stage actually graded. The `*`
+    # these lines used to carry swept fp1505-negctl (the faulted negative
+    # control), full-20260814-short and full-20260814 into the report alongside
+    # a verdict computed from exactly one of them — which is how a reader ends up
+    # attributing a millivolt number to the wrong build.
     artifacts:
-      - ASIC/genus-innovus/rail/work/*/census.txt
-      - ASIC/genus-innovus/rail/work/*/verdict.json
-      - ASIC/genus-innovus/rail/work/*/results/*/Reports/*/*.main.rpt
-      - ASIC/genus-innovus/rail/work/*/results/*/Reports/*/*.layerbased_ir.rpt
-      - ASIC/genus-innovus/rail/work/*/results/*/*/*_vsrcs.rpt
+      - ASIC/genus-innovus/rail/work/fp1505/census.txt
+      - ASIC/genus-innovus/rail/work/fp1505/verdict.json
+      - ASIC/genus-innovus/rail/work/fp1505/results/*/Reports/*/*.main.rpt
+      - ASIC/genus-innovus/rail/work/fp1505/results/*/Reports/*/*.layerbased_ir.rpt
+      - ASIC/genus-innovus/rail/work/fp1505/results/*/*/*_vsrcs.rpt
 
   # --- Can the IR-drop gate actually FAIL? ------------------------------------
   # Same doctrine as rom-selftest and lec-selftest, and runs before the row it
