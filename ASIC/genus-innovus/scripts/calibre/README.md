@@ -3,9 +3,23 @@
 Full write-up: [`docs/tapeout/12-calibre-drc.md`](../../../../docs/tapeout/12-calibre-drc.md)
 
 ```sh
-make drc                    # from ASIC/genus-innovus/
-./scripts/calibre/run_drc.sh          # equivalent, no make
-./scripts/calibre/run_drc.sh some/other.gds   # check a different stream
+make drc                              # from ASIC/genus-innovus/ — the normal way
+make drc GDS=some/other.gds           # check a different stream
+make drc-census                       # count and gate what that run produced
+```
+
+**Run it through `make`.** The scripts here no longer carry a copy of the
+design's identity — the top cell, die box and foundry deck come from the one
+manifest, [`../../drc_project.mk`](../../drc_project.mk), and the Makefile
+passes them in. `run_drc.sh` invoked bare will tell you which variable is
+missing rather than quietly checking the wrong thing. To drive it without
+`make`, export them yourself:
+
+```sh
+BLOCK=nanosoc_eth_chiplet_pads \
+DIE_XLB=0.0 DIE_YLB=0.0 DIE_XRT=1600.0 DIE_YRT=2000.0 \
+FOUNDRY_DECK=$TSMC_65_HOME/CMOS/util/MAIN_DRC_TopMu/$FOUNDRY_DECK_NAME \
+    ./scripts/calibre/run_drc.sh some/other.gds
 ```
 
 Headless. No `$DISPLAY`, no GUI packages, no runset.
@@ -14,14 +28,19 @@ Headless. No `$DISPLAY`, no GUI packages, no runset.
 
 | File | Purpose |
 |---|---|
-| `nanosoc_eth_chiplet_pads.drc.rules` | project-owned SVRF wrapper: supplies layout, top cell and output paths, then `INCLUDE`s the TSMC deck |
-| `run_drc.sh` | preflight + headless `calibre -drc -hier` driver; summarises violations at the end |
+| `tsmc65_minisic_header.svrf.in` | **template** for the project-owned switch/environment block. `@@TOPCELL@@` and `@@XLB@@`/`@@YLB@@`/`@@XRT@@`/`@@YRT@@` are substituted at splice time — SVRF cannot expand a variable inside a cell name, so it cannot be deferred to Calibre |
+| `make_project_deck.sh` | substitutes the template, splices the foundry rule bodies below their own `/* SWITCH DEFINITION END */`, md5-checks the spliced body against the read-only foundry deck, and refuses to emit a deck with any placeholder left unfilled |
+| `nanosoc_eth_chiplet_pads.drc.rules` | the OLD project-owned SVRF wrapper: supplies layout, top cell and output paths, then `INCLUDE`s the TSMC deck. No longer the default — kept for `DRC_DECK=…` A/B runs against foundry switch defaults |
+| `run_drc.sh` | preflight + headless `calibre -drc -hier` driver; asserts the deck's `LAYOUT PRIMARY` equals `$BLOCK`, and summarises violations at the end |
 
 ## Environment
 
 | Variable | Default |
 |---|---|
-| `DRC_GDS` | `../outputs/nanosoc_eth_chiplet_pads.gds` |
+| `BLOCK` | **required** — from `drc_project.mk`. Asserted against the deck's `LAYOUT PRIMARY` |
+| `DIE_XLB` `DIE_YLB` `DIE_XRT` `DIE_YRT` | **required** by `make_project_deck.sh` — from `drc_project.mk`, which reads them out of `scripts/floorplan.tcl` |
+| `FOUNDRY_DECK` | **required** by `make_project_deck.sh` — from `drc_project.mk` |
+| `DRC_GDS` | `../outputs/$BLOCK.gds` |
 | `DRC_RUNDIR` | `../work/drc_run` |
 | `DRC_CPUS` | `8` |
 | `DRC_NOWAIT` | unset — queue for a licence. Set `1` to fail fast. |

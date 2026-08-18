@@ -1,0 +1,289 @@
+[HOLE 3] D2D RX lane-bundle skew — set_data_check, and the Genus handoff that
+         makes it impossible to land in constraints.sdc
+
+WHAT THIS DOES
+    NEW  ASIC/genus-innovus/inputs/pnr_extra_constraints.sdc
+         16 set_data_check commands (8 lanes x setup+hold) at +/-0.5 ns.
+    EDIT ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc
+         adds that file as a SECOND -sdc_files entry, after _syn.sdc.
+
+    No other file changes. No clock created or removed. No clock-to-clock
+    exception. Nothing Genus sees changes at all — synthesis is bit-identical.
+
+WHY THE NEW FILE — THIS IS THE FINDING, NOT THE PLUMBING
+    The obvious patch is two lines in tidelink_constraints.sdc. It would be
+    DEAD ON ARRIVAL, and the tool says so in as many words. Genus 21.1 SDC
+    Command Reference, set_data_check, "Current Limitations":
+
+      "Genus does not support data-to-data checks on top-level ports. Genus
+       will not infer a check and this will also not be captured as part of
+       write_sdc."
+
+    TL_CLK_RX and TL_RX[*] are top-level ports of nanosoc_eth_chiplet_pads.
+    Innovus reads exactly one SDC — ../outputs/<block>_syn.sdc, the file
+    write_sdc produced (mmmc:233-235, 1b_synthesis_eval.tcl:683) — so a
+    set_data_check placed in constraints.sdc is dropped at the Genus->Innovus
+    handoff and never reaches CTS, placement or timing. It would have read as
+    landed in every review and constrained nothing: the same shape as the
+    16,653 untimed flops GATE A was built to catch.
+
+    The two obvious escapes are closed by the same reference: "Genus does not
+    support data-to-data checks specified on pins belonging to different
+    instances" and "Genus also does not support specifying set_data_check
+    -from/-to instances". The related pin (clock) and constrained pins (lanes)
+    are in different instances by construction. There is no internal form.
+
+    GATE A already prescribes this exact remedy for this exact situation
+    (1b_synthesis_eval.tcl:698-700): "If this fires, do NOT hand-edit the
+    written SDC - add a second -sdc_files entry to the mmmc."
+
+WHAT IT BOUNDS
+    set_input_delay bounds each lane against the forwarded clock independently;
+    a per-lane pad->capture cap bounds each lane's absolute delay. Neither
+    bounds LANE AGAINST LANE. All eight lanes can sit inside their own windows
+    with lane 0 and lane 7 a full skew apart — and cross-lane skew is precisely
+    what the deskew FIFO exists to correct, i.e. the quantity whose runtime
+    excursions are the marginal-eye failure mode. TideLink's block SDC calls
+    this "THE key fix per Part B §3.3 — it bounds the lane-to-lane variance
+    that *is* the determinism defect".
+
+THE VALUE: 0.5 ns
+    = T_UI/20 at T_UI = 10.0 ns.
+    Block SDC:75  RX_BUS_SKEW_NS = T_UI_NS/20.
+    Block SDC:66-70 records where the RATIO came from: "the same ratios
+    validated on FPGA at T_UI=40 ns (set_max_delay 8 ns ~ T_UI/5, set_bus_skew
+    2 ns ~ T_UI/20) scaled down to ASIC T_UI".
+    Chain: FPGA-validated 2 ns at 40 ns UI -> ratio 1/20 -> 0.5 ns at 10 ns UI.
+    A BUDGET the post-route report must come in under, not a measured value.
+
+MULTIPLICITY — THE RESTRICTION IS ON THE OTHER SIDE
+    The block SDC warns that fc_shell's set_data_check -to takes a single pin.
+    Cadence restricts the OPPOSITE side. Innovus 21.11 TCR: "Note: You cannot
+    use the -from parameter to specify multiple objects." Genus 21.1, same
+    sentence. Neither carries it on -to. So a bus on -to is probably legal here
+    and no foreach_in_collection is needed for Cadence — but the file loops
+    per-lane anyway (16 commands, not 2) so the form sits inside the strictest
+    reading of all three tools and survives being ported in any direction.
+
+APPLIES TO
+    ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc
+    sha256 4ea0bb59b14807eb36d1ea4831e0ef3f03a44920416fe8c6b9cd79796970febb
+    plus one new file under ASIC/genus-innovus/inputs/.
+    Touches NEITHER constraints.sdc NOR tidelink_constraints.sdc, so it is
+    independent of hole1 and hole2 and can be applied in any order.
+
+APPLY
+    git apply ASIC/genus-innovus/inputs/patches/hole3-rx-lane-bundle-skew.patch
+
+NOT VALIDATED — AND ONE THING IS GENUINELY UNSETTLED
+    No EDA run was made. The documentation settles WHERE the command has to
+    live and WHAT multiplicity is legal. It does NOT settle whether a
+    set_data_check whose -from is a CLOCK port infers a check at all: the tool
+    needs a data arrival event on the related pin, and Innovus's own example
+    uses two data signals, not a clock. The block SDC uses the clock-port form
+    and calls it the key fix, so the expectation is that it works. Expectation
+    is not measurement.
+
+THE FALSIFIABLE CHECK — RUN IT BEFORE CALLING LANE SKEW CONSTRAINED
+        report_analysis_coverage -check_type data_check
+        report_timing -check_type data_check -from [get_ports TL_CLK_RX] \
+                      -to [get_ports {TL_RX[0]}]
+    16 data-check arcs (8 setup + 8 hold) must appear. ZERO arcs is a NULL
+    RESULT, not a pass, and must never be reported as "lane skew is clean".
+    If it infers nothing, move -from to uPAD_TL_CLK_RX/C and the lane side to
+    uPAD_TL_RX_<n>/C (PDDW16DGZ_G, gate.v:584684/584688) — those pins carry a
+    propagated core arrival that a bare input port may not. Do NOT respond by
+    widening 0.5 ns.
+
+    Second check, cheap and independent: the file prints
+    "PNR-EXTRA-SDC: D2D RX lane-bundle skew - 8 lanes at +/-0.5 ns" when read.
+    No such line in the Innovus log means the mmmc entry did not take.
+
+diff --git a/ASIC/genus-innovus/inputs/pnr_extra_constraints.sdc b/ASIC/genus-innovus/inputs/pnr_extra_constraints.sdc
+new file mode 100644
+--- /dev/null
++++ b/ASIC/genus-innovus/inputs/pnr_extra_constraints.sdc
+@@ -0,0 +1,142 @@
++# ---------------------------------------------------------------------------
++# pnr_extra_constraints.sdc — constraints that must reach Innovus DIRECTLY
++#
++# READ THIS FIRST, BECAUSE THE EXISTENCE OF THIS FILE IS THE POINT.
++#
++# Every other SDC in ../inputs is read by GENUS. Innovus never sees them: the
++# mmmc names exactly one constraint file, ../outputs/<block>_syn.sdc, which is
++# what `write_sdc` produced (1b_synthesis_eval.tcl:683). That is the trap
++# design.mk:285-289 and GATE A (1b_synthesis_eval.tcl:685-733) exist to catch --
++# "a clock that binds during elaboration but does not appear HERE reaches
++# neither CTS nor timing, and the run still completes and reports success".
++#
++# THIS FILE IS FOR CONSTRAINTS GENUS CANNOT CARRY ACROSS THAT HANDOFF AT ALL.
++# Not "constraints Genus ignores" -- Genus ignores plenty and still writes them
++# out. These are constraints Genus is DOCUMENTED to drop from write_sdc, so no
++# amount of adding them to constraints.sdc will ever put them in front of
++# Innovus. GATE A's own comment prescribes exactly this remedy: "If this fires,
++# do NOT hand-edit the written SDC - add a second -sdc_files entry to the mmmc."
++#
++# Read AFTER <block>_syn.sdc (mmmc list order), so every clock and port this
++# file references already exists.
++#
++# DO NOT put ordinary constraints here. Anything Genus can carry belongs in
++# ../inputs/constraints.sdc and its four sourced siblings, where synthesis also
++# gets to see it. A constraint that P&R honours and synthesis never saw is a
++# netlist built to the wrong target.
++# ---------------------------------------------------------------------------
++
++# ===========================================================================
++# [HOLE 3] D2D RX LANE-BUNDLE SKEW — set_data_check
++# ===========================================================================
++# TideLink's block SDC calls this "THE key fix" for the determinism defect
++# (tidelink/syn/asic/fusion-compiler/inputs/constraints.sdc:181-190) and it has
++# never existed at chiplet top: `grep -r "set_data_check\|set_bus_skew"` over
++# ASIC/genus-innovus/inputs and ASIC/eth-chiplet returns nothing.
++#
++# WHAT IT BOUNDS, AND WHY THE OTHER CONSTRAINTS DO NOT. set_input_delay bounds
++# each lane against the forwarded clock INDEPENDENTLY; a per-lane pad->capture
++# cap bounds each lane's absolute delay. Neither bounds LANE AGAINST LANE. An
++# 8-lane bundle in which every lane individually sits inside its window can
++# still have lane 0 and lane 7 a full skew apart, and cross-lane skew is exactly
++# the quantity the deskew FIFO exists to correct -- i.e. the quantity whose
++# runtime excursions are the marginal-eye failure mode. set_data_check is a
++# RELATIVE (clock-vs-data) constraint with no absolute-window component, so it
++# cannot trigger per-endpoint hold-buffer insertion the way a tightened
++# input-delay window can.
++#
++# THE VALUE: 0.5 ns = T_UI/20, T_UI = 10.0 ns.
++#   block SDC:75  set RX_BUS_SKEW_NS [expr {$T_UI_NS / 20.0}]
++#   block SDC:66-70 records where the RATIO came from: "the same ratios
++#   validated on FPGA at T_UI=40 ns (set_max_delay 8 ns ~ T_UI/5, set_bus_skew
++#   2 ns ~ T_UI/20) scaled down to ASIC T_UI". So the chain is
++#   FPGA-validated 2 ns at 40 ns UI -> ratio 1/20 -> 0.5 ns at this die's 10 ns
++#   UI. It is a BUDGET the post-route report must come in under, not a measured
++#   value; revisit when the package and channel models exist.
++
++# ---------------------------------------------------------------------------
++# WHY THIS COMMAND CANNOT LIVE IN ../inputs/constraints.sdc. NOT A STYLE CHOICE.
++#
++# Genus 21.1 SDC Command Reference, set_data_check, "Current Limitations":
++#
++#   "Genus does not support data-to-data checks on top-level ports. Genus will
++#    not infer a check and this will also not be captured as part of write_sdc."
++#
++# TL_CLK_RX and TL_RX[*] are top-level ports of nanosoc_eth_chiplet_pads, so a
++# set_data_check written in constraints.sdc would be dropped from
++# <block>_syn.sdc and Innovus would never see it -- a constraint that reads as
++# landed and constrains nothing, in a file whose whole history is that failure.
++#
++# The same reference closes the two obvious escapes: "Genus does not support
++# data-to-data checks specified on pins belonging to different instances" and
++# "Genus also does not support specifying set_data_check -from/-to instances".
++# The related pin (the clock) and the constrained pins (the lanes) are in
++# different instances by construction. There is no internal form either.
++# Innovus is the only place this can be expressed. Hence this file.
++# ---------------------------------------------------------------------------
++
++# ---------------------------------------------------------------------------
++# PER-PORT, NOT A BUS ON -to. Both references restrict multiplicity, and they
++# restrict DIFFERENT SIDES from the one the block SDC's comment warns about:
++#
++#   Innovus 21.11 TCR, set_data_check, -from:
++#     "Note: You cannot use the -from parameter to specify multiple objects."
++#   Genus 21.1, set_data_check, -from:
++#     "You cannot use the -from parameter to specify multiple objects."
++#
++# Neither carries that sentence on -to (both say only "use only one -to
++# parameter per command"), so a bus on -to is probably legal in Cadence -- the
++# fc_shell restriction the block SDC works around is the mirror image. `-from`
++# here is a single port either way. The loop below spends 16 commands instead
++# of 2 to sit inside the STRICTEST reading of both tools plus fc_shell, so this
++# form survives being ported in any direction. That is worth 14 lines of log.
++# ---------------------------------------------------------------------------
++
++set _bs_skew 0.5
++
++if {[llength [get_ports -quiet TL_CLK_RX]] != 1} {
++    error "pnr_extra_constraints.sdc: TL_CLK_RX did not bind. The RX lane-bundle\
++ skew check would be silently absent -- the exact class of defect this file was\
++ created to avoid. Refusing to continue."
++}
++set _bs_n 0
++foreach _l {0 1 2 3 4 5 6 7} {
++    set _p [get_ports -quiet "TL_RX\[$_l\]"]
++    if {[llength $_p] != 1} {
++        error "pnr_extra_constraints.sdc: TL_RX\[$_l\] did not bind. Refusing to\
++ continue -- a partially-applied bundle skew check is worse than none, because\
++ the report looks populated."
++    }
++    set_data_check -from [get_ports TL_CLK_RX] -to $_p -setup $_bs_skew
++    set_data_check -from [get_ports TL_CLK_RX] -to $_p -hold  $_bs_skew
++    incr _bs_n
++}
++if {$_bs_n != 8} {
++    error "pnr_extra_constraints.sdc: applied $_bs_n/8 lane skew checks."
++}
++puts "PNR-EXTRA-SDC: D2D RX lane-bundle skew - $_bs_n lanes at +/-$_bs_skew ns\
++ (T_UI/20, T_UI = 10.0 ns)"
++unset _bs_skew _bs_n _l _p
++
++# ---------------------------------------------------------------------------
++# VERIFY IT INFERRED, DO NOT ASSUME IT DID. The one thing this file cannot
++# settle from documentation is whether a set_data_check whose -from is a CLOCK
++# port produces a check at all: the tool needs a DATA arrival event at the
++# related pin, and Innovus's own example uses two data signals (XE/SE), not a
++# clock. The block SDC uses the clock-port form and calls it the key fix, so the
++# expectation is that it works -- but "expected" is not "measured".
++#
++# THE FALSIFIABLE CHECK, post-CTS or later:
++#     report_analysis_coverage -check_type data_check
++#     report_timing -check_type data_check -from [get_ports TL_CLK_RX] \
++#                   -to [get_ports {TL_RX[0]}]
++# 16 data-check arcs (8 setup + 8 hold) must appear. ZERO arcs means the check
++# inferred nothing -- that is a NULL RESULT, not a pass, and it must not be
++# reported as "lane skew is clean".
++#
++# IF IT INFERS NOTHING, the next thing to try is anchoring -from at the RX clock
++# pad's core-side output pin rather than the port -- uPAD_TL_CLK_RX/C, a
++# PDDW16DGZ_G in the shipping netlist (gate.v:584684), with the lane side moved
++# to the matching uPAD_TL_RX_<n>/C. That pin carries a propagated arrival in the
++# core, which a bare input port may not. Do NOT respond by widening 0.5 ns.
++# ---------------------------------------------------------------------------
+--- a/ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc
++++ b/ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc
+@@ -230,9 +230,37 @@
+    -late_timing_condition {tc_typ}\
+    -rc_corner default_rc_corner_typical
+ 
++# SECOND -sdc_files ENTRY, ADDED 2026-08-18. NOT a convenience.
++#
++# Genus is DOCUMENTED to drop some constraints from write_sdc entirely -- its
++# SDC Command Reference says of set_data_check: "Genus does not support
++# data-to-data checks on top-level ports. Genus will not infer a check and this
++# will also not be captured as part of write_sdc." So the D2D RX lane-bundle
++# skew check can never arrive here through <block>_syn.sdc no matter what
++# ../inputs/constraints.sdc contains.
++#
++# This is the remedy GATE A already prescribes for exactly this situation
++# (1b_synthesis_eval.tcl:698-700): "If this fires, do NOT hand-edit the written
++# SDC - add a second -sdc_files entry to the mmmc."
++#
++# ORDER MATTERS AND IS NOT ALPHABETICAL. _syn.sdc is FIRST because it creates
++# every clock; the overlay only references them. Innovus reads the list in
++# order and get_clocks cannot name a clock that does not exist yet -- the same
++# reasoning design.mk:270-277 gives for why SDC_FILES is a single explicit
++# entry rather than a sorted glob.
++#
++# ${design_home} rather than the ../inputs relative form used elsewhere in the
++# repo: this file is loaded by read_mmmc, whose working directory is a property
++# of the Cadence command, and design_home is resolved from $::env at the top of
++# this file precisely so it is valid in every Tcl context.
++#
++# ANYTHING GENUS CAN CARRY BELONGS IN ../inputs/constraints.sdc INSTEAD. A
++# constraint P&R honours and synthesis never saw means a netlist built to the
++# wrong target.
+ create_constraint_mode -name default_constraint_mode\
+    -sdc_files\
+-    [list ../outputs/nanosoc_eth_chiplet_pads_syn.sdc]
++    [list ../outputs/nanosoc_eth_chiplet_pads_syn.sdc \
++          ${design_home}/ASIC/genus-innovus/inputs/pnr_extra_constraints.sdc]
+ 
+ create_analysis_view -name default_analysis_view_setup -constraint_mode default_constraint_mode -delay_corner default_delay_corner_max
+ create_analysis_view -name default_analysis_view_hold -constraint_mode default_constraint_mode -delay_corner default_delay_corner_min

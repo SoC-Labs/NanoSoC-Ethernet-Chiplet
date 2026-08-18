@@ -480,7 +480,36 @@ if {[info exists ::env(EVP_M5_START_OFFSET)] && $::env(EVP_M5_START_OFFSET) ne "
     set M5_START_OFFSET $::env(EVP_M5_START_OFFSET)
     puts "POWER-PLAN: M5 -start_offset overridden to $M5_START_OFFSET (default 8)"
 }
-add_stripes -nets {VDD VSS} -layer M5 -direction horizontal -width 1 -spacing 0.5 -set_to_set_distance 15 -over_power_domain 1 -start_from bottom -start_offset $M5_START_OFFSET -stop_offset 0 -switch_layer_over_obs false -merge_stripes_value 500 -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
+## ABSOLUTE ANCHOR — the structural cure described a few lines above, made
+## testable rather than asserted. `split_row -selected` (:198) gives every macro
+## its own row region and add_stripes re-anchors PER REGION, so -start_offset is
+## measured from each macro's OWN bottom edge. That is what buries straps inside
+## footprints (the M4 wide-metal family) and what lets a VDD strap and a VSS
+## strap in neighbouring ladders alias onto each other (the 4 rail-to-rail M5
+## shorts at x=844.5). M8 (:124) and M9 (:178) do not have this problem for one
+## reason only: they are added BEFORE split_row, so they anchor once, globally.
+##
+## `-start` takes a coordinate rather than an offset, and the Innovus 21.11
+## reference (TCRcom/add_stripes.html) states -start and -start_offset are
+## EXCLUSIVE. If -start is die-absolute it yields one ladder over the whole core,
+## which is exactly the stated cure.
+##
+## NOT YET MEASURED, AND THIS IS THE CRUX: whether -start is die-absolute or
+## still region-relative. The reference says "the start coordinate for the
+## region", which is ambiguous. Settle it on probe_pg_build.tcl before spending a
+## full P&R — the probe rebuilds floorplan -> power_plan only.
+##
+##   EVP_M5_ABS_START=<y>   one ladder, anchored at absolute y
+##   unset                  per-region anchoring, exactly as before
+##
+## Unset, the expansion below is word-for-word the previous argument list, so the
+## default path is unchanged.
+set _m5_anchor [list -start_from bottom -start_offset $M5_START_OFFSET]
+if {[info exists ::env(EVP_M5_ABS_START)] && $::env(EVP_M5_ABS_START) ne ""} {
+    set _m5_anchor [list -start $::env(EVP_M5_ABS_START)]
+    puts "POWER-PLAN: M5 ladder anchored ABSOLUTELY at y=$::env(EVP_M5_ABS_START) (-start); per-region -start_offset NOT used"
+}
+add_stripes -nets {VDD VSS} -layer M5 -direction horizontal -width 1 -spacing 0.5 -set_to_set_distance 15 -over_power_domain 1 {*}$_m5_anchor -stop_offset 0 -switch_layer_over_obs false -merge_stripes_value 500 -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
 
 deselect_obj -all
 

@@ -5,33 +5,41 @@
 //
 // WHY THIS FILE EXISTS
 // --------------------
-// Same reason as the DRC wrapper beside it: the foundry deck
-// /tsmc65pdk/65/CMOS/util/ANTENNA_DRC/CN65S_9M_ANT.26_2a ships placeholder
-// specification statements the customer is expected to replace --
-//     LAYOUT PATH    "GDSFILENAME"      (deck line 35)
-//     LAYOUT PRIMARY "TOPCELLNAME"      (deck line 36)
-//     DRC RESULTS DATABASE "DRC_RES.db" (deck line 38)
-//     DRC SUMMARY REPORT   "DRC.rep"    (deck line 39)
-// -- and they are literal strings, not variables. `DRC ICSTATION YES` is what
-// makes overriding them from a top-level wrapper legal; see the long note in
-// nanosoc_eth_chiplet_pads.drc.rules. Verified on Calibre v2023.1_18.8.
+// Same reason as the DRC wrapper beside it: the foundry antenna deck ships
+// placeholder specification statements the customer is expected to replace --
+// the layout path, the primary cell, and the results-database and
+// summary-report filenames -- and they are literal strings, not variables. The
+// deck's own text is not reproduced here: this repository is public and TSMC's
+// licence does not permit it. Read the block in your own PDK.
+//
+// `DRC ICSTATION YES` is what makes overriding them from a top-level wrapper
+// legal; see the long note in nanosoc_eth_chiplet_pads.drc.rules. Verified on
+// Calibre v2023.1_18.8.
+//
+// WHICH FOUNDRY DECK: this file does not name one. $ANT_FOUNDRY_DECK is resolved
+// per site from $(TSMC_65_HOME) by ASIC/genus-innovus/drc_project.mk, which is
+// gitignored. It must be the antenna deck for the SAME metal stack as the DRC
+// deck and as the Innovus GdsOutMap used by write_stream. The deck's release
+// name encodes a metal stack and a purchased revision, so it is site
+// configuration, not source. See ci/site.env.example.
 //
 // WHY IT MATTERS
 // --------------
 // Innovus check_process_antenna reports "No Violations Found" on this design,
-// and it is backed by real data (tcbn65lp_9lmT2.lef carries 3,897
-// ANTENNAGATEAREA/ANTENNADIFFAREA entries). But that is the ROUTER's model over
-// a stream with no transistors in it. The foundry deck has never been run here
-// -- there is no .ant.summary anywhere in this repo -- and the Europractice
-// mini@sic manual is unambiguous: "Antenna violations are never acceptable."
+// and it is backed by real data (the std-cell LEF carries thousands of antenna
+// gate-area/diff-area entries). But that is the ROUTER's model over a stream
+// with no transistors in it. The foundry deck has never been run here -- there
+// is no .ant.summary anywhere in this repo -- and the Europractice mini@sic
+// manual is unambiguous that antenna violations are not acceptable in a
+// submission.
 //
 // READ THE RESULT WITH THE BLACK-BOX CAVEAT IN MIND. Standard cells, IO and
 // bond pads stream as empty references (their layouts are imported by the
 // broker), so every gate-area term inside a cell is absent. Checks that need
 // gate area will under-report. The signal here is the ROUTING contribution:
-// long M1-M9 antennas on nets that reach a cell pin.
+// long antennas on nets that reach a cell pin.
 //
-// The foundry deck is READ-ONLY (/tsmc65pdk is shared lab collateral) and is
+// The foundry deck is READ-ONLY (the PDK mount is shared lab collateral) and is
 // not copied, patched or sed-ed by this flow.
 //============================================================================
 
@@ -60,6 +68,7 @@ DRC MAXIMUM VERTEX  4096
 #DEFINE LP
 
 // ---- the foundry antenna deck, unmodified -----------------------------------
-// 9-metal, matching the 9M_6X1Z1U stack used by write_stream and by the DRC
-// wrapper's deck (CLN65S_9M_6X1Z1U.26_2a).
-INCLUDE "/tsmc65pdk/65/CMOS/util/ANTENNA_DRC/CN65S_9M_ANT.26_2a"
+// Resolved per site, never named here. run_drc.sh expands and readability-checks
+// this before launching, so a missing or wrong value is a sentence rather than an
+// SVRF error deep in the deck.
+INCLUDE "$ANT_FOUNDRY_DECK"

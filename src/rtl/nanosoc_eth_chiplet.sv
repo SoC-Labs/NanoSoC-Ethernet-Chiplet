@@ -789,10 +789,45 @@ module nanosoc_eth_chiplet #(
         // now, but still inert in SILICON, and this literal was never what stood
         // in the way. Two of the three conditions the previous comment listed
         // remain open:
-        //   (a) a register to drive it, which must live in THIS chiplet's APB
-        //       space because TideLink has no free aperture (every paddr[8:5]
-        //       nibble is claimed). Until that exists the rate cannot be changed
-        //       on hardware at all — on silicon or on FPGA.
+        //   (a) a register to drive it. It belongs in TIDELINK's free APB
+        //       quadrant, NOT in this chiplet's APB space.
+        //
+        //       CORRECTED 2026-08-18 — what stood here was wrong, and it was
+        //       steering the next reader to the wrong die-side. It read: "must
+        //       live in THIS chiplet's APB space because TideLink has no free
+        //       aperture (every paddr[8:5] nibble is claimed)". The parenthetical
+        //       is TRUE but SCOPED; the "because" it supports is FALSE.
+        //
+        //       tidelink_top splits its 15-bit APB window on paddr[14:13] into
+        //       four quadrants (tidelink_top.sv:846-854):
+        //           00 -> Wlink chiplet controller   (apb_sel_wlink)
+        //           01 -> TideLink config registers  (apb_sel_tidelink)
+        //           10 -> Address translator config  (apb_sel_addr_xlat)
+        //           11 -> Reserved  — NO apb_sel_* wire exists for it
+        //       Only three apb_sel_* wires are declared, and the response mux
+        //       (tidelink_top.sv:872-880) falls through for quadrant 11:
+        //       prdata='0, pready=1'b1, pslverr=1'b0. So quadrant 11 is
+        //       undecoded and free — a full 8 KB at SoC 0x2E03_6000-0x2E03_7FFF
+        //       (this chiplet's TideLink APB window is 0x2E03xxxx, 15-bit, see
+        //       u_tlapb_bridge ADDRWIDTH(15) above).
+        //
+        //       The paddr[8:5] nibble census was a real measurement, but it
+        //       surveyed quadrant 01 ONLY. That quadrant is APB_ADDR_W=12
+        //       (tidelink_top.sv:45) and is fed tl_apb_paddr = apb_paddr[11:0]
+        //       (tidelink_top.sv:981), so every paddr[8:5] decode in
+        //       tidelink_apb_regs.sv sits inside quadrant 01 and says nothing
+        //       whatever about quadrants 10 or 11.
+        //
+        //       Design: see docs/D2D_RATE_CONTROL_ARCH.md. The register is
+        //       write-gated on !role_locked_o (a rate change invalidates the
+        //       calibrator's phase offset, so it is legal only while the PHY is
+        //       held in POR, before role_lock — there is NO warm-change path),
+        //       and reaches u_link_clk_div.ratio_i through a STICKY SOURCE MUX
+        //       so that the link_clk_div_ratio_i port below stays authoritative
+        //       until software first writes. That is why this tie stays 3'd0:
+        //       it remains the reset-time source, not a placeholder to delete.
+        //       Until that register exists the rate cannot be changed on
+        //       hardware at all — on silicon or on FPGA.
         //   (b) an SDC that constrains a DIVIDED ratio. ASIC/genus-innovus/
         //       inputs/tidelink_constraints.sdc signs off the /1 configuration
         //       ONLY and says so, pinning the bypass leg via set_case_analysis on

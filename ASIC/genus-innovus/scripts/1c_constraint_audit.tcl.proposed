@@ -1,0 +1,386 @@
+################################################################################
+# 1c_constraint_audit.tcl  --  C1 CONSTRAINT-AUDIT INSTRUMENTATION   [DRAFT]
+#
+# STATUS: PROPOSED, NOT WIRED IN. Nothing sources this file. It carries the
+# `.proposed` suffix for the same reason ASIC/rom_bind.mk.proposed does -- it is
+# a reviewed draft, not a live flow step. To adopt it, paste the two blocks into
+# the host scripts named in §0 below; do NOT `source` this file, because the
+# two blocks belong to two DIFFERENT tools and must not run in the same session.
+#
+# WHAT PROBLEM THIS SOLVES
+# ------------------------
+# The flow has no way to enumerate what exceptions the timer ACTUALLY APPLIED
+# short of parsing a 16.7 MB written SDC. Every existing check reports what was
+# DECLARED. The gap is the difference between the two: an exception whose -from
+# matched nothing, or which a higher-priority exception dominates, is read
+# without complaint, written into ${block_name}_syn.sdc, and silently does
+# nothing. That is the same failure class as the C2 anchors that this
+# repository has just been shown to be missing entirely
+# (ASIC/sta/sdc_gate.py reports 0/69 and 0/22 on all 13 unique _syn.sdc).
+#
+# EVERY COMMAND SPELLING BELOW WAS CHECKED AGAINST THE LOCAL VENDOR DOCS AT
+# /eda/cadence/{innovus,genus}/doc. THREE OF THE FOUR COMMANDS ORIGINALLY ASKED
+# FOR DO NOT EXIST IN CADENCE. Specifically:
+#
+#   report_clock_interaction   DOES NOT EXIST. Zero hits across
+#                              /eda/cadence/{innovus,genus,edi,innovusexport}/doc.
+#                              It is a Synopsys PrimeTime/DC name. The one use in
+#                              this repo -- tidelink/syn/asic/fusion-compiler/
+#                              inputs/constraints.sdc:116 -- is CORRECT, because
+#                              that is a Fusion Compiler flow. It must not be
+#                              copied into a Cadence script.
+#   report_timing_exceptions   DOES NOT EXIST in Cadence. Nor do the option
+#                              spellings -ineffective / -unapplied / -invalid /
+#                              -dominated on any Cadence command.
+#   check_timing_intent        Genus ONLY. Absent from the entire Innovus doc
+#                              tree. Do not copy it into 2b/3b/4b.
+#   report_analysis_coverage,  Innovus ONLY. Absent from the Genus command
+#   check_timing,              reference TOC. Do not add them to the Genus stage.
+#   report_path_exceptions,
+#   report_clock_propagation
+#
+# CONSEQUENCE, AND IT IS THE MAIN FINDING OF THIS DRAFT: THE AUDIT CANNOT LIVE
+# IN ONE PLACE. Genus can only self-report via check_timing_intent, which the
+# flow already runs. Everything that actually proves an exception or a clock
+# group took effect is an Innovus command, and therefore runs one stage LATER,
+# against the written SDC -- which is exactly the artefact under suspicion.
+#
+################################################################################
+# §0. WHERE EACH BLOCK SLOTS IN
+################################################################################
+#
+#  BLOCK A (Genus)  -> ASIC/genus-innovus/scripts/1b_synthesis_eval.tcl
+#                      immediately after the existing timing-intent call at :496
+#                        check_timing_intent -verbose > .../syn_timing_intent.pre.rep
+#                      and its reports{} twin at :625. Same seam in the toolkit
+#                      copy that actually ships:
+#                      ASIC/asic-toolkit/flow/genus/1_synthesis.tcl:823-838
+#                      (inside `if {$SYN_CHECKS}`, after `try_step "timing intent"`).
+#                      New gate lands next to GATE A/B/C at 1b:685-812.
+#
+#  BLOCK B (Innovus) -> ASIC/genus-innovus/scripts/2b_pnr_place_eval.tcl
+#                      inside the EXISTING `constraint coverage` step at :674-700,
+#                      which today runs check_timing -verbose,
+#                      report_analysis_coverage and report_clocks.
+#                      NOTE: 4b_pnr_route_eval.tcl is claimed by another session;
+#                      this draft deliberately touches neither it nor 3b.
+#
+################################################################################
+
+
+################################################################################
+# BLOCK A -- GENUS, immediately after read_sdc
+#
+# Genus has exactly ONE instrument for this and the flow already calls it. What
+# is missing is not a command but a GATE: check_timing_intent's ineffective-
+# exception section is written to a report nobody opens, and no run has ever
+# failed on it. GATE D below reads the report the flow already produces.
+################################################################################
+
+# --- A.1  Unconstrained paths -------------------------------------------------
+# CONFIRMED SPELLING. -unconstrained is Cadence as well as Synopsys; this is the
+# one command in the set where the Synopsys habit is not a bug.
+#   Genus:  /eda/cadence/genus/doc/genus_comref/analysis.html  (report_timing)
+#           "[-max_paths integer | -nworst integer] [[-max_slack integer]
+#            [-min_slack integer] | -unconstrained ]"
+#           "-unconstrained -- Reports only the unconstrained paths (paths with
+#            no slack)."
+# Already present at 1b_synthesis_eval.tcl:624 as
+#   syn_unconstrained.rep {report_timing -unconstrained -max_paths 50}
+# so A.1 is a NO-OP. Kept here only to record that it was verified, not assumed.
+
+# --- A.2  Ineffective / unapplied exceptions ----------------------------------
+# CONFIRMED: in Genus this is check_timing_intent, and nothing else.
+#   /eda/cadence/genus/doc/genus_timing/post_synth_tk_Reporting_Path_Exceptions.html
+#     "If an exception is not satisfied by any path in the design, then it is
+#      reported. Use the check_timing_intent command to report path exceptions."
+#   /eda/cadence/genus/doc/genus_comref/analysis.html (check_timing_intent)
+#     "It is strongly recommended to execute this command after read_sdc command"
+#   Checklist includes, verbatim: "Timing exceptions with no effect",
+#     "Suspicious multi_cycle exceptions",
+#     "Exceptions with invalid timing start or endpoints".
+# The flow ALREADY runs this (1b:496, :625; toolkit 1_synthesis.tcl:829).
+# Nothing new to call. What follows is the gate that reads it.
+
+# --- A.3  Declared clock groups ----------------------------------------------
+# CONFIRMED: /eda/cadence/genus/doc/genus_comref/analysis.html
+#     report_clock_groups [-design design] [-group string] [>file]
+#     "Generates a clock group report of the current design."
+#     Output columns: Group Name | Description | Exception | From Clocks | To Clocks
+# HONEST LIMIT: this echoes what was DECLARED plus the generated exception
+# object's name. It does NOT say whether the cut took effect on any path. The
+# per-pair False / Partial False proof is check_timing -check_only
+# {clock_crossing}, which is INNOVUS ONLY -- see B.2. Do not present a clean
+# report_clock_groups as evidence that eth_chiplet_cdc cut anything.
+reports {
+    syn_clock_groups.rep {report_clock_groups}
+}
+
+# ---- GATE D: are any timing exceptions INERT? -------------------------------
+# Same shape as GATE B at 1b_synthesis_eval.tcl:737-765: read the report the
+# flow already wrote, regexp the count, fail loudly, never silently.
+#
+# WHY THIS GATE AND NOT A grep: the C2 Option A exceptions
+# (constraints.sdc:517-518 and :568-577) are 91 anchors that either bind or do
+# not. constraints.sdc already errors at READ time if an anchor matches nothing
+# (:507-515, :554-561) -- but that guard proves the anchor resolved in the
+# ELABORATED design. It cannot prove the resulting exception survived mapping,
+# and it cannot prove the exception is not dominated by a higher-priority one.
+# check_timing_intent's "no effect" section is the only thing in the Genus stage
+# that can see either failure.
+#
+# EXPECTED FIRST-RUN BEHAVIOUR -- READ BEFORE SETTING THIS TO A HARD FAIL.
+# The count will NOT be 0 on the first Option A run, and that does not by itself
+# mean C2 failed. Pre-existing inert exceptions elsewhere in the design will be
+# counted too, and nobody has ever measured the baseline because no gate has
+# ever read this section. START IN WARN MODE, record the number, THEN set
+# _ex_max to that baseline and treat any increase as a regression.
+set _ex_max -1   ;# -1 = report only. Set to the measured baseline to arm.
+
+set _ti $REPORT_DIR/syn_timing_intent.rep
+if {![file exists $_ti]} {
+    puts "**ERROR: GATE D: $_ti absent - check_timing_intent did not run."
+    if {[info commands flow_fail] ne ""} { flow_fail "no syn_timing_intent.rep" } else { exit 1 }
+} else {
+    set _fh [open $_ti r] ; set _txt [read $_fh] ; close $_fh
+
+    # The doc's own wording for the ineffective-exception block, quoted from
+    # /eda/cadence/genus/doc/genus_timing_legacy/
+    #   pre_synth_re_Types_of_Constraints_Checked_Using_the_report_timing_-lint_Command.html
+    #   "The following timing exceptions are not currently affecting timing in
+    #    the design. Either no paths in the design satisfy the exception's path
+    #    specification, or all paths that satisfy the path specification also
+    #    satisfy an exception with a higher priority."
+    # Two report vintages exist, so accept either the prose header or a
+    # summary-line count, and DISTINGUISH "0" from "section absent".
+    set _inert -1
+    if {[regexp {not currently affecting timing in the design} $_txt]} {
+        # count the exception lines that follow the header
+        set _inert 0
+        set _in 0
+        foreach _l [split $_txt \n] {
+            if {[regexp {not currently affecting timing in the design} $_l]} { set _in 1 ; continue }
+            if {$_in && [regexp {^\s*$} $_l]} { set _in 0 ; continue }
+            if {$_in && [regexp {set_(false_path|max_delay|min_delay|multicycle_path)} $_l]} { incr _inert }
+        }
+    } elseif {[regexp {Timing exceptions with no effect\s+(\d+)} $_txt -> _n]} {
+        set _inert $_n
+    }
+
+    set _badep -1
+    if {[regexp {Exceptions with invalid timing start or endpoints\s+(\d+)} $_txt -> _n2]} {
+        set _badep $_n2
+    }
+
+    if {$_inert < 0} {
+        # NOT MEASURED is not a pass. This is the "a zero that measured nothing"
+        # failure mode that has bitten this project repeatedly.
+        puts "**ERROR: GATE D: could not find the ineffective-exception section in"
+        puts "         $_ti. This is NOT 'zero inert exceptions' - it is NOT"
+        puts "         MEASURED, and the report format has changed."
+        if {[info commands flow_fail] ne ""} {
+            flow_fail "GATE D: ineffective-exception section not found in $_ti"
+        } else { exit 1 }
+    } elseif {$_ex_max >= 0 && $_inert > $_ex_max} {
+        puts "**ERROR: GATE D FAILED - $_inert timing exceptions have NO EFFECT"
+        puts "         (baseline $_ex_max). Either an exception's -from/-to matched"
+        puts "         nothing after mapping, or a higher-priority exception"
+        puts "         dominates it. With C2 Option A live, suspect the 69"
+        puts "         synchroniser anchors (constraints.sdc:517-518) and the 22"
+        puts "         datapath anchors (:568-577) FIRST."
+        if {[info commands flow_fail] ne ""} {
+            flow_fail "GATE D: $_inert inert exceptions (baseline $_ex_max)"
+        } else { exit 1 }
+    } else {
+        puts "GATE D: $_inert timing exceptions with no effect,\
+              $_badep with invalid start/endpoints (baseline $_ex_max,\
+              -1 = report-only) - see [file tail $_ti]"
+    }
+    unset _fh _txt _inert _badep
+    catch {unset _n _n2 _in _l}
+}
+unset _ti _ex_max
+
+
+################################################################################
+# BLOCK B -- INNOVUS, in 2b_pnr_place_eval.tcl's existing `constraint coverage`
+#            step (:674-700), which is the first point at which the written SDC
+#            has actually been read by the timer.
+################################################################################
+
+# --- B.1  THE BUG IN THE EXISTING STEP ---------------------------------------
+# 2b_pnr_place_eval.tcl:677 already runs
+#     place_check_timing.rep {check_timing -verbose}
+# and that command CANNOT report clock crossings, because clock_crossing is OFF
+# BY DEFAULT. Quoted from /eda/cadence/innovus/doc/TCRcom/check_timing.html:
+#     "By default, the software reports all warnings except the following:
+#      clock_clipping_gate, const_collision, clock_crossing,
+#      clock_not_propagated, missing_drive, multiple_clock, ..."
+# So the flow has produced a check_timing report every run for months and has
+# NEVER once looked at whether a clock group cut anything. This is not a missing
+# report; it is an existing report that is silently blind. Same for
+# missing_clock_groups ("Reports any potential issues with the defined clock
+# grouping data"), also off by default.
+
+# --- B.2  Clock-group cut proof ----------------------------------------------
+# CONFIRMED SPELLING: /eda/cadence/innovus/doc/TCRcom/check_timing.html
+#   check_timing [-check_only warning_list] [-include_warnings warning_list]
+#                [-exclude_warnings warning_list] [-type type_list] [-verbose]
+#                [-view view_name] [> file]
+#   doc's own example line: check_timing -check_only {uncons_endpoint clock_crossing}
+#   clock_crossing: "the Timing Check Crossing Clocks report shows the
+#     interaction of clocks in the design and indicates whether the paths
+#     between the clocks are False or Partial False. ... If all the paths
+#     between two clocks are false paths or they are exclusive/asynchronous
+#     clocks, the path is marked as False. If only part of paths are set as
+#     false paths or exclusive/asynchronous clocks, the path is marked as
+#     Partial False."
+# THIS is the command that proves set_clock_groups -name eth_chiplet_cdc cut what
+# was intended: a group that took effect shows its pairs as False; one that only
+# partly took shows Partial False; one that did nothing shows the pair bare.
+# It is also the direct test of C2 Option A's central claim -- that merging the
+# TX word clocks into the $EXTCLK group leaves the 69 synchroniser paths cut.
+
+# --- B.3  Ineffective / overridden exceptions --------------------------------
+# CONFIRMED SPELLING: /eda/cadence/innovus/doc/TCRcom/report_path_exceptions.html
+#   report_path_exceptions [-early | -late] [-ignored] [-view view_name]
+#                          [{> | >>} filename | -tcl_list]
+#   "By default, the report_path_exceptions command only reports ACTIVATED path
+#    exceptions."
+#   "-ignored -- Reports only the path exceptions that have been ignored by
+#    timing analysis. This parameter can be used for debugging constraints that
+#    may be ineffective or incorrectly entered. A path exception may be
+#    ineffective if it is covered by, or overridden by, another path exception."
+# One flag covers BOTH requested cases: matched-nothing and overridden.
+# It is -ignored. NOT -ineffective, -unapplied, -invalid or -dominated; none of
+# those spellings exist on any Cadence command in the local trees.
+#
+# RUN IT TWICE. -early and -late are separate: an exception can be live for
+# setup and ignored for hold. The doc's own example runs both. This matters
+# directly here -- C2's set_max_delay -datapath_only bounds late only.
+
+# --- B.4  Why a generated clock's source is unreachable (the TA-1018 cause) ---
+# CONFIRMED: /eda/cadence/innovus/doc/TCRcom/report_clock_propagation.html
+#   report_clock_propagation [-help] -clock clock_list [-max_paths number]
+#                            -to pin_port_list [-verbose] [-view viewName] [> file]
+#   "provides the ability to determine clocks that do not propagate to a
+#    particular node in the network, and report the causes for such occurrences"
+#   emits lines such as: "Reason 1: The clock 'CLK_W_4' propagation stops due to
+#   the inactive timing arc: (b12/A->b12/Y)"
+# This is the command that answers GATE 1's WHY. report_clocks -source_insertion
+# gives the VALUE of source latency (0 ns) but never the reason.
+#
+# master_clk_edge_not_reaching is a check_timing warning class and is ON by
+# default -- /eda/cadence/innovus/doc/TCRcom/check_timing.html:
+#   "By default, the software includes the following warnings in the report:
+#    clock_expected, loop, ideal_clock_waveform, master_clk_edge_not_reaching,
+#    partial_input_delay, missing_drive, no_input_delay, no_drive,
+#    no_gen_clock_source, uncons_endpoint."
+#   "-type clocks" selects exactly the clock-related set, including both
+#   clock_crossing and master_clk_edge_not_reaching.
+# TA-1018 itself is documented in ONE place only, and not in the message
+# reference: /eda/cadence/innovus/doc/innovusTCR/
+#   timing_disable_genclk_combinational_blocking.html, which quotes the warning
+#   verbatim and explains it means the source latency path was not found and
+#   "Timing analysis will use 0 ns source latency".
+
+step "constraint audit"
+reports {
+    # The two blind spots in the existing step (B.1). -check_only REPLACES the
+    # default set, so this is an ADDITION to place_check_timing.rep, not a
+    # substitute for it.
+    place_clock_crossing.rep  {check_timing -check_only {clock_crossing missing_clock_groups} -verbose}
+    place_check_clocks.rep    {check_timing -type clocks -verbose}
+
+    # Exceptions the timer READ but did NOT apply. Both edges - see B.3.
+    place_exceptions_ignored_early.rep {report_path_exceptions -ignored -early}
+    place_exceptions_ignored_late.rep  {report_path_exceptions -ignored -late}
+    place_exceptions_applied.rep       {report_path_exceptions -late}
+
+    # Unconstrained: the count, and then the reason.
+    place_unconstrained.rep       {report_timing -unconstrained -max_paths 50}
+    place_unconstrained_debug.rep {report_timing -debug unconstrained -max_paths 20}
+}
+
+# The TX word-clock cause report is per-clock, so it cannot go in reports{}.
+# Only run it when the gate is actually failing -- it is expensive and, if
+# GATE 1 has passed, it has nothing to say.
+try_step "TX word-clock propagation" {
+    set _f $REPORT_DIR/place_txword_propagation.rep
+    if {[file exists $_f]} { file delete $_f }
+    foreach _n {0 1 2 3 4 5 6 7} {
+        set _c "D2D_TX_WORD_CLK_$_n"
+        if {![llength [get_db clocks -if {.base_name == $_c}]]} {
+            puts "**WARN: $_c does not exist in this design - skipping" ; continue
+        }
+        set _to "u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_chiplet_controller/u_wlink/phy/gpio/gpiotx_$_n/io_link_clk"
+        # -to takes the generated clock's own target pin: the question is why the
+        # MASTER edge does not reach it. Names per
+        # inputs/tidelink_constraints.sdc:470-478.
+        catch {report_clock_propagation -clock $_c -to $_to -verbose >> $_f}
+    }
+    say "TX word-clock propagation causes -> [file tail $_f]"
+    unset _f _n _c _to
+}
+
+# ---- GATE E: did the clock groups actually cut anything? --------------------
+# The point of C2 Option A is that merging the TX word clocks into $EXTCLK's
+# group makes the 69 synchroniser paths safe. If the crossing-clocks report
+# shows those pairs as bare -- neither False nor Partial False -- then the merge
+# did not take and the C2 false paths are load-bearing on their own.
+#
+# REPORT-ONLY UNTIL A BASELINE EXISTS, for the same reason as GATE D. Nobody has
+# ever run check_timing with clock_crossing enabled on this design, so there is
+# no number to compare against yet. The FIRST run's job is to produce one.
+try_step "clock-crossing census" {
+    set _f $REPORT_DIR/place_clock_crossing.rep
+    if {![file exists $_f]} {
+        puts "**ERROR: GATE E: $_f absent - check_timing did not run."
+    } else {
+        set _fh [open $_f r] ; set _txt [read $_fh] ; close $_fh
+        if {![regexp {Crossing Clocks} $_txt]} {
+            puts "**ERROR: GATE E: no 'Timing Check Crossing Clocks' table in"
+            puts "         $_f. clock_crossing is OFF BY DEFAULT - if this fires,"
+            puts "         -check_only was dropped. NOT MEASURED, not clean."
+        } else {
+            set _pairs [regexp -all {\(False\)} $_txt]
+            set _part  [regexp -all {\(Partial False\)} $_txt]
+            say "GATE E: $_pairs clock pairs fully cut (False),\
+                 $_part partially cut (Partial False) - see [file tail $_f]"
+            warn "REPORT-ONLY. Record these two numbers as the baseline before"
+            warn "  arming this gate. A Partial False on an EXTCLK <-> "
+            warn "  D2D_TX_WORD_CLK_* pair is the specific signature that C2"
+            warn "  Option A's group merge did not fully take."
+        }
+        catch {unset _fh _txt _pairs _part}
+    }
+    unset _f
+}
+
+################################################################################
+# WHAT THIS DRAFT STILL CANNOT DO -- stated plainly so the first run is not
+# misread, in the same spirit as constraints.sdc:578-590.
+#
+# 1. NOTHING HERE RUNS IN GENUS EXCEPT BLOCK A, and Block A adds no new command
+#    -- only a gate on a report the flow already writes. The proof that an
+#    exception or a clock group took effect is Innovus-only, so it arrives one
+#    stage after the SDC is written. A re-synthesis therefore does NOT by itself
+#    produce the C1 evidence; it produces the SDC that Block B then judges.
+#
+# 2. GATE D AND GATE E ARE REPORT-ONLY AS DRAFTED. Both compare against a
+#    baseline nobody has measured, because neither section has ever been read on
+#    this design. Arming them on a guessed number would repeat the
+#    "budgets set to the day's number" defect already recorded against this
+#    flow's gates. First run measures; second run gates.
+#
+# 3. report_path_exceptions -ignored REPORTS PER EXCEPTION, NOT PER ANCHOR. C2's
+#    69 pins arrive as TWO set_false_path commands (constraints.sdc:517-518), so
+#    an exception that bound only 40 of 69 pins is NOT ignored and will not
+#    appear. Per-anchor accounting is what ASIC/sta/sdc_gate.py does against the
+#    written SDC; the two checks are complementary and neither replaces the other.
+#
+# 4. NONE OF THIS IS A SUBSTITUTE FOR THE TA-1018 COUNT. GATE 1b in
+#    ASIC/sta/sdc_gate.py remains the acceptance criterion for the TX word
+#    clocks. report_clock_propagation explains a failure; it does not certify a
+#    success.
+################################################################################

@@ -1,35 +1,51 @@
 //============================================================================
 // nanosoc_eth_chiplet_pads --- Calibre DRC wrapper deck   (PROJECT-OWNED)
 //
-// Run it with:   ASIC/genus-innovus/scripts/calibre/run_drc.sh
+// *** NO LONGER THE DEFAULT DECK. ***  As of 2026-08-10 run_drc.sh assembles the
+// PROJECT deck (tsmc65_minisic_header.svrf + the foundry rule bodies, spliced by
+// make_project_deck.sh) because this wrapper CANNOT clear the WLCSP seal-ring
+// switch or set the chip-window bounds --- see "CANNOT BE SET FROM THIS WRAPPER"
+// below. This file is kept as the A/B control: it reproduces the deck with the
+// FOUNDRY switch defaults, which is the only way to measure what the project
+// header changed.
+//
+// Run it with:   DRC_DECK=$PWD/nanosoc_eth_chiplet_pads.drc.rules \
+//                ASIC/genus-innovus/scripts/calibre/run_drc.sh
 // or by hand:    cd <rundir> && DRC_GDS=/abs/path/to.gds \
-//                calibre -drc -hier -turbo 8 -nowait <this file>
+//                DRC_FOUNDRY_DECK=/abs/path/to/foundry/deck \
+//                calibre -drc -hier -turbo 8 -nowait <this file> < /dev/null
+//
+// Measured 2026-08-10 on runs/20260810T065131Z_honest-full-pnr2:
+//   this wrapper (foundry defaults) : 1955 rulechecks, 2509 results
+//   project deck (header landed)    : 1926 rulechecks, 2508 results
+//   the whole delta is the WLCSP -> wire-bond branch swap; the only non-zero
+//   check that moves is AP.R.1, 1 -> gone.
+//
+// WHICH FOUNDRY DECK: this file does not name one. $DRC_FOUNDRY_DECK is resolved
+// per site from $(TSMC_65_HOME) by ASIC/genus-innovus/drc_project.mk, which is
+// gitignored. The deck's release name encodes a metal stack and a purchased
+// revision, so it is site configuration, not source. See ci/site.env.example.
 //
 // WHY THIS FILE EXISTS
 // --------------------
-// The TSMC deck /tsmc65pdk/.../CLN65S_9M_6X1Z1U.26_2a ships with *placeholder*
-// specification statements that the customer is expected to replace:
+// The TSMC deck ships with *placeholder* specification statements that the
+// customer is expected to replace: the layout path, the primary cell, and the
+// results-database and summary-report filenames are literal strings, not
+// variables. The deck's own text is not reproduced here -- this repository is
+// public and TSMC's licence does not permit it. Read the block in your own PDK.
 //
-//     LAYOUT PATH    "GDSFILENAME"          <- literal string, not a variable
-//     LAYOUT PRIMARY "TOPCELLNAME"          <- literal string, not a variable
-//     DRC RESULTS DATABASE "DRC_RES.db"
-//     DRC SUMMARY REPORT   "DRC.rep"
-//
-// Pointing Calibre straight at the foundry deck therefore fails with
-//     Failure to open input file GDSFILENAME for read access.
-// because Calibre looks for a file *named* "GDSFILENAME" in the current
-// directory. It is not a variable and nothing in Innovus, Tcl or the shell
-// substitutes it. (`set GDSFILENAME ...` in a Tcl script sets a *Tcl*
-// variable and has no effect whatsoever on the SVRF deck.)
+// Pointing Calibre straight at the foundry deck therefore fails: Calibre looks
+// for a file *named* by the placeholder in the current directory. It is not a
+// variable and nothing in Innovus, Tcl or the shell substitutes it. (Setting a
+// same-spelled variable in a Tcl script sets a *Tcl* variable and has no effect
+// whatsoever on the SVRF deck.)
 //
 // THE LOAD-BEARING LINE IS `DRC ICSTATION YES` -- DO NOT REMOVE IT
 // ---------------------------------------------------------------
-// SVRF normally rejects a specification statement that is given twice:
-//     ERROR: Error SPC1 on line N of <deck> -
-//            superfluous specification statement: layout primary.
-// so simply setting LAYOUT PRIMARY here and then INCLUDEing the foundry deck
-// (which sets it again) is a hard error -- verified on this site, both
-// orderings, with and without -turbo.
+// SVRF normally rejects a specification statement that is given twice (error
+// SPC1, "superfluous specification statement"), so simply setting LAYOUT PRIMARY
+// here and then INCLUDEing the foundry deck (which sets it again) is a hard
+// error -- verified on this site, both orderings, with and without -turbo.
 //
 // `DRC ICSTATION YES` switches Calibre into the mode Calibre Interactive uses:
 // duplicate specification statements are tolerated and the ones in the
@@ -38,7 +54,7 @@
 // clean run back into SPC1.
 //
 // Everything below the INCLUDE is the unmodified foundry deck. The foundry
-// deck is READ-ONLY (/tsmc65pdk is shared, lab-wide collateral) and is not
+// deck is READ-ONLY (the PDK mount is shared, lab-wide collateral) and is not
 // copied, patched or sed-ed by this flow.
 //============================================================================
 
@@ -66,26 +82,77 @@ DRC MAXIMUM RESULTS 1000
 DRC MAXIMUM VERTEX  4096
 
 // ---- process option: WE ARE LP, AND THE DECK DOES NOT ASSUME IT --------------
-// The foundry deck's `#DEFINE LP` is COMMENTED OUT in the shipped file, and the
+// The foundry deck's LP switch is COMMENTED OUT in the shipped file, and the
 // deck never defines it itself. Without it the deck checks the wrong DPO.W.1 /
-// DPO.S.1/2/3 variants (deck :9008-9014 UNSELECTs the general forms and
-// substitutes the `.A` forms only under #IFDEF LP) and skips the N65LP HVD_N
-// block at :10446 entirely. This design is CLN65LP throughout - tcbn65lp std
-// cells, tphn65lpgv2od3_sl IO. Defining it HERE, before the INCLUDE, is legal
-// and leaves the read-only foundry deck untouched.
+// DPO.S.1/2/3 variants and skips the LP high-voltage device block entirely.
+// This design is CLN65LP throughout - tcbn65lp std cells, tphn65lpgv2od3_sl IO.
+// Defining it HERE, before the INCLUDE, is legal and leaves the read-only
+// foundry deck untouched.
 #DEFINE LP
 
-// ---- the foundry deck, unmodified -------------------------------------------
-// 9-metal 6X1Z1U stack, matching the Innovus GdsOutMap used by write_stream
-// (PRTF_EDI_N65_gdsout_6X1Z1U.24a.map). Kept literal on purpose: the metal
-// option is fixed for this tapeout and a silently-wrong deck is worse than an
-// edit. If the metal stack ever changes, change this line AND the map file
-// passed to write_stream together.
+// ---- the rest of the mini@sic switch set ------------------------------------
+// The manual's worked example is a different node; the below is the 65nm
+// equivalent, CHECKED AGAINST THIS DECK rather than transcribed. Switch NAMES
+// are named because you cannot operate the deck without them; where each one
+// sits in the vendor file, and what the vendor's own comment says about it, are
+// not reproduced -- read them in your own PDK.
 //
-// NOT FIXABLE FROM HERE: the deck also has `#DEFINE WLCSP_SEALRING` active at
-// its line 62, and we are WIRE BOND. That selects SR_EDGE = CHIP_WISR NOT
-// SCORE_WLCSP (:3501) rather than the wire-bond branch (:3503), so the CSR.*
-// corner geometry may be derived from degenerate inputs. SVRF has no
-// #UNDEFINE, so undoing it needs a project copy of the deck header - do that
-// only once the broker has confirmed their own switch set.
-INCLUDE "/tsmc65pdk/65/CMOS/util/MAIN_DRC_TopMu/CLN65S_9M_6X1Z1U.26_2a"
+// ALREADY CORRECT, no action: the full-chip switch is on in the shipped deck.
+// Without it you do not see floating gates or CSR violations at all.
+//
+// DEFINE_PAD_BY_TEXT   <-- DO NOT ENABLE. Reverted 2026-08-10.
+// The mini@sic manual offers it when you only have bondpad abstracts, and
+// that IS our situation - but it is actively harmful here. Our top cell
+// carries only 48 text labels, all on one metal layer, all signal names:
+// there is NO VDD/VSS text anywhere and the deck's pad-text variable is still
+// its placeholder. So every *_BY_TEXT layer resolves EMPTY, and ESD.1g swaps
+// its exclusion basis to "devices on the VSS net as identified by text" -
+// i.e. to nothing. Measured on this stream:
+//     off : 2,509 results, 0 capped, LUP.* true count 0
+//     ON  : >=8,509 results, 6 rulechecks CAPPED, LUP.* true count 222,350
+// It manufactures a quarter of a million false latch-up violations. It only
+// becomes usable once the pads carry real VDD/VSS text and the deck's pad-text
+// variable names them. Off by default in the shipped deck.
+//
+// Pads are otherwise recognised by the passivation-opening layer, which appears
+// NOWHERE in our stream, because it is absent from tpbn65v's LEF and
+// -output_macros can only emit what the LEF contains. Without this, pad
+// recognition is broken, which silently disarms the latch-up checks and stops
+// the AP.W.2 "not inside the pad-opening layers" exemption from ever firing.
+//
+// CANNOT BE SET FROM THIS WRAPPER — both need a project copy of the deck header:
+//   The chip-window switch, together with the four window-bound variables. The
+//     deck declares those four as VARIABLE UNCONDITIONALLY and SVRF rejects a
+//     VARIABLE redefinition, so defining the switch alone would pin the window
+//     at the deck's default extent — wrong for this die. Until it is set the
+//     deck derives the chip boundary from DRAWN METAL, so every boundary-derived
+//     check (CSR, seal ring, density) measures against a synthetic outline. That
+//     is the cause of the "entangled" CSR/density numbers in the 2026-08-10
+//     counterfactual.
+//   The WLCSP seal-ring switch is ON in the shipped deck and mini@sic is WIRE
+//     BOND only. SVRF has no #UNDEFINE, so it cannot be cleared from here. Every
+//     CSR.* and AP.R.1 number derives from the WLCSP branch until it is.
+//
+// NOT AVAILABLE AT 65nm, despite the manual's example at another node:
+//   The floating-gate-by-text switch does not exist in this deck (grepped,
+//   absent). The manual offers it to suppress false PO.R.19 floating-gate errors
+//   when you only have abstracts; at 65nm the equivalent rule is PO.R.8 and there
+//   is no such switch. Our 691 PO.R.8 results cannot be configured away — they
+//   resolve only when imec replaces the abstract cells with real layout.
+
+// ---- the foundry deck, unmodified -------------------------------------------
+// Resolved per site, never named here: $DRC_FOUNDRY_DECK must select the deck
+// for the SAME metal stack as the Innovus GdsOutMap used by write_stream. The
+// metal option is fixed for this tapeout and a silently-wrong deck is worse than
+// an edit; if the stack ever changes, change the site config AND the map file
+// passed to write_stream together. run_drc.sh expands and readability-checks
+// this before launching, so a missing or wrong value is a sentence, not an SVRF
+// error 900k lines in.
+//
+// NOT FIXABLE FROM HERE: the shipped deck also has the WLCSP seal-ring switch
+// active, and we are WIRE BOND. That selects the WLCSP seal-ring edge branch
+// rather than the wire-bond branch, so the CSR.* corner geometry may be derived
+// from degenerate inputs. SVRF has no #UNDEFINE, so undoing it needs a project
+// copy of the deck header - do that only once the broker has confirmed their own
+// switch set.
+INCLUDE "$DRC_FOUNDRY_DECK"

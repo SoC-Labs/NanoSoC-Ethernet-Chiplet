@@ -48,6 +48,11 @@
 //   haddr[24]==0 & haddr[19:16]==4'h4   -> tcapb  0x2E040000        (tidechart APB)
 //   anything else in the window         -> internal default: two-cycle ERROR
 //
+// ...AND the block is bigger than the subordinate behind it. The five 0x2E
+// regions are carved at 64 KB (haddr[19:16]) but NOT ONE of the subordinates
+// consumes a full 64 KB of address, so a block-only decode ALIASES. See the
+// "intra-block offset" section below — that is a correctness rule, not tidying.
+//
 // CONSTRAINT: address/control/write-data fan out to the slaves DIRECTLY from the
 // top level. This module owns only the HSELs and the response mux; it never sees
 // HWDATA/HWRITE/HSIZE/HBURST and must not need them.
@@ -113,6 +118,57 @@ module chiplet_d2d_decode (
     wire        in_2e  = ~haddr[24];            // 0x2E aperture
     wire [3:0]  blk    =  haddr[19:16];         // 64 KB block within 0x2E
 
+    //-------------------------------------------------------------------------
+    // INTRA-BLOCK OFFSET QUALIFIERS — the anti-alias rule.
+    //
+    // `blk` carves 64 KB regions, but every 0x2E subordinate is handed a
+    // TRUNCATED address at the top level, so none of them can tell a low offset
+    // from the same offset with an upper bit set. Whatever bits the subordinate
+    // never receives are, by construction, decoded by NOBODY — and a block-only
+    // HSEL therefore hands an out-of-range access to a real register bank at the
+    // wrong offset. Silently. This is the classic decode alias, and it is a
+    // *correctness* defect, not an aesthetic one: it turns a stray pointer into
+    // a successful write to an unrelated register instead of a bus fault.
+    //
+    // The truncation is visible at the instantiations in nanosoc_eth_chiplet.sv,
+    // which are the authority for the widths below:
+    //
+    //   region  connection                                   sees      size
+    //   ------  -----------------------------------------    --------  ------
+    //   tx      .ahb_tx_haddr   (d2d_ahb_m_haddr[13:0])      [13:0]     16 KB
+    //   fifo    .ahb_fifo_haddr (d2d_ahb_m_haddr[13:0])      [13:0]     16 KB
+    //   ptp     .ahb_ptp_haddr  (d2d_ahb_m_haddr[3:0])       [ 3:0]     16 B
+    //   tlapb   u_tlapb_bridge .HADDR (…haddr[14:0])         [14:0]     32 KB
+    //           (cmsdk_ahb_to_apb #(.ADDRWIDTH(15)))
+    //   tcapb   u_tcapb_bridge .HADDR (…haddr[11:0])         [11:0]      4 KB
+    //           (cmsdk_ahb_to_apb #(.ADDRWIDTH(12)))
+    //   peer    .ahb_sub_haddr  (d2d_ahb_m_haddr)            [31:0]  no alias
+    //
+    // These sizes are exactly the ones the SoC firmware map already publishes
+    // (nanosoc-multicore-system/firmware/include/nanosoc_multicore_addrmap.h:
+    // "16 KB TX aperture", "16 KB local RX FIFO", "PTP TX write port (16 B)",
+    // "One 32 KB tidelink APB region (0x2E030000..0x2E037FFF)", TideChart
+    // "only the low 4 KB is the register file"). So this qualification does not
+    // narrow the documented map — it makes the RTL enforce it. Nothing outside
+    // these sub-windows was ever a legal address; it merely used to work by
+    // wrapping onto a lower one.
+    //
+    // WORKED EXAMPLE (the one that motivated this): tlapb sees haddr[14:0], so
+    // haddr[15] was dropped. 0x2E03_8000 landed on PADDR 0x0000 — the same
+    // register as 0x2E03_0000 — and 0x2E03_E000 landed on 0x6000, which is the
+    // reserved paddr[14:13]==2'b11 quadrant where new TideLink config registers
+    // are to be placed. An access to the alias must fault, not write a register.
+    //
+    // Anything that fails its offset qualifier falls through to `a_dflt` below
+    // and takes the SAME two-cycle AHB ERROR as an unmapped block — the existing
+    // clean error path, unchanged and not duplicated.
+    //-------------------------------------------------------------------------
+    wire off_tx    = (haddr[15:14] == 2'b00);    // 16 KB  -> haddr[13:0]
+    wire off_fifo  = (haddr[15:14] == 2'b00);    // 16 KB  -> haddr[13:0]
+    wire off_ptp   = (haddr[15:4]  == 12'h000);  // 16 B   -> haddr[3:0]
+    wire off_tlapb = (haddr[15]    == 1'b0);     // 32 KB  -> haddr[14:0]
+    wire off_tcapb = (haddr[15:12] == 4'h0);     //  4 KB  -> haddr[11:0]
+
     // TX APERTURE WEDGE GATE.
     //
     // TideLink's own integration guide marks `ahb_tx_*` a WEDGE HAZARD: a write
@@ -130,14 +186,22 @@ module chiplet_d2d_decode (
     // Tie `link_active_i` high only if you have another guarantee the link is up.
     wire tx_open = link_active_i;
 
-    wire a_tx    = in_2e & (blk == 4'h0) &  tx_open;
-    wire a_fifo  = in_2e & (blk == 4'h1);
-    wire a_ptp   = in_2e & (blk == 4'h2);
-    wire a_tlapb = in_2e & (blk == 4'h3);
-    wire a_tcapb = in_2e & (blk == 4'h4);
+    wire a_tx    = in_2e & (blk == 4'h0) & off_tx & tx_open;
+    wire a_fifo  = in_2e & (blk == 4'h1) & off_fifo;
+    wire a_ptp   = in_2e & (blk == 4'h2) & off_ptp;
+    wire a_tlapb = in_2e & (blk == 4'h3) & off_tlapb;
+    wire a_tcapb = in_2e & (blk == 4'h4) & off_tcapb;
     wire a_peer  = haddr[24];                   // all of 0x2F is the peer window
-    wire a_dflt  = in_2e & ((blk > 4'h4)                       // unmapped blocks
-                          | ((blk == 4'h0) & ~tx_open));       // TX with link down
+
+    // The default responder claims EVERYTHING in 0x2E that no region claimed.
+    // Written as the complement of the region set rather than as an enumeration
+    // of holes: the previous form, `(blk > 4'h4) | ((blk==4'h0) & ~tx_open)`,
+    // had to restate every reason a transfer might miss, and the offset
+    // qualifiers above have just added five more. A complement cannot drift out
+    // of step with the regions it complements — add a region, and its hole
+    // disappears from here for free. (It is also exactly equivalent to the old
+    // expression for every address, given the old region terms.)
+    wire a_dflt  = in_2e & ~(a_tx | a_fifo | a_ptp | a_tlapb | a_tcapb);
 
     assign hsel_tx    = xfer & a_tx;
     assign hsel_fifo  = xfer & a_fifo;
@@ -152,7 +216,8 @@ module chiplet_d2d_decode (
     //
     // Encode the winning address-phase select and register it on every ready
     // cycle. Only ONE code can be set because the regions are mutually exclusive
-    // by construction (a_peer on haddr[24], the rest on distinct blk values).
+    // by construction (a_peer on haddr[24], the rest on distinct blk values, and
+    // a_dflt is the explicit complement of the five 0x2E regions).
     // Updating solely when `hready` is high is what pipelines the select into the
     // data phase — this is the register whose absence is the classic AHB decode
     // bug the header warns about.

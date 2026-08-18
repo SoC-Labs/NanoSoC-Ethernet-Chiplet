@@ -1,0 +1,266 @@
+[HOLE 1] D2D source-synchronous I/O — give TL_RX and TL_TX a real -min/-max window
+
+WHAT THIS DOES
+    tidelink_constraints.sdc:41   set_input_delay  1   ->  -max 2.5  / -min -0.4
+    tidelink_constraints.sdc:179  set_output_delay 0.8 ->  -max 0.8  / -min -0.8
+
+    Neither live line carries -max or -min, so SDC applies the single value to
+    BOTH ends and the timer sees a source-synchronous interface with a valid
+    window of ZERO width. This gives both a window, adds a bind-or-die guard on
+    each port bundle, and records where every number came from.
+
+    set_input_delay   1 -> 2   (+1: the -min that did not exist)
+    set_output_delay  1 -> 2   (+1: the -min that did not exist)
+    new Tcl vars      +4       (D2D_T_UI, D2D_RX_IN_MAX, D2D_RX_IN_MIN,
+                                D2D_TX_OUT_SYMM -- all parametric off
+                                $D2D_LINK_PERIOD except the two absolutes)
+    no clock created, no clock removed, no clock-to-clock exception added.
+
+WHY
+    The file has been carrying its own indictment since the pad characterisation
+    landed. tidelink_constraints.sdc:699-706:
+
+      "set_input_delay 1 -- carries NEITHER -max NOR -min, so SDC applies 1.0ns
+       to both. The tool therefore believes D2D data arrives at exactly
+       +1.000ns after the RX clock edge with ZERO valid-window uncertainty. For
+       a forwarded-clock source-synchronous interface the window IS the
+       constraint, and a min equal to the max is optimistic for hold: it
+       asserts the data can never arrive early."
+
+    A missing -min is not symmetric with a missing -max. Optimistic setup fails
+    AT SPEED and STA watches the margin shrink; optimistic hold fails at ANY
+    speed, is not recoverable by slowing the link, and STA reports it clean.
+
+WHERE THE NUMBERS COME FROM
+    T_UI = 10.0 ns.  DERIVED: one bit per pad-clock edge per lane
+        (WavD2DGpioRx_v2.v:400/595/665, SDR), and confirmed against the shipping
+        build -- build/full-20260814/reports/cts_clocks.rep:37 gives
+        D2D_RX_WORD_CLK_0 period 160.000 waveform {0 80} at ratio 1/16, i.e.
+        16 x 10.0 ns.  NOTE the block SDC's T_UI is 4.0 ns, NOT 10.0.
+
+    RX -max 2.5 ns = T_UI/4.  The block SDC's RX_INPUT_DELAY_SYMM ratio
+        (tidelink/syn/asic/fusion-compiler/inputs/constraints.sdc:74), SCALED to
+        this die's UI. The block's ratio evaluates to 1.0 ns at ITS T_UI=4.0 --
+        which is exactly the bare `1` that was on line 41, and that coincidence
+        is the defect: an unscaled inheritance asserting a window 2.5x tighter
+        than the block ever claimed.
+
+    RX -min -0.4 ns.  ABSOLUTE, NOT SCALED. It is the block SDC's PROVEN value
+        (its lines 139-149) and the only -min in this project that has ever
+        closed hold: symmetric -1.0 produced "-0.59 ns scen_fast hold WNS / 130
+        NVE ... that 11 builds could not work around", and -0.4 fixed it. The
+        quantity that set it was the RECEIVING DESIGN'S CLOCK-TREE LATENCY
+        (~0.58 ns there), not the link rate, so scaling it with T_UI is a
+        category error. This file's own line 705 agrees about what a -min is:
+        "clock-to-Q + pad-to-pad mismatch + channel skew".
+
+    TX -max 0.8 ns.  UNCHANGED ON PURPOSE. The block at line ~688 already shows
+        0.8 is barely physical and concludes it "cannot be settled from inside
+        this repo -- it needs the compute die's CTS report". That is still true.
+        Only the SHAPE is fixed here; the magnitude stays theirs.
+
+    TX -min -0.8 ns.  Mirror of -max: symmetric about the launch edge, because
+        both io_pad and io_pad_clk leave the serialiser on the same io_clk edge
+        (WavD2DGpioTx.v:320/322/326/330). Symmetric is what lets the tool
+        balance data against the forwarded clock instead of hold-padding every
+        lane -- the 2026-05-05 trap the block SDC's §4 records.
+
+TOOL SUPPORT
+    set_input_delay / set_output_delay -min/-max/-add_delay: base SDC, supported
+    by Genus 21.1 and Innovus 21.11. Nothing here is vendor-specific and nothing
+    here needs a catch wrapper.
+
+APPLIES TO
+    ASIC/genus-innovus/inputs/tidelink_constraints.sdc
+    sha256 d13763286671a1d9a77aa99f50a52fdbcc426bc823b977b24ce7d706d908b1b6
+    (this file is edited by concurrent sessions; if the hash has moved, re-read
+    lines 38-42 and 176-180 before applying)
+
+APPLY
+    git apply ASIC/genus-innovus/inputs/patches/hole1-d2d-io-delay-window.patch
+
+NOT VALIDATED
+    No EDA run was made. Every number above is traced to a file:line or to a
+    report from build/full-20260814; none is measured under THIS constraint set.
+
+READ BEFORE JUDGING THE FIRST RUN
+    SETUP.  -max +1.5 ns on TL_RX spends 1.5 ns of the `default` path group,
+    which closes at WNS +2.435 ns over 4567 paths, 0 violating
+    (reports/nanosoc_eth_chiplet_pads_routed.summary.gz). +2.435 is the WORST
+    path in the group, so the floor after this lands is >= +0.935 ns. If the
+    group goes negative, the group's margin moved since 08-14 -- re-measure
+    before touching the ratio.
+
+    HOLD.  Baseline is post-route-opt hold WNS -0.001 / TNS -0.002 / FEP 7
+    (reports/hold_05_route_opt.rep). NEW hold endpoints on TL_RX capture and
+    TL_TX launch are this constraint WORKING. Ladder if the count is
+    disproportionate: RX -min -0.4 -> -0.2 -> 0.0. TIGHTEN, never delete --
+    deleting restores min == max and the optimism.
+
+    DO NOT follow the block SDC's own guard note, which says to "widen it (e.g.
+    +/-T_UI/2)" on a hold explosion. That is the wrong sign: a more negative
+    -min makes hold strictly harder. The same file's §1 records the fix that
+    actually worked and it was the opposite direction.
+
+--- a/ASIC/genus-innovus/inputs/tidelink_constraints.sdc
++++ b/ASIC/genus-innovus/inputs/tidelink_constraints.sdc
+@@ -38,7 +38,105 @@
+ set D2D_LINK_PERIOD $EXTCLK_PERIOD
+ create_clock -name "D2D_RX_CLK_0" -period "$D2D_LINK_PERIOD"  -waveform "0 [expr $D2D_LINK_PERIOD/2]" [get_ports TL_CLK_RX]
+ 
+-set_input_delay 1 -clock [get_clocks "D2D_RX_CLK_0"] [get_ports {TL_RX[*]}]
++# ── D2D RX EYE — SYMMETRIC SOURCE-SYNCHRONOUS WINDOW (added 2026-08-18) ──────
++# WAS: `set_input_delay 1 -clock D2D_RX_CLK_0 [get_ports {TL_RX[*]}]`, carrying
++# NEITHER -max NOR -min. SDC then applies 1.0ns to BOTH ends, so the timer
++# believes D2D data arrives at exactly +1.000ns after the RX clock edge with
++# ZERO valid-window uncertainty. The pad-characterisation block at the bottom
++# of this file (~line 699) has said so since it landed: "a min equal to the max
++# is optimistic for hold: it asserts the data can never arrive early."
++#
++# WHICH HALF MATTERS. An optimistic -max is a part that fails AT SPEED, and STA
++# can watch the margin shrink. A missing -min is a part that fails at ANY speed,
++# is not recoverable by slowing the link down, and STA reports it CLEAN. Of the
++# two numbers below the -min is the safety-critical one; the -max change is a
++# consistency fix that happens to travel with it.
++
++# --- T_UI, DERIVED NOT ASSUMED ----------------------------------------------
++# The unit interval IS the pad-clock period. Each lane's word clock is
++# io_link_clk = ~count[3] off a free-running 4-bit counter clocked by io_pad_clk
++# (WavD2DGpioRx_v2.v:400/595/665), so exactly one bit is captured per pad-clock
++# edge per lane -- SDR, not DDR. Confirmed against the shipping build rather
++# than inferred: build/full-20260814/reports/cts_clocks.rep:37 reports
++# D2D_RX_WORD_CLK_0 at period 160.000 ns, waveform {0 80}, ratio 1/16 of
++# D2D_RX_CLK_0. 160/16 = 10.0 ns = $D2D_LINK_PERIOD = one UI.
++set D2D_T_UI $D2D_LINK_PERIOD
++
++# --- -max: T_UI/4 -----------------------------------------------------------
++# The SAME RATIO TideLink's own block SDC signs the RX eye off with:
++#   tidelink/syn/asic/fusion-compiler/inputs/constraints.sdc:74
++#   set RX_INPUT_DELAY_SYMM [expr {$T_UI_NS / 4.0}]   ;# +/-25% of UI
++# SCALED, NOT COPIED, and the difference is the whole defect. That file runs
++# T_UI_NS = 4.0 (its line 71), so its number evaluates to 1.0ns -- which is
++# exactly the bare `1` that was on this line. The chiplet's T_UI is 10.0ns, so
++# the same ratio is 2.5ns: the inherited literal was asserting an arrival window
++# 2.5x TIGHTER than the block level ever claimed, in the optimistic direction.
++#
++# COST, MEASURED NOT GUESSED. Raising -max by 1.5ns spends 1.5ns of setup on
++# every TL_RX capture path. Those paths live in Innovus's `default` path group,
++# which in build/full-20260814 closes at WNS +2.435ns over 4567 paths with 0
++# violating (reports/nanosoc_eth_chiplet_pads_routed.summary.gz, "Setup mode /
++# default" column). +2.435 is the WORST path in that group, so a uniform 1.5ns
++# tightening leaves >= +0.935ns. Affordable on this build; re-check it if the
++# group's margin has moved.
++set D2D_RX_IN_MAX [expr {$D2D_T_UI / 4.0}]
++
++# --- -min: -0.4ns, AN ABSOLUTE, DELIBERATELY NOT SCALED WITH T_UI -----------
++# READ THIS BEFORE "FIXING" IT TO -$D2D_RX_IN_MAX FOR SYMMETRY.
++#
++# 1. IT IS NOT A UI FRACTION AND MUST NOT BE ONE. The block SDC's -min carries
++#    the one comment in either file that is a MEASUREMENT rather than a budget
++#    (tidelink/syn/asic/fusion-compiler/inputs/constraints.sdc:139-149): the
++#    symmetric -1.0ns "combined with the aspect-2.0 clock-tree latency (~0.58 ns
++#    from pad_clk_rx to capture FF) produced a -0.59 ns scen_fast hold WNS / 130
++#    NVE failure ... that 11 builds could not work around", and only loosening
++#    -min to -0.4 fixed it. The quantity that set -0.4 was the RECEIVING
++#    DESIGN'S CLOCK-TREE LATENCY, not the link rate. Multiplying it by 2.5
++#    because our UI is 2.5x longer would be a category error.
++#
++# 2. THE PHYSICS AGREES, AND SO DOES THIS FILE. Line ~705 below: "The launch
++#    pads are the same cell for clock and data on both dies, so the residual is
++#    clock-to-Q + pad-to-pad mismatch + channel skew, which is where a real -min
++#    belongs." Those terms are hundreds of picoseconds on a wirebond D2D link
++#    and they do not grow when the link slows down. -0.4ns is a mismatch
++#    allowance standing in for a link budget that does not exist yet.
++#
++# 3. WE HAVE NO HEADROOM TO BE MORE GENEROUS. A negative -min buys hold
++#    pressure one-for-one: the pad->flop route must supply
++#    (clock insertion + t_hold + |min|). Our RX clock insertion is at least as
++#    large as the block's 0.58ns -- this file quotes 1.09ns at line 698
++#    (pnr_m7.log:81871), and build/full-20260814's own
++#    reports/cts_clock_latency_{setup,hold}.rep put the D2D_RX_CLK_0 network
++#    latency at +0.171 (late) and -0.395 (early), a ~0.57ns spread across views.
++#    Nothing in that says we can afford MORE than the block could.
++#
++# FALLBACK LADDER IF HOLD BLOWS UP: -0.4 -> -0.2 -> 0.0. TIGHTEN (reduce the
++# magnitude), never delete -- deleting restores min==max and the optimism.
++#
++# AND NOTE, BECAUSE IT IS WRONG AND IT WILL BE QUOTED AT YOU: the block SDC's
++# own hold-trap guard (its lines 130-136) says that if hold endpoints jump
++# "toward ~100+ ... the symmetric window is still too tight -- widen it (e.g.
++# +/-T_UI/2)". That is the WRONG SIGN. Widening means a MORE negative -min,
++# which makes hold strictly HARDER by the equation above. The same file's own
++# §1 records the fix that actually worked and it was the opposite: -1.0 -> -0.4.
++# Follow the recorded fix, not the guard note.
++set D2D_RX_IN_MIN -0.4
++
++# BIND OR DIE, same doctrine as the word-clock anchors above. If TL_RX ever
++# stops matching 8 ports, a silently-empty collection leaves the RX eye
++# unconstrained behind two lines that read as though it were handled.
++if {[sizeof_collection [get_ports -quiet {TL_RX[*]}]] != 8} {
++    error "tidelink_constraints.sdc: TL_RX\[*\] matched\
++           [sizeof_collection [get_ports -quiet {TL_RX[*]}]] ports, expected 8.\
++           The D2D receive eye would be left unconstrained. Refusing to continue."
++}
++
++# -add_delay on BOTH, so the -min does not replace the -max. Without it the
++# second set_input_delay on the same port/clock pair removes the first, and the
++# file would read as a window while behaving as a single value -- the exact
++# class of defect this block exists to remove.
++set_input_delay -max $D2D_RX_IN_MAX -clock [get_clocks "D2D_RX_CLK_0"] [get_ports {TL_RX[*]}] -add_delay
++set_input_delay -min $D2D_RX_IN_MIN -clock [get_clocks "D2D_RX_CLK_0"] [get_ports {TL_RX[*]}] -add_delay
+ 
+ #-----------------------------------------------------------------------------
+ # THE LINK-CLOCK DIVIDER, AND WHY THE TX CONSTRAINTS STILL HOLD
+@@ -176,7 +274,51 @@
+ 
+ create_generated_clock -name "D2D_TX_CLK_0" -source [get_pins u_nanosoc_eth_chiplet_chip/u_soc/u_tidelink/u_chiplet_controller/u_wlink/pad_clk_tx] -divide_by 1 [get_ports TL_CLK_TX]
+ 
+-set_output_delay 0.8 -clock [get_clocks "D2D_TX_CLK_0"] [get_ports {TL_TX[*]}]
++# ── D2D TX EYE — SYMMETRIC WINDOW ABOUT THE LAUNCH EDGE (added 2026-08-18) ───
++# WAS: `set_output_delay 0.8 -clock D2D_TX_CLK_0 [get_ports {TL_TX[*]}]` -- same
++# defect as the RX line, opposite direction. With neither -max nor -min, SDC
++# applies +0.8ns to BOTH, which asserts that the far die's external path has
++# ZERO variation: it can never be faster than 0.8ns and never slower. A +0.8ns
++# -min is a HOLD GIFT -- it tells the timer that 0.8ns of external delay always
++# exists to pad the far flop's hold requirement. Nothing off this die supplies
++# that guarantee.
++#
++# THE VALUE 0.8 IS NOT CHANGED, AND THAT IS DELIBERATE. The block at line ~688
++# below already dissects it -- the far PDDW04DGZ_G RX pad alone burns 0.675ns,
++# leaving 0.125ns for the far die's routing and setup, and it concludes: "It
++# cannot be settled from inside this repo -- it needs the compute die's CTS
++# report." That is still true. Inventing a scaled number here would be
++# substituting our arithmetic for their measurement. What IS settleable from
++# inside this repo is the SHAPE, and the shape was wrong.
++#
++# WHY SYMMETRIC ABOUT THE LAUNCH EDGE, rather than an asymmetric absolute
++# window. Both io_pad and io_pad_clk leave the WavD2DGpioTx serialiser on the
++# same io_clk edge (WavD2DGpioTx.v:320/322/326/330 -- the pad clock is a
++# WavClockGate on io_clk, the data leaves the same net), so the transmit
++# relationship is EDGE-ALIGNED. A symmetric window lets the tool balance
++# TL_TX[*] against TL_CLK_TX; an asymmetric one makes it hold-pad every lane
++# instead. That is the 2026-05-05 trap the block SDC records at its §4
++# ("Why not the 2026-05-05 trap") and it applies here unchanged.
++set D2D_TX_OUT_SYMM 0.8
++
++if {[sizeof_collection [get_ports -quiet {TL_TX[*]}]] != 8} {
++    error "tidelink_constraints.sdc: TL_TX\[*\] matched\
++           [sizeof_collection [get_ports -quiet {TL_TX[*]}]] ports, expected 8.\
++           The D2D transmit eye would be left unconstrained. Refusing to continue."
++}
++
++set_output_delay -max  $D2D_TX_OUT_SYMM -clock [get_clocks "D2D_TX_CLK_0"] [get_ports {TL_TX[*]}] -add_delay
++set_output_delay -min -$D2D_TX_OUT_SYMM -clock [get_clocks "D2D_TX_CLK_0"] [get_ports {TL_TX[*]}] -add_delay
++
++# WHAT THIS COSTS, SO THE FIRST RUN IS NOT MISREAD. -max is unchanged, so setup
++# on TL_TX is unchanged. -min goes +0.8 -> -0.8, a 1.6ns swing IN THE HOLD
++# DIRECTION ONLY, and it is the first real hold requirement these 8 ports have
++# ever carried. Expect NEW hold endpoints on the TX launch flops. Baseline to
++# compare against: build/full-20260814 post-route-opt hold WNS -0.001 / TNS
++# -0.002 / FEP 7 (reports/hold_05_route_opt.rep). New hold endpoints here are
++# the constraint WORKING, not the constraint being wrong; they are ordinary
++# buffer-insertion work on 8 nets. See the ladder on the RX -min above if the
++# count is disproportionate.
+ 
+ # CLOCK UNCERTAINTY — was ABSENT for both D2D clocks, so they were timed with
+ # ZERO margin on setup and hold. Verified on the 2026-08-06 run: paths in these

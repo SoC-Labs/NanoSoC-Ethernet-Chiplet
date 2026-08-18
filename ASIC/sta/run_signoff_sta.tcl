@@ -53,6 +53,12 @@ set BLOCK    [envdef STA_BLOCK nanosoc_eth_chiplet_pads]
 # RCDB that already exists in work/, which turns a 40-minute loop into a
 # 2-minute one while iterating on report formatting.
 set SKIP_EXT [envdef STA_SKIP_EXTRACT 0]
+# Design(LEF/DEF)->QRC-techfile layer map. The wired QRC deck is a foundry
+# Assura deck whose layers are named metal1..metal10/VIA1..VIA9 while the tech
+# LEF names them M1..M9/RV/AP; without the map Quantus aborts (EXTSNZ-127) and
+# writes no SPEF. Derivation, and the corner caveat that survives this fix, are
+# in the header of the map file.
+set QRC_LAYER_MAP [envdef STA_QRC_LAYER_MAP $STA_ROOT/qrc_layer_map.ccl]
 
 file mkdir $OUT $REP
 
@@ -230,7 +236,8 @@ step record_extraction_setup {
     # extract_rc_effort_level is not in the Tempus extract_rc category at all;
     # Tempus drives Quantus through extract_rc_qrc_run_mode instead. Reading a
     # name that does not exist is recorded as <unreadable> rather than assumed.
-    foreach a {extract_rc_qrc_cmd_file extract_rc_qrc_cmd_type extract_rc_qrc_run_mode \
+    foreach a {extract_rc_lef_tech_file_map \
+               extract_rc_qrc_cmd_file extract_rc_qrc_cmd_type extract_rc_qrc_run_mode \
                extract_rc_coupled extract_rc_total_cap_threshold \
                extract_rc_coupling_cap_threshold extract_rc_cap_filter_mode} {
         if {[catch {set v [get_db $a]}]} { set v "<unreadable>" }
@@ -252,6 +259,17 @@ if {$SKIP_EXT} {
 } else {
     step extract_parasitics {
         set_db extract_rc_coupled true
+        # Tempus requires the layer map whenever extract_rc_qrc_cmd_type is
+        # `auto`, which is the default and what this run uses
+        # (tempusCUI/extract_rc_Category_Attributes.html). A missing file is
+        # recorded rather than silently ignored: without it the run cannot
+        # produce a SPEF at all, so a blank here explains the whole failure.
+        if {[file exists $QRC_LAYER_MAP]} {
+            set_db extract_rc_lef_tech_file_map $QRC_LAYER_MAP
+            rec extract.lef_tech_file_map [file tail $QRC_LAYER_MAP]
+        } else {
+            rec extract.lef_tech_file_map "<missing:$QRC_LAYER_MAP>"
+        }
         extract_parasitics
     }
 

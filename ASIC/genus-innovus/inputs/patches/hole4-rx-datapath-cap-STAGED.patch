@@ -1,0 +1,246 @@
+[HOLE 4] Per-lane RX pad->capture delay cap — STAGED, GUARDED OFF, NOT CLOSED
+
+STATUS: NOT CLOSED. This patch delivers the constraint, the derivation and the
+        experiment; it does NOT deliver a landable change for the frozen run.
+        The block it adds is guarded OFF by an env var and prints a NOTE saying
+        so. Applying this patch changes no timing. Read WHAT IS MISSING below.
+
+WHAT THIS DOES
+    Appends a guarded block to tidelink_constraints.sdc.
+      guard unset (default)  -> 0 constraints, one NOTE line in the log
+      TL_RX_DATAPATH_CAP=1   -> 8 x set_max_delay -ignore_clock_latency,
+                                one per lane, 16 endpoints each
+
+WHY IT IS NOT SIMPLY ON — THREE FINDINGS, TWO SETTLED AND ONE NOT
+
+  1. -datapath_only DOES NOT EXIST IN EITHER TOOL HERE.  SETTLED.
+     Genus 21.1 SDC Command Reference lists set_max_delay's options as
+     [-rise] [-fall] [-ignore_clock_latency] [-exception_name] [-comment]
+     [-combinational_from_to] [-reset_path]; "datapath_only" occurs ZERO times
+     in the whole document. Innovus 21.11 TCR: `set_max_delay value
+     [-combinational_from_to | -ignore_clock_latency]`. The block SDC is right
+     that it is PrimeTime-only and right that -ignore_clock_latency is the
+     Cadence spelling — but they are not equivalent, which is finding 2.
+
+  2. -ignore_clock_latency EXCLUDES CLOCK LATENCY AND NOTHING ELSE.  SETTLED.
+     Two Innovus globals control the rest and BOTH DEFAULT TO false:
+       timing_constraint_path_delay_exclude_io_delay_from_ignore_clock_latency
+       timing_constraint_path_delay_exclude_check_delay_from_ignore_clock_latency
+     So at defaults the set_input_delay -max is charged INSIDE the budget. A
+     bare 2.0 ns cap anchored at [get_ports {TL_RX[*]}] alongside a 2.5 ns
+     input delay violates by >= 0.5 ns on every lane before any silicon delay —
+     an unfixable false violation. The budget in this patch adds it back:
+     D2D_RX_DP_MAX = T_UI/5 + D2D_RX_IN_MAX = 2.0 + 2.5 = 4.5 ns.
+
+  3. WHETHER set_max_delay DISPLACES THE CLOCK-DERIVED HOLD CHECK. **NOT
+     SETTLED, AND IT IS THE BLOCKER.**
+     Innovus's reference says set_max_delay "takes precedence over other path
+     exceptions specified for the same path, except for the set_false_path
+     command", so a path-delay constraint replaces the clock-derived check on
+     TL_RX[*] -> capture — the SAME paths the RX input-delay window (hole1)
+     exists to constrain.
+       SETUP is safe, arithmetically: the clock-derived check allows
+       10.0 - 2.5 - uncertainty - t_setup ~ 7.4 ns of datapath; this bound
+       allows 2.0. Strictly tighter, never looser.
+       HOLD is not stated in EITHER reference. If the min requirement silently
+       defaults to 0, this block DELETES the -min that hole1 adds — the one
+       constraint here whose absence is a silicon failure that slowing the link
+       down does not recover. A budget assertion that quietly removes a safety
+       check is worse than no constraint.
+     AND IT CANNOT BE PAPERED OVER. The hold requirement hole1 creates is
+     (clock insertion + t_hold + 0.4 ns); clock insertion is not expressible in
+     SDC, so there is no companion set_min_delay that reproduces it.
+
+WHAT IS MISSING, PLAINLY
+    One measurement, on any build that already carries hole1, before and after
+    setting TL_RX_DATAPATH_CAP=1:
+
+        report_timing -hold -from [get_ports {TL_RX[0]}] \
+            -to [get_pins <GPIO>/gpiorx_0/link_data_pad_clk_reg[0]/D]
+
+    Hold path still reported, required time still derived from D2D_RX_CLK_0 and
+    the -0.4 ns arrival  ->  benign; delete the guard and land it.
+    Hold check gone, or required time collapsed to 0  ->  do not use this form.
+    The alternative is then to set both globals above to true in the P&R setup
+    and re-derive the budget as the bare 2.0 ns. That is a flow-script change
+    with effects beyond this constraint and belongs in its own reviewed patch,
+    not smuggled into an SDC.
+
+    Note the globals affect ONLY paths carrying -ignore_clock_latency, so they
+    would not disturb the C2 block at constraints.sdc:568-577 (whose
+    -datapath_only is rejected and whose catch fallback is a PLAIN
+    set_max_delay). That is a convenience, not a licence to skip the review.
+
+WHERE THE NUMBER COMES FROM
+    2.0 ns = T_UI/5 at T_UI = 10.0 ns.
+    Block SDC:74  RX_DATAPATH_MAX_NS = T_UI_NS/5.
+    Block SDC:66-70 gives the ratio's provenance: "the same ratios validated on
+    FPGA at T_UI=40 ns (set_max_delay 8 ns ~ T_UI/5 ...) scaled down to ASIC
+    T_UI". Chain: FPGA-validated 8 ns at 40 ns UI -> ratio 1/5 -> 2.0 ns here.
+    +2.5 ns for the charged input delay, per finding 2. The capture setup arc
+    (~0.05-0.10 ns, tcbn65lp DFF) is inside the 4.5 and is documented rather
+    than padded out.
+
+    THIS IS A DIFFERENT CONSTRAINT FROM THE ONE AT constraints.sdc:568-570.
+    That is C2 Option A's payload bound: different source (a2l_fc_replay FIFO
+    and addrsync cells), different target (the TX clock group and $EXTCLK),
+    different value ($EXTCLK_PERIOD). Nothing in this patch touches it.
+
+TARGET, MEASURED IN THE SHIPPING NETLIST
+    gpiorx_<0..7>/link_data_pad_clk_reg[15:0] — 16 per lane, 128 total. It is
+    the per-lane deserialiser: each bit loads io_pad when adj_count == n
+    (WavD2DGpioRx_v2.v:402-424), i.e. the true pad capture register. Same
+    selector shape the block SDC uses, with a candidate ladder for the pre-map
+    spelling and error-on-zero.
+
+APPLIES TO
+    ASIC/genus-innovus/inputs/tidelink_constraints.sdc, AFTER hole1 and hole2.
+    It uses $D2D_T_UI and $D2D_RX_IN_MAX, which hole1 introduces, and appends
+    after hole2's block. Apply order: hole1 -> hole2 -> hole4.
+
+APPLY
+    git apply ASIC/genus-innovus/inputs/patches/hole1-d2d-io-delay-window.patch
+    git apply ASIC/genus-innovus/inputs/patches/hole2-deskew-fifo-cdc.patch
+    git apply ASIC/genus-innovus/inputs/patches/hole4-rx-datapath-cap-STAGED.patch
+
+NOT VALIDATED
+    No EDA run was made. Findings 1 and 2 are quoted from the installed Genus
+    21.1 and Innovus 21.11 references. Finding 3 is absent from both references
+    and was NOT resolved by experiment.
+
+--- a/ASIC/genus-innovus/inputs/tidelink_constraints.sdc
++++ b/ASIC/genus-innovus/inputs/tidelink_constraints.sdc
+@@ -1130,3 +1130,133 @@
+ # D2D_RX_WORDN_CLK_n -> D2D_RX_WORD_CLK_n half-cycle check inside
+ # WavD2DGpioRx (link_data_reg -> the FIFO write port), which is a genuine
+ # 80 ns synchronous check and must stay timed.
++
++# ===========================================================================
++# [HOLE 4] PER-LANE RX PAD->CAPTURE DELAY CAP — STAGED, NOT FOR THE FROZEN RUN
++# ===========================================================================
++# ###########################################################################
++# ## DO NOT LAND THIS IN THE SAME RUN AS THE RX INPUT-DELAY WINDOW ABOVE.   ##
++# ## The whole block is guarded OFF by default. Read the collision first.   ##
++# ###########################################################################
++#
++# WHAT IT IS. TideLink's block SDC caps each lane's absolute pad->capture delay
++# at RX_DATAPATH_MAX_NS = T_UI/5 (its lines 74 and 152-165) and the chiplet has
++# no equivalent. At this die's T_UI of 10.0 ns the ratio gives 2.0 ns.
++#
++# WHY IT IS NOT SIMPLY ENABLED. Two tool facts and one unresolved interaction.
++#
++# FACT 1 - -datapath_only DOES NOT EXIST IN EITHER TOOL HERE. Verified against
++# the shipping references. Genus 21.1 SDC Command Reference lists set_max_delay
++# as [-rise] [-fall] [-ignore_clock_latency] [-exception_name] [-comment]
++# [-combinational_from_to] [-reset_path]; the string "datapath_only" occurs ZERO
++# times in that document. Innovus 21.11 TCR gives `set_max_delay value
++# [-combinational_from_to | -ignore_clock_latency]`. The block SDC's own note is
++# right that it is PrimeTime-only, and right that -ignore_clock_latency is the
++# substitute -- but the substitute is NOT equivalent, which is FACT 2.
++#
++# FACT 2 - -ignore_clock_latency EXCLUDES CLOCK LATENCY AND NOTHING ELSE. Two
++# Innovus globals control the rest and BOTH DEFAULT TO false:
++#   timing_constraint_path_delay_exclude_io_delay_from_ignore_clock_latency
++#       "Default: false ... When set to true, the software excludes the
++#        input/output delays from slack computation for paths constrained by
++#        the set_max_delay / set_min_delay -ignore_clock_latency command."
++#   timing_constraint_path_delay_exclude_check_delay_from_ignore_clock_latency
++#       "Default: false ... excludes check arc delays"
++# So at defaults, a bound of 2.0 ns anchored at [get_ports {TL_RX[*]}] is
++# charged the set_input_delay -max FIRST. With the 2.5 ns -max above, every one
++# of the 8 lanes violates by >= 0.5 ns before a single picosecond of silicon
++# delay -- an unfixable false violation on the interface with the known
++# marginal-eye failure mode. The budget below therefore ADDS the input delay
++# back in; see D2D_RX_DP_MAX.
++#
++# THE UNRESOLVED INTERACTION - AND IT IS WHY THIS IS OFF, NOT WHY IT IS SLOW.
++# Innovus's set_max_delay reference: "The set_max_delay command takes precedence
++# over other path exceptions specified for the same path, except for the
++# set_false_path command." A path-delay constraint on TL_RX[*] -> capture
++# REPLACES the clock-derived setup check on exactly the paths the RX input-delay
++# window above exists to constrain.
++#
++#   For SETUP that is SAFE and can be shown arithmetically: the clock-derived
++#   check allows 10.0 - 2.5 - uncertainty - t_setup ~ 7.4 ns of datapath, and
++#   this bound allows 2.0. Strictly tighter, never looser -- the same argument
++#   the C2 block makes for its catch fallback (constraints.sdc:545-548).
++#
++#   For HOLD IT IS NOT SETTLED, AND HOLD IS THE HALF THAT MATTERS. Neither the
++#   Genus nor the Innovus reference states whether a path carrying
++#   set_max_delay still takes the clock-derived hold check, or whether the min
++#   requirement silently defaults to 0. If it defaults to 0, THIS BLOCK DELETES
++#   THE -min FROM THE RX WINDOW ABOVE -- the one constraint in this file whose
++#   absence is a silicon failure that no amount of slowing the link down
++#   recovers. Landing a budget assertion that quietly removes a safety check is
++#   strictly worse than landing nothing.
++#
++#   AND IT CANNOT BE PAPERED OVER WITH A COMPANION set_min_delay. The hold
++#   requirement the window creates is (clock insertion + t_hold + 0.4 ns), and
++#   clock insertion is not expressible in SDC. There is no equivalent min-delay
++#   number to write.
++#
++# THE EXPERIMENT THAT SETTLES IT, AND IT IS CHEAP. On any build that already
++# has the RX window from the block above, before and after flipping the guard:
++#     report_timing -hold -from [get_ports {TL_RX[0]}] \
++#         -to [get_pins <GPIO>/gpiorx_0/link_data_pad_clk_reg[0]/D]
++# If the hold path is still reported with a required time derived from
++# D2D_RX_CLK_0 and the -0.4 ns arrival, the interaction is benign and this
++# block can be turned on permanently. If the hold check disappears or its
++# required time collapses to 0, it must NOT be used in this form -- the
++# alternative is to set the two globals above to true in the P&R setup and
++# re-derive the budget as the bare 2.0 ns, which is a flow-script change and
++# belongs in a separate, reviewed patch.
++#
++# WHY ANCHORING AT THE PAD PIN INSTEAD DOES NOT ESCAPE THIS. Moving -from to
++# uPAD_TL_RX_<n>/C removes the input-delay term, but -from on a non-startpoint
++# pin SEGMENTS the timing path, which removes the port-launched path the RX
++# window is checked on. Same loss, different mechanism.
++
++# GUARD. Off unless the run explicitly asks for it. Deliberately an env var and
++# not a bare `if {0}`: an env var leaves a trace in the run's config capture,
++# so a build made with this on can be told apart from one made without it.
++if {[info exists ::env(TL_RX_DATAPATH_CAP)] && $::env(TL_RX_DATAPATH_CAP) ne "0"} {
++
++  # 2.0 ns of true datapath (T_UI/5, the block SDC's ratio at this die's UI)
++  # PLUS the -max input delay, because the globals above default to charging it.
++  # The capture flop's setup arc is charged too and is inside this number
++  # (~0.05-0.10 ns for a tcbn65lp DFF), so the true datapath headroom is
++  # ~1.9 ns, not 2.0. Documented rather than padded: padding it would make the
++  # constraint agree with itself instead of with the silicon.
++  set D2D_RX_DP_MAX [expr {$D2D_T_UI / 5.0 + $D2D_RX_IN_MAX}]
++
++  set _dp_n 0
++  foreach n {0 1 2 3 4 5 6 7} {
++      set _dp_c {}
++      foreach _c [list "$GPIO/gpiorx_$n/link_data_pad_clk_reg*" \
++                       "$GPIO/gpiorx_$n/link_data_pad_clk*"] {
++          set _dp_c [get_cells -quiet $_c]
++          if {[sizeof_collection $_dp_c] > 0} { break }
++      }
++      if {[sizeof_collection $_dp_c] == 0} {
++          error "tidelink_constraints.sdc: RX capture flop selector for lane $n\
++ matched NOTHING. TL_RX_DATAPATH_CAP was requested, so a skip here would be a\
++ silently unconstrained lane. Refusing to continue. (Shipping build spells\
++ these gpiorx_<n>/link_data_pad_clk_reg[15:0], 16 per lane, 128 total.)"
++      }
++      if {[sizeof_collection $_dp_c] != 16} {
++          puts "**WARN: tidelink_constraints.sdc: lane $n capture flops bound\
++ [sizeof_collection $_dp_c], expected 16."
++      }
++      set_max_delay $D2D_RX_DP_MAX -ignore_clock_latency \
++          -from [get_ports "TL_RX\[$n\]"] -to $_dp_c
++      incr _dp_n
++  }
++  if {$_dp_n != 8} {
++      error "tidelink_constraints.sdc: applied $_dp_n/8 RX datapath caps."
++  }
++  puts "TIDELINK-SDC: RX per-lane pad->capture cap ACTIVE - $_dp_n lanes at\
++ $D2D_RX_DP_MAX ns (T_UI/5 = [expr {$D2D_T_UI / 5.0}] plus the\
++ $D2D_RX_IN_MAX ns input delay the tool charges at default globals)"
++  unset _dp_n _dp_c _c
++
++} else {
++  puts "TIDELINK-SDC: NOTE RX per-lane pad->capture cap NOT applied\
++ (TL_RX_DATAPATH_CAP unset). This is HOLE 4 and it is deliberately OPEN -\
++ see the block above for the hold interaction that has to be measured first."
++}

@@ -1,0 +1,86 @@
+################################################################################
+# Quantus technology layer map: design (LEF/DEF) names -> QRC tech file names.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The QRC deck wired into the .mmmc is a foundry *Assura* deck:
+#     /tsmc65pdk/65/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile
+# It was compiled by Techgen from the ICT beside it
+#     crn65lp_1p09m+alrdl_6x1z1u_typical.ict
+# and therefore carries that ICT's layer names -- poly / metal1..metal10 /
+# VIA1..VIA9 -- NOT the P&R names. The design side (tech LEF
+# PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef) presents M1..M9 / RV / AP.
+#
+# With no map, Quantus 21.1 logs "EXTGRMP-155: Layer mappings were not
+# specified", then EXTGRMP-330 for every LEF layer, then a hard
+# "EXTSNZ-127 ... definition cannot be found in the tech file" for each layer
+# the DEF actually uses, and aborts (EXTDPW-103 / EXTGRMP-103, exit 2). No SPEF
+# is produced. See ASIC/sta/work/qrc_3534228_20260818_00:28:44.log:409,446-500,
+# 1037-1117.
+#
+# Tempus requires this file whenever extract_rc_qrc_cmd_type is `auto` (the
+# default): SSV_21.11.000/doc/tempusCUI/extract_rc_Category_Attributes.html,
+# attribute extract_rc_lef_tech_file_map -- "In this mode, the
+# extract_rc_lef_tech_file_map attribute is required to be specified."
+# Format and the -technology_layer_map spelling come from that page and from
+# QUANTUS_21.11.000/doc/quantusUser/Running_Quantus.html.
+#
+# HOW EACH PAIR WAS ESTABLISHED (topology, not guesswork)
+# -------------------------------------------------------
+# The ICT states each via's top_layer/bottom_layer, which pins the stack
+# ordering uniquely against the tech LEF's ROUTING/CUT sequence:
+#   ICT  VIA1 metal1->metal2 ... VIA8 metal8->metal9, VIA9 metal9->metal10
+#   LEF  M1 VIA1 M2 VIA2 ... M8 VIA8 M9 RV AP
+# so M1..M9 -> metal1..metal9, RV -> VIA9, AP -> metal10. The AP pairing is
+# additionally stated outright in the ICT header:
+#   "( metal10 is Al-RDL = AP )"
+# and corroborated by geometry: ICT metal10 min_width 3 / thickness 1.45 is the
+# AlRDL, and ICT metal9 thickness 3.4 is the 1U ultra-thick M9 of this stack.
+#
+# NW, PW, PO are MASTERSLICE in the tech LEF and CO is a CUT layer; none of the
+# four is referenced by any VIA definition in the tech LEF, nor by any macro LEF
+# in the design (checked across every *.lef in the routed libs/lef directory).
+# They carry no parasitics here. MASTERSLICE layers unused by the DEF are mapped
+# to the reserved ICT layer `none` per Running_Quantus.html. CO is deliberately
+# left UNMAPPED: the same page guarantees an unused CUT layer yields a warning,
+# not an error, and the ICT offers two candidate contacts (polyCont poly->metal1
+# and odCont S/D->metal1) that the evidence does NOT disambiguate. If a future
+# run raises EXTSNZ-127 on CO, that means CO became load-bearing and the choice
+# must be settled from the design, not guessed here.
+#
+# WHAT THIS FILE DOES *NOT* FIX -- READ BEFORE TREATING ANY SPEF AS SIGNOFF
+# -------------------------------------------------------------------------
+# This map corrects a NAMING mismatch only. The deck itself is still the TYPICAL
+# ICT applied to all three RC corners (best/typical/worst all point at the one
+# qrcTechFile). Parasitics produced with this map are single-corner physics
+# wearing three corner names. The corner-specific packs under
+# CMOS/util/T-N65-CL-SP-036-V1_11a/ do NOT fix this: they are the 6X2Y stack,
+# not 6X1Z1U (their ICT gives metal8 0.2/0.5 and metal9 0.2/0.5 against this
+# stack's 0.4/0.9 and 2/3.4), so wiring them per corner would replace a
+# corner error with a much larger geometry error on the top metals.
+################################################################################
+
+extraction_setup \
+    -technology_layer_map \
+        M1   metal1  \
+        M2   metal2  \
+        M3   metal3  \
+        M4   metal4  \
+        M5   metal5  \
+        M6   metal6  \
+        M7   metal7  \
+        M8   metal8  \
+        M9   metal9  \
+        AP   metal10 \
+        VIA1 VIA1    \
+        VIA2 VIA2    \
+        VIA3 VIA3    \
+        VIA4 VIA4    \
+        VIA5 VIA5    \
+        VIA6 VIA6    \
+        VIA7 VIA7    \
+        VIA8 VIA8    \
+        RV   VIA9    \
+        NW   none    \
+        PW   none    \
+        PO   none

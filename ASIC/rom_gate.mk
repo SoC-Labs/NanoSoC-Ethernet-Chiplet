@@ -107,9 +107,56 @@ ASIC_TOOLKIT_DIR ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/asic-toolkit
 ROM_TOOLKIT_MK   ?= $(ASIC_TOOLKIT_DIR)/mk/rom.mk
 ROM_GDS_EXTRACT  ?= $(ASIC_TOOLKIT_DIR)/scripts/asic-flow-rom-gds-bits
 
-# Evidence lands here: one .log, one .rc and one .json per ROM per gate. Under
-# build/, which is gitignored.
-ROM_VERIFY_DIR  ?= $(NANOSOC_ETH_CHIPLET_HOME)/build/rom_verify
+# ── THE RUN'S OWN TREE, DERIVED FROM THE STREAM UNDER TEST ─────────────────
+#
+# Two defects share one cause, and one derivation closes both. Found 2026-08-18
+# by two sessions independently.
+#
+# 1. GEOMETRY CAME FROM A TREE THAT IS NOT THE RUN'S. This gate extracts
+#    <words> x <bits> from the stream and takes those numbers from the macro's
+#    metadata -- but ROMLIBS_DIR points at the SHARED ASIC/romlibs, not at the
+#    macros this run actually merged. They are byte-identical today (md5'd, both
+#    trees), so the result stands; the safety rests on a coincidence. The day
+#    they diverge, the gate extracts another macro's geometry and PASSES.
+#
+# 2. THE EVIDENCE WAS UNREACHABLE. build/rom_verify is gitignored AND sits at
+#    the repo root, outside $(ASIC_DIR) -- and scripts/ci/package_submission.sh
+#    collects exactly one reports tree, $(ASIC_DIR)/reports. So a submission
+#    bundle could be assembled, pass its own checks, and contain NO evidence
+#    that the mask-programmed boot ROMs were ever compared against the firmware.
+#    The ROMs are the one thing on this die that cannot be fixed after tapeout.
+#
+# THE STREAM NAMES ITS OWN RUN. Gating .../build/<tag>/outputs/<block>.gds means
+# the run root is .../build/<tag>, which holds both that run's romlibs/ and the
+# reports/ tree the packager collects. Nothing else has to be passed, and no
+# RUN_DIR is needed here (it is only defined in eth-chiplet/design.mk, which is
+# not in scope in a common.mk context -- that is what blocked this before).
+#
+# CONSERVATIVE BY CONSTRUCTION. Every redirect is guarded on the artefact
+# actually existing, and falls back to today's behaviour otherwise. With no
+# ROM_GDS -- i.e. `romlibs-verify`, the paper gate -- nothing changes at all.
+ROM_GDS_RUN_ROOT   := $(if $(strip $(ROM_GDS)),$(abspath $(dir $(ROM_GDS))/..),)
+
+# Trust the run's romlibs only if BOTH macros' metadata is really there. A
+# partial tree would otherwise fail the gate on a stream that is fine.
+ROM_RUN_ROMLIBS    := $(if $(ROM_GDS_RUN_ROOT),$(ROM_GDS_RUN_ROOT)/romlibs,)
+# $(strip) IS LOAD-BEARING. A backslash-continuation inside $(if ...) keeps the
+# leading whitespace of the next line, so the unstripped form yields " /path"
+# and every ROM_DIR_<r> below becomes " /path/<rom>". Caught 2026-08-18 by
+# reading `rom-vars` output rather than assuming the expansion was clean.
+ROMLIBS_EFFECTIVE  := $(strip $(if $(and \
+                        $(wildcard $(ROM_RUN_ROMLIBS)/eth_rom/eth_rom_via.memlib),\
+                        $(wildcard $(ROM_RUN_ROMLIBS)/cc_rom/rom_via.memlib)),\
+                        $(ROM_RUN_ROMLIBS),$(ROMLIBS_DIR)))
+
+# Evidence: into the run's own reports/ when we are gating that run's stream, so
+# the packager collects it BY CONSTRUCTION rather than by someone remembering an
+# override. Falls back to the old gitignored location otherwise -- which is
+# still where the paper gate writes, and is still not collected. Guarded on
+# outputs/ so an arbitrary --gds path cannot make us scatter directories.
+ROM_VERIFY_DIR  ?= $(strip $(if $(wildcard $(ROM_GDS_RUN_ROOT)/outputs),\
+                     $(ROM_GDS_RUN_ROOT)/reports/rom,\
+                     $(NANOSOC_ETH_CHIPLET_HOME)/build/rom_verify))
 
 # `block` (default) — an UNVERIFIED stream-out gate fails, exactly like a
 #                     detected mismatch. "We could not check" is not a pass.
@@ -244,7 +291,7 @@ ROM_FLIST ?= $(NANOSOC_MULTICORE_HOME)/flist/nanosoc_multicore_asic.flist
 ROM_WRAP_DIR ?= $(NANOSOC_MULTICORE_HOME)/syn/asic/tech_wrappers/tsmc65
 
 ROM_LABEL_eth  := eth_rom
-ROM_DIR_eth    := $(ROMLIBS_DIR)/eth_rom
+ROM_DIR_eth    := $(ROMLIBS_EFFECTIVE)/eth_rom
 ROM_CODE_eth   := $(ETH_BINTXT)
 ROM_SPEC_eth   := $(ETH_ROM_SPEC)
 ROM_WRAP_eth   := $(ROM_WRAP_DIR)/eth_ss_bootrom.sv
@@ -254,7 +301,7 @@ ROM_SIM_eth    := $(ROM_SIM_RTL_DIR)/eth_ss_bootrom.sv
 ROM_REGION_eth := $(ROM_SIM_RTL_DIR)/nanosoc_region_bootrom.v
 
 ROM_LABEL_cc   := cc_rom
-ROM_DIR_cc     := $(ROMLIBS_DIR)/cc_rom
+ROM_DIR_cc     := $(ROMLIBS_EFFECTIVE)/cc_rom
 ROM_CODE_cc    := $(CC_BINTXT)
 ROM_SPEC_cc    := $(CC_ROM_SPEC)
 ROM_WRAP_cc    := $(ROM_WRAP_DIR)/nanosoc_bootrom_chip_core.sv

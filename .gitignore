@@ -242,3 +242,25 @@ voltus.cmd*
 # requirements, which is precisely the inventory that is not ours to publish.
 # Written here, sent from here, never tracked.
 docs/tapeout/27-broker-questions-SEND-NOW.md
+
+# ── TOOL OUTPUT THAT KEEPS ARRIVING AT THE TOP OF `git status` ──────────────
+#
+# Each of these is a tool's own working state, and each was sitting untracked
+# and unignored on 2026-08-18, together about 320 MB. Left unignored they are
+# offered for commit every time somebody stages broadly, and a `git add -A` on
+# a tired evening puts a quarter of a gigabyte of vendor-tool databases into
+# the history permanently.
+# A trailing `#` is NOT a comment in .gitignore - it is only a comment at the
+# START of a line, so a pattern written with one on the end silently stops
+# matching. Every comment here is therefore on its own line.
+#
+# Vivado/impl run: .db .sdb .o .so
+/imp/
+# Conformal LEC mapping database
+/ASIC/eth-chiplet/fv_map_*_gatev_db/
+# LEC dofile scratch - "tmp" is in the name
+/ASIC/eth-chiplet/hier_tmp*.lec.do
+# signoff-STA report snapshots
+/ASIC/sta/reports_baseline_*/
+# merge/patch backups
+*.orig

@@ -564,18 +564,58 @@ foreach _p $_c2_dp {
                synchronous."
     }
 }
-if {[catch {
-    set_max_delay -datapath_only $EXTCLK_PERIOD \
-        -from [get_cells $_c2_dp] -to [get_clocks $_tx_grp]
-    set_max_delay -datapath_only $EXTCLK_PERIOD \
-        -from [get_cells $_c2_dp] -to [get_clocks $EXTCLK]
-} _c2_dp_err]} {
-    puts "**WARN: constraints.sdc: C2 OPTION A set_max_delay -datapath_only"
-    puts "**WARN: rejected -- '$_c2_dp_err'. Falling back to plain set_max_delay,"
-    puts "**WARN: which is STRICTER (it charges clock latency too), not looser."
-    set_max_delay $EXTCLK_PERIOD -from [get_cells $_c2_dp] -to [get_clocks $_tx_grp]
-    set_max_delay $EXTCLK_PERIOD -from [get_cells $_c2_dp] -to [get_clocks $EXTCLK]
-}
+# THE `catch` FALLBACK THAT USED TO BE HERE WAS INERT. MEASURED 2026-08-18.
+#
+# This was written as `if {[catch { set_max_delay -datapath_only ... }]}` with a
+# documented fallback to plain set_max_delay. Genus does not accept
+# -datapath_only on set_max_delay ("A floating point number was expected, but
+# '-datapath_only' was seen instead", TUI-66), which the comment above at :543
+# already anticipated -- but the fallback never ran.
+#
+# read_sdc does not evaluate this file as ordinary Tcl. It processes one SDC
+# command at a time, and a command that fails is reported through read_sdc's own
+# error path (SDC-202) and appended to $::dc::sdc_failed_commands. It is not
+# raised as a Tcl error, so the enclosing `catch` never sees it and the else-arm
+# never executes. The whole if/catch block is rejected as a single command.
+#
+# The measurement, from the first run that reached this line:
+#     "set_max_delay"  - successful 0 , failed 2
+# Zero applied. Not the -datapath_only form, and not the fallback either: the
+# transmit-group datapath was left with NO max-delay constraint at all, which is
+# the state this block exists to prevent. Synthesis then reports these paths met
+# because it was never asked to time them.
+#
+# What is written below is what the fallback intended, applied unconditionally.
+# Per the original comment it is STRICTER than -datapath_only, not looser.
+#
+# IT STILL DOES NOT APPLY, AND THIS BLOCK IS THEREFORE STILL INERT. Removing
+# -datapath_only only moved the failure one step later, from argument parsing to
+# object resolution:
+#
+#   Error : Invalid path specification.  A 'from' object is invalid. [TIM-303]
+#         : The object is 'hpin:<WL>/.../a2l_fc_replay/fifo/mem/rdata[100]'.
+#
+# The anchors built above are hierarchical INSTANCES (`.../fifo/mem`,
+# `.../addrsync`). get_cells resolves them -- it reports 25 successful and 0
+# failed -- but set_max_delay -from expands a hierarchical instance to its pins,
+# and an output pin such as mem/rdata[100] is not a valid timing startpoint. A
+# startpoint has to be a clock pin, a sequential cell, a latch data pin or a
+# primary input.
+#
+# SO THE MEASURED STATE IS: "set_max_delay" - successful 0, failed 2, both
+# before and after this edit, and on every run that has ever reached this line.
+# Confirmed against an independent concurrent run on the same HEAD. The C2
+# Option A datapath bound has NEVER been applied to any netlist this project has
+# produced, including the shipping stream. That is a standing gap, not a
+# regression, and it is not fixable by respelling the command: it needs the
+# launching sequential elements named as the -from objects, which is a timing
+# question with an owner, not a syntax question.
+#
+# Do not reintroduce a `catch` here expecting it to guard an SDC command. If a
+# command must be conditional, test the condition (tool version, collection
+# size) BEFORE issuing it, or check $::dc::sdc_failed_commands afterwards.
+set_max_delay $EXTCLK_PERIOD -from [get_cells $_c2_dp] -to [get_clocks $_tx_grp]
+set_max_delay $EXTCLK_PERIOD -from [get_cells $_c2_dp] -to [get_clocks $EXTCLK]
 #
 # WHAT IS STILL NOT COVERED, STATED PLAINLY SO THE FIRST RUN IS NOT MISREAD.
 # The two blocks above cover the synchronisers and the FIFO/address-sync

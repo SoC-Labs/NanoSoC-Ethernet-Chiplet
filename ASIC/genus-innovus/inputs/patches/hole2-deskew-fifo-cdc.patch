@@ -1,0 +1,398 @@
+[HOLE 2] D2D RX deskew FIFO — the narrow exception constraints.sdc:358 asks for
+
+WHAT THIS DOES
+    Appends one block to tidelink_constraints.sdc. No existing line is changed.
+
+    set_false_path  +5   (all -to NAMED PINS: 4 demet groups crossing INTO
+                          out_clk + 1 crossing back out; 152 pins in the
+                          shipping build)
+    set_max_delay   +1   (payload: 4096 mem_l cells, 10.0 ns)
+    set_min_delay   +1   (payload: explicit 0 — the half that matters)
+    set_clock_groups  0  (UNCHANGED — no clock-to-clock exception is added)
+
+WHY
+    constraints.sdc:358-362 leaves this open by name:
+      "[OWNER, DO NOT LET THIS SLIDE] ... across u_deskew, which is an async
+       FIFO. This one probably DOES want a narrow set_false_path on the FIFO's
+       data path only - not a blanket group cut."
+
+    All 16 RX clocks are in ONE async group, and set_clock_groups never cuts
+    within a group (constraints.sdc:349-354, deliberate), so the FIFO is timed
+    today. Because all eight word clocks are -source TL_CLK_RX -divide_by 16
+    they carry IDENTICAL waveforms, so setup gets the full 160 ns and is never
+    the issue — but HOLD gets a ZERO-ns budget against whatever lane-to-lane
+    skew CTS actually built, and CTS built the lanes very differently:
+    reports/cts_clock_trees.rep:185-192, D2D_RX_WORDN_CLK_0 has 501 clock gates
+    against 36 for each of lanes 1-7. The hold fixer chases that skew across
+    4096 FIFO memory flops and a 32:1 read mux, threading buffers into the
+    receive datapath of the one interface with a known marginal-eye failure.
+
+CORRECTION TO THE NOTE THIS CLOSES
+    constraints.sdc:359 names the crossing "D2D_RX_CLK_0 -> D2D_RX_WORD_CLK_n".
+    That is not the FIFO. WavD2DGpio_v2.v:897-928 wires
+    u_deskew.lane_clk = {gpiorx_7..0}_io_link_clk and u_deskew.out_clk =
+    gpiorx_0_io_link_clk, so the FIFO crossing is WORD -> WORD:
+    D2D_RX_WORD_CLK_n (n=1..7) -> D2D_RX_WORD_CLK_0. Confirmed against the
+    shipping build — reports/cts_clock_latency_setup.rep:29-33 names
+    `u_deskew_g_lane_write[6].mem_l_reg[26][2]/CP` under `Clock:
+    D2D_RX_WORD_CLK_6`. The D2D_RX_CLK_0 -> word paths are real, but they are
+    intra-lane inside WavD2DGpioRx and must stay timed. A cut written against
+    the clock pair the note names would have missed the FIFO entirely.
+
+THE STRUCTURE, VERIFIED IN THE COMPILED RTL
+    tidelink_asic.flist:73 pins tidelink_lane_deskew_v2.sv as the file that
+    builds (it declares module tidelink_lane_deskew, :190). That module is the
+    textbook pointer-protected async FIFO:
+      :529-548  write side, lane_clk[gi]: mem_l[wr_ptr_l] <= lane_data
+                                          wr_gray_l <= bin2gray(wr_ptr_l+1)
+      :960-972  read side,  out_clk:      wr_gray_sync0 <= wr_gray_flat
+                                          wr_gray_sync1 <= wr_gray_sync0
+                                          rd_word = mem_l[rd_ptr_l[gi]]
+    Its own header (:49) states the intent: "CDC: wr_ptr crosses to out_clk as
+    GRAY (RX-audit Finding #2 fix, 2026-06-09)". So: gray-coded pointer +
+    two-flop demet, payload unsynchronised. Pointer-protected, confirmed.
+
+    Cut STAGE 0 ONLY. wr_gray_sync1's D is fed by wr_gray_sync0's Q in the same
+    domain and IS the metastability settling window — cutting it would destroy
+    the protection instead of describing it.
+
+COUNTS, MEASURED IN build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate.v
+    wr_gray_sync0_reg    48   (8 lanes x 6 bits; DEPTH_LOG=5 -> PW=6)  MANDATORY
+    sync_idx_sync0_reg   48                                            optional
+    sync_seen_sync0_reg   8                                            optional
+    sync_dist_sync0_reg  40                                            optional
+    clr_meta_l_reg        8   (reverse direction: out_clk -> lane_clk) optional
+    mem_l_reg          4096   (8 x 32 entries x 16 bits)               MANDATORY
+    The four "optional" groups exist only under SYNC_REANCHOR_EN=1 and are
+    generate-pruned otherwise, so absence is a NOTE, not an error. Absence of
+    wr_gray_sync0 or mem_l is fatal.
+
+TOOL SUPPORT — VERIFIED, NOT ASSUMED
+    set_max_delay -datapath_only DOES NOT EXIST in either tool here, so this
+    block does not use it. Genus 21.1 SDC Command Reference lists set_max_delay
+    as [-rise] [-fall] [-ignore_clock_latency] [-exception_name] [-comment]
+    [-combinational_from_to] [-reset_path]; "datapath_only" appears ZERO times
+    in that document. Innovus 21.11 Text Command Reference gives
+    `set_max_delay value [-combinational_from_to | -ignore_clock_latency]`.
+
+    Consequence worth recording: the live C2 block at constraints.sdc:568-570
+    wraps -datapath_only in `catch`, so in this flow it ALWAYS takes its
+    fallback leg and the C2 payload bound is a plain set_max_delay, not the
+    datapath-only bound its comment describes. That is SAFE (the fallback is
+    stricter) and is deliberately NOT changed by this patch.
+
+    The fc_shell idiom `get_cells -hier -filter {NAME =~ "*a/b*"}` that
+    TideLink's block SDC uses is NOT portable here: Genus's -filter `name`
+    checks the instance BASE NAME (Genus 21.1 get_cells), so a pattern
+    containing `/` returns an empty collection and the constraint silently does
+    nothing. This block uses hierarchical-path globs with a candidate ladder
+    instead — the form this file has already proven binds (the div_en_r*/Q and
+    count_reg[3]/Q anchors, both measured 8/8 at read time).
+
+APPLIES TO
+    ASIC/genus-innovus/inputs/tidelink_constraints.sdc
+    sha256 d13763286671a1d9a77aa99f50a52fdbcc426bc823b977b24ce7d706d908b1b6
+    Appends at EOF, so it also applies cleanly on top of
+    hole1-d2d-io-delay-window.patch (disjoint hunks). Apply hole1 FIRST if
+    applying both.
+
+APPLY
+    git apply ASIC/genus-innovus/inputs/patches/hole2-deskew-fifo-cdc.patch
+
+NOT VALIDATED
+    No EDA run was made. The selectors are derived from the shipping gate
+    netlist (post-map spellings) and the RTL (pre-map spellings); which of the
+    candidate spellings Genus binds at read time is NOT proven and is why the
+    ladder plus error-on-zero exists.
+
+READ BEFORE JUDGING THE FIRST RUN
+    The block PRINTS what it bound — one `TIDELINK-SDC: deskew ...` line per
+    group with a pin/cell count. Read those lines first. They are the difference
+    between "the exception landed" and "the exception read as landed".
+    Expect: 48 / 48 / 8 / 40 / 8 pins and 4096 cells.
+
+    Baseline to compare hold against: post-route-opt hold WNS -0.001 / TNS
+    -0.002 / FEP 7 (reports/hold_05_route_opt.rep). This block should move hold
+    endpoints DOWN or leave them flat, and should remove hold buffers from the
+    deskew read path. If hold endpoints RISE, the demet cut bound nothing —
+    check the printed counts, do not widen the budget.
+
+--- a/ASIC/genus-innovus/inputs/tidelink_constraints.sdc
++++ b/ASIC/genus-innovus/inputs/tidelink_constraints.sdc
+@@ -715,3 +715,276 @@
+ # Drive and load are electrical characterisation; the setup uncertainty needs
+ # the far die's source jitter plus package and channel skew, which is a
+ # different measurement.
++
++# ===========================================================================
++# [HOLE 2] D2D RX DESKEW FIFO — THE NARROW EXCEPTION
++# ===========================================================================
++# Added 2026-08-18. This is the constraint constraints.sdc:358-362 asks for:
++#
++#   "[OWNER, DO NOT LET THIS SLIDE] ... word<->capture (D2D_RX_CLK_0 ->
++#    D2D_RX_WORD_CLK_n) across u_deskew, which is an async FIFO. This one
++#    probably DOES want a narrow set_false_path on the FIFO's data path only -
++#    not a blanket group cut. Constrain it properly once the first run shows
++#    what it reports."
++#
++# FIRST, CORRECT THE CLOCK PAIR IN THAT NOTE. The deskew FIFO's asynchronous
++# crossing is NOT D2D_RX_CLK_0 -> D2D_RX_WORD_CLK_n. From the port map that is
++# actually compiled (WavD2DGpio_v2.v:897-928, and tidelink_asic.flist:73 pins
++# tidelink_lane_deskew_v2.sv as the module that builds):
++#
++#   u_deskew.lane_clk[7:0] = {gpiorx_7..0}_io_link_clk  = D2D_RX_WORD_CLK_7..0
++#   u_deskew.out_clk       =  gpiorx_0_io_link_clk      = D2D_RX_WORD_CLK_0
++#
++# so the crossing is WORD -> WORD: D2D_RX_WORD_CLK_n (n=1..7) -> _0. Confirmed
++# in the shipping build, not inferred: reports/cts_clock_latency_setup.rep:29-33
++# names `u_deskew_g_lane_write[6].mem_l_reg[26][2]/CP` under `Clock:
++# D2D_RX_WORD_CLK_6`. D2D_RX_CLK_0 -> word paths exist too, but they are inside
++# WavD2DGpioRx (link_data_word -> link_data_reg), NOT across the FIFO, and they
++# are a real synchronous check that must stay timed.
++#
++# WHY IT IS TIMED TODAY. All 16 RX clocks sit in ONE -asynchronous group
++# (constraints.sdc:395, `-group [get_clocks $_rx_grp]`). set_clock_groups cuts
++# BETWEEN groups and never within one, which is the deliberate conservative
++# choice recorded at constraints.sdc:349-354 -- so every path inside the D2D
++# receive domain, this FIFO included, stays timed. Nothing here changes that
++# doctrine: NO clock-to-clock exception is added below. Every exception is
++# -to a NAMED PIN, exactly as the C2 demet block does at constraints.sdc:517-518.
++#
++# THE FIFO IS THE TEXTBOOK POINTER-PROTECTED SHAPE — VERIFIED IN THE RTL:
++#   write side (lane_clk[gi]), tidelink_lane_deskew_v2.sv:529-548
++#     mem_l[wr_ptr_l] <= lane_data[...]      ;# payload, NO synchroniser
++#     wr_gray_l       <= bin2gray(wr_ptr_l+1);# pointer, GRAY (one bit per step)
++#   read side (out_clk), tidelink_lane_deskew_v2.sv:960-972
++#     wr_gray_sync0 <= wr_gray_flat          ;# demet stage 1  <-- ASYNC CAPTURE
++#     wr_gray_sync1 <= wr_gray_sync0         ;# demet stage 2  <-- STAYS TIMED
++#     wr_ptr_sync1  =  gray2bin(wr_gray_sync1)
++#     rd_word[gi]   =  mem_l[rd_ptr_l[gi]]   ;# payload read, pointer-qualified
++# The module's own header states the intent (its line 49): "CDC: wr_ptr crosses
++# to out_clk as GRAY (RX-audit Finding #2 fix, 2026-06-09)".
++#
++# SO TWO DIFFERENT INSTRUMENTS, AND CONFLATING THEM IS THE WHOLE TRAP:
++#
++#   (a) THE DEMET FIRST STAGE gets a false_path. Its D pin is where a
++#       deliberately-unsynchronised value is sampled; the setup/hold check there
++#       is one STA is not entitled to make and hold-fixing it is meaningless
++#       work. ONLY stage 0. wr_gray_sync1's D is fed by wr_gray_sync0's Q in the
++#       SAME domain and IS the metastability settling window -- cutting it would
++#       destroy the protection rather than describe it.
++#
++#   (b) THE PAYLOAD gets a DATAPATH BOUND, never a false path. This is verbatim
++#       the reasoning already in constraints.sdc:522-534 for C2: "The payload
++#       itself ... crosses with NO synchroniser on it at all, and that is
++#       correct by design ... Cutting those paths outright would be wrong;
++#       timing them against an unrelated edge is also wrong."
++#
++# WHAT LEAVING IT ALONE COSTS, so this is not filed as a tidiness fix. All eight
++# word clocks are declared -source TL_CLK_RX -divide_by 16, i.e. IDENTICAL
++# waveforms, so STA sees launch and capture on the same edge: setup gets the
++# full 160 ns and is never the issue, but HOLD gets a ZERO-ns budget against
++# whatever lane-to-lane skew CTS actually built. And CTS built the lanes very
++# differently -- reports/cts_clock_trees.rep:185-192 shows D2D_RX_WORDN_CLK_0
++# with 501 clock gates and lanes 1-7 with 36 each. The hold fixer chases that
++# skew across 4096 FIFO memory flops and a 32:1 read mux, inserting buffers into
++# the receive datapath of the one interface with a known marginal-eye failure
++# mode.
++
++set _dsk "$GPIO/u_deskew"
++
++# The eight word clocks, rebuilt locally: this file is sourced BEFORE
++# constraints.sdc builds $_rx_grp, so that variable does not exist yet.
++set _dsk_wclk {}
++foreach n {0 1 2 3 4 5 6 7} { lappend _dsk_wclk "D2D_RX_WORD_CLK_$n" }
++if {[llength $_dsk_wclk] != 8} {
++    error "tidelink_constraints.sdc: deskew word-clock list built wrong -\
++           [llength $_dsk_wclk], expected 8."
++}
++
++# --- CANDIDATE-LADDER BINDING, AND WHY IT IS NOT OVER-ENGINEERING -----------
++# u_deskew is UNGROUPED during synthesis. In the shipping netlist the flops are
++# flat names inside WavD2DGpio -- `u_deskew_wr_gray_sync0_reg[0][0]`,
++# `u_deskew_g_lane_write[6].mem_l_reg[26][2]` -- while at Genus read time
++# (post-elaborate, pre-map) u_deskew is still a hierarchy level and the
++# separator is `/`. A glob `*` does not cross `/`, so ONE spelling cannot cover
++# both, and this file is read pre-map while the SDC Genus writes is read
++# post-map.
++#
++# DO NOT "SIMPLIFY" THIS TO THE fc_shell IDIOM the block SDC uses:
++#     get_cells -hier -filter {NAME =~ "*gpiorx_*/link_data_pad_clk_reg*"}
++# In Genus, `-filter name` checks the instance's BASE NAME, not its path
++# (Genus 21.1 SDC Command Reference, get_cells: "-filter '{base_name|name}
++# {==|!=|!~} name' -- base_name or name checks the base name of the instance").
++# A pattern containing `/` can never match a base name, so that form returns an
++# EMPTY collection in Genus and the constraint silently does nothing. The
++# hierarchical-path form with a trailing glob is the one this file has already
++# PROVEN binds here (the div_en_r*/Q anchors at line ~145 and the
++# count_reg[3]/Q anchors at line ~320, both measured 8/8 at read time).
++#
++# ERROR ON ZERO, WARN ON COUNT. A zero bind is fatal: it is the failure this
++# whole file exists to prevent -- an exception that reads as handled and
++# constrains nothing. A count that differs from the shipping build's is loud but
++# not fatal, because Genus may legitimately merge or prune flops.
++
++# group name / mandatory? / measured count in build/full-20260814 / candidates
++set _dsk_demet [list \
++  [list "wr_gray_sync0 (FIFO write pointer, gray)"  1 48 [list \
++     "$_dsk/wr_gray_sync0_reg*/D"   "$_dsk/wr_gray_sync0*/D" \
++     "${_dsk}_wr_gray_sync0_reg*/D"]] \
++  [list "sync_idx_sync0 (SYNC re-anchor index)"     0 48 [list \
++     "$_dsk/g_sync_sync.sync_idx_sync0_reg*/D"   "$_dsk/g_sync_sync/sync_idx_sync0_reg*/D" \
++     "$_dsk/sync_idx_sync0_reg*/D"               "${_dsk}_g_sync_sync.sync_idx_sync0_reg*/D"]] \
++  [list "sync_seen_sync0 (SYNC re-anchor valid)"    0  8 [list \
++     "$_dsk/g_sync_sync.sync_seen_sync0_reg*/D"  "$_dsk/g_sync_sync/sync_seen_sync0_reg*/D" \
++     "$_dsk/sync_seen_sync0_reg*/D"              "${_dsk}_g_sync_sync.sync_seen_sync0_reg*/D"]] \
++  [list "sync_dist_sync0 (SYNC Hamming obs)"        0 40 [list \
++     "$_dsk/g_sync_dist_sync.sync_dist_sync0_reg*/D"  "$_dsk/g_sync_dist_sync/sync_dist_sync0_reg*/D" \
++     "$_dsk/sync_dist_sync0_reg*/D"                   "${_dsk}_g_sync_dist_sync.sync_dist_sync0_reg*/D"]] \
++]
++
++set _dsk_cut 0
++foreach _e $_dsk_demet {
++    foreach {_nm _must _exp _cands} $_e { break }
++    set _p {}
++    foreach _c $_cands {
++        set _p [get_pins -quiet $_c]
++        if {[sizeof_collection $_p] > 0} { break }
++    }
++    if {[sizeof_collection $_p] == 0} {
++        if {$_must} {
++            error "tidelink_constraints.sdc: deskew demet anchor '$_nm' matched\
++ NOTHING under any candidate spelling ([join $_cands {, }]). The deskew FIFO's\
++ pointer CDC would be timed as a synchronous check and hold-fixed across the D2D\
++ receive datapath, while this block reads as though it were handled. Do NOT\
++ waive this by deleting the constraint - find the spelling. See the RX\
++ word-clock anchors above and why 16,653 flops went untimed."
++        } else {
++            puts "TIDELINK-SDC: NOTE deskew demet '$_nm' absent - skipped."
++            puts "TIDELINK-SDC:      Legitimate ONLY if SYNC_REANCHOR_EN=0 in this"
++            puts "TIDELINK-SDC:      build (the whole g_sync_capture/g_sync_sync tree"
++            puts "TIDELINK-SDC:      is generate-pruned there). If SYNC_REANCHOR IS on,"
++            puts "TIDELINK-SDC:      this is a REAL GAP - the hierarchy moved."
++            continue
++        }
++    }
++    if {[sizeof_collection $_p] != $_exp} {
++        puts "**WARN: tidelink_constraints.sdc: deskew demet '$_nm' bound\
++ [sizeof_collection $_p] pins, expected $_exp (measured in build/full-20260814).\
++ Not fatal - Genus may merge or prune - but check the hierarchy did not move."
++    }
++    # -from the word clocks, -to NAMED PINS. This is a clock-to-PIN exception,
++    # the same instrument as constraints.sdc:517-518, NOT a clock-to-clock cut:
++    # the C5 doctrine at the top of constraints.sdc is honoured.
++    #
++    # LANE 0 IS DEGENERATE AND THAT IS ACCEPTED. out_clk IS D2D_RX_WORD_CLK_0,
++    # so lane 0's pointer "crossing" is same-clock and this also cuts a path
++    # that would always have passed. Cutting it costs no coverage - the same
++    # logic is replicated per lane and lanes 1-7 are cut regardless - and
++    # excluding lane 0 would need a lane-discriminating pattern, which is
++    # exactly the fragile spelling this ladder exists to avoid.
++    set_false_path -from [get_clocks $_dsk_wclk] -to $_p
++    incr _dsk_cut
++    puts "TIDELINK-SDC: deskew demet cut '$_nm' - [sizeof_collection $_p] pins"
++}
++
++# --- THE REVERSE CROSSING, which is easy to miss entirely -------------------
++# sync_obs_clr_i is generated in out_clk and lands on a 3-flop demet inside EACH
++# lane's OWN write clock (tidelink_lane_deskew_v2.sv:573-582, clr_meta_l ->
++# clr_sync_l -> clr_d_l). Same instrument, opposite direction: cut stage 0 only.
++set _dsk_clr {}
++foreach _c [list "$_dsk/g_lane_write*.g_sync_capture.clr_meta_l_reg*/D" \
++                 "$_dsk/g_lane_write*/g_sync_capture/clr_meta_l_reg*/D" \
++                 "${_dsk}_g_lane_write*.g_sync_capture.clr_meta_l_reg*/D"] {
++    set _dsk_clr [get_pins -quiet $_c]
++    if {[sizeof_collection $_dsk_clr] > 0} { break }
++}
++if {[sizeof_collection $_dsk_clr] == 0} {
++    puts "TIDELINK-SDC: NOTE deskew clr_meta_l demet absent - skipped\
++ (expected only when SYNC_REANCHOR_EN=0)."
++} else {
++    if {[sizeof_collection $_dsk_clr] != 8} {
++        puts "**WARN: tidelink_constraints.sdc: deskew clr_meta_l bound\
++ [sizeof_collection $_dsk_clr] pins, expected 8."
++    }
++    set_false_path -from [get_clocks D2D_RX_WORD_CLK_0] -to $_dsk_clr
++    puts "TIDELINK-SDC: deskew clr_meta_l demet cut -\
++ [sizeof_collection $_dsk_clr] pins"
++}
++
++# --- THE PAYLOAD: A DATAPATH BOUND, NOT A FALSE PATH ------------------------
++# mem_l is 8 lanes x 32 entries x 16 bits = 4096 flops, written in lane_clk[gi]
++# and read combinationally in out_clk through a 32:1 mux
++# (tidelink_lane_deskew_v2.sv:542/549). It has no synchroniser by design and
++# must not get one: the gray pointer's value is what guarantees the entry is
++# stable before the read side addresses it.
++#
++# THE BUDGET IS ONE UI, $D2D_LINK_PERIOD = 10.0 ns, AND IT IS CHOSEN TO
++# DISCRIMINATE. The destination cycle is 160 ns; a bound at one destination
++# cycle -- the number the C2 block uses for its own payload -- would be a
++# ceiling nothing could ever touch, i.e. a check that measures nothing. The
++# protocol floor is looser still (the 2-flop pointer sync means the read side
++# never addresses an entry written less than 2 x 160 ns ago). A 65nm 32:1 mux
++# plus routing is order 1-2 ns, so 10 ns leaves 5-10x headroom and will not
++# force optimisation effort, while still catching a pathological read path or a
++# hold-buffer chain that a mis-timed hold fix threaded into the FIFO output.
++#
++# PLAIN set_max_delay, NOT -datapath_only, AND NOT -ignore_clock_latency.
++#   * -datapath_only DOES NOT EXIST IN EITHER TOOL HERE. Verified against the
++#     shipping references, not assumed: Genus 21.1 SDC Command Reference lists
++#     set_max_delay's options as [-rise] [-fall] [-ignore_clock_latency]
++#     [-exception_name] [-comment] [-combinational_from_to] [-reset_path] and
++#     the string "datapath_only" appears ZERO times in the whole document;
++#     Innovus 21.11 Text Command Reference gives
++#     `set_max_delay value [-combinational_from_to | -ignore_clock_latency]`.
++#     -datapath_only is PrimeTime-only. (This is also why the C2 block's
++#     catch-wrapped -datapath_only at constraints.sdc:568-570 ALWAYS takes its
++#     fallback leg in this flow. That is safe -- the fallback is stricter -- but
++#     it means the C2 payload bound is not the datapath-only bound its comment
++#     describes. Flagged, deliberately not changed here.)
++#   * -ignore_clock_latency IS supported by both, but it is not needed and it
++#     drags in two Innovus globals whose defaults are `false`
++#     (timing_constraint_path_delay_exclude_{check,io}_delay_from_ignore_clock_latency),
++#     i.e. check-arc and I/O delays stay INSIDE the slack computation. Charging
++#     clock latency instead is STRICTER, never looser, and 10 ns has the room.
++#
++# AND AN EXPLICIT set_min_delay 0, WHICH IS THE HALF THAT ACTUALLY MATTERS.
++# set_max_delay alone bounds setup; whether it also displaces the clock-derived
++# HOLD check on the same paths is not stated in either tool's reference, and the
++# hold check is the one doing the damage here. Declaring the min requirement
++# explicitly as 0 says what is true of a pointer-protected payload -- there is
++# no hold relationship to meet -- in a form neither tool can interpret two ways.
++# Genus records that it does not time set_min_delay itself but "will be written
++# out using write_sdc", so Innovus is where it takes effect. That is correct:
++# Innovus is where hold fixing happens.
++set _dsk_mem {}
++foreach _c [list "$_dsk/g_lane_write*mem_l_reg*" "$_dsk/g_lane_write*/mem_l_reg*" \
++                 "${_dsk}_g_lane_write*mem_l_reg*" "$_dsk/mem_l_reg*"] {
++    set _dsk_mem [get_cells -quiet $_c]
++    if {[sizeof_collection $_dsk_mem] > 0} { break }
++}
++if {[sizeof_collection $_dsk_mem] == 0} {
++    error "tidelink_constraints.sdc: deskew payload anchor mem_l matched NOTHING.\
++ The 4096 FIFO memory flops would be timed as a synchronous word-to-word\
++ crossing and hold-fixed across the D2D receive datapath. Refusing to continue."
++}
++if {[sizeof_collection $_dsk_mem] != 4096} {
++    puts "**WARN: tidelink_constraints.sdc: deskew mem_l bound\
++ [sizeof_collection $_dsk_mem] cells, expected 4096 (8 lanes x 32 entries x 16\
++ bits, measured in build/full-20260814). Check DEPTH_LOG has not moved."
++}
++set_max_delay $D2D_LINK_PERIOD -from $_dsk_mem -to [get_clocks D2D_RX_WORD_CLK_0]
++set_min_delay 0                -from $_dsk_mem -to [get_clocks D2D_RX_WORD_CLK_0]
++puts "TIDELINK-SDC: deskew payload bounded -\
++ [sizeof_collection $_dsk_mem] mem_l cells, max $D2D_LINK_PERIOD ns / min 0"
++
++if {$_dsk_cut < 1} {
++    error "tidelink_constraints.sdc: deskew block cut $_dsk_cut demet groups.\
++ At least the mandatory wr_gray_sync0 group must have bound."
++}
++unset _dsk _dsk_wclk _dsk_demet _dsk_cut _dsk_clr _dsk_mem _e _nm _must _exp _cands _c _p
++
++# WHAT THIS BLOCK DOES NOT COVER, stated plainly so the first run is not
++# misread. It covers the FIFO's own pointer CDC and its payload. It does NOT
++# cover the deskew's read-side outputs (out_data, epoch/sync observability)
++# once they leave u_deskew, and it does NOT touch the intra-lane
++# D2D_RX_WORDN_CLK_n -> D2D_RX_WORD_CLK_n half-cycle check inside
++# WavD2DGpioRx (link_data_reg -> the FIFO write port), which is a genuine
++# 80 ns synchronous check and must stay timed.

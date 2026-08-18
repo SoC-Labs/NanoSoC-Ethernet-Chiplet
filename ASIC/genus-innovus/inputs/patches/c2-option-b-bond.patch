@@ -1,0 +1,428 @@
+[C2] OPTION B — bond user_ref_clk to its own pad (SDC HALF ONLY)
+
+READ THIS FIRST. THIS PATCH IS NOT ALL OF OPTION B.
+    Option B is a HARDWARE change. This file is the constraint half. Applying it
+    WITHOUT the five changes listed under "WHAT THIS PATCH CANNOT DO" leaves the
+    design with a create_clock on a port that does not exist, which will not
+    elaborate. Land them together or not at all.
+
+WHAT THIS DOES
+    Declares user_ref_clk as a primary clock on a new USER_REF_CLK pad, gives it
+    uncertainty and drive characterisation, and puts it at the head of the D2D
+    transmit group — so the existing `-asynchronous` group becomes true as
+    written instead of cutting a boundary the tool can see is synchronous.
+
+    Clocks         33 -> 34        (+1 create_clock on USER_REF_CLK)
+    Clock groups    5 -> 5         (3 / 10 / 17 / 3 / 1; 34 clocks, all grouped)
+    set_false_path  7 -> 7         (unchanged)
+    set_max_delay   0 -> 0         (unchanged)
+    set_clock_uncertainty 68 -> 70 (+2 for the new clock)
+    set_input_transition  21 -> 23 (+2 for the new port)
+
+CORRECTING THE [C2] BLOCK: OPTION B IS NOT "NO SDC EDIT AT ALL"
+    The block being replaced claims Option B needs no constraint change. That is
+    wrong, and it is the kind of wrong that ships. Every transmit clock is a
+    create_generated_clock whose -source traces back through an INTERNAL pin
+    ($WL/user_hsclk, $WL/pad_clk_tx) to whatever primary clock feeds the Wlink.
+    Remove the pad alias without adding a primary clock here and that trace ends
+    at an unclocked port: D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 lose their
+    master, ~1.5k transmit-word flops go back to having no waveform, and the run
+    still reports success.
+
+APPLIES TO
+    ASIC/genus-innovus/inputs/constraints.sdc
+    sha256 90b776a92cdd67ffe19db5d8ca8572ddb6cb0c9b179a57a9d8287eba37cc0a80
+    (edited by concurrent sessions; re-read the [C2] block if the hash has moved)
+
+    tidelink_constraints.sdc is UNCHANGED, and that is the payoff of a decision
+    already taken: its TX word clocks are sourced at $WL/user_hsclk rather than
+    [get_ports CLK] precisely so they survive this option. Had they been anchored
+    at the CLK port they would now be sourced on a clock that no longer reaches
+    them — and it would still elaborate and still report clean.
+
+WHAT THIS PATCH CANNOT DO — the hardware change request
+    1. ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v
+       Remove the alias at :137-139; add a PDDW04DGZ_G input pad instance
+       (uPAD_USER_REF_CLK_I, the same cell and tie pattern as uPAD_CLK_I at
+       :266-273) driving soc_user_ref_clk; add the USER_REF_CLK port.
+    2. sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml
+       Delete `- { soc_port: user_ref_clk, const: "sys_fclk" }` from the ALIASED
+       CLOCKS block (:178-199) and add user_ref_clk as a bonded chip_port.
+       rtc_clk STAYS aliased. Regenerate the wrapper; `make chip-boundary` then
+       reports 24 pad cells / bonded 36 instead of 23 / 35.
+    3. ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io
+       Add the pad to the top side beside uPAD_CLK_I. The side is relative-
+       spaced, so the 17 existing top pads at space=55 become 18 at space=50
+       (18 x 25 + 17 x 50 + 30 = 1330, and 50 = 20+20+10 is filler-legal).
+    4. ASIC/genus-innovus/scripts/place_bondpads.tcl
+       The eight name lists hand-encode the outer/inner bond-pad parity of the
+       .io ring order. APPEND at the end of the top side rather than inserting
+       mid-side, or every pad after the insertion point reparents. Nothing in
+       the tree enforces this and `make chip-boundary` will not catch it.
+    5. THE BOARD. A clock source for the new pin. A DISTINCT source: if the
+       board feeds it from a buffered copy of the oscillator that drives CLK,
+       the two clocks share a source again and `-asynchronous` is a fiction one
+       buffer further out. Say so on the schematic.
+
+PAD BUDGET — THE ANSWER IS THERE IS ROOM, AND IT IS NOT CLOSE
+    The [C2] block prices this option at "one more bonded clock pad out of the
+    ring's budget". Measured, that half of the cost is ~zero:
+      * 82 pad cells (48 signal + 34 power/ground) + 4 corners + 325 fillers.
+      * Every signal pad is 25.000 um wide (patched vendor LEF).
+      * 4,070 um of IO filler is inserted across the four sides, and the
+        SMALLEST single contiguous gap anywhere in the ring is 42 um — 17 um
+        more than a whole pad cell. On three sides the gaps are 55 um.
+      * The v1 "pad budget" is a SCOPE DECISION recorded in commit e809fbf
+        ("back to the intended 23-pad budget", 46 -> 23), not a geometric limit.
+        Nothing in pads.v, the .io file, floorplan.tcl or place_bondpads.tcl
+        claims the ring is physically full.
+    What does NOT exist is a spare already-instantiated pad to repurpose: all 48
+    signal pads are bound. SE and TEST are the only candidates and the boundary
+    spec reserves them deliberately (yaml:131-132) for a future muxed scan
+    chain. Adding a pad is cheaper than taking either.
+
+APPLY
+    git apply -p1 ASIC/genus-innovus/inputs/patches/c2-option-b-bond.patch
+
+VALIDATED
+    git apply --check     clean against the sha above
+    tclsh, all SDC commands stubbed so the foreach loops and error guards
+    actually execute: sources OK; group census as above; the transmit group's
+    length guard correctly requires 10 and not 9.
+    NOT validated: no Genus or Innovus run, and the four hardware edits above
+    are not made, so this patch alone does not build.
+
+--- a/ASIC/genus-innovus/inputs/constraints.sdc
++++ b/ASIC/genus-innovus/inputs/constraints.sdc
+@@ -13,11 +13,44 @@
+ 
+ set EXTCLK "clk";
+ set SWDCLK "swdclk";
++set USRCLK "user_ref_clk";
+ set_units -time ns;
+ 
+ set_units -capacitance pF;
+ set EXTCLK_PERIOD $::env(CLK_PERIOD);
+ set SWDCLK_PERIOD [expr 4*$EXTCLK_PERIOD];
++#
++# [C2 OPTION B] THE D2D REFERENCE PERIOD. READ THIS BEFORE CHANGING IT.
++#
++# This defaults to $EXTCLK_PERIOD, which is 10.0 ns, and that is DELIBERATE and
++# CONSERVATIVE: it makes Option B a change of PHASE RELATIONSHIP ONLY. The link
++# keeps the rate it was placed, CTS'd and routed at, and every number in
++# tidelink_constraints.sdc that is derived from $EXTCLK_PERIOD (D2D_LINK_PERIOD,
++# and through it the 16 word clocks' 160 ns) stays where it was.
++#
++# THE DESIGN INTENT WAS 8.0 ns, NOT 10.0, AND YOU SHOULD KNOW THAT BEFORE YOU
++# DECIDE. constraints/nanosoc_eth_chiplet_cdc.sdc:29-33 -- the chiplet-level CDC
++# input, which describes the INNER top where user_ref_clk is a real distinct
++# port -- declares it at 8.000 ns (125 MHz) and calls it "the Wlink PLL
++# reference ... the D2D unit interval; TideLink's SDC parameterises it as
++# T_UI_NS. Placeholder 8 ns (125 MHz) matches the sim ref; confirm against the
++# PHY." So 125 MHz is what the link was specified at and 100 MHz is what the pad
++# alias silently imposed.
++#
++# WHY RAISING IT IS NOT A ONE-LINE CHANGE. Our TX rate is the PEER die's RX rate
++# (tidelink_constraints.sdc:3-19: this die's forwarded pad_clk_tx "IS the peer's
++# pad_clk_rx"). Setting 8.0 here makes this die transmit at 125 MHz into a
++# compute chiplet whose own constraints still say 10.0, and whose pad ring is a
++# separate tapeout we cannot edit. It also breaks the symmetry argument that
++# licenses D2D_LINK_PERIOD == $EXTCLK_PERIOD for the RECEIVE direction, since
++# the two dies would no longer share a source. Whether the link layer tolerates
++# a per-direction rate difference is a PHY/flow-control question this file
++# cannot answer -- it needs the Wlink spec, not an SDC edit.
++#
++# SO: change this to 8.0 ONLY together with the peer die's constraints and an
++# answer on per-direction rate asymmetry. Leaving it at $EXTCLK_PERIOD is the
++# supported Option B.
++set USRCLK_PERIOD $EXTCLK_PERIOD;
+ set CLK_ERROR 0.35; #Error calculated from worst case characteristics of CDCM61001 low-jitter oscillator chip at 250MHz
+ # PROVENANCE CHECKED against the actual datasheet (TI SCAS869F, Feb 2009 rev
+ # June 2011) while adding the drive characterisation at the bottom of this file.
+@@ -61,18 +94,41 @@
+ create_clock -name "$EXTCLK" -period "$EXTCLK_PERIOD" -waveform "0 [expr $EXTCLK_PERIOD/2]" [get_ports CLK]
+ create_clock -name "$SWDCLK" -period "$SWDCLK_PERIOD" -waveform "0 [expr $SWDCLK_PERIOD/2]" [get_ports SWDCK]
+ 
+-# NO create_clock for rtc_clk / user_ref_clk / scan_clk. None of the three is a
+-# pad on this chip:
+-#   rtc_clk, user_ref_clk : aliased onto the sys_fclk pad inside the generated
+-#                           wrapper (ALIASED CLOCKS in the boundary spec), so
+-#                           they ARE $EXTCLK -- constraining them separately
+-#                           would invent a clock that does not exist and cut
+-#                           real same-clock paths.
+-#   scan_clk              : tied 1'b0; the scan chain is not bonded.
+-# constraints/nanosoc_eth_chiplet_cdc.sdc still declares all three, because it
+-# describes the INNER top (nanosoc_eth_chiplet, 111 ports) where they are
+-# distinct ports. That file is the CDC/CLKDMN input, not this pad ring's
+-# constraints. Bond the clocks and both files converge.
++#############################################################################
++# [C2] OPTION B TAKEN -- user_ref_clk IS NOW A BONDED PAD OF ITS OWN.
++#############################################################################
++# This block used to read "NO create_clock for rtc_clk / user_ref_clk /
++# scan_clk", because all three were aliased or tied inside the pad wrapper. That
++# is still true of rtc_clk and scan_clk. It is NO LONGER TRUE OF user_ref_clk:
++# the [C2] decision recorded at the ASYNCHRONOUS CLOCK GROUPS section below has
++# been taken in the B direction, the alias in
++# ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v has been removed, and
++# USER_REF_CLK is a real input pad.
++#
++#   rtc_clk  : STILL aliased onto the sys_fclk pad inside the generated wrapper
++#              (ALIASED CLOCKS in the boundary spec), so it IS $EXTCLK.
++#              Constraining it separately would invent a clock that does not
++#              exist and cut real same-clock paths. DO NOT copy the block below
++#              for rtc_clk without bonding it too.
++#   scan_clk : tied 1'b0; the scan chain is not bonded.
++#
++# THIS create_clock IS NOT OPTIONAL AND IT IS NOT COSMETIC. The [C2] block below
++# used to claim Option B needs "no SDC edit at all". That claim was WRONG, and
++# this is the correction. Every D2D transmit clock in this design is a
++# create_generated_clock whose -source traces back through
++# $WL/user_hsclk (tidelink_constraints.sdc:327-345) or $WL/pad_clk_tx
++# (tidelink_constraints.sdc:43) to whatever primary clock feeds the Wlink
++# reference. Remove the alias WITHOUT adding a primary clock here and that trace
++# terminates at an UNCLOCKED port: D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 lose
++# their master, ~1.5k TX-word flops go back to having no waveform, and the run
++# still completes. That is the exact failure mode the guards in
++# tidelink_constraints.sdc exist to prevent, arrived at from a different
++# direction.
++#
++# PERIOD: see the $USRCLK_PERIOD note at the top of this file. It is
++# $EXTCLK_PERIOD on purpose -- Option B as landed changes the PHASE
++# RELATIONSHIP, not the link rate.
++create_clock -name "$USRCLK" -period "$USRCLK_PERIOD" -waveform "0 [expr $USRCLK_PERIOD/2]" [get_ports USER_REF_CLK]
+ 
+ 
+ # QUALIFIED -setup/-hold. These two lines previously carried NEITHER, and SDC
+@@ -90,6 +146,15 @@
+ set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks $EXTCLK]
+ set_clock_uncertainty -setup $CLK_ERROR      [get_clocks $SWDCLK]
+ set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks $SWDCLK]
++# [C2 OPTION B] $USRCLK gets the same treatment as every other primary clock in
++# this file -- NEVER zero margin. $CLK_ERROR is a PLACEHOLDER here in exactly
++# the sense flagged for D2D_RX_CLK_0 in tidelink_constraints.sdc:55-61: it is
++# the CDCM61001 system oscillator's figure and this is now a DIFFERENT board
++# source with its own datasheet. Replace both numbers when the part is chosen.
++# Using the system figure is strictly more conservative than the zero that a
++# newly-declared clock would otherwise carry, which is the only claim made here.
++set_clock_uncertainty -setup $CLK_ERROR      [get_clocks $USRCLK]
++set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks $USRCLK]
+ 
+ set_clock_uncertainty -setup $INTER_CLOCK_UNCERTAINTY -rise_from [get_clocks $SWDCLK] -rise_to [get_clocks $EXTCLK]
+ set_clock_uncertainty -setup $INTER_CLOCK_UNCERTAINTY -rise_from [get_clocks $EXTCLK] -rise_to [get_clocks $SWDCLK]
+@@ -266,91 +331,71 @@
+ # synchronisers, which makes every number it reports meaningless.
+ #
+ # Group membership mirrors that file, collapsed for this pad ring's clocks.
+-# rtc_clk / user_ref_clk / scan_clk are absent here (aliased onto $EXTCLK or
+-# tied), so the CDC SDC's separate groups for them fold into the $EXTCLK group:
++# rtc_clk / scan_clk are absent here (aliased onto $EXTCLK or tied), so the CDC
++# SDC's separate groups for them fold into the $EXTCLK group. user_ref_clk no
++# longer does -- it is a bonded pad under [C2] Option B and leads its own group:
+ #   sys_fclk + scan_clk + rtc_clk -> $EXTCLK (+ the QSPI clocks generated off it)
+-#   user_ref_clk + pad_clk_tx     -> D2D_TX_CLK_0 alone. *** SEE [C2] BELOW ***
+-#                                    the reasoning that used to sit here ran the
+-#                                    alias BACKWARDS and concluded the cut is
+-#                                    REAL. It is the alias that makes the cut
+-#                                    FICTION. Do not restore that sentence.
++#   user_ref_clk + pad_clk_tx     -> $USRCLK + D2D_TX_CLK_0 + the 8 TX word
++#                                    clocks. [C2] IS RESOLVED IN THE B
++#                                    DIRECTION (see the block below):
++#                                    user_ref_clk is a bonded pad again, so this
++#                                    group now says what the CDC SDC always
++#                                    said. Before the bond it was FICTION -- the
++#                                    alias made the whole transmit chain a
++#                                    generated copy of $EXTCLK.
+ #   pad_clk_rx                    -> D2D_RX_CLK_0
+ #   rmii_ref_clk                  -> stands alone, dragging its two divide-by-2
+ #                                    MII clocks with it.
+ #
+ #############################################################################
+-# [C2] OPEN DECISION, FOR THE OWNER — THE TRANSMIT GROUP CUTS A BOUNDARY THAT
+-#      IS SYNCHRONOUS. NO CONSTRAINT IS CHANGED BY THIS BLOCK. Recorded
+-#      2026-08-17 because it needs a pad-budget call, not an SDC edit.
++# [C2] RESOLVED — OPTION B TAKEN. THE TRANSMIT GROUP IS NOW TRUE AS WRITTEN.
++#      user_ref_clk is bonded to its own pad; the transmit clocks are no longer
++#      generated from $EXTCLK, so `-asynchronous` states a fact.
+ #############################################################################
+ #
+-# THE FINDING. D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 are grouped -asynchronous
+-# against $EXTCLK below. They are not asynchronous to it. They are generated
+-# from it, 1:1, on the same net, and the tool says so.
+-#
+-# EVIDENCE 1 — THE TOOL'S OWN RESOLUTION. From the shipped run:
+-#     Using master clock 'clk' for generated clock 'D2D_TX_CLK_0'
+-#     Using master clock 'clk' for generated clock 'D2D_TX_WORD_CLK_0'   ... _7
+-#   (build/full-20260814/logs/pnr_qor_after_opt_design_post_cts.rep:21-34)
+-# Every clock in the -asynchronous TX group resolves its master to `clk`.
+-#
+-# EVIDENCE 2 — THE RTL CHAIN, and note there is no PLL and no divider anywhere
+-# on it. It is assigns and one scan mux:
+-#   ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v:137,266
+-#                                 rtc_clk / user_ref_clk aliased onto the
+-#                                 sys_fclk pad -> user_ref_clk IS the CLK pad
+-#   tidelink_top.sv:2483          .user_hsclk (user_ref_clk)
+-#   axi_chiplet_controller.sv:6160 .user_hsclk (user_hsclk)
+-#   Wlink.v:2105                  phy_user_hsclk = user_hsclk
+-#   WlinkGPIOPHY_v2.v:357         gpio_io_hsclk  = user_hsclk
+-#   WavD2DGpio_v2.v:2088          hsclk_scan_mux_io_i_a = io_hsclk
+-#                                 -> the io_clk of all 8 TX lanes, hence
+-#                                    pad_clk_tx (gated) and the /16 word clocks
+-#
+-# EVIDENCE 3 — THE CONTRAST WITH RECEIVE, which is the check that this is a real
+-# asymmetry and not a misreading. D2D_RX_CLK_0 is a create_clock on a PAD
+-# (TL_CLK_RX): an off-die clock from the peer die, mesochronous at best, and its
+-# word clocks correctly resolve master 'D2D_RX_CLK_0'. The RX group is right.
+-# Only the TX group asserts asynchrony against a clock it is generated from.
+-#
+-# WHAT THE CUT IS ACTUALLY HIDING. Everything between the system clock and the
+-# TX word domain: the a2l FC-replay write sides and their enable_link_clk_demet,
+-# lltx, txpstate, txrouter and the sp2wl TX FIFO — the same blocks censused in
+-# tidelink_constraints.sdc's TX word-clock block. Roughly 2k flops' worth of
+-# boundary, currently false-pathed by group membership rather than by any
+-# statement about those paths.
+-#
+-# WHY THIS IS A DECISION AND NOT A BUG FIX. Those crossings DO carry RTL
+-# synchronisers (the demet stages are right there in the names). Merging the
+-# groups would newly time paths whose RTL treats them as CDC, which is honest
+-# but not free. Conversely, leaving the group is defensible ONLY as
+-# "deliberately not timed, because the RTL synchronises it" — which is not what
+-# `-asynchronous` says. Either way the file should say the true thing.
+-#
+-# THE TWO OPTIONS, BOTH DEFENSIBLE:
+-#
+-#   OPTION A — MERGE D2D_TX_* INTO THE $EXTCLK GROUP.
+-#     Deletes the TX group and adds its clocks to the system group, so the
+-#     boundary is timed as the synchronous crossing it physically is.
+-#     COST: ~2k TX-word flops newly timed against clk across a /16 ratio.
+-#     EXPECT NEW VIOLATIONS ON THE FIRST RUN AND EXPECT THEM TO BE REAL — the
+-#     same lesson as the 16,653-flop RX block. The demet crossings then want
+-#     narrow, NAMED false paths (set_false_path -to the first demet stage),
+-#     not a blanket group. No pad, no board, no silicon change.
+-#
+-#   OPTION B — BOND user_ref_clk TO ITS OWN PAD.
+-#     Removes the alias, so the Wlink reference stops being `clk` and the
+-#     existing -asynchronous group becomes TRUE AS WRITTEN, with no SDC edit at
+-#     all. It also restores the peer-independent link reference the Wlink was
+-#     designed around.
+-#     COST: one more bonded clock pad out of the ring's budget, plus a board
+-#     clock source for it. THAT IS THE DECISION THE OWNER HAS NOT MADE, and it
+-#     is why nothing here is changed.
+-#
+-# NOTE FOR WHOEVER TAKES OPTION B: the TX word clocks' -source in
+-# tidelink_constraints.sdc was deliberately anchored at $WL/user_hsclk rather
+-# than [get_ports CLK] so that it stays correct under either option. Check
+-# D2D_TX_CLK_0's own -source and this group at the same time.
++# WHAT THE PROBLEM WAS. D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 were grouped
++# -asynchronous against $EXTCLK while being GENERATED FROM IT, 1:1, on the same
++# net. The pad wrapper aliased user_ref_clk onto the sys_fclk pad, so the whole
++# Wlink transmit chain hung off the CLK pad. The tool said so, exhaustively:
++# in build/full-20260814 every one of the nine transmit clocks resolved
++#     Using master clock 'clk' for generated clock 'D2D_TX_...'
++# in all three analysis views -- 27 lines, ZERO resolving to anything else --
++# while all 16 receive clocks resolved 'D2D_RX_CLK_0' and none resolved 'clk'
++# (logs/pnr_qor_after_opt_design_post_cts.rep). The group was false-pathing a
++# boundary the timer could see was synchronous.
++#
++# WHY B AND NOT A. Option A (merge the transmit clocks into the $EXTCLK group)
++# would have made the CONSTRAINT honest by timing the boundary. Option B makes
++# the DESIGN match what the constraint always said, and it is what the RTL was
++# built for: constraints/nanosoc_eth_chiplet_cdc.sdc:29-33 describes
++# user_ref_clk as "the Wlink PLL reference. ASYNCHRONOUS to sys_hclk", and
++# tidelink_constraints.sdc's whole mesochronous-link argument assumes a link
++# reference that is not the SoC clock. The alias was the deviation.
++#
++# WHAT THIS OPTION COSTS, RECORDED HERE SO IT IS NOT RE-LITIGATED:
++#   * ONE MORE BONDED PAD, plus a board clock source. That is the real price and
++#     it is paid in hardware, not here.
++#   * A SECOND CLOCK TREE. $USRCLK now drives the Wlink reference and, through
++#     it, the whole transmit domain -- CTS builds and balances it separately.
++#   * THE PAD WRAPPER, THE BOUNDARY SPEC, THE IO FILE AND THE BOARD all change.
++#     None of that is expressible in SDC. See docs/C2_TRANSMIT_GROUP_OPTIONS.md
++#     for the itemised change-list; this file is only the constraint half.
++#
++# A DISTINCT PAD IS NECESSARY BUT NOT SUFFICIENT. If the board feeds the new pad
++# from a buffered copy of the SAME oscillator that drives CLK, the two clocks
++# share a source again and `-asynchronous` is a fiction one buffer further out.
++# The constraint asserts a DISTINCT SOURCE, not merely a distinct pin. Say so on
++# the schematic.
++#
++# THE -source ANCHORS NEEDED NO CHANGE, AND THAT WAS BY DESIGN. The TX word
++# clocks are sourced at $WL/user_hsclk and D2D_TX_CLK_0 at $WL/pad_clk_tx --
++# both INTERNAL pins downstream of whatever primary clock feeds the Wlink, so
++# both simply re-resolve their master to $USRCLK. Had the word clocks been
++# anchored at [get_ports CLK] -- which would also have resolved, and which
++# tidelink_constraints.sdc:288-301 explicitly rejected for this reason -- they
++# would now be sourced on a clock that no longer reaches them, and it would
++# still elaborate and still report clean. tidelink_constraints.sdc is UNCHANGED
++# by this option. That was the point of the anchor.
+ #############################################################################
+ #
+ # [OWNER] For SIGNOFF, narrow the D2D_RX_CLK_0 cut rather than leaving it a
+@@ -379,15 +424,35 @@
+ # whichever interpreter the tool embeds. A constraint file that errors on one tool
+ # and not another is the worst possible failure here.
+ set _rx_grp {D2D_RX_CLK_0}
+-set _tx_grp {D2D_TX_CLK_0}
++# [C2 OPTION B] $USRCLK LEADS THE TRANSMIT GROUP, AND IT MUST BE IN A GROUP.
++# set_clock_groups only cuts BETWEEN groups. A clock named in NO group is not
++# "async to nothing" -- it stays fully timed against every other clock in the
++# design, which for a newly-declared primary clock feeding the whole Wlink is
++# the worst of both worlds: the alias is gone, so the paths are no longer
++# same-clock, and the group is absent, so they are not cut either. Every one of
++# the 33 clocks this file declared before Option B was in exactly one group
++# (3+9+17+3+1 = 33, checked); with $USRCLK that is 34 and the arithmetic below
++# is what keeps it checked.
++#
++# It goes in the TRANSMIT group specifically because that is the group whose
++# asynchrony Option B is buying: user_ref_clk -> pad_clk_tx -> the 8 lane word
++# clocks is one synchronous tree off the new pad, so those nine clocks and the
++# new one are mutually SYNCHRONOUS and must stay timed against each other, while
++# the whole tree is now genuinely asynchronous to $EXTCLK.
++set _tx_grp [list $USRCLK D2D_TX_CLK_0]
+ foreach n {0 1 2 3 4 5 6 7} {
+     lappend _rx_grp "D2D_RX_WORD_CLK_$n"
+     lappend _rx_grp "D2D_RX_WORDN_CLK_$n"   ;# negedge half - same domain, opposite phase
+     lappend _tx_grp "D2D_TX_WORD_CLK_$n"
+ }
+-if {[llength $_rx_grp] != 17 || [llength $_tx_grp] != 9} {
++if {[llength $_rx_grp] != 17 || [llength $_tx_grp] != 10} {
+     error "constraints.sdc: D2D clock groups built wrong -\
+-           rx [llength $_rx_grp], tx [llength $_tx_grp], expected 17 and 9"
++           rx [llength $_rx_grp], tx [llength $_tx_grp], expected 17 and 10.\
++           tx is 10 and not 9 under [C2] OPTION B: $USRCLK is a bonded pad on\
++           this chip and leads the transmit group. If you are reverting to the\
++           alias, revert the create_clock and this count TOGETHER -- dropping\
++           $USRCLK from the group while leaving its create_clock in place\
++           leaves a primary clock timed against everything."
+ }
+ set_clock_groups -asynchronous -name eth_chiplet_cdc \
+     -group [get_clocks [list $EXTCLK QSPI_SCLK QSPI_SCLK_o]] \
+@@ -510,6 +575,28 @@
+ # slew range rather than extrapolating below it.
+ set_input_transition -min 0.50 [get_ports CLK] ;# [PLACEHOLDER] no max-slew-rate spec exists in SCAS869F; on-table pessimistic hold assumption
+ 
++### --- USER_REF_CLK : the D2D link reference [C2 OPTION B] -------------------
++#
++# [PLACEHOLDER, AND DELIBERATELY SO.] Option B adds a board clock source that
++# DOES NOT EXIST YET -- choosing the part is half the cost of the option. Until
++# it is chosen there is no datasheet to read, so the values below are the CLK
++# port's numbers reused verbatim.
++#
++# THAT REUSE IS AN ASSUMPTION, NOT A MEASUREMENT: it assumes the new source is
++# another LVCMOS clock generator of the same class as the CDCM61001. If the
++# board instead reuses a buffered copy of the existing oscillator -- which is
++# the cheapest way to build this and also the way that quietly puts the two
++# clocks back on a common source -- then Option B has bought a phase
++# relationship it has not actually broken, and the -asynchronous group is a
++# fiction AGAIN, one buffer further out. SEE THE [C2] BLOCK: a distinct PAD is
++# necessary for Option B and is not on its own sufficient. A DISTINCT SOURCE is
++# what the constraint asserts.
++#
++# Replace both lines from the chosen part's datasheet, converting 20-80% to the
++# library's 10-90% thresholds by 4/3 exactly as the CLK block above does.
++set_input_transition -max 1.20 [get_ports USER_REF_CLK] ;# [PLACEHOLDER] copied from CLK (SCAS869F); no part chosen for this source yet
++set_input_transition -min 0.50 [get_ports USER_REF_CLK] ;# [PLACEHOLDER] on-table pessimistic hold assumption, as CLK
++
+ ### --- SWDCK / SWDIO : ARM Serial Wire Debug probe ---------------------------
+ #
+ # SOURCE: Lauterbach, "Arm Debug and Trace Interface Specification"

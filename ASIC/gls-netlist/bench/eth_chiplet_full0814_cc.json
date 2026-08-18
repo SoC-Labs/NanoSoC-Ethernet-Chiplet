@@ -1,0 +1,188 @@
+{
+  "_comment": [
+    "Bench description for the eth-chiplet pad-ring netlist. Every value here is",
+    "a name inside THIS design or a number chosen for it; none of it belongs in",
+    "the toolkit.",
+    "",
+    "PROBES ARE AT THE ROM MACRO'S OWN PORT PINS, not on the AHB bus upstream.",
+    "That is deliberate: a bus-level probe can be satisfied by the testbench",
+    "itself, and the question is specifically whether a CPU reaches the macro.",
+    "CEN/A/Q at the macro boundary cannot be produced by anything but the design.",
+    "",
+    "BOTH ROMs are watched in one run because the compile is the expensive step",
+    "and because the two CPUs gate each other: chip_core_remap_ctrl.v holds each",
+    "core in reset until the other writes its bootgate bit, so which core fetches",
+    "first is exactly the thing in question. chip_core_remap_ctrl_w[3:0] is that",
+    "register: bit1 = CPU1 bootgate, bit2 = CPU0 bootgate, both 0 at power-on.",
+    "",
+    "SYNTHESIS VARIANT. Same design, same probe paths, but the synthesis top has",
+    "no VDD/VDDIO/VSS/VSSIO ports - power ports are added later in the flow - so",
+    "the supply ties are dropped. Everything else is identical, which is the point:",
+    "any difference in the result is a difference between the two NETLISTS.",
+    "",
+    "The bidirectional pins carry WEAK PULLS rather than being left floating.",
+    "Nothing external drives them in this bench, and a floating inout is Z,",
+    "which is X at the first gate downstream. The design's own pad driver",
+    "still wins whenever it drives, so this models a board pull-up and not a",
+    "tie-off. Without it the boot dies of the testbench.",
+    "",
+    "subs r3,#4 / ble / ldr r0,[r1,r3] / str r0,[r2,r3] / bgt, with the",
+    "destination base taken from the literal at ROM word 0x6e = 0x18000000.",
+    "memory, which is a side effect of execution and not merely a fetch.",
+    "",
+    "cpu1_dmem_write is the rung-6 probe. The boot ROM's loop decodes as",
+    "subs r3,#4 / ble / ldr r0,[r1,r3] / str r0,[r2,r3] / bgt, with the",
+    "destination base from the literal at ROM word 0x6e = 0x18000000. That is",
+    "DMEM_0 per the generated linker MEMORY block - NOT IMEM, which is the",
+    "first place this probe was pointed and where it correctly saw nothing.",
+    "Watching CEN&GWEN at CPU1's DMEM macro observes the store LANDING in a",
+    "memory: a side effect of execution rather than another fetch."
+  ],
+  "timescale": "1ns/1ps",
+  "clocks": [
+    {
+      "port": "CLK",
+      "period_ns": 20.0
+    }
+  ],
+  "resets": [
+    {
+      "port": "NRST",
+      "active": 0,
+      "cycles": 64
+    }
+  ],
+  "tie0": [
+    "SE",
+    "TEST",
+    "SWDCK",
+    "RMII_REF_CLK",
+    "RMII_RXD:2",
+    "RMII_CRS_DV",
+    "TL_CLK_RX",
+    "TL_RX:8"
+  ],
+  "tie1": [],
+  "mems": [
+    {
+      "name": "cc_rom",
+      "array": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.mem",
+      "words": 512,
+      "bits": 32,
+      "radix": "b",
+      "golden": "nanosoc_bootrom_chip_core.bintxt"
+    },
+    {
+      "name": "eth_rom",
+      "array": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.mem",
+      "words": 512,
+      "bits": 32,
+      "radix": "b",
+      "golden": "eth_ss_bootrom.bintxt"
+    }
+  ],
+  "romwatch": [
+    {
+      "name": "cc_rom_port",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.CLK",
+      "cen": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "addr_width": 9,
+      "data_width": 32,
+      "latency": 1,
+      "max_log": 60,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    },
+    {
+      "name": "eth_rom_port",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CLK",
+      "cen": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "addr_width": 9,
+      "data_width": 32,
+      "latency": 1,
+      "max_log": 60,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    },
+    {
+      "name": "cpu1_dmem_write",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .CLK",
+      "cen": "(u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .CEN | u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .GWEN)",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .D",
+      "addr_width": 11,
+      "data_width": 32,
+      "latency": 0,
+      "max_log": 40,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    }
+  ],
+  "traces": [
+    {
+      "name": "bootgate_remap_ctrl",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.chip_core_remap_ctrl_w",
+      "width": 4,
+      "max_log": 40
+    },
+    {
+      "name": "cc_rom_A",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "width": 9,
+      "max_log": 150
+    },
+    {
+      "name": "eth_rom_A",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "width": 9,
+      "max_log": 150
+    },
+    {
+      "name": "cc_rom_CEN",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "eth_rom_CEN",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "width": 1,
+      "max_log": 20
+    }
+  ],
+  "expects": [
+    {
+      "name": "cc_rom_msp_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h18003c00"
+    },
+    {
+      "name": "cc_rom_rstvec_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h08000189"
+    },
+    {
+      "name": "eth_rom_msp_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h18003c00"
+    },
+    {
+      "name": "eth_rom_rstvec_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h08000189"
+    }
+  ],
+  "run_cycles": 8000,
+  "pullup": [
+    "SWDIO",
+    "QSPI_IO:4",
+    "HOSTIO4_P1:7",
+    "RMII_MDIO",
+    "I2C_SCL",
+    "I2C_SDA"
+  ]
+}

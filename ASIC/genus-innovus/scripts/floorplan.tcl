@@ -270,7 +270,7 @@ unset _csr _bp_d _dx1 _dy1 _dx2 _dy2 _cx1 _cy1 _cx2 _cy2 _expect
 ## RAIL-TO-RAIL SHORT COUNT (not the DRC total -- Innovus check_drc disagrees in
 ## SIGN with Calibre on this design) plus check_connectivity opens/dangling.
 ## ~3 minutes, no P&R licence. Full treatment, including why the obvious
-## detectors miss it: docs/tapeout/35-split-row-pg-anchoring-hazard.md
+## detectors miss it: docs/tapeout/36-split-row-pg-anchoring-hazard.md
 proc place_macro {pattern x y orient} {
     # Filter to MACROS explicitly. `get_db insts <pattern>` matches every
     # instance, standard cells included, so a region-scoped glob like

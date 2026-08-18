@@ -1,0 +1,427 @@
+[C2] OPTION A — merge the D2D transmit clocks into the $EXTCLK group
+
+WHAT THIS DOES
+    Moves D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 out of their own -asynchronous
+    -group and into the system group, so the transmit boundary is timed as the
+    synchronous crossing it physically is, and cuts the genuine synchroniser
+    crossings across it BY NAME rather than by clock pair.
+
+    Clock groups   5 -> 4          (12 / 17 / 3 / 1; 33 clocks, all grouped)
+    Clocks         33 -> 33        (unchanged: no clock is created or removed)
+    set_false_path  7 -> 9         (+2, both -to 69 named synchroniser anchors)
+    set_max_delay   0 -> 2         (+2, -datapath_only on 22 named FIFO/addrsync
+                                    hierarchies, catch-guarded)
+
+WHY
+    Every D2D transmit clock resolves master 'clk'. build/full-20260814,
+    logs/pnr_qor_after_opt_design_post_cts.rep: 9 transmit clocks x 3 analysis
+    views = 27 "Using master clock 'clk'" lines, and ZERO resolving to anything
+    else. All 16 receive clocks resolve 'D2D_RX_CLK_0' and none resolves 'clk'.
+    The transmit group false-paths a boundary the timer can see is synchronous.
+
+APPLIES TO
+    ASIC/genus-innovus/inputs/constraints.sdc
+    sha256 90b776a92cdd67ffe19db5d8ca8572ddb6cb0c9b179a57a9d8287eba37cc0a80
+    (this file is edited by concurrent sessions; if the hash has moved, re-read
+    the [C2] block before applying — the patch may still apply cleanly while
+    describing a file that has changed underneath it)
+
+    NOTHING ELSE CHANGES. tidelink_constraints.sdc is untouched: the TX word
+    clocks' -source is anchored at $WL/user_hsclk and D2D_TX_CLK_0's at
+    $WL/pad_clk_tx, both internal pins that re-resolve their master by
+    themselves. That anchor choice was made for exactly this reason.
+
+APPLY
+    git apply -p1 ASIC/genus-innovus/inputs/patches/c2-option-a-merge.patch
+
+VALIDATED
+    git apply --check     clean against the sha above
+    tclsh, all SDC commands stubbed so the foreach loops and error guards
+    actually execute: sources OK; 69/69 synchroniser anchors and 22/22 datapath
+    anchors built; group census as above.
+    NOT validated: no Genus or Innovus run. In particular set_max_delay
+    -datapath_only support in Genus 21.15 is UNCONFIRMED — that call is wrapped
+    in catch with a plain set_max_delay fallback, which is stricter, not looser.
+
+READ BEFORE JUDGING THE FIRST RUN
+    This option newly times 1184 endpoints (1003 clk->TX, 181 TX->clk, by
+    structural fan-in over the synthesised Wlink). The exceptions below cover
+    the synchronisers and the FIFO/address-sync payload; roughly 200 further
+    endpoints are neither and are genuinely timed. See PART 3 OF 3 in the patch
+    body for the acceptance gate, and docs/C2_TRANSMIT_GROUP_OPTIONS.md for the
+    side-by-side comparison with Option B.
+
+--- a/ASIC/genus-innovus/inputs/constraints.sdc
++++ b/ASIC/genus-innovus/inputs/constraints.sdc
+@@ -268,89 +268,66 @@
+ # Group membership mirrors that file, collapsed for this pad ring's clocks.
+ # rtc_clk / user_ref_clk / scan_clk are absent here (aliased onto $EXTCLK or
+ # tied), so the CDC SDC's separate groups for them fold into the $EXTCLK group:
+-#   sys_fclk + scan_clk + rtc_clk -> $EXTCLK (+ the QSPI clocks generated off it)
+-#   user_ref_clk + pad_clk_tx     -> D2D_TX_CLK_0 alone. *** SEE [C2] BELOW ***
+-#                                    the reasoning that used to sit here ran the
+-#                                    alias BACKWARDS and concluded the cut is
+-#                                    REAL. It is the alias that makes the cut
+-#                                    FICTION. Do not restore that sentence.
++#   sys_fclk + scan_clk + rtc_clk -> $EXTCLK (+ the QSPI clocks generated off it,
++#                                    + the 9 D2D transmit clocks, per [C2] A)
++#   user_ref_clk + pad_clk_tx     -> FOLDED INTO THE $EXTCLK GROUP. [C2] IS
++#                                    RESOLVED IN THE A DIRECTION (see the block
++#                                    below). user_ref_clk is aliased onto the
++#                                    sys_fclk pad, so the transmit chain IS
++#                                    $EXTCLK and its own group was fiction. The
++#                                    reasoning that used to sit here ran the
++#                                    alias BACKWARDS and concluded the cut was
++#                                    REAL. Do not restore that sentence.
+ #   pad_clk_rx                    -> D2D_RX_CLK_0
+ #   rmii_ref_clk                  -> stands alone, dragging its two divide-by-2
+ #                                    MII clocks with it.
+ #
+ #############################################################################
+-# [C2] OPEN DECISION, FOR THE OWNER — THE TRANSMIT GROUP CUTS A BOUNDARY THAT
+-#      IS SYNCHRONOUS. NO CONSTRAINT IS CHANGED BY THIS BLOCK. Recorded
+-#      2026-08-17 because it needs a pad-budget call, not an SDC edit.
++# [C2] RESOLVED — OPTION A TAKEN. THE TRANSMIT CLOCKS ARE IN THE $EXTCLK GROUP,
++#      BECAUSE THEY ARE GENERATED FROM IT. The boundary is now TIMED, and the
++#      genuine synchroniser crossings across it are cut BY NAME below.
+ #############################################################################
+ #
+-# THE FINDING. D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 are grouped -asynchronous
+-# against $EXTCLK below. They are not asynchronous to it. They are generated
+-# from it, 1:1, on the same net, and the tool says so.
++# WHAT THE PROBLEM WAS. D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 used to sit in a
++# `-group` of their own, i.e. declared -asynchronous to $EXTCLK, while being
++# GENERATED FROM IT on the same net. The pad wrapper aliases user_ref_clk onto
++# the sys_fclk pad (nanosoc_eth_chiplet_pads.v:137,266; the ALIASED CLOCKS block
++# of sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml), so the whole Wlink
++# transmit chain hangs off the CLK pad.
+ #
+-# EVIDENCE 1 — THE TOOL'S OWN RESOLUTION. From the shipped run:
++# EVIDENCE, EXHAUSTIVE AND FROM THE TOOL ITSELF. In build/full-20260814,
++# logs/pnr_qor_after_opt_design_post_cts.rep:
+ #     Using master clock 'clk' for generated clock 'D2D_TX_CLK_0'
+-#     Using master clock 'clk' for generated clock 'D2D_TX_WORD_CLK_0'   ... _7
+-#   (build/full-20260814/logs/pnr_qor_after_opt_design_post_cts.rep:21-34)
+-# Every clock in the -asynchronous TX group resolves its master to `clk`.
+-#
+-# EVIDENCE 2 — THE RTL CHAIN, and note there is no PLL and no divider anywhere
+-# on it. It is assigns and one scan mux:
+-#   ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v:137,266
+-#                                 rtc_clk / user_ref_clk aliased onto the
+-#                                 sys_fclk pad -> user_ref_clk IS the CLK pad
+-#   tidelink_top.sv:2483          .user_hsclk (user_ref_clk)
+-#   axi_chiplet_controller.sv:6160 .user_hsclk (user_hsclk)
+-#   Wlink.v:2105                  phy_user_hsclk = user_hsclk
+-#   WlinkGPIOPHY_v2.v:357         gpio_io_hsclk  = user_hsclk
+-#   WavD2DGpio_v2.v:2088          hsclk_scan_mux_io_i_a = io_hsclk
+-#                                 -> the io_clk of all 8 TX lanes, hence
+-#                                    pad_clk_tx (gated) and the /16 word clocks
+-#
+-# EVIDENCE 3 — THE CONTRAST WITH RECEIVE, which is the check that this is a real
+-# asymmetry and not a misreading. D2D_RX_CLK_0 is a create_clock on a PAD
+-# (TL_CLK_RX): an off-die clock from the peer die, mesochronous at best, and its
+-# word clocks correctly resolve master 'D2D_RX_CLK_0'. The RX group is right.
+-# Only the TX group asserts asynchrony against a clock it is generated from.
+-#
+-# WHAT THE CUT IS ACTUALLY HIDING. Everything between the system clock and the
+-# TX word domain: the a2l FC-replay write sides and their enable_link_clk_demet,
+-# lltx, txpstate, txrouter and the sp2wl TX FIFO — the same blocks censused in
+-# tidelink_constraints.sdc's TX word-clock block. Roughly 2k flops' worth of
+-# boundary, currently false-pathed by group membership rather than by any
+-# statement about those paths.
+-#
+-# WHY THIS IS A DECISION AND NOT A BUG FIX. Those crossings DO carry RTL
+-# synchronisers (the demet stages are right there in the names). Merging the
+-# groups would newly time paths whose RTL treats them as CDC, which is honest
+-# but not free. Conversely, leaving the group is defensible ONLY as
+-# "deliberately not timed, because the RTL synchronises it" — which is not what
+-# `-asynchronous` says. Either way the file should say the true thing.
+-#
+-# THE TWO OPTIONS, BOTH DEFENSIBLE:
+-#
+-#   OPTION A — MERGE D2D_TX_* INTO THE $EXTCLK GROUP.
+-#     Deletes the TX group and adds its clocks to the system group, so the
+-#     boundary is timed as the synchronous crossing it physically is.
+-#     COST: ~2k TX-word flops newly timed against clk across a /16 ratio.
+-#     EXPECT NEW VIOLATIONS ON THE FIRST RUN AND EXPECT THEM TO BE REAL — the
+-#     same lesson as the 16,653-flop RX block. The demet crossings then want
+-#     narrow, NAMED false paths (set_false_path -to the first demet stage),
+-#     not a blanket group. No pad, no board, no silicon change.
+-#
+-#   OPTION B — BOND user_ref_clk TO ITS OWN PAD.
+-#     Removes the alias, so the Wlink reference stops being `clk` and the
+-#     existing -asynchronous group becomes TRUE AS WRITTEN, with no SDC edit at
+-#     all. It also restores the peer-independent link reference the Wlink was
+-#     designed around.
+-#     COST: one more bonded clock pad out of the ring's budget, plus a board
+-#     clock source for it. THAT IS THE DECISION THE OWNER HAS NOT MADE, and it
+-#     is why nothing here is changed.
+-#
+-# NOTE FOR WHOEVER TAKES OPTION B: the TX word clocks' -source in
+-# tidelink_constraints.sdc was deliberately anchored at $WL/user_hsclk rather
+-# than [get_ports CLK] so that it stays correct under either option. Check
+-# D2D_TX_CLK_0's own -source and this group at the same time.
++#     Using master clock 'clk' for generated clock 'D2D_TX_WORD_CLK_0' ... _7
++#   9 transmit clocks x 3 analysis views = 27 lines. ZERO of them resolve to
++#   any master other than `clk`. The control experiment is receive: all 16
++#   D2D_RX_* clocks resolve 'D2D_RX_CLK_0' and NONE resolves 'clk'. The
++#   asymmetry is real and it is one-sided.
++#
++# THE NETLIST SAYS IT EVEN MORE PLAINLY THAN THE TIMER DOES. Inside the
++# synthesised Wlink, the app-side and link-side halves of each a2l flow-control
++# replay buffer are clocked by `user_hsclk` and `phy_link_tx_tx_link_clk` --
++# and `user_hsclk` is the same physical net as the Wlink's app_clk, because
++# tidelink_top wires .app_clk(hclk) and the SoC's hclk is sys_fclk. The two
++# "domains" the RTL synchronises between are one net and its own /16.
++#
++# WHAT MERGING COSTS -- MEASURED, NOT ESTIMATED. Structural fan-in over the
++# synthesised Wlink gives 1451 flops on the transmit word clock, of which
++#     1003 capture from the clk domain, and
++#      181 launch into it.
++# Those 1184 endpoints were false-pathed by group membership and are now timed.
++# Note also that only D2D_TX_WORD_CLK_0 carries any of them:
++# `phy_link_tx_tx_link_clk` is driven from gpiotx_0 alone
++# (WavD2DGpio_v2.v:1961), and D2D_TX_WORD_CLK_1..7 clock only per-lane
++# serialiser flops with no clk-domain fan-in. CTS agrees -- it built exactly one
++# transmit word-clock tree, D2D_TX_WORD_CLK_0, with 1495 flops
++# (reports/cts_clock_trees.rep).
++#
++# READ THE NEXT TWO BLOCKS BEFORE JUDGING A RUN MADE WITH THIS OPTION. The
++# demet cuts below handle the SYNCHRONISERS. They do NOT handle the
++# handshake-protected DATA the synchronisers qualify, which by design has no
++# demet on it at all. That is the second block, and the honest note attached to
++# it about what is still not covered.
+ #############################################################################
+ #
+ # [OWNER] For SIGNOFF, narrow the D2D_RX_CLK_0 cut rather than leaving it a
+@@ -389,12 +366,228 @@
+     error "constraints.sdc: D2D clock groups built wrong -\
+            rx [llength $_rx_grp], tx [llength $_tx_grp], expected 17 and 9"
+ }
++# [C2 OPTION A] THE MERGE. $_tx_grp is still BUILT as its own list -- the loop
++# above and the guard on it are unchanged, so a lane that goes missing is still
++# caught -- but it is now CONCATENATED into the system group instead of being
++# passed as a `-group` of its own. That single change is the whole of Option A's
++# effect on clock grouping: four groups where there were five, and the transmit
++# clocks timed against the clock they are generated from.
++set _sys_grp [concat [list $EXTCLK QSPI_SCLK QSPI_SCLK_o] $_tx_grp]
++if {[llength $_sys_grp] != 12} {
++    error "constraints.sdc: C2 OPTION A system group built wrong -\
++           [llength $_sys_grp] clocks, expected 12 (clk + 2 QSPI + 9 D2D TX).\
++           If you are reverting to the pre-C2 five-group form, revert the\
++           demet false-path block below IN THE SAME CHANGE: those exceptions\
++           exist only because this merge times the boundary, and left behind\
++           they would cut synchroniser crossings the group already cuts --\
++           the two-mechanism defect the C5 block at the top of this file
++           spends seventy lines explaining."
++}
+ set_clock_groups -asynchronous -name eth_chiplet_cdc \
+-    -group [get_clocks [list $EXTCLK QSPI_SCLK QSPI_SCLK_o]] \
+-    -group [get_clocks $_tx_grp] \
++    -group [get_clocks $_sys_grp] \
+     -group [get_clocks $_rx_grp] \
+     -group [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}] \
+     -group [get_clocks [list $SWDCLK]]
++
++#############################################################################
++# [C2 OPTION A] PART 2 OF 3 — NARROW, NAMED CUTS ON THE SYNCHRONISERS.
++#############################################################################
++# THIS IS NOT A BLANKET CUT AND MUST NOT BECOME ONE. Every exception below ends
++# at the FIRST STAGE of one named synchroniser instance. A blanket
++# `set_false_path -from clk -to [get_clocks D2D_TX_WORD_CLK_*]` would restore
++# exactly the hole the merge was made to close, in a different shape.
++#
++# WHAT A "FIRST STAGE" IS HERE, because the answer is not the obvious one.
++# WavDemetReset carries TWO implementations behind `ifdef ASIC_TSMC65`: a
++# structural pair of SDFCNQD1 named u_f1/u_f2, and a behavioural pair of
++# always-blocks on regs f1/f2. ASIC_TSMC65 IS NOT DEFINED IN THIS FLOW -- it
++# belongs to TideLink's Fusion Compiler flow -- so this design synthesises the
++# BEHAVIOURAL branch. Checked, not assumed: `u_f1` appears ZERO times in
++# outputs/nanosoc_eth_chiplet_pads_gate.v, while f1_reg and f2_reg each appear
++# 282 times. The endpoint is therefore `<instance>/f1_reg*/D`. The `*` covers
++# the multi-bit variants, whose flops are f1_reg[0..n].
++#
++# AND THE INSTANCES ARE DISSOLVED, WHICH IS WHY THE GUARD MATTERS. Genus
++# ungroups WavDemetReset: in the gate netlist there is no such module, only
++# `enable_link_clk_demet_f1_reg` sitting in the parent with the hierarchy
++# underscore-joined into its name. This SDC is read AFTER elaborate and BEFORE
++# mapping, so the hierarchical form below is the correct one to write and Genus
++# re-expresses it at write_sdc -- the same translation that turns
++# .../u_wlink/phy/gpio/... into .../u_wlink/phy_gpio/... in
++# outputs/nanosoc_eth_chiplet_pads_syn.sdc. Do not "fix" these to the flattened
++# spelling; it would not resolve at read time.
++#
++# WHY THESE INSTANCES AND NOT THE OTHER 115. There are 176 demet instances under
++# the Wlink. Only the ones bridging $EXTCLK and the TRANSMIT word domain are
++# affected by this merge, and only those are cut here. Every capture domain
++# below was READ OFF THE .CP PIN of the demet's f1 flop in the gate netlist, not
++# inferred:
++#   user_hsclk                 -> the app/system domain, i.e. $EXTCLK
++#   phy_link_tx_tx_link_clk    -> D2D_TX_WORD_CLK_0
++#   phy_link_rx_rx_link_clk_o  -> the receive word domain
++# DELIBERATELY EXCLUDED, each for a stated reason:
++#   l2a_fc_replay/*      its app_clk port is wired to the RX clock and its
++#                        link_clk port to the app clock, so every demet in it is
++#                        clk<->RX. The RX group already cuts that. Cutting it
++#                        again here would be the [C5] two-mechanism defect.
++#   ack_nack_fifo/*, cr_pkt_seen_tx_demet, crack_pkt_seen_tx_demet
++#                        RX word -> TX word. Both ends outside the merge.
++#   phy/gpio/*           reset synchronisers on io_clk, which is in the $EXTCLK
++#                        group before and after this change. Nothing moved.
++#   app_clk_reset_scan_wrs, ff2_demet{,_1,_2}
++#                        both ends in the $EXTCLK / apb domain.
++#   txrouter/en_ff2_demet
++#                        IS on the TX clock, but the netlist shows Genus tied
++#                        its D pin to 1'b1. There is no arc from clk to cut.
++#   en_ff2_tx_demet / en_ff2_rx_demet
++#                        do not survive mapping at all (CSE'd onto a shared
++#                        swi_enable driver). They resolve pre-map, so including
++#                        them would not error -- they are left out because an
++#                        exception on a path that no longer exists is noise.
++set _c2_fc {
++    axi2wl/wlink_axiawFC  axi2wl/wlink_axiwFC   axi2wl/wlink_axibFC
++    axi2wl/wlink_axiarFC  axi2wl/wlink_axirFC
++    gb2wl/wlink_generalbusgb  tl2wl/wlink_tidelinktl
++}
++set _c2_sfx {
++    a2l_fc_replay/enable_app_clk_demet
++    a2l_fc_replay/enable_link_clk_demet
++    a2l_fc_replay/fifo/sync_wptr_demet
++    a2l_fc_replay/fifo/sync_rptr_demet
++    a2l_fc_replay/link_addr_to_app_clk/addrsync/rptr_wclk_demet
++    a2l_fc_replay/link_addr_to_app_clk/addrsync/wptr_rclk_demet
++    l2a_fifo_addr_to_tx/addrsync/wptr_rclk_demet
++    l2a_fifo_addr_to_tx/addrsync/rptr_wclk_demet
++}
++# Not under a flow-control block, and each verified individually in the gate
++# netlist by its .CP net:
++#   lltx/*                      TX capture, enable + error-injection from clk
++#   tx_link_clk_reset_wrs/...   TX capture, the transmit reset RELEASE from clk
++#   sp2wl/tx_fifo/sync_*ptr     the short-packet TX FIFO's gray pointers
++set _c2_solo {
++    lltx/enable_ff2_demet
++    lltx/err_inj_ff2_demet
++    tx_link_clk_reset_wrs/reset_sync_demet
++    sp2wl/tx_fifo/sync_wptr_demet
++    sp2wl/tx_fifo/sync_rptr_demet
++}
++# tidelink_fcemit_obs is SoC Labs' own observability block, not Wav IP, so it
++# does not use WavDemetReset and its first stage is <signal>_s0 rather than f1.
++# It is a plain 2FF synchroniser TX word -> clk. Its 41 flops are the single
++# largest TX->clk group in the design and they are ALL synchroniser first or
++# second stages, so leaving them timed would be the loudest false alarm in the
++# first Option A report.
++set _c2_obs {asl ioen oae sop grant cnt idaw idsb}
++
++set _c2_pins {}
++foreach fc $_c2_fc {
++    foreach s $_c2_sfx { lappend _c2_pins "$WL/$fc/$s/f1_reg*/D" }
++}
++foreach s $_c2_solo { lappend _c2_pins "$WL/$s/f1_reg*/D" }
++foreach s $_c2_obs  { lappend _c2_pins "$WL/u_fcemit_obs/${s}_s0_reg*/D" }
++if {[llength $_c2_pins] != 69} {
++    error "constraints.sdc: C2 OPTION A built [llength $_c2_pins] synchroniser\
++           anchors, expected 69 (7 flow-control blocks x 8, + 5 standalone,\
++           + 8 fcemit_obs). The lists above were edited without the count."
++}
++# error, NOT continue -- the same doctrine as the word-clock guards in
++# tidelink_constraints.sdc. A silently-skipped anchor leaves a synchroniser
++# crossing timed against a clock it was never meant to meet, the run completes,
++# and the violation reads as a real one. Every anchor below was confirmed
++# present in build/full-20260814; a miss means the Wlink hierarchy moved.
++foreach _p $_c2_pins {
++    if {[sizeof_collection [get_pins -quiet $_p]] == 0} {
++        error "constraints.sdc: C2 OPTION A synchroniser anchor $_p matched\
++               NOTHING. Refusing to continue: with the transmit clocks now in\
++               the $EXTCLK group, an unmatched anchor means a real CDC crossing\
++               is being timed as if it were synchronous. If the demet flops are\
++               named something other than f1_reg in your Genus version, fix the\
++               pattern here -- do NOT fall back to a blanket clock-to-clock cut."
++    }
++}
++set_false_path -from [get_clocks $EXTCLK]  -to [get_pins $_c2_pins]
++set_false_path -from [get_clocks $_tx_grp] -to [get_pins $_c2_pins]
++
++#############################################################################
++# [C2 OPTION A] PART 3 OF 3 — THE HANDSHAKE-PROTECTED DATA, AND WHAT IS STILL
++#               NOT COVERED. READ THIS BEFORE CALLING AN OPTION A RUN CLEAN.
++#############################################################################
++# THE SYNCHRONISERS ABOVE ARE NOT THE CROSSING. They are the POINTERS AND
++# ENABLES that make the crossing safe. The payload itself -- the FIFO memory
++# array, the WavMultibitSync address memories -- crosses with NO synchroniser on
++# it at all, and that is correct by design: the gray-coded pointer is demet'd,
++# and the pointer's value is what guarantees the data is stable before the read
++# side looks at it. Cutting those paths outright would be wrong; timing them
++# against an unrelated edge is also wrong.
++#
++# THE RIGHT INSTRUMENT IS A DATAPATH BOUND, NOT A FALSE PATH. What actually has
++# to hold is that the bits of one word do not skew past each other by more than
++# a destination cycle. set_max_delay -datapath_only expresses exactly that and
++# nothing more: it bounds combinational delay and ignores clock latency, so it
++# does not assert any edge relationship between the two clocks.
++#
++# THE BUDGET IS ONE SYSTEM CLOCK PERIOD. For clk -> TX word that is one period
++# of the faster (launch) clock; for TX word -> clk it is one period of the
++# destination. Both are $EXTCLK_PERIOD, which is why one number serves both.
++#
++# WRAPPED IN catch FOR THE SAME REASON THE D2D set_driving_cell IS
++# (tidelink_constraints.sdc:483): -datapath_only is not universally supported,
++# and a constraint file that aborts on one tool and not another is the worst
++# failure mode available here. If it is rejected the fallback is a plain
++# set_max_delay at the same budget, which is STRICTER, never looser.
++set _c2_dp {}
++foreach fc $_c2_fc {
++    lappend _c2_dp "$WL/$fc/a2l_fc_replay/fifo/mem"
++    lappend _c2_dp "$WL/$fc/a2l_fc_replay/link_addr_to_app_clk/addrsync"
++    lappend _c2_dp "$WL/$fc/l2a_fifo_addr_to_tx/addrsync"
++}
++lappend _c2_dp "$WL/sp2wl/tx_fifo/mem"
++if {[llength $_c2_dp] != 22} {
++    error "constraints.sdc: C2 OPTION A built [llength $_c2_dp] datapath\
++           anchors, expected 22 (7 x 3 + 1)."
++}
++foreach _p $_c2_dp {
++    if {[sizeof_collection [get_cells -quiet $_p]] == 0} {
++        error "constraints.sdc: C2 OPTION A datapath anchor $_p matched\
++               NOTHING. These are named hierarchical instances (a2l_fc_replay's
++               `mem`, the WavMultibitSync `addrsync`); a miss means the Wlink
++               hierarchy moved and the payload crossings are being timed as
++               synchronous."
++    }
++}
++if {[catch {
++    set_max_delay -datapath_only $EXTCLK_PERIOD \
++        -from [get_cells $_c2_dp] -to [get_clocks $_tx_grp]
++    set_max_delay -datapath_only $EXTCLK_PERIOD \
++        -from [get_cells $_c2_dp] -to [get_clocks $EXTCLK]
++} _c2_dp_err]} {
++    puts "**WARN: constraints.sdc: C2 OPTION A set_max_delay -datapath_only"
++    puts "**WARN: rejected -- '$_c2_dp_err'. Falling back to plain set_max_delay,"
++    puts "**WARN: which is STRICTER (it charges clock latency too), not looser."
++    set_max_delay $EXTCLK_PERIOD -from [get_cells $_c2_dp] -to [get_clocks $_tx_grp]
++    set_max_delay $EXTCLK_PERIOD -from [get_cells $_c2_dp] -to [get_clocks $EXTCLK]
++}
++#
++# WHAT IS STILL NOT COVERED, STATED PLAINLY SO THE FIRST RUN IS NOT MISREAD.
++# The two blocks above cover the synchronisers and the FIFO/address-sync
++# payload. They do NOT cover every one of the 1184 endpoints the merge exposes.
++# Structural fan-in names roughly 200 more that are neither: lltx/link_data_reg
++# (128 bits), lltx/byte_count_reg, txpstate/count_reg, sp2wl/tx_data_reg,
++# txrouter/curr_ch_reg and u_fcemit_obs's own capture registers. Some of those
++# are downstream of a cut already made here and will resolve themselves; the
++# rest are genuinely timed clk -> TX-word paths across a /16 ratio with a
++# full $EXTCLK_PERIOD of budget, and they SHOULD close.
++#
++# THE ACCEPTANCE GATE FOR OPTION A IS THEREFORE NOT "ZERO VIOLATIONS". It is:
++#   1. check_timing's master_clk_edge_not_reaching stays at 0 (this change must
++#      not disturb the -source anchors -- it does not touch them);
++#   2. the violating endpoints that remain are ENUMERATED and each is either
++#      closed by real optimisation or given its own named exception here;
++#   3. no exception added in step 2 is expressed clock-to-clock.
++# An Option A run whose report is read as "1184 new violations, revert" has
++# learned nothing. An Option A run that ends with step 2's list empty is the
++# only version of this option that is finished.
++unset _c2_fc _c2_sfx _c2_solo _c2_obs _c2_pins _c2_dp _sys_grp _p
+ unset _rx_grp _tx_grp
+ 
+ #### EXTERNAL DRIVE AND LOAD CHARACTERISATION #################################
