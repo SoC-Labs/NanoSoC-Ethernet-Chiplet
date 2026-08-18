@@ -36,12 +36,31 @@ export CHIPLET_TL_ASIC_FLIST := $(CHIPLET_HOME)/build/chip/flist/tidelink_asic.f
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
-ASIC_DIR     := $(CHIPLET_HOME)/ASIC/genus-innovus
+# THE FLOW THAT BUILDS THIS CHIP. ASIC/eth-chiplet is the asic-toolkit entry
+# point - its Makefile is three lines: design.mk, then the toolkit's mk/flow.mk.
+# Every artefact under signoff came out of it: the shipping GDS is
+# ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds and
+# the shipping netlist carries the toolkit's own provenance block
+# (reports/syn_manifest.txt: toolkit_git_sha).
+ASIC_DIR     := $(CHIPLET_HOME)/ASIC/eth-chiplet
+
+# THE LEGACY FLOW, kept runnable and deliberately NOT deleted - reachable as
+# `make asic-*-legacy` below. It last drove a tool on 2026-08-13 22:57
+# (work/innovus.log7) and its outputs/ holds no netlist and no GDS, so it did
+# not build anything now under signoff. The DIRECTORY still matters for reasons
+# that have nothing to do with its flow stages: design.mk reads its floorplan,
+# power plan, mmmc and io, and it hosts lec/rail/romlibs. Retiring the four
+# stage targets and retiring this directory are different changes.
+LEGACY_ASIC_DIR := $(CHIPLET_HOME)/ASIC/genus-innovus
+
 TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
 .PHONY: vendor-check hooks
 .PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc
+.PHONY: asic-lvs asic-lvs-pre asic-lec-pnr asic-pipeline asic-pipeline-resume
+.PHONY: asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy
+.PHONY: asic-gds-legacy asic-lec-pnr-legacy
 
 # Bare `make` used to run `bootstrap` — a 42-submodule fetch — because it was
 # the first target in the file. Show what is available instead.
@@ -69,13 +88,30 @@ help:
 	@echo "    make vendor-check  no TSMC collateral tracked in this PUBLIC repo."
 	@echo "                       Both scanners, the same two the PR gate runs."
 	@echo ""
-	@echo "  ASIC implementation (delegates to ASIC/genus-innovus):"
+	@echo "  ASIC implementation — delegates to ASIC/eth-chiplet, the asic-toolkit"
+	@echo "  flow that built the shipping GDS and netlist:"
 	@echo "    make asic-status   which flow stages have run"
 	@echo "    make asic-syn      synthesis (Genus)"
 	@echo "    make asic-pnr      place + CTS + route -> GDSII (Innovus). Multi-hour."
-	@echo "    make asic-gds      syn + pnr, unattended, end to end"
+	@echo "    make asic-gds      syn + place + cts + route, unattended, end to end"
+	@echo "    make asic-lec-pnr  Conformal LEC: synthesis netlist vs post-P&R netlist"
+	@echo "    make asic-pipeline every check this design declares, in dependency"
+	@echo "                       order, CONTINUING PAST FAILURES, then collated."
+	@echo "                       A superset of asic-gds; no legacy equivalent."
+	@echo "                       asic-pipeline-resume re-runs only what has not passed."
+	@echo "    make asic          the flow's own help, with every target"
+	@echo ""
+	@echo ""
+	@echo "  Signoff checks that still run out of ASIC/genus-innovus, because that"
+	@echo "  is where ci/signoff.yaml reads their evidence from:"
 	@echo "    make asic-drc      Calibre DRC on the built GDS"
-	@echo "    make asic          the ASIC flow's own help, with every target"
+	@echo "    make asic-lvs      Calibre nmLVS (asic-lvs-pre for the preflight alone)"
+	@echo ""
+	@echo "  The legacy IMPLEMENTATION flow is kept runnable but is no longer what"
+	@echo "  ships — it last drove a tool on 2026-08-13 and its outputs/ has no"
+	@echo "  netlist and no GDS. Reach it with the same names plus -legacy:"
+	@echo "    asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy"
+	@echo "    asic-gds-legacy asic-lec-pnr-legacy"
 	@echo ""
 	@echo "    make asic-flist    re-render the generated ASIC sub-flists"
 	@echo "    make clean         remove build/elab"
@@ -85,18 +121,70 @@ help:
 #-----------------------------------------------------------------------------
 # So the implementation flow is reachable from the repo root like every other
 # gate, instead of requiring a cd into a directory you have to know about.
-# ASIC/genus-innovus/Makefile is the authority; these only forward.
+# $(ASIC_DIR)/Makefile is the authority; these only forward.
+#
+# THESE NAME THE TOOLKIT FLOW, AND THAT IS THE POINT OF THIS BLOCK. Until
+# 2026-08-18 every line here forwarded to ASIC/genus-innovus, so `make help`
+# pointed a newcomer at a flow that last produced an artefact on 08-13 while
+# the GDS, netlist, SDF and reports under signoff all came from the toolkit.
+# The stage names differ between the two flows and are mapped one-for-one:
+#
+#     root target       toolkit ($(ASIC_DIR))   legacy ($(LEGACY_ASIC_DIR))
+#     asic              help                    help
+#     asic-status       status                  status
+#     asic-syn          syn                     syn
+#     asic-pnr          place cts route         pnr_place pnr_cts pnr_route
+#     asic-gds          all                     pnr_all
+#     asic-lec-pnr      lec-pnr                 lec-pnr
+#     asic-pipeline     pipeline                - none; see below
+#     asic-drc          (still legacy)          drc          <- see note below
+#     asic-lvs          (still legacy)          lvs          <- see note below
+#     asic-lvs-pre      (still legacy)          lvs-preflight<- see note below
+#
+# `pipeline` has NO legacy counterpart, so there is no asic-pipeline-legacy.
+# It is not `all` under another name: `all` is syn->place->cts->route, four
+# stages, stopping at the first failure; `pipeline` runs the whole declared
+# ladder and deliberately continues past failures.
 asic:        ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory help
 asic-status: ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory status
 asic-syn:    ; $(MAKE) -C $(ASIC_DIR) syn
-asic-pnr:    ; $(MAKE) -C $(ASIC_DIR) pnr_place pnr_cts pnr_route
-asic-gds:    ; $(MAKE) -C $(ASIC_DIR) pnr_all
-## scripts/calibre/run_drc.sh is the maintained headless harness behind `drc`,
-## and is what the signoff pipeline calls.
-asic-drc:     ; $(MAKE) -C $(ASIC_DIR) drc
-asic-lvs:     ; $(MAKE) -C $(ASIC_DIR) lvs
-asic-lvs-pre: ; $(MAKE) -C $(ASIC_DIR) lvs-preflight
+asic-pnr:    ; $(MAKE) -C $(ASIC_DIR) place cts route
+asic-gds:    ; $(MAKE) -C $(ASIC_DIR) all
 asic-lec-pnr: ; $(MAKE) -C $(ASIC_DIR) lec-pnr
+
+## DRC AND LVS DELIBERATELY STILL POINT AT THE LEGACY TREE, and this is the one
+## place in this block where "name the real flow" loses to something else.
+##
+## ci/signoff.yaml calls `make asic-drc` and `make asic-lvs-pre` directly, and
+## the stages behind them read their evidence out of ASIC/genus-innovus:
+## the drc stage's check: is `drc_census.py ASIC/genus-innovus/work/drc_run` and
+## lvs-preflight's artefacts are ASIC/genus-innovus/logs/calibre_lvs*.log. The
+## toolkit writes its own $(RUN_TAG)/work/drc_run, so repointing THESE two
+## without moving the census path and the artefact globs in the same commit
+## would leave each stage running one tree and grading another - the exact
+## split this repository has been bitten by before. That move is a separate
+## change with its own fixtures; it is not free, so it is not smuggled in here.
+##
+## The deck itself is common to both: the toolkit resolves DRC_SCRIPT to
+## $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh (design.mk:434), so when these
+## are repointed it will change which GDS is read, not which rules are applied.
+asic-drc:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) drc
+asic-lvs:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs
+asic-lvs-pre: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs-preflight
+asic-pipeline:        ; $(MAKE) -C $(ASIC_DIR) pipeline
+asic-pipeline-resume: ; $(MAKE) -C $(ASIC_DIR) pipeline-resume
+
+# The legacy flow, still reachable and still runnable. Renamed rather than
+# removed: doc 41 Step 3 is "freeze, do not delete", and these four stage
+# targets (syn, pnr_place, pnr_cts, pnr_route) are the ONLY entry points in the
+# repository that reach the ASIC/asic-flows submodule at all. No CI gate calls
+# any of them.
+asic-legacy:        ; @$(MAKE) -C $(LEGACY_ASIC_DIR) --no-print-directory help
+asic-status-legacy: ; @$(MAKE) -C $(LEGACY_ASIC_DIR) --no-print-directory status
+asic-syn-legacy:    ; $(MAKE) -C $(LEGACY_ASIC_DIR) syn
+asic-pnr-legacy:    ; $(MAKE) -C $(LEGACY_ASIC_DIR) pnr_place pnr_cts pnr_route
+asic-gds-legacy:    ; $(MAKE) -C $(LEGACY_ASIC_DIR) pnr_all
+asic-lec-pnr-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lec-pnr
 
 ## bootstrap: fetch all 42 submodules. Not `git clone --recursive` — see the script.
 bootstrap:
