@@ -1,0 +1,120 @@
+// REAL BYTES, NOT A CONSTRUCTION. A trimmed extract of the transcript that was
+// on disk on 2026-08-18 at
+//   ASIC/eth-chiplet/build/full-20260814/logs/lec_syn.log
+// (815,045 B, written 2026-08-17 23:25 -> 2026-08-18 00:11). Three verbatim
+// slices, joined by the `...` elisions this directory already uses:
+//   lines 1-11      the header
+//   lines 360-441   compare #1 -- fv_map vs <block>_gate.v -- which PASSED
+//   lines 9700-9709 compare #2 -- RTL vs fv_map -- starting, and the file ends
+//
+// THIS IS THE DEFECT OF RECORD. The gate used to re.search the FIRST
+// `Compare Results:` line, which is compare #1's, and reported the whole stage
+// PASS at 58,672 compare points -- a population that belongs to the
+// netlist-to-netlist half. The RTL comparison died on its 21st sub-compare and
+// never rendered a verdict; reports/lec/syn/verdict.txt was never written.
+// Nothing may make this case green.
+// LEC version 22.10-s200 (16-Jun-2022)
+// Check out Conformal_Ultra 22.1 license
+// Check out Conformal_Asic 22.1 license
+// Command: tclmode
+CPU time     : 0.18    seconds
+Elapse time  : 2       seconds
+Memory usage : 67.61   M bytes
+// Command: set_screen_display -noprogress
+0
+// Command: set_dofile_abort exit
+0
+...
+================================================================================
+0
+// Command: report_unmapped_points -notmapped
+
+0 unmapped points reported
+0
+// Command: add_compared_points -all
+// 58672 compared points added to compare list
+0
+CPU time     : 314.16  seconds
+Elapse time  : 819     seconds
+Memory usage : 1094.57 M bytes
+// Command: compare
+================================================================================
+Compared points      PO     DFF    DLAT   BBOX      Total   
+--------------------------------------------------------------------------------
+Equivalent           30     58620  1      21        58672   
+================================================================================
+0
+CPU time     : 584.35  seconds
+Elapse time  : 1131    seconds
+Memory usage : 1275.63 M bytes
+// Command: report_compare_data -class nonequivalent -class abort -class notcompared
+0 Non-equivalent point(s) reported
+0 Abort point(s) reported
+0 Not-compared point(s) reported
+0 compared point(s) reported
+================================================================================
+Compared points      PO     DFF    DLAT   BBOX      Total   
+--------------------------------------------------------------------------------
+Equivalent           30     58620  1      21        58672   
+================================================================================
+0
+// Command: report_verification -verbose
+================================================================================
+                            Verification Report
+--------------------------------------------------------------------------------
+Category                                                                  Count
+--------------------------------------------------------------------------------
+1. Non-standard modeling options used:                                      0
+     Tri-stated output:                                        checked
+     Revised X signals set to E:                               yes
+     Floating signals tied to Z:                               yes
+     Command "add clock" for clock-gating:                     not used
+--------------------------------------------------------------------------------
+2. Incomplete verification:                                                 0
+     All primary outputs are mapped:                           yes
+     Not-mapped DFF/DLAT is detected:                          no
+     All mapped points are added as compare points:            yes
+     All compared points are compared:                         yes
+     User added black box:                                     no
+     Black box mapped with different module name:              no
+     Empty module is not black boxed:                          no
+     Command "add ignore outputs" used:                        no
+     Always false constraints detected:                        no
+--------------------------------------------------------------------------------
+3. User modification to design:                                             0
+     Change gate type:                                         no
+     Change wire:                                              no
+     Primary input added by user:                              no
+--------------------------------------------------------------------------------
+4. Conformal Constraint Designer clock domain crossing checks recommended:  1
+     Multiple clocks in the design:                            yes *
+--------------------------------------------------------------------------------
+5. Design ambiguity:                                                        0
+     Duplicate module definition:                              no
+     Black box due to undefined cells:                         no
+     Golden design has abnormal ratio of unreachable gates:    no
+     Ratio of golden unreachable gates:                        1%
+     Revised design has abnormal ratio of unreachable gates:   no
+     Ratio of revised unreachable gates:                       1%
+     All primary input bus ordering is consistent:             yes
+     All primary output bus ordering is consistent:            yes
+     DFF/DLAT not compared due to disabled clock port(s):        0
+     Always X compared point is detected:                      not checked
+--------------------------------------------------------------------------------
+6. Compare Results:                                                        PASS
+     Number of EQ compare points:                              58672
+     Number of NON-EQ compare points:                          0
+     Number of Aborted compare points:                         0
+     Number of Uncompared compare points :                     0
+================================================================================
+...
+0
+CPU time     : 1301.71 seconds
+Elapse time  : 2771    seconds
+Memory usage : 1413.46 M bytes
+// Command: add_compared_points -all
+// Warning: Golden has 6 unmapped key points which will not be compared
+// 10895 compared points added to compare list
+0
+// Command: compare -noneq_stop 1  -threads 1,4
+// Compare will stop on the 1st non-equivalent point

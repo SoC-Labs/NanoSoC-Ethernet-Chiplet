@@ -1,0 +1,14 @@
+LEC-VERDICT: tag=syn
+LEC-VERDICT: design=nanosoc_eth_chiplet_pads
+LEC-VERDICT: golden=RTL via lec.dofile
+LEC-VERDICT: revised=<run>/outputs/nanosoc_eth_chiplet_pads_gate.v
+LEC-VERDICT: pg_pin_mode=none
+LEC-VERDICT: compare_points=41 equivalent=40 inverted_equivalent=0 nonequivalent=1 abort=0 notcompared=0
+LEC-VERDICT: unmapped_extra_golden=0 unmapped_extra_revised=0
+LEC-VERDICT: unmapped_extra_tie_e_golden=0 unmapped_extra_tie_e_revised=0
+LEC-VERDICT: unreachable_golden=0 unreachable_revised=0
+LEC-VERDICT: notmapped_golden=0 notmapped_revised=0
+LEC-VERDICT: tool_exit_code=16 flags=non-equivalent
+LEC-VERDICT: reason=1 non-equivalent point(s)
+LEC-VERDICT: reason=tool non-equivalent flag set (exit code 16)
+LEC-VERDICT: RESULT=FAIL

@@ -1,8 +1,18 @@
+// SYNTHETIC FIXTURE, and labelled so, in the style this directory already uses
+// for fail-abort-points. The SECTION GRAMMAR and the LEC-VERDICT block are
+// copied verbatim from real transcripts in this tree
+// (build/full-20260814/logs/lec_syn.log for compare #1 and the two-comparison
+// shape, logs/lec_gate.log for the appended verdict block). Only the point
+// counts are small, as in every other fixture here -- no real syn-leg
+// transcript has ever completed anywhere in this repository, so a "real"
+// passing one could not be extracted, and inventing large numbers would only
+// make a construction look like a measurement.
 // LEC version 22.10-s200 (16-Jun-2022)
 // Check out Conformal_Ultra 22.1 license
-// Check out Conformal_Asic 22.1 license
-// Command: tclmode
 ...
+// COMPARE 1 of 2 -- golden fv_map, revised <block>_gate.v. NOT the RTL one.
+// Command: add_compared_points -all
+// 37 compared points added to compare list
 // Command: compare
 ================================================================================
 Compared points      PO     DFF    BBOX      Total   
@@ -12,10 +22,49 @@ Equivalent           35     1      1         37
 0
 // Command: report_compare_data -class nonequivalent -class abort -class notcompared
 0 Non-equivalent point(s) reported
-1 Abort point(s) reported
+0 Abort point(s) reported
 0 Not-compared point(s) reported
 ...
 6. Compare Results:                                                        PASS
      Number of EQ compare points:                              37
      Number of NON-EQ compare points:                          0
+     Number of Aborted compare points:                         0
+     Number of Uncompared compare points :                     0
+================================================================================
+// Command: reset
+...
+// COMPARE 2 of 2 -- golden RTL, revised fv_map. THIS is the comparison the
+// stage description promises, and it is the SECOND one.
+// Command: read_implementation_information <fv_dir> -revised fv_map
+// Command: add_compared_points -all
+// 41 compared points added to compare list
+// Command: compare -noneq_stop 1  -threads 1,4
+================================================================================
+Compared points      PO     DFF    BBOX      Total   
+--------------------------------------------------------------------------------
+Equivalent           35     5      1         41      
+================================================================================
+0
+// Command: report_compare_data -class nonequivalent -class abort -class notcompared
+0 Non-equivalent point(s) reported
+1 Abort point(s) reported
+0 Not-compared point(s) reported
+...
+6. Compare Results:                                                  PASS
+     Number of EQ compare points:                              41
+     Number of NON-EQ compare points:                          0
      Number of Aborted compare points:                         1
+     Number of Uncompared compare points :                     0
+================================================================================
+LEC-VERDICT: tag=syn
+LEC-VERDICT: design=nanosoc_eth_chiplet_pads
+LEC-VERDICT: golden=RTL via lec.dofile
+LEC-VERDICT: revised=<run>/outputs/nanosoc_eth_chiplet_pads_gate.v
+LEC-VERDICT: pg_pin_mode=none
+LEC-VERDICT: compare_points=41 equivalent=41 inverted_equivalent=0 nonequivalent=0 abort=1 notcompared=0
+LEC-VERDICT: unmapped_extra_golden=0 unmapped_extra_revised=0
+LEC-VERDICT: unmapped_extra_tie_e_golden=0 unmapped_extra_tie_e_revised=0
+LEC-VERDICT: unreachable_golden=0 unreachable_revised=0
+LEC-VERDICT: notmapped_golden=0 notmapped_revised=0
+LEC-VERDICT: tool_exit_code=0 flags=
+LEC-VERDICT: RESULT=PASS

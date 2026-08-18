@@ -180,14 +180,42 @@ def parse_floorplan(path):
     return fp
 
 
+def expand_splices(txt, line):
+    """Substitute `{*}$VAR` from the file's own `set VAR [list ...]`.
+
+    The M5 call reaches its anchor through `{*}$_m5_anchor` so that
+    EVP_M5_ABS_START can swap `-start_from/-start_offset` for `-start` in one
+    place. Without this the option scan below reads a bare `{*}$_m5_anchor` and
+    reports the offset as missing - which is how this script spent an afternoon
+    exiting 2 on a power plan it understands perfectly well.
+    """
+    for var in set(re.findall(r"\{\*\}\$\{?(\w+)\}?", line)):
+        m = re.search(r"^\s*set\s+%s\s+\[list\s+([^\]]*)\]" % re.escape(var), txt, re.M)
+        if not m:
+            raise NotMeasured(
+                "power_plan.tcl: an add_stripes call splices {*}$%s, and there is no\n"
+                "  `set %s [list ...]` in the same file to expand it from. The option\n"
+                "  list cannot be read, so nothing here was checked." % (var, var))
+        line = re.sub(r"\{\*\}\$\{?%s\}?" % re.escape(var), m.group(1), line)
+    return line
+
+
 def parse_add_stripes(txt, layer):
-    """The one add_stripes call for <layer>, as a dict of its options."""
+    """The one GRID add_stripes call for <layer>, as a dict of its options.
+
+    A grid call is the one that repeats: it carries -set_to_set_distance. The
+    island-feed calls in power_plan.tcl place a single set each at a derived
+    -start and are matched by feed_sets() instead, so they are excluded here
+    rather than making the layer ambiguous.
+    """
     hits = [l for l in txt.splitlines()
             if re.match(r"\s*add_stripes\b", l) and re.search(r"-layer\s+%s\b" % layer, l)]
-    if len(hits) != 1:
-        raise NotMeasured("power_plan.tcl: expected exactly 1 `add_stripes -layer %s`, "
-                          "found %d" % (layer, len(hits)))
-    line = hits[0]
+    grid = [l for l in hits if re.search(r"-set_to_set_distance\s+\S", l)]
+    if len(grid) != 1:
+        raise NotMeasured("power_plan.tcl: expected exactly 1 repeating `add_stripes -layer %s` "
+                          "(one carrying -set_to_set_distance), found %d among %d add_stripes "
+                          "calls on that layer" % (layer, len(grid), len(hits)))
+    line = expand_splices(txt, grid[0])
     out = {"_line": line}
     for key in ("width", "spacing", "set_to_set_distance", "start_offset"):
         m = re.search(r"-%s\s+(\S+)" % key, line)
@@ -237,6 +265,14 @@ def parse_powerplan(path):
             "  meaningless. Re-derive the model before removing this guard.")
     pp["split_row"] = True
 
+    if os.environ.get("EVP_M5_ABS_START", "").strip():
+        raise NotMeasured(
+            "EVP_M5_ABS_START is set in the environment. That replaces the per-region\n"
+            "  M5 -start_offset with one die-absolute ladder, and every model in this\n"
+            "  script - the short phase arithmetic above all - describes the per-region\n"
+            "  form. A result computed now would not describe the run.\n"
+            "  (It is also measured THREE TIMES WORSE: docs/tapeout/42, 330 -> 990\n"
+            "  stranded instances, 55 -> 305 functional, plus a new M1 short.)")
     m5 = parse_add_stripes(txt, "M5")
     if m5["direction"] != "horizontal":
         raise NotMeasured("the M5 add_stripes is -direction %s; this model assumes horizontal"
@@ -256,6 +292,16 @@ def parse_powerplan(path):
                 "P": resolve_tcl_scalar(txt, m8["set_to_set_distance"], "M8 -set_to_set_distance"),
                 "F": resolve_tcl_scalar(txt, m8["start_offset"], "M8 -start_offset"),
                 "start_from": m8["start_from"]}
+
+    # Does this power plan carry the island feed, and is it switched on? The
+    # block is recognised by the proc it cannot run without, not by a comment.
+    pp["feed"] = bool(re.search(r"^\s*proc\s+pg_feed_atrisk\b", txt, re.M))
+    off = os.environ.get("EVP_NO_PG_ISLAND_FEED", "").strip()
+    pp["feed_disabled"] = bool(off and off != "0" and off.lower() != "false")
+    m = re.search(r"^\s*set\s+_pif_marg\s+([0-9.]+)", txt, re.M)
+    pp["feed_margin"] = float(m.group(1)) if m else 0.8
+    m = re.search(r"^\s*set\s+_pif_maxw\s+([0-9.]+)", txt, re.M)
+    pp["feed_maxw"] = float(m.group(1)) if m else 60.0
     return pp
 
 
@@ -437,9 +483,10 @@ def overlap(a, b):
     return min(a[1], b[1]) - max(a[0], b[0])
 
 
-def check_short(macros, m5, m8, core, guard):
+def check_short(macros, m5, m8, core, guard, vsets=None):
     """FP-SHORT: rail-to-rail M5 between two re-anchored ladders."""
-    vsets = vertical_sets(core, m8)
+    if vsets is None:
+        vsets = vertical_sets(core, m8)
     reg = []
     for mac in macros:
         hx = (mac["x"] - HALO_L, mac["x"] + mac["w"] + HALO_R)
@@ -588,11 +635,12 @@ def check_corridor(rows, site, min_len):
     return found
 
 
-def check_island(rows, core, m8, max_w, keep_clear=False):
+def check_island(rows, core, m8, max_w, keep_clear=False, vsets=None):
     """FP-ISLAND: narrow row segments with no same-net vertical stripe crossing,
     whose ends are macro halos rather than the core boundary - so
     `-core_pin_target first_after_row_end` has nothing to reach."""
-    vsets = vertical_sets(core, m8)
+    if vsets is None:
+        vsets = vertical_sets(core, m8)
     seen = {}
     for y, segs in rows.items():
         for a, b in segs:
@@ -612,6 +660,51 @@ def check_island(rows, core, m8, max_w, keep_clear=False):
         if rec["risk"] or keep_clear:
             out.append(rec)
     return out
+
+
+def feed_sets(islands, m8, margin):
+    """The island-feed x coordinates power_plan.tcl derives at run time.
+
+    This is the arithmetic half of the block in power_plan.tcl marked
+    `PG ISLAND FEED`, kept here so the coordinate can be checked before any tool
+    starts. THE TWO MUST AGREE: power_plan.tcl reads the rows out of the
+    database and this reads them out of the floorplan text, and if they ever
+    disagree the run's own log prints its numbers under `POWER-PLAN: island
+    feed` for a direct diff.
+
+    One M8 set is VDD [x, x+W] and VSS [x+W+S, x+2W+S]. For both halves to
+    overlap an island [a, b] by at least m,
+
+        x in [a + m - W,  b - m - W - S]
+
+    which is non-empty exactly when b - a >= S + 2m. The fewest sets that cover
+    every island is the classic interval-stabbing greedy - stab the interval
+    that ENDS first - and each set then goes at the middle of its group's
+    intersection, the x that maximises the smallest overlap in the group.
+    """
+    W, S = m8["W"], m8["S"]
+    ivs, too_narrow = [], []
+    for isl in islands:
+        a, b = isl["x1"], isl["x2"]
+        m = min(margin, (b - a - S) / 2.0 - 0.05)
+        if m < 0.05:
+            too_narrow.append(isl)
+            continue
+        ivs.append((a + m - W, b - m - W - S, isl))
+    ivs.sort(key=lambda t: t[1])
+    out = []
+    while ivs:
+        p = ivs[0][1]
+        grp = [t for t in ivs if t[0] - 1e-9 <= p <= t[1] + 1e-9]
+        keep = {id(t) for t in grp}
+        ivs = [t for t in ivs if id(t) not in keep]
+        lo = max(t[0] for t in grp)
+        hi = min(t[1] for t in grp)
+        x = round((lo + hi) / 2.0, 1)
+        if x < lo or x > hi:
+            x = (lo + hi) / 2.0
+        out.append({"x": x, "lo": lo, "hi": hi, "islands": [t[2] for t in grp]})
+    return out, too_narrow
 
 
 # ---------------------------------------------------------------------------
@@ -698,11 +791,36 @@ def run(args, capture=False):
     core = fp["core"]
     m5, m8 = pp["m5"], pp["m8"]
 
-    shorts, margins, pairs = check_short(macros, m5, m8, core, args.guard)
-    census, census_n = phase_census(macros, m5, m8, core)
     rows = build_rows(macros, core, site)
     corridors = check_corridor(rows, site, args.corridor_min_length)
-    all_narrow = check_island(rows, core, m8, args.island_max_width, keep_clear=True)
+
+    # The islands as the GRID alone leaves them - the defect this detector is
+    # for, and what its self-test asserts on.
+    grid_vsets = vertical_sets(core, m8)
+    prefeed_all = check_island(rows, core, m8, args.island_max_width,
+                               keep_clear=True, vsets=grid_vsets)
+    prefeed = [i for i in prefeed_all if i["risk"]]
+
+    # Then the feed power_plan.tcl derives, if this power plan carries it. The
+    # feed sets are folded into the vertical grid BEFORE FP-SHORT is computed,
+    # not after: an M5 stripe runs out to the nearest same-net vertical stripe
+    # past each end, so adding a vertical set SHORTENS M5 extents and changes
+    # which ladders can meet. Checking the shorts against the old grid would be
+    # checking a power plan that is not the one being built.
+    feed, feed_narrow = [], []
+    if pp.get("feed") and not pp.get("feed_disabled"):
+        feed, feed_narrow = feed_sets(prefeed, m8, pp.get("feed_margin", 0.8))
+    vsets = {n: list(grid_vsets[n]) for n in grid_vsets}
+    for f in feed:
+        vsets["VDD"].append((f["x"], f["x"] + m8["W"]))
+        vsets["VSS"].append((f["x"] + m8["W"] + m8["S"], f["x"] + 2 * m8["W"] + m8["S"]))
+    for n in vsets:
+        vsets[n].sort()
+
+    shorts, margins, pairs = check_short(macros, m5, m8, core, args.guard, vsets=vsets)
+    census, census_n = phase_census(macros, m5, m8, core)
+    all_narrow = check_island(rows, core, m8, args.island_max_width,
+                              keep_clear=True, vsets=vsets)
     islands = [i for i in all_narrow if i["risk"]]
 
     res = {"floorplan": args.floorplan, "power_plan": args.power_plan,
@@ -711,6 +829,10 @@ def run(args, capture=False):
            "shorts": shorts, "marginal": margins, "phase_census": census,
            "phase_census_pairs": census_n,
            "corridors": corridors, "islands": islands,
+           "islands_prefeed": prefeed,
+           "feed": feed, "feed_present": bool(pp.get("feed")),
+           "feed_disabled": bool(pp.get("feed_disabled")),
+           "feed_unfeedable": feed_narrow,
            "narrow_segments": all_narrow}
 
     hard = bool(shorts)
@@ -785,8 +907,24 @@ def emit(r, args):
     p("")
     p("-- FP-ISLAND  split_row islands with no supply stripe crossing  [%s] --"
       % ("HARD" if args.strict_island else "warn"))
-    p("     %d row segment(s) <= %.1f um wide were examined; %d at risk."
-      % (len(r["narrow_segments"]), args.island_max_width, len(r["islands"])))
+    p("     %d row segment(s) <= %.1f um wide were examined; %d left at risk by the"
+      " M8 grid alone; %d after the island feed."
+      % (len(r["narrow_segments"]), args.island_max_width,
+         len(r["islands_prefeed"]), len(r["islands"])))
+    if not r["feed_present"]:
+        p("     [warn] this power plan carries NO island feed. The islands below are the")
+        p("            330-instance / 55-functional defect of docs/tapeout/42, unfixed.")
+    elif r["feed_disabled"]:
+        p("     [warn] EVP_NO_PG_ISLAND_FEED is set - the feed is present but SWITCHED OFF.")
+    for f in r["feed"]:
+        p("     feed set x=%8.3f  VDD %.3f-%.3f  VSS %.3f-%.3f   feeds %d island(s), window [%.3f, %.3f]"
+          % (f["x"], f["x"], f["x"] + r["m8"]["W"],
+             f["x"] + r["m8"]["W"] + r["m8"]["S"],
+             f["x"] + 2 * r["m8"]["W"] + r["m8"]["S"],
+             len(f["islands"]), f["lo"], f["hi"]))
+    for i in r["feed_unfeedable"]:
+        p("     [warn] x=[%8.1f,%8.1f] w=%6.2f is narrower than one VDD+VSS set; no single"
+          " set can feed it." % (i["x1"], i["x2"], i["w"]))
     for i in (r["narrow_segments"] if args.verbose else r["islands"]):
         if i["risk"]:
             p("     AT RISK  x=[%8.1f,%8.1f] w=%6.2f %3d row(s) y %.1f..%.1f  no vertical %s stripe"
@@ -909,7 +1047,7 @@ def selftest(args):
     CONTROLS = ((1390.6, 1395.0), (1024.0, 1055.6), (205.0, 227.0))
     SITES = ((1051.8, 1055.0), (1034.2, 1055.6), (1043.2, 1055.6),
              (869.2, 907.6), (879.8, 895.2))
-    risky = {(round(i["x1"], 1), round(i["x2"], 1)) for i in good["islands"]}
+    risky = {(round(i["x1"], 1), round(i["x2"], 1)) for i in good["islands_prefeed"]}
     examined = {(round(i["x1"], 1), round(i["x2"], 1)) for i in good["narrow_segments"]}
     case("island_controls_stay_quiet",
          all(c in examined and c not in risky for c in CONTROLS),
@@ -917,6 +1055,20 @@ def selftest(args):
          "and cleared")
     case("island_known_sites_fire", all(x in risky for x in SITES),
          "all 5 sites docs/tapeout/42 records as stranding cells are reported")
+
+    # -- FP-ISLAND, the repair: the feed must clear every one of them ----------
+    # Without this case the two above would still pass on a power plan whose
+    # feed does nothing, because they both read the PRE-feed view.
+    case("island_feed_present", good["feed_present"] and not good["feed_disabled"],
+         "power_plan.tcl carries the island feed and it is enabled")
+    case("island_feed_clears_every_site",
+         good["feed_present"] and not good["islands"],
+         "%d island(s) left at risk after %d derived feed set(s) at x = %s"
+         % (len(good["islands"]), len(good["feed"]),
+            ", ".join("%.3f" % f["x"] for f in good["feed"]) or "-"))
+    case("island_feed_adds_no_short", not good["shorts"],
+         "FP-SHORT recomputed WITH the feed sets folded into the vertical grid: %d short(s)"
+         % len(good["shorts"]))
 
     npass = sum(1 for _, ok, _ in cases if ok)
     nfail = len(cases) - npass

@@ -197,6 +197,300 @@ select_obj $::PLACED_MACROS
 
 split_row -selected
 
+################################################################################
+# PG ISLAND FEED -- a perpendicular supply for the split_row row islands
+#
+# THE DEFECT (docs/tapeout/42-stranded-cells-pg-islands.md). `split_row
+# -selected` immediately above leaves narrow standard-cell row segments between
+# the macro halos. `route_special -core_pin_target first_after_row_end` at the
+# end of this file feeds a follow-pin rail by EXTENDING IT ALONG ITS ROW to the
+# first stripe past the row end. On a 500um row that costs nothing: the rail
+# crosses stripes all the way along and is stitched at every crossing. On a
+# 3.2um island the row-end riser is the WHOLE supply, and where it fails to
+# stack -- VIA2 is absent on all 10 dead rails in the shipping stream and
+# present on all 24 healthy interior ones -- every cell on that island is left
+# with no metal path to a rail. On build/full-20260814 that is 328 instances,
+# 55 of them FUNCTIONAL: QSPI flash-cache write-data and tag-address buffers,
+# four cache-controller flops, an ethernet MAC reset inverter and a scratch-TX
+# SRAM write-enable buffer.
+#
+# WHY A PERPENDICULAR STRIPE IS THE CURE. M5 and M9 are HORIZONTAL, i.e.
+# PARALLEL to the follow-pin rails, so a rail extending along its own row never
+# crosses one. M8 is the only vertical supply layer, and its grid above sits at
+# x = core_llx + 39.5 + 60k, which misses four of the five known island clusters
+# outright and clips only the VDD half of the fifth. A vertical stripe placed
+# OVER an island gives every rail on it an in-row target, so the row-end riser
+# stops being the only path.
+#
+# MEASURED on the licence-free PG probe, against the same placed population that
+# doc 42 section 5 prices (351,211 instances):
+#     without these stripes   34 rail-class open boxes   330 stranded   55 functional
+#     with them                3 rail-class open boxes    30 stranded    0 functional
+# SHORT records are 0 either way, and the residual 30 are fill/decap/antenna.
+#
+# WHY THIS IS DERIVED AND NOT TWO HARD-CODED COORDINATES. The islands are made
+# by macro placement, and macros move -- a macro move is what made these. So the
+# x positions are computed HERE, every run, from the rows `split_row` actually
+# left and the vertical stripes actually in the database. Hard-coding the two
+# numbers that serve today's floorplan would silently stop working on the next
+# macro move, which is the exact failure being fixed.
+#
+# THREE OTHER CANDIDATES WERE SCREENED AND REJECTED -- do not re-try them:
+#   * `-core_pin_target {stripe ring block_ring}` (the list form) in place of
+#     the bare enum: byte-identical to baseline. Inert -- with no stripe over
+#     the island there is nothing in the row to target.
+#   * `-core_pin_check_stdcell_geometry`: repaired zero at power-plan time.
+#   * one absolute M5 ladder (EVP_M5_ABS_START below, doc 36 s7): THREE TIMES
+#     WORSE -- 330 -> 990 stranded, 55 -> 305 functional, plus a new M1 short.
+#
+# GATE. hooks/post_powerplan.tcl -> checks/check_fp_pg.tcl measures FP-ISLAND on
+# the real geometry seconds after this runs. Run the stage with
+# FP_PG_ISLAND_MAX=0 and a floorplan this cannot feed aborts in minutes instead
+# of after a five-hour route. The licence-free pre-flight that predicts the same
+# islands and the same feed x's from the floorplan TEXT, with no database and no
+# tool, is checks/fp_guard.py.
+#
+#   EVP_NO_PG_ISLAND_FEED=1   omit the feed stripes. The defect comes back; this
+#                             exists so the A/B stays available, not because the
+#                             default is in doubt.
+################################################################################
+
+proc pg_feed_rows {} {
+    ## The row segments `split_row` left, read from the database rather than
+    ## modelled -- keyed by x span, valued by the row y's that share it.
+    set out [dict create]
+    foreach r [get_db rows] {
+        set rr [lindex [get_db $r .rect] 0]
+        if {[llength $rr] != 4} { continue }
+        lassign $rr x1 y1 x2 y2
+        dict lappend out [format "%.4f %.4f" $x1 $x2] $y1
+    }
+    return $out
+}
+
+proc pg_feed_vstripes {die nets} {
+    ## Vertical supply stripes already in the database, on every routing layer.
+    ## "Vertical" is taller-than-wide AND over 50um long, which is what
+    ## checks/check_fp_pg.tcl uses, so the two agree by construction.
+    set out [dict create]
+    foreach n $nets { dict set out $n {} }
+    foreach l [get_db layers -if {.type == routing}] {
+        set ln [get_db $l .name]
+        set objs {}
+        if {[catch {set objs [get_obj_in_area -areas [list $die] -layers [list $ln] \
+                                              -obj_type special_wire]}]} { continue }
+        foreach o $objs {
+            set nn ""
+            catch { set nn [get_db $o .net.name] }
+            if {[lsearch -exact $nets $nn] < 0} { continue }
+            set rr [lindex [get_db $o .rect] 0]
+            if {[llength $rr] != 4} { continue }
+            lassign $rr x1 y1 x2 y2
+            if {($y2-$y1) > ($x2-$x1) && ($y2-$y1) > 50.0} {
+                dict lappend out $nn [list $x1 $x2]
+            }
+        }
+    }
+    return $out
+}
+
+proc pg_feed_atrisk {rows vert cx1 cx2 maxw nets} {
+    ## A row segment is at risk when it is narrow, does NOT end on the core
+    ## boundary (a segment that does has the core ring immediately outside it,
+    ## which IS a legal first_after_row_end target), and some supply has no
+    ## vertical stripe crossing it.
+    set out {}
+    foreach k [lsort [dict keys $rows]] {
+        lassign $k a b
+        if {($b - $a) > $maxw} { continue }
+        if {abs($a - $cx1) < 1e-6 || abs($b - $cx2) < 1e-6} { continue }
+        set miss {}
+        foreach n $nets {
+            set hit 0
+            foreach s [dict get $vert $n] {
+                lassign $s s1 s2
+                if {[expr {min($s2,$b) - max($s1,$a)}] > 0} { set hit 1 ; break }
+            }
+            if {!$hit} { lappend miss $n }
+        }
+        if {[llength $miss]} {
+            lappend out [list $a $b [llength [dict get $rows $k]] $miss]
+        }
+    }
+    return $out
+}
+
+set PG_ISLAND_FEED 1
+if {[info exists ::env(EVP_NO_PG_ISLAND_FEED)]} {
+    set _pif_v [string trim $::env(EVP_NO_PG_ISLAND_FEED)]
+    if {$_pif_v ne "" && $_pif_v ne "0" && ![string equal -nocase $_pif_v "false"]} {
+        set PG_ISLAND_FEED 0
+    }
+    unset _pif_v
+}
+
+if {!$PG_ISLAND_FEED} {
+    puts "POWER-PLAN: EVP_NO_PG_ISLAND_FEED set -- island feed stripes NOT added."
+    puts "POWER-PLAN:   docs/tapeout/42 measures 328 instances with no supply path on"
+    puts "POWER-PLAN:   that path, 55 of them functional. This is the A/B leg, not a fix."
+} else {
+    ## One M8 set is VDD [x, x+W] and VSS [x+W+S, x+2W+S]. W and S are the M8
+    ## grid's own width and spacing above; keeping them equal is what makes the
+    ## feed sets indistinguishable from grid sets to every downstream check.
+    set _pif_w    3.6
+    set _pif_s    1.2
+    set _pif_span [expr {2*$_pif_w + $_pif_s}]
+    ## Widest row segment treated as an island. Same default as
+    ## FP_PG_ISLAND_MAX_W in checks/check_fp_pg.tcl, deliberately.
+    set _pif_maxw 60.0
+    ## Overlap wanted between the stripe and the island on EACH net. Capped per
+    ## island: an island of width w can hold at most (w - S)/2 on each side, so
+    ## the narrowest one here (3.2um) tolerates 1.0.
+    set _pif_marg 0.8
+    ## Below this gap to an existing vertical stripe, say so. Not fatal here:
+    ## check_fp_pg.tcl measures real overlaps a moment later and hard-fails on
+    ## any short, with no budget. This is the early warning, not the gate.
+    set _pif_clr  1.2
+
+    lassign [lindex [get_db current_design .core_bbox] 0] _pif_cx1 _pif_cy1 _pif_cx2 _pif_cy2
+    set _pif_die [lindex [get_db current_design .bbox] 0]
+    if {[llength $_pif_die] != 4} {
+        set _pif_die [list 0 0 [expr {$_pif_cx2 + 400}] [expr {$_pif_cy2 + 400}]]
+    }
+
+    set _pif_rows [pg_feed_rows]
+    set _pif_nrow 0
+    foreach _pif_k [dict keys $_pif_rows] { incr _pif_nrow [llength [dict get $_pif_rows $_pif_k]] }
+    if {$_pif_nrow == 0} {
+        error "power_plan: PG island feed read 0 standard-cell rows from the database.\
+             \n  It cannot have found any island, so adding no stripes here would be a\
+             \n  SILENT NO-OP that looks exactly like a clean floorplan. Aborting instead."
+    }
+
+    set _pif_vert [pg_feed_vstripes $_pif_die {VDD VSS}]
+    set _pif_nv [expr {[llength [dict get $_pif_vert VDD]] + [llength [dict get $_pif_vert VSS]]}]
+    if {$_pif_nv == 0} {
+        error "power_plan: PG island feed found 0 vertical VDD/VSS stripes in the database.\
+             \n  Every island would then read as at-risk and the derivation is meaningless.\
+             \n  Either the M8 grid above did not build or the supply nets are not VDD/VSS."
+    }
+
+    set _pif_risk [pg_feed_atrisk $_pif_rows $_pif_vert $_pif_cx1 $_pif_cx2 $_pif_maxw {VDD VSS}]
+    puts [format "POWER-PLAN: island feed -- %d row segments on %d distinct x spans, %d vertical supply stripes, %d island(s) at risk" \
+          $_pif_nrow [llength [dict keys $_pif_rows]] $_pif_nv [llength $_pif_risk]]
+    foreach _pif_i $_pif_risk {
+        lassign $_pif_i _pif_a _pif_b _pif_nr _pif_miss
+        puts [format "POWER-PLAN:   AT RISK x=\[%9.3f,%9.3f\] w=%6.2f %4d row(s)  no vertical %s stripe" \
+              $_pif_a $_pif_b [expr {$_pif_b - $_pif_a}] $_pif_nr [join $_pif_miss +]]
+    }
+
+    ## Feasible x for a set that must overlap [a,b] by at least m on BOTH nets:
+    ##     VDD [x, x+W]        overlaps by >= m  <=>  x >= a+m-W   and x <= b-m
+    ##     VSS [x+W+S, x+2W+S] overlaps by >= m  <=>  x >= a+m-2W-S and x <= b-m-W-S
+    ## which intersects to x in [a+m-W, b-m-W-S], non-empty iff b-a >= S+2m.
+    set _pif_iv {}
+    set _pif_toonarrow {}
+    foreach _pif_i $_pif_risk {
+        lassign $_pif_i _pif_a _pif_b
+        set _pif_m $_pif_marg
+        set _pif_room [expr {($_pif_b - $_pif_a - $_pif_s)/2.0 - 0.05}]
+        if {$_pif_room < $_pif_m} { set _pif_m $_pif_room }
+        if {$_pif_m < 0.05} { lappend _pif_toonarrow $_pif_i ; continue }
+        lappend _pif_iv [list [expr {$_pif_a + $_pif_m - $_pif_w}] \
+                              [expr {$_pif_b - $_pif_m - $_pif_w - $_pif_s}] $_pif_a $_pif_b]
+    }
+    foreach _pif_i $_pif_toonarrow {
+        lassign $_pif_i _pif_a _pif_b
+        puts stderr [format "WARNING: power_plan: island \[%.3f,%.3f\] is %.2fum wide -- narrower than one\
+                     VDD+VSS set (%.2fum of stripe plus %.2fum gap), so no single set can feed it.\
+                     It stays at risk and check_fp_pg.tcl will report it." \
+                     $_pif_a $_pif_b [expr {$_pif_b - $_pif_a}] [expr {2*$_pif_w}] $_pif_s]
+    }
+
+    ## Fewest sets that cover every feasible island: stab the interval that ENDS
+    ## first, take everything that interval's endpoint also stabs as one group,
+    ## repeat. Then place the set at the middle of the group's intersection,
+    ## which is the x that maximises the SMALLEST overlap in the group.
+    set _pif_iv [lsort -real -index 1 $_pif_iv]
+    set _pif_starts {}
+    while {[llength $_pif_iv]} {
+        set _pif_p [lindex [lindex $_pif_iv 0] 1]
+        set _pif_grp {}
+        set _pif_rest {}
+        foreach _pif_e $_pif_iv {
+            if {[lindex $_pif_e 0] <= $_pif_p + 1e-9 && [lindex $_pif_e 1] >= $_pif_p - 1e-9} {
+                lappend _pif_grp $_pif_e
+            } else {
+                lappend _pif_rest $_pif_e
+            }
+        }
+        set _pif_lo [lindex [lindex $_pif_grp 0] 0]
+        set _pif_hi [lindex [lindex $_pif_grp 0] 1]
+        foreach _pif_e $_pif_grp {
+            if {[lindex $_pif_e 0] > $_pif_lo} { set _pif_lo [lindex $_pif_e 0] }
+            if {[lindex $_pif_e 1] < $_pif_hi} { set _pif_hi [lindex $_pif_e 1] }
+        }
+        set _pif_x [expr {round((($_pif_lo + $_pif_hi)/2.0) * 10.0)/10.0}]
+        if {$_pif_x < $_pif_lo || $_pif_x > $_pif_hi} {
+            set _pif_x [expr {($_pif_lo + $_pif_hi)/2.0}]
+        }
+        lappend _pif_starts $_pif_x
+        puts [format "POWER-PLAN:   feed set at x=%.3f  (VDD %.3f-%.3f, VSS %.3f-%.3f) feeds %d island(s), x window \[%.3f,%.3f\]" \
+              $_pif_x $_pif_x [expr {$_pif_x + $_pif_w}] \
+              [expr {$_pif_x + $_pif_w + $_pif_s}] [expr {$_pif_x + $_pif_span}] \
+              [llength $_pif_grp] $_pif_lo $_pif_hi]
+        set _pif_iv $_pif_rest
+    }
+
+    ## Clearance to what is already there, reported before it is built.
+    foreach _pif_x $_pif_starts {
+        foreach _pif_n {VDD VSS} {
+            foreach _pif_v [dict get $_pif_vert $_pif_n] {
+                lassign $_pif_v _pif_s1 _pif_s2
+                set _pif_gap [expr {max($_pif_s1 - ($_pif_x + $_pif_span), $_pif_x - $_pif_s2)}]
+                if {$_pif_gap < $_pif_clr} {
+                    puts stderr [format "WARNING: power_plan: island feed set at x=%.3f sits %.3fum from an\
+                                 existing vertical %s stripe \[%.3f,%.3f\]. check_fp_pg.tcl measures the real\
+                                 overlaps next and hard-fails on any short." \
+                                 $_pif_x $_pif_gap $_pif_n $_pif_s1 $_pif_s2]
+                }
+            }
+        }
+    }
+
+    ## The add_stripes state in force here is the one the M9 set left, and that
+    ## block is character-for-character the M8 block above -- so these sets are
+    ## built under exactly the settings the M8 grid was.
+    foreach _pif_x $_pif_starts {
+        add_stripes -nets {VDD VSS} -layer M8 -direction vertical -width $_pif_w -spacing $_pif_s -number_of_sets 1 -start $_pif_x -extend_to all_domains -switch_layer_over_obs false -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
+    }
+
+    ## Re-measure. add_stripes drops a stripe it cannot legally place and says so
+    ## only in the log, so "the command ran" is not evidence that the island is
+    ## fed. This asks the database the same question again.
+    set _pif_vert2 [pg_feed_vstripes $_pif_die {VDD VSS}]
+    set _pif_risk2 [pg_feed_atrisk $_pif_rows $_pif_vert2 $_pif_cx1 $_pif_cx2 $_pif_maxw {VDD VSS}]
+    puts [format "POWER-PLAN: island feed -- %d set(s) added; islands at risk %d -> %d" \
+          [llength $_pif_starts] [llength $_pif_risk] [llength $_pif_risk2]]
+    foreach _pif_i $_pif_risk2 {
+        lassign $_pif_i _pif_a _pif_b _pif_nr _pif_miss
+        puts [format "POWER-PLAN:   STILL AT RISK x=\[%9.3f,%9.3f\] w=%6.2f %4d row(s)  no vertical %s stripe" \
+              $_pif_a $_pif_b [expr {$_pif_b - $_pif_a}] $_pif_nr [join $_pif_miss +]]
+    }
+    if {[llength $_pif_risk2] > [llength $_pif_toonarrow]} {
+        puts stderr "WARNING: power_plan: the island feed did not clear every island it could reach.\
+                   \n  Set FP_PG_ISLAND_MAX=0 and let hooks/post_powerplan.tcl abort the stage rather\
+                   \n  than placing cells on a rail with no supply."
+    }
+
+    unset _pif_w _pif_s _pif_span _pif_maxw _pif_marg _pif_clr
+    unset _pif_cx1 _pif_cy1 _pif_cx2 _pif_cy2 _pif_die
+    unset _pif_rows _pif_nrow _pif_vert _pif_nv _pif_risk _pif_iv _pif_toonarrow
+    unset _pif_starts _pif_vert2 _pif_risk2
+}
+unset PG_ISLAND_FEED
+
+
 set_db add_stripes_ignore_block_check false
 ## Explicit, not inherited: M8/M9 now stop at M5, so this pass owns the run to M1.
 set_db add_stripes_stacked_via_bottom_layer M1
