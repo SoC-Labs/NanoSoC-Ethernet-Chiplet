@@ -589,7 +589,7 @@ stages:
     # the same defect class as a check that cannot fail. It is now the exact
     # input `run:` consumes below: absent, the stage is UNVERIFIED, not FAIL.
     needs_implementation:
-      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds
     # Content-correct at synthesis does NOT prove the bits reached the mask. The
     # macro is merged into the stream by write_stream from a hand-maintained
     # $gds_merge_list in scripts/config.tcl; a dropped or stale entry produces a
@@ -604,7 +604,34 @@ stages:
     # re-encodes records on merge, so 0 of 126 structure hashes match on a
     # CORRECT chip. Content extraction is the only sound test here.
     description: "The ROM words inside the merged tapeout stream are the boot firmware"
-    run: make -C ASIC/genus-innovus romlibs-gds-check ROM_GDS=$PWD/ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds
+    # REPOINTED 2026-08-18, AND IT WAS BROKEN TWICE OVER.
+    #
+    #   1. ROM_GDS named ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds.
+    #      THAT FILE DOES NOT EXIST, and nothing in that directory ever became
+    #      it: outputs/ there holds eval/ and romlibs/, no netlist and no GDS.
+    #      needs_implementation named the same absent path, so the stage
+    #      rendered UNVERIFIED and run: was never reached to notice.
+    #   2. `romlibs-gds-check` IS NOT COMMITTED AT HEAD. It exists only in a
+    #      dirty working copy of ASIC/genus-innovus/Makefile. CI clones HEAD, so
+    #      even given a real stream this line would have died with "No rule to
+    #      make target". A gate that cannot run is not a gate -- and this is the
+    #      one that catches a boot ROM that does not contain the boot firmware.
+    #
+    # Now names the stream that actually ships and calls the ROM gate directly.
+    # `romlibs-gds-check` was a one-line forwarder to exactly this target with
+    # exactly these variables (ROM_GDS, and ROM_GDS_GATE whose default is
+    # `block` in ASIC/rom_gate.mk), so WHAT IS CHECKED IS UNCHANGED -- only the
+    # input file and the route to it. `make -C ASIC -f common.mk` is the same
+    # invocation form the rom-selftest stage above already uses, and
+    # romlibs-verify-gds has been committed in ASIC/rom_gate.mk throughout.
+    #
+    # THE RUN TAG IS PINNED, deliberately, the way ASIC/sta/run_sta.sh:53 pins
+    # it and for the same reason: a glob over build/*/ grades whichever run
+    # sorts first, which at any moment may be a half-written live one. When a
+    # run supersedes full-20260814, change it HERE AND IN needs_implementation
+    # above -- they are the same string on purpose, so this stage cannot
+    # declare one stream and measure another.
+    run: make -C ASIC -f common.mk romlibs-verify-gds ROM_GDS=$PWD/ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds
     check: |
       python3 - <<'EOF'
       import os, subprocess, sys
@@ -650,18 +677,36 @@ stages:
     phase: physical
     gate: block
     label: soclabs-pdk
-    # `make -C ASIC/genus-innovus lec` is `cd work/; lec -xl -Dofile ./lec.dofile`,
-    # and Genus writes both the dofile and fv/ during `syn`. Without them the
-    # stage burns a Conformal seat to die on a missing file.
+    # REPOINTED 2026-08-18 AT THE TOOLKIT RUN THAT HOLDS THE EVIDENCE.
+    # This named ASIC/genus-innovus/work/{lec.dofile,fv}. work/lec.dofile IS NOT
+    # THERE -- that tree's last tool run was 2026-08-13 -- so the stage rendered
+    # UNVERIFIED and burned nothing, while the RTL-to-gate comparison for the
+    # netlist under signoff was being run, and re-run, in the toolkit's build
+    # tree. A gate pointed at an empty directory reports "not measured" forever
+    # and never contradicts anything.
+    #
+    # These are the three INPUTS ASIC/asic-toolkit/mk/flow.mk:lec-syn asserts
+    # before it takes a Conformal seat: the dofile Genus wrote during syn_map,
+    # the gate netlist, and Genus's own fv model, which lives in work/ and which
+    # `make clean` destroys.
     needs_implementation:
-      - ASIC/genus-innovus/work/lec.dofile
-      - ASIC/genus-innovus/work/fv
+      - ASIC/eth-chiplet/build/full-20260814/outputs/lec.dofile
+      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate.v
+      - ASIC/eth-chiplet/build/full-20260814/work/fv
     # NOTE this compares RTL -> SYNTHESISED netlist (via Genus's fv_map). It
     # does NOT read outputs/*_pnr.v — there is no post-P&R LEC anywhere in the
     # repo, despite package_submission.sh's MANIFEST claiming otherwise.
     # Needs work/lec.dofile and work/fv/ from `syn`; `make clean` destroys both.
     description: "Conformal LEC — RTL vs SYNTHESISED netlist equivalence (not post-P&R)"
-    run: make -C ASIC/genus-innovus lec
+    # `lec-syn`, NOT the toolkit's `lec`. Both compare RTL against <block>_gate.v.
+    # `lec` runs the generated dofile as Genus wrote it, and Genus bakes that
+    # run's absolute logs/, work/fv and outputs/ paths into it plus a native
+    # force-exit whose status the recipe discards; it has never been run in this
+    # tree (there is no logs/lec.log anywhere under it). `lec-syn` rewrites those
+    # paths, refuses a dofile that has lost its `set_dofile_abort exit`, and ends
+    # with the same computed verdict the gate and pnr legs get -- and it is the
+    # leg that has actually been run here.
+    run: make -C ASIC/eth-chiplet lec-syn RUN_TAG=full-20260814
     # `exit -f` DOES return a nonzero bit-flag status on non-equivalence
     # (-Force only suppresses the confirmation prompt; see Conformal's
     # `<COMMAND> EXIT` help and the exit-status bit table in LEC_debug.html).
@@ -704,7 +749,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import re, sys
-      L = "ASIC/genus-innovus/logs/lec.log"
+      L = "ASIC/eth-chiplet/build/full-20260814/logs/lec_syn.log"
       try:
           t = open(L, errors="replace").read()
       except OSError:
@@ -754,8 +799,8 @@ stages:
         - ci/fixtures/lec/fail-no-verdict-line
         - ci/fixtures/lec/fail-empty-log
     artifacts:
-      - ASIC/genus-innovus/logs/lec.log*
-      - ASIC/genus-innovus/work/noneq.*
+      - ASIC/eth-chiplet/build/full-20260814/logs/lec_syn.log*
+      - ASIC/eth-chiplet/build/full-20260814/reports/lec/syn/**
 
   - id: lec-selftest
     phase: physical
@@ -770,7 +815,47 @@ stages:
     # Tee'd so the SUMMARY becomes an artefact. run_lec.sh prints its case tally
     # to the terminal only; the logs/ directory holds the per-case Conformal
     # transcripts and nothing that says how many cases ran.
-    run: make -C ASIC/genus-innovus lec-selftest 2>&1 | tee ASIC/genus-innovus/logs/lec_selftest_summary.log; exit ${PIPESTATUS[0]}
+    #
+    # REPOINTED 2026-08-18 ONTO THE HARNESS THAT PRODUCES THIS PIPELINE'S LEC
+    # EVIDENCE, AND THIS ONE IS A REAL CHANGE OF SCOPE -- read it before
+    # believing a green.
+    #
+    # It mutation-tested ASIC/genus-innovus/scripts/lec/run_lec.sh. Nothing in
+    # this pipeline any longer grades a verdict that harness produced: `lec` and
+    # `lec-pnr` above now read ASIC/eth-chiplet/build/, whose transcripts and
+    # verdicts come from ASIC/asic-toolkit/flow/verify/run_lec.sh. So the stage
+    # was proving that a harness nobody reads can fail -- true, and irrelevant.
+    # A self-test of the wrong harness is the same defect class as a check that
+    # cannot fail: it is green for a reason unconnected to the thing at risk.
+    #
+    # WHAT CHANGED, EXPLICITLY, so nobody reads this as a like-for-like move:
+    #   * 4 cases -> 9. The project harness declares equivalent, nonequivalent,
+    #     extra_state, missing_input. The toolkit adds empty_input (a zero-length
+    #     netlist, which `[ -e ]` calls present), bad_pg_pin (the dofile's own
+    #     preflight, which nothing used to execute), pg_decoration,
+    #     extra_nonsupply_pi and asym_unreachable. The count assertion below is
+    #     exact, not a `[0-9]+` window, for the reason the original comment
+    #     gives.
+    #   * The toolkit's cases additionally assert WHY a case failed, against a
+    #     declared reason pattern. A case that fails for the wrong reason is not
+    #     evidence that the rule it attacks works.
+    #   * The transcripts move from ASIC/genus-innovus/logs to this run's logs/.
+    #     Both harnesses name them lec_selftest_<case>.log and both print the
+    #     same "SELFTEST: all N cases behaved as declared" tally, so the two
+    #     assertions below keep their exact shape.
+    #
+    # EXPECT THIS STAGE TO BE RED ON THE CURRENT EVIDENCE, and that is the
+    # finding, not a regression introduced here. In the last recorded toolkit
+    # selftest (reports/lec/selftest_*/verdict.txt, 2026-08-17 18:02) the
+    # pg_decoration case DECLARES pass and COMPUTED FAIL: its tolerance list is
+    # R:PI:VDD,R:PI:VSS but the netlist yields eight more supply-shaped unmapped
+    # points (R:PI:VDD_z, R:PO:VDD, R:Z:VDD ...). One of nine cases misbehaving
+    # is exactly what this stage exists to say out loud, and until it is
+    # resolved in the toolkit the honest reading of `lec` and `lec-pnr` is that
+    # their harness has a known-broken self-test case.
+    pre:
+      - mkdir -p ASIC/eth-chiplet/build/full-20260814/logs
+    run: make -C ASIC/eth-chiplet lec-selftest RUN_TAG=full-20260814 2>&1 | tee ASIC/eth-chiplet/build/full-20260814/logs/lec_selftest_summary.log; exit ${PIPESTATUS[0]}
     # A MUTATION HARNESS THAT RUNS ZERO CASES EXITS 0. That is the hole this
     # stage existed to close for `lec` and had left open in itself — the same
     # defect rom-selftest's check: was added for. Two independent assertions,
@@ -793,7 +878,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import os, re, sys
-      D = "ASIC/genus-innovus/logs"
+      D = "ASIC/eth-chiplet/build/full-20260814/logs"
       S = os.path.join(D, "lec_selftest_summary.log")
       bad = []
       try:
@@ -806,9 +891,11 @@ stages:
           f = re.search(r"SELFTEST: (\d+) of (\d+) cases misbehaved", summary)
           bad.append(f"{f.group(1)} of {f.group(2)} cases misbehaved — DO NOT TRUST lec/lec-pnr"
                      if f else "no 'SELFTEST: all N cases behaved as declared' line")
-      elif int(m.group(1)) != 4:
-          bad.append(f"the harness ran {m.group(1)} cases, not the 4 run_lec.sh declares "
-                     f"(equivalent, nonequivalent, extra_state, missing_input) — a case "
+      elif int(m.group(1)) != 9:
+          bad.append(f"the harness ran {m.group(1)} cases, not the 9 the toolkit's "
+                     f"flow/verify/run_lec.sh declares (equivalent, nonequivalent, "
+                     f"extra_state, missing_input, empty_input, bad_pg_pin, "
+                     f"pg_decoration, extra_nonsupply_pi, asym_unreachable) — a case "
                      f"was dropped and the tally still reads clean")
       def verdict(case):
           p = os.path.join(D, f"lec_selftest_{case}.log")
@@ -840,18 +927,27 @@ stages:
         - ci/fixtures/lec-selftest/fail-case-misbehaved
         - ci/fixtures/lec-selftest/fail-no-summary
     artifacts:
-      - ASIC/genus-innovus/logs/lec_selftest*.log
+      - ASIC/eth-chiplet/build/full-20260814/logs/lec_selftest*.log
+      - ASIC/eth-chiplet/build/full-20260814/reports/lec/selftest_*/**
 
   - id: lec-pnr
     phase: physical
     gate: block
     label: soclabs-pdk
-    # Exactly the two netlists scripts/lec/run_lec.sh:565-566 reads for `pnr`.
-    # This stage holds a Conformal seat for up to six hours, so refusing it in
-    # seconds when an input is absent is worth more here than anywhere else.
+    # Exactly the two netlists the toolkit's flow/verify/run_lec.sh reads for
+    # `pnr`. This stage holds a Conformal seat for up to six hours, so refusing
+    # it in seconds when an input is absent is worth more here than anywhere
+    # else.
+    #
+    # REPOINTED 2026-08-18. These two named ASIC/genus-innovus/outputs/, which
+    # holds neither of them and holds no netlist at all -- so this stage, the
+    # ONLY comparison in the pipeline that can see what place/CTS/route did to
+    # the logic, has been reporting "not measured" while both netlists sat in
+    # the toolkit's build tree and a real post-P&R LEC passed over them
+    # (reports/lec/pnr/verdict.txt: 61674 compare points, 0 non-equivalent).
     needs_implementation:
-      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads_gate_power.v
-      - ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads_pnr.v
+      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate_power.v
+      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_pnr.v
     timeout_s: 21600
     # Closes the gap this manifest previously declared under `unsupported`.
     # Golden is outputs/*_gate_power.v — the exact netlist 2_pnr_setup.tcl hands
@@ -862,7 +958,13 @@ stages:
     # Unlike `lec` it needs nothing from work/ except its own inputs, so it
     # survives `make clean`.
     description: "Conformal LEC — synthesised netlist vs POST-P&R netlist"
-    run: make asic-lec-pnr
+    # NOT `make asic-lec-pnr`. That root forwarder now reaches the toolkit too,
+    # but it carries no run tag, so it would resolve to RUN_TAG=default -- a
+    # different build directory from the one needs_implementation above names
+    # and the one check: below reads. The tag is spelled out here for the same
+    # reason it is spelled out in rom-gds: a stage must not declare one run and
+    # measure another.
+    run: make -C ASIC/eth-chiplet lec-pnr RUN_TAG=full-20260814
     # SAME TOOL, SAME GRAMMAR, SAME CHECK AS `lec` — deliberately, and read the
     # note there for the measurement behind it. This stage held a Conformal seat
     # for up to six hours and then reported on an exit status the Makefile recipe
@@ -873,7 +975,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import re, sys
-      L = "ASIC/genus-innovus/logs/lec_pnr.log"
+      L = "ASIC/eth-chiplet/build/full-20260814/logs/lec_pnr.log"
       try:
           t = open(L, errors="replace").read()
       except OSError:
@@ -908,8 +1010,8 @@ stages:
         - ci/fixtures/lec-pnr/fail-nonequivalent
         - ci/fixtures/lec-pnr/fail-no-log
     artifacts:
-      - ASIC/genus-innovus/logs/lec_pnr*.log
-      - ASIC/genus-innovus/work/noneq.*pnr*
+      - ASIC/eth-chiplet/build/full-20260814/logs/lec_pnr*.log
+      - ASIC/eth-chiplet/build/full-20260814/reports/lec/pnr/**
 
   - id: lvs-preflight
     phase: physical
