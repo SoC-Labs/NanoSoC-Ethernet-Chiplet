@@ -788,13 +788,21 @@ if {[info exists ::env(EVP_M5_START_OFFSET)] && $::env(EVP_M5_START_OFFSET) ne "
 ## EXCLUSIVE. If -start is die-absolute it yields one ladder over the whole core,
 ## which is exactly the stated cure.
 ##
-## NOT YET MEASURED, AND THIS IS THE CRUX: whether -start is die-absolute or
-## still region-relative. The reference says "the start coordinate for the
-## region", which is ambiguous. Settle it on probe_pg_build.tcl before spending a
-## full P&R — the probe rebuilds floorplan -> power_plan only.
+## MEASURED 2026-08-18 on the PG probe, both halves — and the answer is DO NOT
+## USE THIS. `-start` IS die-absolute: the 30 distinct M5 ladder phases collapse
+## to 2. But the cure it was reasoned to be, it is not. Against the same placed
+## population doc 42 section 5 prices, EVP_M5_ABS_START=213.0 gives
+##     rail-class open boxes  34 -> 49
+##     stranded instances    330 -> 990,  of them functional  55 -> 305
+##     SHORT records           0 -> 1     (a new M1 short)
+## i.e. THREE TIMES WORSE on the defect it was proposed to fix, plus a short.
+## Re-phasing a ladder that is PARALLEL to the follow-pin rails only moves which
+## rails sit under a stripe; it creates no perpendicular feed. The island feed
+## after split_row above is what does. This knob is kept because the semantics
+## it settled are worth keeping, not because the setting is worth trying again.
 ##
-##   EVP_M5_ABS_START=<y>   one ladder, anchored at absolute y
-##   unset                  per-region anchoring, exactly as before
+##   EVP_M5_ABS_START=<y>   one ladder, anchored at absolute y — measured worse
+##   unset                  per-region anchoring, exactly as before (THE DEFAULT)
 ##
 ## Unset, the expansion below is word-for-word the previous argument list, so the
 ## default path is unchanged.
