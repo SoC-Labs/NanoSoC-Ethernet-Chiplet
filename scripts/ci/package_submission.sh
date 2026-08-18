@@ -16,13 +16,78 @@
 # IO libraries. Standard cells, IO drivers and bond pads are therefore empty
 # cell references and MUST be merged by whoever holds the foundry data.
 #
-# Usage:  package_submission.sh [output-dir]
+# Usage:  RUN_TAG=<build> package_submission.sh [output-dir]
 # Exits non-zero if the GDS is absent — there is nothing to submit without it.
 #-----------------------------------------------------------------------------
 set -euo pipefail
 
-ASIC_DIR="${ASIC_DIR:-ASIC/genus-innovus}"
 BLOCK="${BLOCK:-nanosoc_eth_chiplet_pads}"
+
+# WHICH BUILD TREE. THERE IS NO DEFAULT RUN, AND THAT IS THE FIX.
+#
+# This script used to open with `ASIC_DIR="${ASIC_DIR:-ASIC/genus-innovus}"`.
+# That is the LEGACY engine's directory. Its outputs/ holds two subdirectories
+# (eval/, romlibs/) and no stream at all, so the script exited 1 at the GDS
+# check for EVERY invocation — measured 2026-08-18, including the CI one, which
+# pins the same path in .github/workflows/asic-gds.yml's `env:`. The flow that
+# actually builds this chip writes to ASIC/eth-chiplet/build/<RUN_TAG>/outputs/
+# (top-level Makefile, "THE FLOW THAT BUILDS THIS CHIP").
+#
+# A silent default naming a directory nobody meant to package is what produced
+# that state, so it is NOT replaced with a different silent default. Pinning a
+# run tag here would rot the moment the next run is made, and would re-create
+# the same defect one directory over. Naming the run is the call
+# ASIC/genus-innovus/rail_project.mk already makes, for the same reason: "Two
+# sessions on this project have reached stale conclusions by pointing at the
+# directory with the obvious name". The asymmetry is worse here — a rail number
+# can be re-derived, a bundle goes to a foundry.
+#
+#   RUN_TAG=fp1505 package_submission.sh <dest>    package that build
+#   ASIC_DIR=<dir> package_submission.sh <dest>    package an arbitrary tree
+#   neither set                                    FAIL, and list the builds
+#
+# RUN_TAG rather than a positional argument, deliberately: $1 already means the
+# output directory in docs/tapeout/10-tapeout-submission.md AND in the CI step
+# (`Z=$(scripts/ci/package_submission.sh | tail -1)`), and quietly changing what
+# $1 means is the same class of defect as a stale default. RUN_TAG is also how
+# the flow itself spells it — ASIC/eth-chiplet/design.mk, the toolkit's CI
+# action, ci/signoff.yaml — so it composes with every other RUN_TAG= in the repo.
+BUILD_ROOT="${BUILD_ROOT:-ASIC/eth-chiplet/build}"
+
+list_builds() { ls -1 "$BUILD_ROOT" 2>/dev/null | sed 's/^/    /' || echo "    (none)"; }
+
+if [ -n "${ASIC_DIR:-}" ] && [ -n "${RUN_TAG:-}" ]; then
+    # Both name the tree. Honouring one and dropping the other would be an
+    # override that silently does nothing, which the SUBMIT_GDS note below
+    # already calls worse than no override. Refuse instead of picking.
+    if [ "$ASIC_DIR" != "$BUILD_ROOT/$RUN_TAG" ]; then
+        {
+            echo "FAIL: ASIC_DIR and RUN_TAG name different trees."
+            echo "  ASIC_DIR=$ASIC_DIR"
+            echo "  RUN_TAG=$RUN_TAG  ->  $BUILD_ROOT/$RUN_TAG"
+            echo "  Set one, not both."
+        } >&2
+        exit 1
+    fi
+elif [ -n "${RUN_TAG:-}" ]; then
+    ASIC_DIR="$BUILD_ROOT/$RUN_TAG"
+elif [ -z "${ASIC_DIR:-}" ]; then
+    {
+        echo "FAIL: no build named — set RUN_TAG=<build> (or ASIC_DIR=<dir>)."
+        echo "  Builds under $BUILD_ROOT:"
+        list_builds
+        echo "  There is deliberately no default: this script used to default to"
+        echo "  ASIC/genus-innovus, whose outputs/ has never held a stream."
+    } >&2
+    exit 1
+fi
+
+[ -d "$ASIC_DIR" ] || {
+    { echo "FAIL: no such build tree: $ASIC_DIR"
+      echo "  Builds under $BUILD_ROOT:"; list_builds; } >&2
+    exit 1
+}
+
 OUT="$ASIC_DIR/outputs"
 REP="$ASIC_DIR/reports"
 DEST="${1:-$ASIC_DIR/submission}"
@@ -41,7 +106,25 @@ DEST="${1:-$ASIC_DIR/submission}"
 # Whichever is chosen, MANIFEST.txt records the path and sha256 of the file that
 # was actually copied, so the bundle states which one it is.
 GDS="${SUBMIT_GDS:-$OUT/$BLOCK.gds}"
-[ -s "$GDS" ] || { echo "FAIL: no GDSII at $GDS — nothing to package." >&2; exit 1; }
+# A MISSING SUBMIT_GDS MUST BE LOUD, AND MUST NOT FALL BACK.
+# `${SUBMIT_GDS:-...}` only substitutes when SUBMIT_GDS is unset or empty, so a
+# SET-but-nonexistent path lands here as $GDS and is rejected. That is the whole
+# point: if the logo merge has not been run for this build, the correct outcome
+# is a refusal, not a bundle carrying the signoff stream under the shipping
+# name. Silent fallback is how the 2026-08-17 16:56 bundle came to exist.
+if [ ! -s "$GDS" ]; then
+    if [ -n "${SUBMIT_GDS:-}" ]; then
+        {
+            echo "FAIL: SUBMIT_GDS=$GDS is missing or empty."
+            echo "  NOT falling back to the signoff stream at $OUT/$BLOCK.gds."
+            echo "  The logo merge has not been run for this build. Run it, or"
+            echo "  unset SUBMIT_GDS to package the signoff stream deliberately."
+        } >&2
+    else
+        echo "FAIL: no GDSII at $GDS — nothing to package." >&2
+    fi
+    exit 1
+fi
 
 SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DIRTY=""
@@ -87,6 +170,8 @@ M="$STAGE/MANIFEST.txt"
     echo "generated   : $STAMP (UTC)"
     echo "built on    : $(hostname -s)"
     echo "repo commit : $(git rev-parse HEAD 2>/dev/null || echo unknown)$DIRTY"
+    echo "build tree  : $ASIC_DIR"
+    echo "run tag     : ${RUN_TAG:-(none — ASIC_DIR named directly)}"
     echo
     echo "submodules:"
     git submodule status --recursive 2>/dev/null | sed 's/^/  /' || echo "  (unavailable)"
@@ -100,6 +185,47 @@ M="$STAGE/MANIFEST.txt"
     echo "geometry:"
     grep -m1 'set CORE_TO_IO' "$ASIC_DIR/scripts/floorplan.tcl" 2>/dev/null | sed 's/^/  /' || true
     grep -m1 'create_floorplan -site' "$ASIC_DIR/scripts/floorplan.tcl" 2>/dev/null | sed 's/^/  /' || true
+    echo
+    # THE STREAM THIS BUNDLE ACTUALLY CARRIES.
+    # The comment on SUBMIT_GDS above promises MANIFEST.txt records "the path
+    # and sha256 of the file that was actually copied". Until this block it did
+    # not: `contents (sha256)` hashes $STAGE, where the file has already been
+    # renamed to $BLOCK.gds, so a logoed and an un-logoed bundle were textually
+    # identical apart from one hash with nothing to compare it against. The
+    # source path and the stream KIND are stated here in words.
+    if [ -s "$GDS" ]; then
+        echo "GDS actually packaged:"
+        echo "  staged as : $BLOCK.gds"
+        echo "  source    : $GDS"
+        if [ -n "${SUBMIT_GDS:-}" ]; then
+            echo "  stream    : SUBMIT_GDS override — NOT the signoff stream"
+        else
+            echo "  stream    : signoff stream (no SUBMIT_GDS override given)"
+        fi
+        echo "  sha256    : $(sha256sum "$GDS" | cut -d' ' -f1)"
+        echo
+    fi
+    # PROVENANCE OF THE OTHER COLLECTED ARTEFACTS.
+    # Being in the run directory does NOT mean this run produced it: fp1505's
+    # outputs/<block>_syn.sdc is a SYMLINK to full-20260814's copy, so a bundle
+    # can carry one run's stream beside another run's constraints and look
+    # entirely consistent. Each staged file is resolved back through symlinks
+    # and recorded with its real path, so a cross-run artefact is visible here
+    # rather than implied.
+    echo "evidence provenance (mtime UTC; real path shown when it leaves the tree):"
+    for f in "${BLOCK}_pnr.v" "${BLOCK}_pnr.sdf" "${BLOCK}_syn.sdc"; do
+        [ -e "$OUT/$f" ] || continue
+        R=$(readlink -f "$OUT/$f")
+        T=$(date -u -r "$OUT/$f" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
+        if [ "$R" = "$(readlink -f "$OUT")/$f" ]; then
+            printf '  %-26s %s  (in-tree)\n' "$f" "$T"
+        else
+            printf '  %-26s %s  <- %s\n' "$f" "$T" "$R"
+        fi
+    done
+    [ -d "$REP" ] && printf '  %-26s %s\n' "reports/" \
+        "$(date -u -r "$REP" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+    echo "  ROM stream verification: NOT COLLECTED — see item 7 below."
     echo
     echo "contents (sha256):"
     ( cd "$STAGE" && find . -maxdepth 1 -type f ! -name MANIFEST.txt -print0 \
@@ -146,6 +272,23 @@ READ THIS BEFORE SUBMITTING
    Why this matters: a previous build silently lost an entire datapath to Genus
    GLO-34 unused-logic removal. RTL-to-synthesis LEC is what catches that class;
    post-P&R LEC is what catches anything the place-and-route tool did.
+
+7. ROM STREAM VERIFICATION IS NOT IN THIS BUNDLE.
+   Nothing under build/rom_verify/ is collected. It lives at the REPOSITORY
+   ROOT, not in the build tree this bundle was assembled from, and the run
+   directory's reports/ holds no ROM evidence at all. Read that as a gap, not
+   as a failure -- and do NOT quote that directory as this bundle's proof.
+   build/rom_verify/{eth,cc}_gds.{log,bits} is a SINGLE MUTABLE SLOT with no
+   stream identity in the filename: every run against any stream overwrites it,
+   and the only record of WHICH GDS was measured is on LINE 1 of the .log.
+   last_pass.txt does not close that gap either -- it is written by the
+   `romlibs-verify` target, not by the GDS gate, so it never states which
+   stream was stream-checked. Measured 2026-08-18: that slot held a run against
+   a different, older build for part of the morning while looking exactly like
+   a live result for the current one.
+   If ROM content proof is required, re-run the gate against the stream whose
+   sha256 is recorded under "GDS actually packaged" above, confirm line 1 of
+   the log names that same path, and hand the log over with this bundle.
 -------------------------------------------------------------------------------
 EOF
 } > "$M"
