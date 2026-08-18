@@ -368,8 +368,45 @@ def g_lec_chain(run_dir):
         v = d / "verdict.txt"
         if v.is_file():
             txt = v.read_text(errors="replace")
-            ok = ("nonequivalent=0" in txt) and ("abort=0" in txt)
+            fields = {}
+            for tok in txt.split():
+                if "=" in tok:
+                    k, _, val = tok.partition("=")
+                    if val.isdigit():
+                        fields[k] = int(val)
+
+            # CLEAN NEEDS THE TOOL'S OWN EXIT STATUS TOO. A verdict can carry
+            # nonequivalent=0 because the compare never produced a result.
+            ok = (fields.get("nonequivalent", 1) == 0
+                  and fields.get("abort", 1) == 0
+                  and fields.get("tool_exit_code", 1) == 0
+                  and fields.get("process_exit_status", 1) == 0)
             legs[leg] = "clean" if ok else "not-clean"
+
+            # EVERY POINT THAT WAS EXCLUDED FROM THE COMPARE IS A FOOTNOTE ON
+            # THE PASS, NAMED AND SIDED. "6 points not compared" and "6 RTL
+            # registers not compared" land very differently on a reader, so the
+            # field name travels with the number rather than being flattened
+            # into a single notcompared count.
+            #
+            # This surfaced a gap in an earlier version, which required only
+            # nonequivalent=0 and abort=0: full-20260814's `gate` leg carries
+            # unmapped_extra_revised=4 and was being rendered as unqualified
+            # clean.
+            for k in ("notcompared",
+                      "notmapped_golden", "notmapped_revised",
+                      "unmapped_extra_golden", "unmapped_extra_revised",
+                      "unmapped_extra_tie_e_golden", "unmapped_extra_tie_e_revised"):
+                if fields.get(k):
+                    notes.append("%s leg %s=%d" % (leg, k, fields[k]))
+            # Unreachable points that are SYMMETRIC (same count both sides) are
+            # reported separately: they are usually structural - supply pads and
+            # the like - and lumping them with one-sided exclusions would bury
+            # the ones that matter.
+            ug, ur = fields.get("unreachable_golden", 0), fields.get("unreachable_revised", 0)
+            if ug or ur:
+                sym = "symmetric" if ug == ur else "ASYMMETRIC"
+                notes.append("%s leg unreachable %d/%d (%s)" % (leg, ug, ur, sym))
             # UNCOMPARED POINTS TRAVEL WITH THE VERDICT. "PASS" while N points
             # were never compared is a claim with a footnote, and the footnote
             # is part of the result. Conformal reports several different
@@ -473,10 +510,15 @@ def g_lec_chain(run_dir):
             return (NM, "the RTL->gate.v leg has inputs pinned and NO verdict "
                     "file.%s%s Legs with verdicts: %s. Until a verdict lands "
                     "nothing proves the netlist implements the RTL"
-                    % (extra, warn, ", ".join(have) or "none"), S_NETLIST, None, read)
+                    % (extra, warn, ", ".join(have) or "none")
+                    + (" Completed legs carry exclusions: %s." % "; ".join(notes)
+                       if notes else ""), S_NETLIST, None, read)
         return (NM, "no RTL->gate.v leg anywhere: legs present = %s. Nothing "
                 "proves the netlist implements the RTL, so the chain is OPEN at "
-                "the RTL end" % (", ".join(have) or "none"), S_NETLIST, None, read)
+                "the RTL end.%s" % (", ".join(have) or "none",
+                                    " Completed legs carry exclusions: %s."
+                                    % "; ".join(notes) if notes else ""),
+                S_NETLIST, None, read)
     if all(legs[k] == "clean" for k in have):
         foot = ""
         if notes:
