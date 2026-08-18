@@ -333,9 +333,35 @@ def g_rom_content(run_dir):
         path = stream.get("path") or "?"
         verdict = (d.get("verdict") or "").lower()
         own = str(run_dir) in path
-        read = "%s (sha256 %s)" % (path, (stream.get("sha256") or "?")[:12])
+        recorded = (stream.get("sha256") or "").lower()
+        read = "%s (sha256 %s)" % (path, (recorded or "?")[:12])
         if not own:
-            return NM, ("reports/rom grades a stream OUTSIDE this run: %s" % path),                    S_SIGNOFF, None, read
+            return (NM, "reports/rom grades a stream OUTSIDE this run: %s. An "
+                    "artefact in the right PLACE attesting to the wrong FILE is "
+                    "worse than an empty row, because it looks attributable"
+                    % path, S_SIGNOFF, None, read)
+
+        # BIND TO THE BYTES, NOT JUST THE PATH. Checking only that the path
+        # lies inside the run still accepts a verdict whose recorded hash no
+        # longer describes the file - a re-stream after the gate ran, or a
+        # hand-edited manifest. ~1 s for a 313 MB stream, which is a cheap
+        # price for the difference between "attributable" and "looks
+        # attributable".
+        gds = pathlib.Path(path)
+        if not gds.is_file():
+            return (NM, "reports/rom names a stream inside this run that is no "
+                    "longer on disk: %s" % path, S_SIGNOFF, None, read)
+        actual = None
+        rc, o, _ = sh("sha256sum %s" % path, timeout=600)
+        if rc == 0 and o:
+            actual = o.split()[0].lower()
+        if actual and recorded and actual != recorded:
+            return (NM, "reports/rom records sha256 %s for this run's stream, but "
+                    "the file on disk hashes to %s. The evidence describes a file "
+                    "that no longer exists in that form"
+                    % (recorded[:12], actual[:12]), S_SIGNOFF, None, read)
+        if actual:
+            read = "%s (sha256 %s, re-hashed and matching)" % (path, actual[:12])
         if verdict == "pass":
             # No size here: the top-level verdict json carries class/path/
             # sha256/ships, and the size lives in the per-ROM manifest.
@@ -656,8 +682,15 @@ def render_md(doc):
         L.append("      this run, so nobody auditing the run can find it.")
         L.append("None of the three is a pass. (c) in particular is NOT a claim")
         L.append("that the thing is broken - it is a claim that this run cannot")
-        L.append("show you. The remedy for (c) is to re-run the gate so it writes")
-        L.append("evidence, not to redo the analysis.")
+        L.append("show you, and the remedy is not to redo the analysis.")
+        L.append("")
+        L.append("BUT THE REMEDY FOR (c) NEEDS ITS QUALIFIER. Re-running a gate")
+        L.append("fixes (c) ONLY IF the re-run is bound to the run's own")
+        L.append("artefacts. Re-running with an explicit --gds pointing at a")
+        L.append("foreign stream puts evidence in the right PLACE attesting to")
+        L.append("the wrong FILE, which is strictly worse than an empty row")
+        L.append("because it now looks attributable. So: re-run THROUGH THE PATH")
+        L.append("THAT BINDS EVIDENCE TO THE RUN, not merely re-run.")
     if n_qual:
         L.append("QUALIFIED means the check passed a NARROWER question than its")
         L.append("name suggests. The qualifier is part of the result.")
