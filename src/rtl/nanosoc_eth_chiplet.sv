@@ -764,52 +764,43 @@ module nanosoc_eth_chiplet #(
         .poresetn   (sys_poresetn),
         .phc_clk    (sys_hclk),       // PHC shares the AHB clock in this build
         .phc_resetn (sys_hresetn),
-        // D2D LINK-CLOCK DIVIDER RATIO: DELIBERATELY NOT CONNECTED HERE, AND
-        // THIS COMMENT IS THE REASON. DO NOT ADD `.link_clk_div_ratio_i (...)`
-        // WITHOUT FIRST MOVING THE tidelink SUBMODULE PIN.
+        // D2D link-clock divider ratio. 3'd0 = /1 bypass = the pre-divider
+        // clock path, which is what this tapeout ships.
         //
-        // `link_clk_div_ratio_i[2:0]` exists on tidelink_top ONLY on the local
-        // branch feat/link-clk-divider (d7fe5d5b..), which is on NO REMOTE. The
-        // pinned tidelink -- the commit this superproject records, and the only
-        // one a `git clone --recursive` can fetch -- does not have the port:
+        // CONNECTED ONLY NOW THAT THE PIN CARRIES THE PORT. The guard comment
+        // that stood here forbade this connection "WITHOUT FIRST MOVING THE
+        // tidelink SUBMODULE PIN", because a connection to a port the pinned
+        // tidelink does not have makes the superproject unelaboratable from its
+        // own pin (%Error: Pin not found). That precondition is now met, in the
+        // order that keeps the repo clonable at every step:
+        //   1. feat/link-clk-divider PUSHED  -> 635f59cc, verified with
+        //      `git ls-remote origin`, i.e. a clone can now fetch it
+        //   2. superproject pin MOVED to 635f59cc  (this commit)
+        //   3. this connection re-added        (this commit, same commit as 2 —
+        //      between them the wrapper would lint red, so they must not split)
         //
-        //     grep -c link_clk_div_ratio_i tidelink_top.sv @ the pin        0
-        //     grep -c link_clk_div_ratio_i tidelink_top.sv @ origin/main    0
-        //     grep -c link_clk_div_ratio_i tidelink_top.sv @ the branch     2
+        // Do NOT reintroduce a bare `grep -c link_clk_div_ratio_i` as the check
+        // for whether this port is wired: the previous guard comment named the
+        // port six times, so that grep returned 6 against a wrapper with ZERO
+        // connections. Anchor on the connection form instead:
+        //     grep -cE '^[[:space:]]*\.link_clk_div_ratio_i'
         //
-        // So a connection here does not merely lint differently against the two
-        // -- it makes the superproject UNELABORATABLE FROM ITS OWN PIN:
-        //     %Error: nanosoc_eth_chiplet.sv:792: Pin not found:
-        //             'link_clk_div_ratio_i'
-        // Measured in both directions against a fresh-clone-equivalent checkout
-        // of the pin: connected -> Pin-not-found; unconnected -> elaborates with
-        // no non-waived finding. Verilog has no "connect if the port exists", so
-        // this instantiation can match exactly one tidelink, and the one it must
-        // match is the one that ships.
-        //
-        // WHAT YOU WILL SEE IF YOU BUILD FROM A WORKING TREE WHOSE tidelink
-        // CHECKOUT IS ON feat/link-clk-divider (several are): lint reports
-        // %Warning-PINMISSING / HAL *E,UNCONI at this instance. That red is TRUE
-        // and it is the intended signal -- it says your checkout is not your pin,
-        // i.e. you are building a different chip from the one a clone builds. It
-        // is not a defect in this wrapper. Do not silence it by connecting the
-        // port; silence it by agreeing the pin.
-        //
-        // It is also not a functional hazard in that configuration:
-        // tidelink_link_clk_div is X-safe by construction -- an undriven ratio
-        // never satisfies its two-consecutive-samples-equal filter, so it holds
-        // RATIO_RESET = 3'd0 = /1 bypass, which is the pre-divider clock path
-        // and is what this tapeout ships either way.
-        //
-        // [OPEN] The knob is built and verified but inert, and making it
-        // reachable was never a matter of this one literal. It needs (1) the
-        // divider on tidelink `main` and the pin moved onto it -- a CHIP
-        // INTERFACE CHANGE, currently on sim-only evidence; (2) a register to
-        // drive it, which must live in THIS chiplet's APB space because TideLink
-        // has no free aperture (every paddr[8:5] nibble is claimed); and (3) an
-        // SDC that constrains a divided ratio -- ASIC/genus-innovus/inputs/
-        // tidelink_constraints.sdc signs off the /1 configuration ONLY and says
-        // so. Until all three land, the port stays off this instantiation.
+        // [OPEN — UNCHANGED BY THIS COMMIT] the knob is reachable by the BUILD
+        // now, but still inert in SILICON, and this literal was never what stood
+        // in the way. Two of the three conditions the previous comment listed
+        // remain open:
+        //   (a) a register to drive it, which must live in THIS chiplet's APB
+        //       space because TideLink has no free aperture (every paddr[8:5]
+        //       nibble is claimed). Until that exists the rate cannot be changed
+        //       on hardware at all — on silicon or on FPGA.
+        //   (b) an SDC that constrains a DIVIDED ratio. ASIC/genus-innovus/
+        //       inputs/tidelink_constraints.sdc signs off the /1 configuration
+        //       ONLY and says so, pinning the bypass leg via set_case_analysis on
+        //       the divider's enable flops. A clean STA says nothing about /2../16.
+        // Evidence for the divided modes is SIMULATION ONLY: the full 11-test
+        // cocotb/tidelink_top_pair suite passes at /1 /2 /4 /8 /16. That is a
+        // digital go/no-go, not an eye or BER measurement.
+        .link_clk_div_ratio_i (3'd0),
         // ahb_sub — peer aperture (0x2F, address-translated). Full 32-bit haddr;
         // carries hburst/hprot; no hmastlock (reduced shape).
         .ahb_sub_hsel       (hsel_peer),
