@@ -118,52 +118,87 @@ scanned. `make vendor-check` runs the same two scanners locally, in the same
 order, for the same reason — a local gate that is greener than the PR check is
 worse than no local gate.
 
-### The toolkit scanner is RED on this repository today
+### The toolkit scanner on this repository today
 
-Not as a threat and not as a projection — measured, at the currently pinned
-toolkit commit, on the tree as it stands. Recorded here rather than tuned away,
-because tuning a scanner until it agrees with the repository is how the `*.lef`
-gate came to mean nothing:
+Not a threat and not a projection — measured, at the currently pinned toolkit
+commit, on the tree as it stands. Recorded here rather than tuned away, because
+tuning a scanner until it agrees with the repository is how the `*.lef` gate
+came to mean nothing:
 
-| Rule | Findings at HEAD | What it is, on inspection |
+| Rule | Findings in the tree at HEAD | What it is, on inspection |
 |---|---|---|
 | `file.ext` | 3 | the three tracked `ASIC/genus-innovus/logos/*.gds` — **this project's own logo artwork**, caught because `.gds` is collateral by extension. A false positive here, and the clearest candidate for a waiver. |
-| `value.lef` | 35 | LEF/Liberty keywords beside decimals, mostly in `ASIC/genus-innovus/scripts/{floorplan,power_plan}.tcl` |
-| `value.lefwin` | 7 | table keywords within two lines of a multi-significant-figure number |
-| `value.map` | 1 | a GDS layer/datatype pair |
-| `value.libtag` | 5 | `[LIB]`-style provenance annotations carrying numbers |
-| `ident` | 257 | revision-coded release names — concentrated in `ASIC/common.mk` and the four `inputs/*.sdc` |
-| `path` | 266 | absolute site paths (`$TSMC_65_HOME`, `$IP_LIBRARY_ROOT`, `$MEM_BASE`, `$CDS_INSTALL`) — in `ASIC/common.mk`, the config and eval Tcl, and four of the five workflow files |
+| `value.lef` | 46 | a LEF or Liberty keyword standing beside a decimal, concentrated in the two power-grid Tcl scripts and the tapeout notes |
+| `value.lefwin` | 6 | a table keyword within two lines of a multi-significant-figure number |
+| `value.map` | 2 | a GDS layer and datatype pair |
+| `value.libtag` | 5 | a provenance annotation, in the bracketed source-tag form, on a line carrying a number |
+| `ident` | 38 | revision-coded release names |
+| `path` | 97 | absolute site paths, in `ASIC/common.mk`, the config and eval Tcl, and the workflow files |
 
-**574 findings, 7 failing gates, exit 1.** The `path` and `ident` rows are the
-consequential ones and they are *not* noise: `VENDOR_COLLATERAL.md` names
-absolute paths to this site's PDK mounts as not-for-publication, and
-`scripts/ci/vendor_guard_report.sh` redacts `$TSMC_65_HOME` out of the CI log for
-exactly that reason — while the tree itself carries the same class of path in 266
-places. That is a real, pre-existing debt this scanner surfaced; it is not a
-reason to soften the rule.
+**197 findings, 7 failing gates, exit 1** for the tree as a whole. The pre-push
+hook charges only what a push ADDS to what the server already has, so the number
+that blocks a push is far smaller than this backlog and moves with the branch.
+Read that number from the hook, never from this table.
 
-**Consequence for making `vendor-collateral-gate` a required status check:** it
-will block every PR until this list is triaged. Triage is the repo owner's call
-and it is one of three things per row — redact it, waive it with a reason, or
-accept the block. Do not make it a fourth thing by narrowing a rule.
+The row above describes the bracketed source-tag rule without reproducing the
+tag itself, and that is deliberate rather than evasive: measured, the only
+number in that row is this scanner's own finding count, so there is no value
+here to redact and nothing is gained by writing a token the rule reads as a
+citation. This file stays wholly inside the scanned corpus — no waiver, no
+exemption — so a real citation written anywhere in it is still caught.
 
-**The `vendor.allowlist.stale` warning is correct and is left alone.** All five
-of the toolkit scanner's allowlist entries name toolkit paths (`ci/…`,
-`test/stage/…`) that do not exist here, so run against this repository every one
-of them reports as suppressing nothing. That warning is the feature working:
-stale-waiver detection is exactly what it says. It is a `warn`, not a `fail`, so
-it does not affect the verdict, and there is deliberately no chiplet-specific
-allowlist — the scanner's table is a hardcoded shell variable with no environment
-override, so pointing it at one would mean either editing the submodule (whose
-allowlist is *its* repository's) or forking the script into this one, and two
-copies of a pattern table drift until they disagree about the same file. Accept
-the warning; do not silence it.
+#### The value rules ask a question this table cannot answer
+
+`value.lef`, `value.lefwin` and `value.libtag` match a SHAPE: a LEF or Liberty
+keyword standing as a word beside a decimal. The scanner says so in its own
+text, and says outright that a human must read the line — because the shape
+cannot tell a number this design CHOSE from a number transcribed out of the
+PDK. **That is a measurable question, and it must not be settled by eye.**
+
+`scripts/ci/pdk_value_provenance.py` measures it. For each flagged line it asks
+the installed technology LEF, and the vendor timing library that line's own
+legend cites, whether the number is the value of that rule on that layer, or a
+point on that library's own axis. A number that appears nowhere is this design's
+own and the finding is a false positive; a number that IS the rule's value is a
+disclosure and the line needs redacting. It prints PRESENT or absent and never
+a vendor number, so its output belongs in a review, a commit message or an
+allowlist reason. It runs controls on every invocation and fails when they do
+not hold, because a probe that answers "absent" having parsed nothing looks
+exactly like a clean result — and it distinguishes a bare small integer the deck
+happens to carry in twenty places from a match that means something.
+
+The toolkit deliberately cannot do this. Reading the PDK in order to compare
+against it is itself the disclosure the toolkit exists to prevent. A check that
+lives in the consuming project can, because it publishes nothing.
+
+#### Triage is one of three things and never a fourth
+
+Per finding: redact it, waive it with a written reason, or accept the block.
+**Do not make it a fourth thing by narrowing a rule.** Do not reach for
+`VENDOR_CHECK_BYPASS` either — it leaves a name and a reason in the log, which
+is the point of it, and it is not a substitute for doing one of the three.
+
+**There IS a chiplet-specific allowlist now, and it lives in the submodule.** An
+earlier revision of this section said there was deliberately none, and that this
+repository could not have one without forking the scanner into it. That is no
+longer true, and it was always half true: the scanner's table is a hardcoded
+shell variable, so a chiplet path is waived by adding an entry to
+`ASIC/asic-toolkit/ci/check-vendor-collateral.sh` and bumping the submodule pin
+— one table, not two copies that drift until they disagree about the same file.
+**The waivers reach this repository only when the pin is bumped**, and until
+then the local hooks (which read the submodule *working tree*) and CI (which
+clones the *pinned* commit) will disagree about this repository — the local one
+being the greener of the two, which is the direction that misleads. If the two
+disagree, believe CI.
+Every entry names one path and the one rule it waives, carries the measurement
+that justifies it, and is reported by `vendor.allowlist.stale` the day that rule
+stops firing on that path — which is the day the entry must be deleted. The
+stale warning is the feature working; do not silence it.
 
 **When it fires.** It prints the offending paths and never their contents. Two
 things are certainly wrong, and neither is the check:
 
-- **Do not delete or narrow the check, and do not add an allowlist.** There used
+- **Do not delete or narrow the check, and do not add an allowlist to `scripts/ci/check_no_vendor_collateral.sh`.** There used
   to be one, and removing it is what armed this gate. A tracked vendor file is a
   licence breach, not a CI failure.
 - **Ship the transform, not the result.** If a build needs a vendor file,
