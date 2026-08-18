@@ -38,8 +38,8 @@ carries your new content; **the shared index still carries your pre-commit
 blob**. The next person to commit from the shared index — with a perfectly
 ordinary explicit pathspec — restores the old content and reverts you.
 
-Measured, twice in one session. Immediately after committing a **+81 / −14**
-change:
+Measured **five times in one session** — see the table below. Immediately after
+committing a **+81 / −14** change:
 
 ```
 $ git diff --cached --stat -- <the paths I had just committed>
@@ -58,6 +58,25 @@ Two shapes:
 |---|---|
 | a **newly tracked** file | staged **deletion** (`D `) — the index lacks it |
 | an **already tracked** file you modified | staged **modification** (`M `) holding the old blob |
+
+**It is not theoretical and it is not rare.** Five commits in one session, every
+one of them correct and explicitly pathspec'd, each left a reversal of itself
+primed in the shared index:
+
+| the commit | what was primed against it |
+|---|---|
+| an audit doc (new file) | `D` — staged deletion of all 563 lines |
+| a klayout fix (+81 / −14) | `M` — 14 insertions / 81 deletions, the exact inverse |
+| **this page** (new file) | `D` — a deletion of the file documenting the hazard |
+| LVS inputs (+58) | `M` — 58 deletions |
+| an LVS repoint (+96 / −53) | `M` — 53 insertions / 96 deletions, the inverse |
+
+The third row is the point: step 4 caught a primed reversal of the very commit
+that introduced step 4, minutes after it was written. All five were repaired
+with a path-scoped `git reset`, and in every case the other sessions' staged
+entries were still intact afterwards. **A clean `git show --stat` is not the end
+of the job** — that check looks backwards at what you wrote, and this hazard is
+in front of you.
 
 Corroborating (measured by other sessions the same day, not by the author of
 this page): three sessions each reported a stale index carrying **different**
