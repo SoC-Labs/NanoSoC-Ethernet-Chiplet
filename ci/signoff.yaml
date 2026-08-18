@@ -1437,43 +1437,62 @@ stages:
     phase: physical
     gate: report
     label: soclabs-pdk
-    description: "Can LVS run at all? Reports the missing leaf-cell data by name"
-    # gate: report, NOT block — this fails today and will keep failing until the
-    # TSMC _BE packages are licensed. That is a procurement blocker, not a
-    # regression, and blocking on it would make every run red and train people
-    # to ignore the report. It appears in every signoff report as a dated,
-    # explicit "LVS BLOCKED - standard cells, IO drivers, bond pads" and turns
-    # green by itself the day the packages land.
-    # See docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+    description: "Can LVS run on the build under test? Names any missing input"
+    # REPOINTED TO THE TOOLKIT 2026-08-18, and READ THE SCOPE CHANGE BELOW
+    # BEFORE QUOTING A PASS FROM THIS STAGE. It goes from red to green in the
+    # same commit, and that is a change of question, not an improvement.
     #
-    # DELIBERATELY NOT REPOINTED, 2026-08-18, and the reason is a measurement
-    # rather than inertia. The `drc` stage below moved to the toolkit in the
-    # same commit; this one is in the same bundle and stayed, because the
-    # toolkit side of it grades nothing:
+    # WHY IT MOVED. Measured before the change:
+    #   make asic-lvs-pre  ->  rc=0, "OK — both layers clean"
+    #     grading ASIC/genus-innovus/runs/20260810T065131Z_honest-full-pnr2/
+    #     outputs/nanosoc_eth_chiplet_pads_lvs.gds — 2026-08-10, 312,031,404 B
+    # So this stage was already passing GREEN, on an eight-day-old artefact of
+    # the flow the root Makefile calls no-longer-shipping, while its description
+    # still promised "LVS BLOCKED - standard cells, IO drivers, bond pads". The
+    # description was as stale as the stream. It was not reporting a blocker.
     #
-    #   make -C ASIC/genus-innovus lvs-preflight   (scripts/calibre/run_lvs.sh
-    #     --check, the recipe at HEAD)  ->  exit 1, "LVS BLOCKED: no transistor
-    #     netlist for standard cells IO drivers bond pads" — the sentence this
-    #     stage's description promises, naming the missing collateral.
-    #   make -C ASIC/eth-chiplet lvs-preflight RUN_TAG=full-20260814
-    #     ->  exit 2, "UNSET LVS_DECK / UNSET STDCELL_VLOG".
+    # The old note here said the toolkit side "grades nothing" because
+    # design.mk declared none of LVS_DECK / STDCELL_VLOG / IO_VLOG /
+    # MACRO_CDLS. True when written; 18bf68e ported all four, so it is not now.
     #
-    # That second failure is a make variable nobody set, not a fact about this
-    # design: LVS_DECK, STDCELL_VLOG, IO_VLOG and MACRO_CDLS are declared in
-    # ASIC/genus-innovus/lvs_project.mk, which is where this project's LVS
-    # configuration lives and which includes the portable flow in ASIC/lvs-flow.
-    # ASIC/eth-chiplet/design.mk declares none of them. Moving the entry point
-    # would swap a stage that reports the real blocker for one that reports a
-    # missing assignment, and both are red, so the report would look unchanged
-    # while saying something much weaker. Same category as `rail`,
-    # `rail-selftest` and `romlibs-check`: evidence that genuinely lives in
-    # ASIC/genus-innovus.
-    run: make asic-lvs-pre
-    # $(LOG_DIR)/calibre_lvs.log — LOG_DIR is ASIC/genus-innovus/logs and
-    # scripts/calibre/run_lvs.sh:179 writes there. Produced by `make lvs`, not
-    # by this stage's own `--check`, which launches no tool and writes nothing.
+    # THE SCOPE CHANGE, stated plainly because a reader will otherwise conclude
+    # the TSMC _BE procurement blocker was resolved. It was not.
+    #   legacy  = transistor-level LVS. Needs the _BE packages (CDL + cell GDS)
+    #             for standard cells, IO and pads. Still unlicensed. Still a
+    #             procurement blocker: docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+    #   toolkit = Front-End methodology. run_lvs.sh states it in its own output:
+    #             this flow does NOT require the _BE packages; FE simulation
+    #             Verilog is sufficient, because leaf cells are BLACK-BOXED.
+    # A pass here therefore means "clean modulo black boxes and modulo the pad
+    # ring" — the runner's own words. It does NOT mean signoff clean, it does
+    # NOT prove cell interiors or pin-level wiring on boxed leaves, and it says
+    # nothing about the pad ring, whose obstruction geometry is deliberately
+    # stripped from the LVS stream. The eight hard macros ARE compared down to
+    # transistors; that is the part of the run that is real verification.
+    #
+    # gate: report is UNCHANGED and deliberately so. The full `lvs` run has
+    # never been executed on the toolkit path — preflight-clean is not
+    # run-clean — so this is a configuration check, not a verification result,
+    # and it must not be able to turn a report green on its own authority.
+    #
+    # KNOWN WARNING, not a failure and not to be silenced: preflight reports 2
+    # .GLOBAL/macro-internal collisions. Both boot ROMs use an internal net
+    # named VSS 514 times where their actual supply ports are VDDE/VSSE, so
+    # `.GLOBAL VSS` merges ROM interior with chip ground. Any macro-interior
+    # discrepancy that follows is an artifact of the source. Open decision.
+    #
+    # RUN_TAG is spelled here rather than inherited, same doctrine as lec-syn
+    # and rom-gds: the root forwarder carries no tag and resolves to
+    # build/default, which has no GDS, no netlist and no romlibs and exits 2
+    # naming each — right for a human, wrong for a gate that must name its
+    # build.
+    run: make -C ASIC/eth-chiplet lvs-preflight RUN_TAG=full-20260814
+    # The preflight launches no tool and writes no log of its own, so there is
+    # nothing here that it produces. LVS_RUNDIR is where the FULL run would
+    # write; globbed rather than named so an empty directory collects nothing
+    # instead of failing the stage.
     artifacts:
-      - ASIC/genus-innovus/logs/calibre_lvs*.log
+      - ASIC/eth-chiplet/build/full-20260814/work/lvs_run/**
 
   - id: drc
     phase: physical

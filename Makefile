@@ -61,6 +61,7 @@ TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 .PHONY: asic-lvs asic-lvs-pre asic-lec-pnr asic-pipeline asic-pipeline-resume
 .PHONY: asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy
 .PHONY: asic-gds-legacy asic-lec-pnr-legacy asic-drc-legacy
+.PHONY: asic-lvs-legacy asic-lvs-pre-legacy
 
 # Bare `make` used to run `bootstrap` — a 42-submodule fetch — because it was
 # the first target in the file. Show what is available instead.
@@ -138,8 +139,8 @@ help:
 #     asic-lec-pnr      lec-pnr                 lec-pnr
 #     asic-pipeline     pipeline                - none; see below
 #     asic-drc          drc                     drc          <- asic-drc-legacy
-#     asic-lvs          (still legacy)          lvs          <- see note below
-#     asic-lvs-pre      (still legacy)          lvs-preflight<- see note below
+#     asic-lvs          lvs                     lvs          <- asic-lvs-legacy
+#     asic-lvs-pre      lvs-preflight           lvs-preflight<- asic-lvs-pre-legacy
 #
 # `pipeline` has NO legacy counterpart, so there is no asic-pipeline-legacy.
 # It is not `all` under another name: `all` is syn->place->cts->route, four
@@ -171,23 +172,46 @@ asic-lec-pnr: ; $(MAKE) -C $(ASIC_DIR) lec-pnr
 asic-drc:        ; $(MAKE) -C $(ASIC_DIR) drc
 asic-drc-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) drc
 
-## LVS STAYS LEGACY, and this is the one place in this block where "name the
-## real flow" still loses to something else. Measured 2026-08-18, both sides:
+## LVS MOVED 2026-08-18, and the reason it could not move before is gone.
+## The note that stood here said design.mk "sets none of them", so repointing
+## would swap a stage reporting a real blocker for one reporting a missing
+## assignment. That was true when written. 18bf68e ported LVS_DECK,
+## STDCELL_VLOG, IO_VLOG and MACRO_CDLS into design.mk, so it is not true now.
 ##
-##   make -C $(LEGACY_ASIC_DIR) lvs-preflight -> exit 1, "LVS BLOCKED: no
-##     transistor netlist for standard cells IO drivers bond pads" — the real
-##     coverage statement, naming the missing collateral.
-##   make -C $(ASIC_DIR) lvs-preflight        -> exit 2, "UNSET LVS_DECK /
-##     UNSET STDCELL_VLOG".
+## WHY THIS HAD TO MOVE, measured 2026-08-18 before the change:
+##   make asic-lvs-pre  ->  rc=0, "OK — both layers clean"
+##     LVS_GDS = $(LEGACY_ASIC_DIR)/runs/20260810T065131Z_honest-full-pnr2/
+##               outputs/nanosoc_eth_chiplet_pads_lvs.gds
+##               2026-08-10, 312,031,404 bytes
+## An eight-day-old artefact of the flow this very block calls no-longer-
+## shipping, graded green by the command ci/signoff.yaml runs. A gate pointed at
+## a stream nobody is building is worse than no gate: it answers a question no
+## one asked and reports it as the answer to the one they did.
 ##
-## This design's LVS configuration is $(LEGACY_ASIC_DIR)/lvs_project.mk, which
-## sets LVS_DECK, STDCELL_VLOG, IO_VLOG and MACRO_CDLS and includes the portable
-## flow in ASIC/lvs-flow. ASIC/eth-chiplet/design.mk sets none of them, so the
-## toolkit's lvs targets resolve to nothing to check. Repointing would swap a
-## stage that reports the blocker for one that reports a missing assignment —
-## red either way, which is exactly why it would go unnoticed.
-asic-lvs:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs
-asic-lvs-pre: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs-preflight
+## After, on the shipping build:
+##   make -C $(ASIC_DIR) lvs-preflight RUN_TAG=full-20260814
+##     ->  rc=0, 14/14 inputs OK, all eight macro CDLs resolved
+##
+## THE RUN TAG, and why the default is safe here where it was not before.
+## Like every toolkit forwarder in this block this one carries no RUN_TAG, so a
+## human typing `make asic-lvs-pre` gets build/default. That resolves to a
+## directory with no GDS, no netlist and no romlibs, and the toolkit's layer-1
+## chk() names each one:
+##   MISS LVS_GDS / MISS LVS_SRC_V / MISS MACRO_CDLS ...   ->  rc=2
+## Loud and wrong-proof, which is the opposite of what the legacy default did.
+## ci/signoff.yaml spells the tag out itself rather than calling this target.
+##
+## asic-lvs IS REPOINTED TOO, DELIBERATELY, AND HAS NEVER BEEN RUN THERE.
+## Leaving the full run on legacy while preflight moved would mean the two
+## halves of one gate grading two different streams — the precise defect this
+## commit exists to remove, reintroduced one target along. So they name one
+## flow. But `lvs` takes a Calibre licence and a long run, and it has NOT been
+## executed on the toolkit path: preflight-clean is not run-clean. Treat the
+## first `make asic-lvs` as an experiment, not a regression.
+asic-lvs:         ; $(MAKE) -C $(ASIC_DIR) lvs
+asic-lvs-pre:     ; $(MAKE) -C $(ASIC_DIR) lvs-preflight
+asic-lvs-legacy:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs
+asic-lvs-pre-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs-preflight
 asic-pipeline:        ; $(MAKE) -C $(ASIC_DIR) pipeline
 asic-pipeline-resume: ; $(MAKE) -C $(ASIC_DIR) pipeline-resume
 
