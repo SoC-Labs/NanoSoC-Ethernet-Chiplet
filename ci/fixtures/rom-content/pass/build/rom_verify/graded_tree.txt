@@ -1,0 +1,7 @@
+# what the ROM content gate last graded into this slot.
+# ASSERTED by ci/signoff.yaml rom-content check: — not a note.
+graded_tree=_fixture/romlibs
+graded_utc=2026-08-18T00:00:00Z
+graded_commit=0000000
+graded_macro=aaaa  _fixture/romlibs/eth_rom/eth_rom_via.memlib
+graded_macro=bbbb  _fixture/romlibs/cc_rom/rom_via.memlib

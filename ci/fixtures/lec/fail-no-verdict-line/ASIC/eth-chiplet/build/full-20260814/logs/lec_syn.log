@@ -25,7 +25,6 @@ Equivalent           35     1      1         37
 0 Abort point(s) reported
 0 Not-compared point(s) reported
 ...
-6. Compare Results:                                                        PASS
      Number of EQ compare points:                              37
      Number of NON-EQ compare points:                          0
      Number of Aborted compare points:                         0
@@ -55,3 +54,15 @@ Equivalent           35     5      1         41
      Number of Aborted compare points:                         0
      Number of Uncompared compare points :                     0
 ================================================================================
+LEC-VERDICT: tag=syn
+LEC-VERDICT: design=nanosoc_eth_chiplet_pads
+LEC-VERDICT: golden=RTL via lec.dofile
+LEC-VERDICT: revised=<run>/outputs/nanosoc_eth_chiplet_pads_gate.v
+LEC-VERDICT: pg_pin_mode=none
+LEC-VERDICT: compare_points=41 equivalent=41 inverted_equivalent=0 nonequivalent=0 abort=0 notcompared=0
+LEC-VERDICT: unmapped_extra_golden=0 unmapped_extra_revised=0
+LEC-VERDICT: unmapped_extra_tie_e_golden=0 unmapped_extra_tie_e_revised=0
+LEC-VERDICT: unreachable_golden=0 unreachable_revised=0
+LEC-VERDICT: notmapped_golden=0 notmapped_revised=0
+LEC-VERDICT: tool_exit_code=0 flags=
+LEC-VERDICT: RESULT=PASS

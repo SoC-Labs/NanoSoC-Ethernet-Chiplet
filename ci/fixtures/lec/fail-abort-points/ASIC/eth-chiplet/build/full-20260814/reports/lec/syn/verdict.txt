@@ -10,3 +10,5 @@ LEC-VERDICT: unreachable_golden=0 unreachable_revised=0
 LEC-VERDICT: notmapped_golden=0 notmapped_revised=0
 LEC-VERDICT: tool_exit_code=0 flags=
 LEC-VERDICT: RESULT=PASS
+LEC: process_exit_status=0
+LEC: RESULT=PASS

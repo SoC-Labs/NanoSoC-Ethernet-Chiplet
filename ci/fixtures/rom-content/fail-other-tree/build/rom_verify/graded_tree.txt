@@ -1,0 +1,11 @@
+# what the ROM content gate last graded into this slot.
+# ASSERTED by ci/signoff.yaml rom-content check: — not a note.
+# THIS FIXTURE: a real, PASSING result sitting in the slot, whose stamp names a
+# DIFFERENT ROM tree from the one this stage grades. build/rom_verify is one
+# mutable directory that every invocation overwrites, so this is not a
+# hypothetical shape — it is the default one.
+graded_tree=_fixture/some_other_run/romlibs
+graded_utc=2026-08-18T00:00:00Z
+graded_commit=0000000
+graded_macro=aaaa  _fixture/some_other_run/romlibs/eth_rom/eth_rom_via.memlib
+graded_macro=bbbb  _fixture/some_other_run/romlibs/cc_rom/rom_via.memlib

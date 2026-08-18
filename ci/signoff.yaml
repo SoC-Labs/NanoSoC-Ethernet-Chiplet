@@ -553,14 +553,89 @@ stages:
     # metal fix. Nothing else in this pipeline reads ROM contents — LEC compares
     # netlists, DRC compares geometry, and a ROM full of noise passes both.
     #
-    # The gate (ASIC/rom_gate.mk, via ASIC/genus-innovus/Makefile:romlibs-check)
-    # asserts, per ROM: the .lib/.lef Genus opens exist; spec, RTL wrapper, built
-    # macro and code file agree on depth and address width; and every word of the
-    # compiled macro equals the corresponding word of the firmware code file
-    # (scripts/ci/rom_verify.py, checks: content_equivalence, physical_decode,
-    # code_file_sanity, geometry, provenance, image_plausibility, hex_chain).
-    # sim_divergence is a WARNING by design and is surfaced, not gated.
-    run: make -C ASIC/genus-innovus romlibs-check
+    # The gate (ASIC/rom_gate.mk) asserts, per ROM: the .lib/.lef Genus opens
+    # exist; spec, RTL wrapper, built macro and code file agree on depth and
+    # address width; and every word of the compiled macro equals the
+    # corresponding word of the firmware code file (scripts/ci/rom_verify.py,
+    # checks: content_equivalence, physical_decode, code_file_sanity, geometry,
+    # provenance, image_plausibility, hex_chain). sim_divergence is a WARNING by
+    # design and is surfaced, not gated.
+    #
+    # ── 2026-08-18: THIS STAGE WAS RED FOR A WIRING REASON, NOT A ROM REASON ──
+    #
+    # Its two halves resolved ROMLIBS_DIR to DIFFERENT TREES and neither said so:
+    #
+    #   run:    make -C ASIC/genus-innovus romlibs-check
+    #             -> that Makefile:128 sets ROM_RUN_DIR := $(OUT_DIR)/romlibs and
+    #                passes it down, so the gate BUILT AND GRADED
+    #                ASIC/genus-innovus/outputs/romlibs
+    #   check:  make -C ASIC -f common.mk rom-vars
+    #             -> no override, so ASIC/common.mk:434's
+    #                ROMLIBS_DIR := .../ASIC/romlibs wins
+    #
+    # The check then required each result JSON to NAME the directory rom-vars
+    # reported — a good clause, and the only reason the divergence was visible at
+    # all — so the stage failed on a path, on ROMs that are byte-identical in all
+    # three trees (md5 on every .rcf and .memlib: ASIC/romlibs,
+    # ASIC/genus-innovus/outputs/romlibs and the shipping build's own). A red for
+    # a wiring reason is worse than a green: it trains people to discount the one
+    # gate that stands between a firmware change and a dead die.
+    #
+    # THE FIX IS NOT "point check: at the other tree". Both halves now name ONE
+    # tree, spelled out, and it is the tree the netlist under signoff actually
+    # compiled in — build/full-20260814/romlibs, the directory the LEC dofile
+    # itself reads its ROM .libs from. Same doctrine as rom-gds's RUN_TAG and
+    # lec-pnr's two tags: WHEN A BUILD SUPERSEDES THIS ONE, CHANGE THE STRING IN
+    # ALL THREE PLACES BELOW — run:, check: and needs_implementation: — they are
+    # the same string on purpose, so this stage cannot declare one tree and
+    # measure another.
+    #
+    # `romlibs-verify`, NOT `rom-run`/`romlibs-check`. Those BUILD the macros
+    # before grading them, which is right for `syn` (a firmware change must not
+    # reach the .bintxt without reaching the macro) and wrong here: this stage
+    # grades a COMPLETED build's ROMs and must not write into that build. The
+    # gating is identical — rom_build.mk:rom-run ends by invoking exactly
+    # `romlibs-verify ROMLIBS_DIR=$(ROM_RUN_DIR)` — so nothing checked was
+    # dropped, only the build step. Verified read-only: romlibs-verify writes to
+    # $(ROM_VERIFY_DIR) alone.
+    #
+    # MUTATION-PROVEN 2026-08-18 against this exact invocation, on a COPY of the
+    # tree: flipping ONE bit-cell instance in eth_rom_via.cdl (XCCCELL[0_41]
+    # CCS01 -> CCS11, one bit of one word of the PHYSICAL view) took the gate
+    # from "13 passed, 0 FAILURES, VERDICT: PASS" to "physical_consistency:
+    # VIEW/SILICON DIVERGENCE ... 3217 set bits vs 3216", VERDICT: FAIL, rc=2.
+    # The gate still discriminates; it was never the ROMs that were wrong.
+    #
+    # AND THE EVIDENCE SLOT NOW RECORDS WHAT IT GRADED. build/rom_verify is a
+    # single mutable slot shared by every invocation of this gate — an earlier
+    # run's JSONs were silently overwritten at 12:20 on 2026-08-18 — and nothing
+    # in it said which ROM tree produced it. run: now writes graded_tree.txt
+    # beside the JSONs and check: ASSERTS that it names the tree rom-vars
+    # reports, so a slot left behind by a different invocation is a FAILURE
+    # rather than a silent substitution. It is derived from rom-vars' own output
+    # rather than hard-coded, so it keeps working when the string above moves.
+    run: |
+      set -uo pipefail
+      ROMTREE="$PWD/ASIC/eth-chiplet/build/full-20260814/romlibs"
+      make -C ASIC -f common.mk --no-print-directory romlibs-verify \
+           ROMLIBS_DIR="$ROMTREE"
+      rc=${PIPESTATUS[0]}
+      # The stamp is written ONLY on a pass, and after the JSONs, so a failed or
+      # half-finished run cannot leave one that vouches for the slot.
+      if [ "$rc" -eq 0 ]; then
+        mkdir -p build/rom_verify
+        { echo "# what the ROM content gate last graded into this slot."
+          echo "# ASSERTED by ci/signoff.yaml's rom-content check: — not a note."
+          echo "graded_tree=$ROMTREE"
+          echo "graded_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "graded_commit=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+          for m in "$ROMTREE"/eth_rom/eth_rom_via.memlib \
+                   "$ROMTREE"/cc_rom/rom_via.memlib; do
+            echo "graded_macro=$(sha256sum "$m" 2>/dev/null || echo "MISSING $m")"
+          done
+        } > build/rom_verify/graded_tree.txt
+      fi
+      exit "$rc"
     # Re-read the evidence rather than trusting the stage's exit code. This is
     # the same doctrine as the drc/lec rows: an artefact that does not exist, does
     # not parse, names a different ROM, or reports zero words compared is a
@@ -568,14 +643,20 @@ stages:
     check: |
       python3 - <<'EOF'
       import json, os, subprocess, sys
+      # THE SAME TREE run: NAMES. Change both together, or this stage grades a
+      # directory its own run never touched.
+      ROMTREE = os.path.abspath("ASIC/eth-chiplet/build/full-20260814/romlibs")
       rows = subprocess.run(["make", "-C", "ASIC", "-f", "common.mk",
-                             "--no-print-directory", "rom-vars"],
+                             "--no-print-directory", "rom-vars",
+                             "ROMLIBS_DIR=" + ROMTREE],
                             capture_output=True, text=True).stdout.split()
       if not rows:
           print("cannot read the ROM table from ASIC/common.mk"); sys.exit(1)
       bad = 0
+      trees = set()
       for row in rows:
           name, label, romdir, code, memlib, inst, js, bits = row.split("|")
+          trees.add(os.path.dirname(romdir.rstrip("/")))
           problems = []
           if not os.path.exists(js):
               print(f"{label}: FAIL — no result at {js}, the gate did not run"); bad += 1; continue
@@ -593,8 +674,52 @@ stages:
               print(f"{label}: FAIL — " + "; ".join(problems) + f"  ({js})"); bad += 1
           else:
               print(f"{label}: PASS — {max(words)} words match {os.path.basename(code)}")
+      # THE SLOT MUST SAY WHICH TREE IT HOLDS EVIDENCE FOR. build/rom_verify is
+      # one mutable directory that every invocation of this gate overwrites; a
+      # JSON alone cannot distinguish "this run's evidence" from "somebody
+      # else's, left here". Derived from rom-vars, not hard-coded, so it follows
+      # the tree above rather than needing to be remembered separately.
+      stamp = "build/rom_verify/graded_tree.txt"
+      want = sorted(trees)
+      if not os.path.exists(stamp):
+          print(f"FAIL — no {stamp}: this evidence slot does not record which ROM "
+                f"tree produced it, so it cannot be told apart from a slot left "
+                f"behind by another invocation")
+          bad += 1
+      else:
+          got = [l.split("=", 1)[1].strip()
+                 for l in open(stamp, errors="replace").read().splitlines()
+                 if l.startswith("graded_tree=")]
+          if not got:
+              print(f"FAIL — {stamp} carries no 'graded_tree=' line"); bad += 1
+          elif sorted(set(got)) != want:
+              print(f"FAIL — {stamp} says the evidence in this slot was produced "
+                    f"from {got}, but this stage grades {want}. The slot holds "
+                    f"another run's results"); bad += 1
+          else:
+              macros = [l.split("=", 1)[1].strip()
+                        for l in open(stamp, errors="replace").read().splitlines()
+                        if l.startswith("graded_macro=")]
+              stray = [m for m in macros
+                       if not any(t in m for t in want) or m.startswith("MISSING")]
+              if not macros:
+                  print(f"FAIL — {stamp} names no macro; it vouches for a tree "
+                        f"without recording a single file out of it"); bad += 1
+              elif stray:
+                  print(f"FAIL — {stamp} records macro(s) outside the graded "
+                        f"tree, or missing: {stray}"); bad += 1
+              else:
+                  print(f"slot: PASS — evidence produced from {got[0]} "
+                        f"({len(macros)} macro(s) recorded)")
       sys.exit(1 if bad else 0)
       EOF
+    # ABSENT TREE => UNVERIFIED, not FAIL. The distinction matters here: a build
+    # that has been cleaned away indicts the RUN, and a ROM full of the wrong
+    # bits indicts the DESIGN, and this stage must never report the first as the
+    # second. Same string as run: and check: above, on purpose.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/full-20260814/romlibs/eth_rom/eth_rom_via.memlib
+      - ASIC/eth-chiplet/build/full-20260814/romlibs/cc_rom/rom_via.memlib
     check_proof:
       must_pass: ci/fixtures/rom-content/pass
       must_fail:
@@ -602,9 +727,17 @@ stages:
         - ci/fixtures/rom-content/fail-zero-words
         - ci/fixtures/rom-content/fail-no-result
         - ci/fixtures/rom-content/fail-wrong-rom
+        # The slot holds a real, PASSING result — for a DIFFERENT ROM tree. This
+        # is the shape build/rom_verify actually takes: one mutable directory,
+        # overwritten by whichever invocation ran last.
+        - ci/fixtures/rom-content/fail-other-tree
+        # A slot with no stamp at all: the state every run before 2026-08-18
+        # left behind, and indistinguishable from another run's evidence.
+        - ci/fixtures/rom-content/fail-no-stamp
     artifacts:
       - build/rom_verify/*.json
       - build/rom_verify/*.log
+      - build/rom_verify/graded_tree.txt
 
   - id: rom-gds
     phase: physical
@@ -810,56 +943,216 @@ stages:
     #     0 Not-compared point(s) reported
     # Those are what this now reads, and the fixtures are trimmed extracts of the
     # real transcripts rather than excerpts of what we believed they said.
+    #
+    # ── 2026-08-18: THIS GATE WAS GREEN OVER THE WRONG COMPARISON ──────────
+    #
+    # Until today the clause above was `re.search(...)` — the FIRST
+    # `Compare Results:` line in the transcript. Genus's generated dofile does
+    # not perform one comparison, it performs TWO, and the first is not the one
+    # this stage is named after:
+    #
+    #   compare #1  golden fv_map          revised <block>_gate.v   58,672 pts
+    #   `reset`
+    #   compare #2  golden RTL             revised fv_map           <- THE ONE
+    #
+    # (The structure is documented, and asserted, by the toolkit's own
+    # flow/verify/lec_syn_rewrite.tcl: "The dofile performs TWO comparisons …
+    # The appended epilogue reads the FINAL compare state, which is compare #2's".)
+    #
+    # MEASURED on the real transcript, 2026-08-18: compare #2 died on its 21st
+    # sub-compare and the file simply stops after
+    # `// Command: compare -noneq_stop 1  -threads 1,4`. There is ONE
+    # `Compare Results:` line in 815 KB of log and it is compare #1's, so the
+    # gate read PASS over 58,672 points — a population the `gate` and `pnr` legs
+    # report as 61,674, because it is a different comparison. There is, and has
+    # ever been, NO end-to-end RTL→netlist equivalence proof in this repository:
+    # `grep -rl 'LEC-VERDICT: tag=syn' --include=verdict.txt .` returns nothing,
+    # here or in any archived run.
+    #
+    # (The [UNRESOLVED] in docs/tapeout/45 — whether 58,672 meant the gate was
+    # grading the audit-mutant transcript instead — is settled and the answer is
+    # no. 58,672 is compare #1's own count, printed in lec_syn.log itself at
+    # `// 58672 compared points added to compare list`. The gate read the right
+    # FILE and the wrong HALF.)
+    #
+    # WHAT IT NOW READS, and why each clause is here rather than one of them:
+    #
+    #   1. EVERY `Compare Results:` line, and at least two of them. One verdict
+    #      means the run stopped before the RTL half. This is the clause that
+    #      catches today's transcript.
+    #   2. THE HARNESS'S OWN COMPUTED VERDICT, `LEC-VERDICT: RESULT=`, which
+    #      run_lec.sh's epilogue appends AFTER the final compare — i.e. after
+    #      the RTL one. Its absence *is* "the RTL comparison never finished".
+    #      Its `tag=` and `golden=` are asserted too, so another leg's
+    #      transcript (gate, pnr, an audit run) cannot satisfy this stage: a
+    #      complete, healthy, PASSING netlist-vs-netlist transcript must still
+    #      be refused here, and ci/fixtures/lec/fail-wrong-leg pins that.
+    #   3. The point census, from the verdict block AND from Conformal's own
+    #      `N <class> point(s) reported` lines, ALL occurrences — the syn leg is
+    #      hierarchical and prints one set per sub-compare.
+    #   4. reports/lec/syn/verdict.txt, the out-of-band artefact every finished
+    #      leg writes (gate and pnr both have theirs), required to exist and to
+    #      AGREE with the transcript — a stale verdict beside a fresh truncated
+    #      log is exactly the shape lec-pnr's note warns about.
+    #
+    # EXPECT THIS STAGE TO BE RED until a syn leg completes. That is the finding,
+    # not a regression introduced here, and it is the same honesty lec-selftest's
+    # note asks for. Do NOT restore the green by reading one verdict line again.
     check: |
       python3 - <<'EOF'
       import re, sys
-      L = "ASIC/eth-chiplet/build/full-20260814/logs/lec_syn.log"
-      try:
-          t = open(L, errors="replace").read()
-      except OSError:
-          print(f"lec: FAIL — no LEC log at {L}; did 'syn' run in this work area?")
+      B   = "ASIC/eth-chiplet/build/full-20260814"
+      LOG = B + "/logs/lec_syn.log"
+      VER = B + "/reports/lec/syn/verdict.txt"
+
+      def read(p):
+          try:
+              return open(p, errors="replace").read()
+          except OSError:
+              return None
+
+      t = read(LOG)
+      if t is None:
+          print(f"lec: FAIL — no LEC log at {LOG}; did 'syn' run in this work area?")
           sys.exit(1)
       if not t.strip():
-          print(f"lec: FAIL — {L} is empty; Conformal produced no transcript")
+          print(f"lec: FAIL — {LOG} is empty; Conformal produced no transcript")
           sys.exit(1)
+
       bad = []
-      m = re.search(r"^\s*\d*\.?\s*Compare Results:\s+(\S+)", t, re.M)
-      if not m:
+
+      # 1. EVERY verdict line, not the first. The generated dofile compares
+      #    fv_map vs <block>_gate.v FIRST and RTL vs fv_map SECOND.
+      verdicts = re.findall(r"^\s*\d*\.?\s*Compare Results:\s+(\S+)", t, re.M)
+      if not verdicts:
           bad.append("no 'Compare Results:' verdict line at all — the run did not "
                      "reach its own conclusion, which is NOT the same as equivalent")
-      elif m.group(1).upper() != "PASS":
-          bad.append(f"Conformal's verdict is {m.group(1)!r}, not PASS")
-      # The point census, read independently of the verdict line. A tool that
-      # reported PASS while non-equivalent or aborted points exist would still be
-      # caught here; the verdict line alone is one string from one tool version.
+      else:
+          notpass = sorted({v.upper() for v in verdicts if v.upper() != "PASS"})
+          if notpass:
+              bad.append(f"Conformal reported {', '.join(notpass)} — "
+                         f"{sum(1 for v in verdicts if v.upper() != 'PASS')} of "
+                         f"{len(verdicts)} comparison(s) in this transcript are "
+                         f"not PASS")
+          if len(verdicts) < 2:
+              bad.append(f"only {len(verdicts)} 'Compare Results:' verdict in the "
+                         "transcript. The generated dofile performs TWO comparisons "
+                         "— fv_map vs <block>_gate.v, then RTL vs fv_map — and the "
+                         "RTL one is SECOND. A single verdict is the netlist-to-"
+                         "netlist half alone: a different population, a different "
+                         "comparison, and no RTL→gate proof")
+
+      # 2. the harness's own computed verdict, appended AFTER the final compare.
+      def vfield(text, key):
+          m = re.search(rf"^LEC-VERDICT: {key}=(\S+)", text, re.M)
+          return m.group(1) if m else None
+
+      result = vfield(t, "RESULT")
+      if result is None:
+          bad.append("the transcript carries no LEC-VERDICT block. run_lec.sh "
+                     "appends its computed verdict after the FINAL compare — the "
+                     "RTL one — so its absence means the RTL comparison never "
+                     "rendered a verdict")
+      elif result.upper() != "PASS":
+          bad.append(f"the harness's computed verdict is RESULT={result}, not PASS")
+          for r in re.findall(r"^LEC-VERDICT: reason=(.+)$", t, re.M):
+              bad.append(f"  reason: {r.strip()}")
+
+      tag = vfield(t, "tag")
+      if tag is not None and tag != "syn":
+          bad.append(f"this transcript is the {tag!r} leg, not 'syn' — a complete "
+                     f"and passing transcript of a DIFFERENT comparison")
+      golden = vfield(t, "golden")
+      if result is not None and (golden is None or not golden.startswith("RTL")):
+          bad.append(f"the golden of the completed comparison is {golden!r}, not "
+                     f"RTL. This stage claims RTL vs SYNTHESISED netlist, and a "
+                     f"netlist-vs-netlist transcript does not prove it")
+
+      cp = re.search(r"^LEC-VERDICT: (compare_points=.*)$", t, re.M)
+      if result is not None and cp is None:
+          bad.append("no 'LEC-VERDICT: compare_points=' census line — the verdict "
+                     "block is truncated, so the population is unknown")
+      elif cp is not None:
+          n = dict(re.findall(r"(\w+)=(\d+)", cp.group(1)))
+          pts = int(n.get("compare_points", 0))
+          if pts == 0:
+              bad.append("0 compare points. A comparison over nothing agrees with "
+                         "itself perfectly; that is not equivalence")
+          if int(n.get("equivalent", -1)) != pts:
+              bad.append(f"{n.get('equivalent')} of {pts} points equivalent")
+          for k, what in (("nonequivalent", "points are NOT equivalent"),
+                          ("abort", "points ABORTED — not compared, so unknown"),
+                          ("notcompared", "points were NOT COMPARED")):
+              if int(n.get(k, 0)) != 0:
+                  bad.append(f"{n[k]} {what}")
+
+      # 3. Conformal's own census lines — ALL of them; the syn leg is
+      #    hierarchical and prints one set per sub-compare.
       for label, what in (("Non-equivalent", "points are NOT equivalent"),
                           ("Abort", "points ABORTED — not compared, so unknown"),
                           ("Not-compared", "points were NOT COMPARED")):
-          c = re.search(rf"^(\d+) {label} point\(s\) reported", t, re.M)
-          if c is None:
+          cs = re.findall(rf"^(\d+) {label} point\(s\) reported", t, re.M)
+          if not cs:
               bad.append(f"no '{label} point(s) reported' census line — cannot tell "
                          f"whether any were found")
-          elif int(c.group(1)) != 0:
-              bad.append(f"{c.group(1)} {what}")
+          else:
+              nz = [c for c in cs if int(c) != 0]
+              if nz:
+                  bad.append(f"{'+'.join(nz)} {what}")
+
+      # 4. the out-of-band verdict, which must exist AND agree.
+      v = read(VER)
+      if v is None:
+          bad.append(f"no {VER}. Every leg that finishes writes one — the gate and "
+                     f"pnr legs have theirs — so its absence is the run stopping "
+                     f"before its own verdict")
+      else:
+          vr = re.search(r"^LEC: RESULT=(\S+)", v, re.M)
+          if not vr:
+              bad.append(f"{VER} carries no 'LEC: RESULT=' line")
+          elif vr.group(1).upper() != "PASS":
+              bad.append(f"{VER} records RESULT={vr.group(1)}")
+          elif result is not None and result.upper() != vr.group(1).upper():
+              bad.append(f"verdict.txt says {vr.group(1)} while the transcript says "
+                         f"{result} — one of them is stale")
+          vt = vfield(v, "tag")
+          if vt is not None and vt != "syn":
+              bad.append(f"{VER} is the {vt!r} leg's verdict, not 'syn'")
+
       for b in bad:
           print("lec: FAIL —", b)
       sys.exit(1 if bad else 0)
       EOF
     check_proof:
+      # NO REAL PASSING syn TRANSCRIPT EXISTS TO DERIVE A FIXTURE FROM — that is
+      # the finding this stage now reports, so must_pass is necessarily a
+      # construction and says so in its own first lines. Its section grammar and
+      # its LEC-VERDICT block are copied verbatim from the real transcripts in
+      # build/full-20260814/logs/; only the point counts are small, exactly as in
+      # every other fixture in this directory.
       must_pass: ci/fixtures/lec/pass
       must_fail:
-        # Trimmed extract of the REAL non-equivalent transcript: FAIL:NONEQ plus
-        # '1 Non-equivalent point(s) reported'. Replaces fail-different-key-points,
-        # which asserted a string Conformal never prints.
+        # THE DEFECT OF RECORD, IN REAL BYTES: three verbatim slices of the
+        # 815 KB transcript that made this gate green — compare #1 passing,
+        # compare #2 starting and the file ending. The old check returned PASS on
+        # it. Nothing may make this case green.
+        - ci/fixtures/lec/fail-truncated-rtl-half
+        # A COMPLETE, HEALTHY, PASSING transcript of the WRONG comparison
+        # (tag=gate, golden a netlist). Pins the clause that a different
+        # population is a different proof, independently of truncation.
+        - ci/fixtures/lec/fail-wrong-leg
+        # The RTL comparison itself reporting FAIL:NONEQ, coherently: verdict
+        # line, census line and LEC-VERDICT counters all say one non-equivalent
+        # point. This is the direction the gate exists for.
         - ci/fixtures/lec/fail-nonequivalent
         # Verdict says PASS but the abort census is non-zero. SYNTHETIC BY DESIGN,
         # and labelled so: this shape was not observed, because Conformal reports
         # FAIL:ABORT when it aborts. It pins the census clause independently of
         # the verdict line, so a future version that reports PASS over aborted
-        # points cannot walk through. The only fixture here not taken from a log.
+        # points cannot walk through.
         - ci/fixtures/lec/fail-abort-points
-        # The case the vacuous `|Equivalent` clause used to let through: a real
-        # transcript with the summary table but no verdict line at all.
+        # The case the vacuous `|Equivalent` clause used to let through: the
+        # summary table with no verdict line at all.
         - ci/fixtures/lec/fail-no-verdict-line
         - ci/fixtures/lec/fail-empty-log
     artifacts:

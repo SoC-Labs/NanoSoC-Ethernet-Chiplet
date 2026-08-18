@@ -194,6 +194,43 @@ log, and is labelled as such in the manifest: it asserts PASS over a non-zero
 abort census, a shape Conformal does not currently produce, so that a future
 version which did could not walk through.
 
+### `lec/` re-derived AGAIN, 2026-08-18 — the family was proving the wrong half
+
+The re-derivation above fixed *what strings* the gate reads. It did not ask
+*which comparison* it was reading them from, and that turned out to be the
+larger hole.
+
+Genus's generated dofile performs **two** comparisons, not one — compare #1 is
+`fv_map` vs `<block>_gate.v`, then `reset`, then compare #2 is **RTL** vs
+`fv_map` — a structure the toolkit's own `flow/verify/lec_syn_rewrite.tcl`
+documents and refuses to run without. The gate `re.search`ed the **first**
+`Compare Results:` line, which is compare #1's, and every fixture in this family
+was a **single-comparison extract**, so the fixtures agreed with the check about
+a shape neither of them was measuring. On the real 815 KB transcript that meant
+`PASS` at **58,672** compare points where the `gate` and `pnr` legs report
+**61,674**: a different population, and no RTL→netlist proof at all.
+
+Two things follow for anyone re-deriving this family again:
+
+* **No real *passing* `syn` transcript exists to derive `lec/pass` from.**
+  `grep -rl 'LEC-VERDICT: tag=syn' --include=verdict.txt .` returns nothing in
+  this repository or in any archived run — the leg has never completed anywhere.
+  `lec/pass` is therefore a construction and says so in its own first lines; its
+  section grammar and its `LEC-VERDICT` block are copied verbatim from the real
+  `logs/lec_syn.log` (compare #1) and `logs/lec_gate.log` (the appended verdict
+  block), and only the point counts are small. Inventing large counts would make
+  a construction look like a measurement.
+* **`lec/fail-truncated-rtl-half` is real bytes** — three verbatim slices of the
+  transcript that made the gate green, joined by the `...` elisions this
+  directory already uses. It is the defect of record and nothing may make it
+  green. `lec/fail-wrong-leg` is its complement: a complete, healthy, *passing*
+  transcript of the **wrong** comparison, which must still be refused.
+
+The paragraph further down that calls `lec/` "the weak one" and asks for
+re-derivation from "the first real `logs/lec.log`" is **superseded**: the
+bare-presence greps it worries about were removed on 2026-08-17, and the real
+transcript it asks for arrived and is what produced this section.
+
 One more, recorded because it wasted an hour and will waste someone else's:
 `verif/elab_strict/build/xrun_hal.log` and `verif/g2_soc_pair/results.xml` are
 **rewritten by concurrent runs**. Two measurements of "the same" file minutes

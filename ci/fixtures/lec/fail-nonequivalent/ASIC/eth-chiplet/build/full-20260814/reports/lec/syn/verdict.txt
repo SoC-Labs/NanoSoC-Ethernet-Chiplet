@@ -12,3 +12,5 @@ LEC-VERDICT: tool_exit_code=16 flags=non-equivalent
 LEC-VERDICT: reason=1 non-equivalent point(s)
 LEC-VERDICT: reason=tool non-equivalent flag set (exit code 16)
 LEC-VERDICT: RESULT=FAIL
+LEC: process_exit_status=16
+LEC: RESULT=FAIL
