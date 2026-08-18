@@ -413,6 +413,115 @@ module nanosoc_eth_chiplet #(
     wire        hreadyout_tx, hreadyout_fifo, hreadyout_ptp, hreadyout_tlapb, hreadyout_tcapb, hreadyout_peer;
     wire        hresp_tx,     hresp_fifo,     hresp_ptp,     hresp_tlapb,     hresp_tcapb,     hresp_peer;
 
+    // =========================================================================
+    // BURST-FIX GUARD (2026-08-18, David Mapstone) — bufferable/EWR peer-write
+    // FAIL-LOUD. PROTO copy, NOT the shared RTL. See BURST_FIX_GUARD.md.
+    //
+    // The depth-1 hold above is VALIDATED only for the non-bufferable (hprot[2]=0)
+    // peer-write path (BURST_FIX_HARDENING.md, 5/5). A BUFFERABLE (hprot[2]=1)
+    // peer-write reaches XHB500's EWR path (up to HAZARD_LIST_SIZE=4 posted writes,
+    // early-synthesised B); its depth>1 behaviour through this single-deep hold is
+    // UNTESTED, so a bufferable peer-write burst could SILENTLY reproduce the
+    // corruption class. hprot is master-driven passthrough end-to-end, so the path
+    // is architecturally REACHABLE. This guard makes it FAIL LOUD, LAYERED (owner
+    // tidelink-63 call, 2026-08-18):
+    //
+    //   (iii) MANDATORY CORE — return a 2-cycle AHB HRESP=ERROR to the master for
+    //         ANY bufferable peer-write (single OR burst). The write VISIBLY FAILS;
+    //         software cannot mistake an unvalidated write for a landed OKAY.
+    //         "we don't know this landed" beats a false OKAY on a path whose data
+    //         integrity was never established.
+    //   (ii)  a synthesizable STICKY obs flag (mark_debug), latched on the same
+    //         condition and held to reset — post-hoc silicon/ILA visibility
+    //         (N1/TL-037 pattern: protocol-correct response + observable state).
+    //   (i)   a SIM assertion ($error, `ifndef SYNTHESIS) — catches it in verif.
+    //
+    // OWNER CONSTRAINTS honoured:
+    //   1. TIMING — the reject is DECIDED at the ADDRESS phase on hprot[2]
+    //      (ewr_peer_wr_aphase), BEFORE any data enters the depth-1 hold; the
+    //      2-cycle ERROR is presented in the immediately-following data phase.
+    //   2. SCOPE — BLANKET: every hprot[2]=1 peer-write is rejected (single OR
+    //      burst). No depth-2+ collision cleverness on an already-untested path.
+    //
+    // MECHANISM — a TOP-LEVEL, non-invasive interpose on the peer response wires
+    // BETWEEN u_tidelink (drives *_tl below) and u_d2d_decode (consumes the muxed
+    // hresp_peer / hreadyout_peer). It MIRRORS the 2-cycle ERROR the shared
+    // chiplet_d2d_decode already raises for an unmapped default (its dflt_err2
+    // sequencer, chiplet_d2d_decode.sv:197-206), but implemented HERE so neither
+    // shared file is touched. Read data is passed through unchanged (a write
+    // ignores hrdata).
+    //
+    // DORMANT for hprot[2]=0: ewr_reject_active is 0 for every non-bufferable
+    // transfer, so the decoder sees tidelink's native response verbatim and the
+    // validated path is byte-for-byte unaffected.
+    //
+    // RESIDUAL (honest): the ERROR is returned to the MASTER; it does not un-post
+    // whatever TideLink's ahb_sub may already have forwarded to the far die (the
+    // hready_to_peer loop-break completes ahb_sub's transfer independently). The
+    // guarantee is "the master is TOLD the write failed and must not trust it",
+    // per the owner rationale — not "no data physically crossed". The even-louder
+    // variant that ALSO gates hsel_peer into u_tidelink (so nothing is posted) is
+    // documented in BURST_FIX_GUARD.md but deliberately NOT implemented (scope 2).
+    // =========================================================================
+    // tidelink ahb_sub native response (renamed); the guard overrides it.
+    wire [31:0] hrdata_peer_tl;
+    wire        hreadyout_peer_tl;
+    wire        hresp_peer_tl;
+
+    // Address-phase detect: a bufferable peer WRITE is accepted THIS cycle.
+    // hsel_peer already implies htrans[1] (a real transfer); qualify with the
+    // data-phase accept (d2d_ahb_m_hready), write-ness, and the bufferable bit.
+    wire ewr_peer_wr_aphase = hsel_peer & d2d_ahb_m_hready
+                            & d2d_ahb_m_hwrite & d2d_ahb_m_hprot[2];
+
+    reg  ewr_reject_dph_r;   // the outstanding peer data phase must be ERROR-rejected
+    reg  ewr_err2_r;         // 0 = ERROR cycle 1 (hready low); 1 = ERROR cycle 2 (hready high)
+    (* mark_debug = "true" *) reg ewr_seen_sticky_r;  // (ii) sticky obs — set on detect, held to reset
+
+    always @(posedge sys_hclk or negedge sys_hresetn) begin
+        if (!sys_hresetn) begin
+            ewr_reject_dph_r  <= 1'b0;
+            ewr_err2_r        <= 1'b0;
+            ewr_seen_sticky_r <= 1'b0;
+        end else begin
+            // (ii) sticky obs flag — set on the address-phase detect; cleared only
+            // by reset. Observed-only, so non-behaviour-changing.
+            if (ewr_peer_wr_aphase)
+                ewr_seen_sticky_r <= 1'b1;
+
+            // (iii) 2-cycle ERROR sequencer. Enter the reject data phase on the
+            // address-accept (the earliest point); a fresh detect always re-arms.
+            if (ewr_peer_wr_aphase) begin
+                ewr_reject_dph_r <= 1'b1;
+                ewr_err2_r       <= 1'b0;   // first data-phase cycle is err1 (hready low)
+            end else if (ewr_reject_dph_r) begin
+                if (!ewr_err2_r)
+                    ewr_err2_r       <= 1'b1;  // err1 -> err2
+                else begin
+                    ewr_reject_dph_r <= 1'b0;  // err2 done -> release
+                    ewr_err2_r       <= 1'b0;
+                end
+            end
+        end
+    end
+
+    // Present the 2-cycle ERROR on the peer response wires INTO u_d2d_decode while a
+    // bufferable-peer-write reject is in flight; otherwise pass tidelink through.
+    wire ewr_reject_active = ewr_reject_dph_r;
+    assign hrdata_peer    = hrdata_peer_tl;                                   // writes ignore hrdata
+    assign hreadyout_peer = ewr_reject_active ? ewr_err2_r : hreadyout_peer_tl;
+    assign hresp_peer     = ewr_reject_active ? 1'b1       : hresp_peer_tl;
+
+`ifndef SYNTHESIS
+    // (i) SIM assertion — a bufferable peer-write must never reach the validated
+    // path; fire the cycle one is accepted at the address phase.
+    always @(posedge sys_hclk) begin
+        if (sys_hresetn === 1'b1 && ewr_peer_wr_aphase === 1'b1)
+            $error("[BURST_FIX_GUARD] BUFFERABLE/EWR peer-write REJECTED: hprot=0x%0h haddr=0x%08h @ %0t -- hprot[2]=1 path is UNVALIDATED through the depth-1 hold; returning 2-cycle HRESP=ERROR to the master.",
+                   d2d_ahb_m_hprot, d2d_ahb_m_haddr, $time);
+    end
+`endif
+
     // --- D2D inbound: TideLink ahb_mng -> SoC d2d_ahb_s ---
     wire [31:0] d2d_ahb_s_haddr;
     wire  [2:0] d2d_ahb_s_hburst;
@@ -931,9 +1040,12 @@ module nanosoc_eth_chiplet #(
         .ahb_sub_hwdata     (d2d_ahb_m_hwdata_q),   // delayed 1 cyc — see above
         .ahb_sub_hwrite     (d2d_ahb_m_hwrite),
         .ahb_sub_hready     (hready_to_peer),   // NOT d2d_ahb_m_hready — comb loop
-        .ahb_sub_hrdata     (hrdata_peer),
-        .ahb_sub_hresp      (hresp_peer),
-        .ahb_sub_hreadyout  (hreadyout_peer),
+        // BURST-FIX GUARD: tidelink's native peer response feeds the guard mux
+        // (*_tl); the guard drives the decoder-facing hrdata_peer/hreadyout_peer/
+        // hresp_peer (2-cycle HRESP=ERROR for a bufferable peer-write, else pass).
+        .ahb_sub_hrdata     (hrdata_peer_tl),
+        .ahb_sub_hresp      (hresp_peer_tl),
+        .ahb_sub_hreadyout  (hreadyout_peer_tl),
         // BURST-FIX PORT (proto): per-beat W-consumption strobe replacing the XMR.
         .ahb_sub_w_beat_consumed_o (w_beat_consumed),
         // ahb_tx — TX aperture (0x2E00). RAM_ADDR_W haddr[13:0]; no hburst/hprot.
