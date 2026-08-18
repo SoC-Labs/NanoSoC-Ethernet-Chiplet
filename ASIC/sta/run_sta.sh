@@ -29,13 +29,25 @@ if [ -z "$TEMPUS" ] || [ ! -x "$TEMPUS" ]; then
     exit 1
 fi
 
-# Quantus MUST be on PATH or extraction dies with a message that names no tool:
+# Quantus must be on PATH: Tempus shells out to `qrc` and does not resolve it
+# from its own install.
+#
+# BUT DO NOT READ IMPEXT-5016 AS A MISSING BINARY. Corrected 2026-08-18.
 #
 #   ERROR (IMPEXT-5016): Command qrc failed with error message:
 #                        failed to run: No such file or directory
 #
-# Tempus shells out to `qrc`; it does not ship it and does not resolve it from
-# its own install. QUANTUS_21.11.000 is version-matched to this Tempus and to
+# That is Tempus's OUTER report of a non-zero exit from qrc. It says nothing
+# about why. On 2026-08-18 it was raised while qrc was present and executable
+# and had RUN: the real failure was EXTSNZ-127, five layer names qrc could not
+# resolve because no LEF->tech layer map had been supplied (`Layer mappings were
+# not specified`, and the five were only the ones that got far enough to be
+# required -- the warning list is capped at 10). Chasing the install cost hours.
+# FIXED by ASIC/sta/qrc_layer_map.ccl, wired as extract_rc_lef_tech_file_map in
+# run_signoff_sta.tcl. Extraction now completes: newest qrc log reports
+# EXTSNZ-127 = 0 over 206,824 nets, and a SPEF lands.
+#
+# The version pinning below is still right and still load-bearing. QUANTUS_21.11.000 is version-matched to this Tempus and to
 # the Innovus that built the DB. Older EXT_15/17/18 installs also carry a
 # `qrc` and would be picked up by a stale PATH — do not let them, a
 # mismatched extractor against a 21.11 database is a silent-wrong-answer risk.

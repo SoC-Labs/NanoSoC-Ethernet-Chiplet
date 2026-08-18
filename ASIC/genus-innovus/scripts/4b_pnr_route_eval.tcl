@@ -734,14 +734,35 @@ if {$EVR_HOLD_SANITY} {
 # --- 3c. What effort will the signoff extraction run at? -----------------------
 # 17-silent-noops #4, IMPEXT-3518. design_process_node is 65, which puts Innovus
 # into lower-node mode, but the three create_rc_corner blocks in the .mmmc
-# supply only -cap_table and no -qrc_tech_file. Innovus therefore silently
-# downgrades post-route extraction to effort level `low` and says so once, in a
-# warning nobody reads. Every parasitic, every post-route delay and the SDF this
-# stage writes carry that. It is NOT fixable by editing a script: there is no
-# Quantus/QRC technology file installed anywhere on this site - not under
-# /tsmc65pdk, not in the ARM tech tree the cap tables come from. It belongs on
-# the collateral request. Reported here so the number is attached to the run
-# that produced it rather than discovered later.
+# once supplied only -cap_table. Innovus then silently downgrades post-route
+# extraction to effort level `low` and says so once, in a warning nobody reads.
+# Every parasitic, every post-route delay and the SDF this stage writes carry
+# that, which is why the effort level is read back and reported below.
+#
+# TWO CLAIMS THAT USED TO STAND HERE WERE FALSE. Corrected 2026-08-18.
+#   (1) "the .mmmc supplies no -qrc_tech_file" -- it does. See
+#       scripts/nanosoc_eth_chiplet_pads.mmmc:103 (set qrc_tech_file) and :114
+#       and :125, which pass -qrc_tech on the RC corners.
+#   (2) "there is no Quantus/QRC technology file installed anywhere on this
+#       site" -- there is, and :103 names it, under the PDK root this project
+#       already reads its cap tables from. It is stack-correct for this design
+#       (9M_6X1Z1U). Wired 2026-08-09; this comment was never updated, and it
+#       sent a reader to file a collateral request for a file already on disk.
+#       Read the resolved location off :103 on your own install rather than
+#       from here -- this repository is public.
+# The deck was simply never EXERCISED, because P&R extracts via cap tables and
+# never invokes qrc -- signoff STA on 2026-08-18 was its first consumer and its
+# first failure (EXTSNZ-127, a missing layer map, since fixed; that run now
+# reports 0 errors over 206,824 nets).
+#
+# STILL TRUE AND STILL OPEN, do not conflate it with the above: the cap tables
+# are 1p9m_6x2z against a real 6X1Z1U stack, so M9 is modelled far too thin.
+# THAT belongs on the collateral request. The corner-specific QRC packs under
+# CMOS/util are NOT the fix -- they are 6X2Y, a different stack again, and using
+# them would make extraction worse while looking like a repair.
+#
+# Re-measure rather than trusting this block: the effort level is read back
+# immediately below, and that is the number to quote.
 if {[try_step "read extraction effort" {
         say "extract_rc_effort_level = [get_db extract_rc_effort_level]"
     }]} {
