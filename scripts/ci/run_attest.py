@@ -203,7 +203,7 @@ def g_design_report(run_dir):
     un = len(d.get("unmeasured", []))
     if un:
         return NM, "%d of %d metrics unmeasured" % (un, n), S_NA
-    return PASS, "%d/%d metrics measured, each with file:line provenance" % (n, n), S_NA
+    return PASS, "%d/%d metrics measured, each with file:line provenance" % (n, n), S_NA, None, str(f)
 
 
 def g_setup_timing(run_dir):
@@ -272,7 +272,7 @@ def g_pg_shorts(run_dir):
     if shorts:
         return FAIL, ("%d rail-to-rail VDD-VSS SHORT record(s) on special "
                       "wiring, at lines %s"
-                      % (len(shorts), ", ".join(str(x) for x in shorts[:8]))), S_SIGNOFF
+                      % (len(shorts), ", ".join(str(x) for x in shorts[:8]))), S_SIGNOFF, None, str(f)
     return PASS, "no VDD-VSS SHORT records in check_drc", S_SIGNOFF
 
 
@@ -306,51 +306,71 @@ def g_lec_chain(run_dir):
 
 
 def g_rom_content(run_dir):
-    """TWO QUESTIONS WEAR ONE NAME HERE, AND ONLY ONE OF THEM IS ANSWERED.
+    """TWO EVIDENCE PATHS WITH DIFFERENT PROVENANCE, AND ONLY ONE IS TRUSTWORTHY.
 
-    `romlibs/verify/*.json` records a PASS for ROM contents against firmware -
-    the .bintxt compared to the compiled ROM. That is real and it is this run's.
+    reports/rom/rom_gds_verdict.json is the evidence-by-construction path: it
+    records stream.path, stream.sha256 and stream.size for the GDS the bits were
+    actually extracted from, so the claim can be CHECKED rather than believed.
 
-    `romlibs/verify/*_gds.log` records which GDS the bits were extracted FROM,
-    and on full-20260814 that is
-    `ASIC/genus-innovus/runs/20260807T171905Z_eval-pnr-resume/outputs/...` - an
-    08-07 snapshot from the LEGACY engine, not this build's stream. So the
-    firmware comparison is measured and the in-stream check is measured against
-    somebody else's file.
+    romlibs/verify/*_gds.log is the older path, and on every run measured so far
+    it names
+    ASIC/genus-innovus/runs/20260807T171905Z_eval-pnr-resume/outputs/...gds -
+    an 08-07 LEGACY-engine file, 312,298,556 B, which is not the stream of the
+    run it sits inside. fp1505's own stream is 312,343,330 B and
+    full-20260814's is 313,424,880 B: three different files.
 
-    Evidence lives under romlibs/verify/, NOT reports/rom - an earlier version
-    of this probe looked in reports/rom, found nothing and said NOT MEASURED
-    about a check that had in fact run.
+    So: prefer reports/rom and verify its stream path lies inside THIS run. Fall
+    back to romlibs/verify only while printing where it actually looked, because
+    that is the path that lied.
     """
+    v = run_dir / "reports" / "rom" / "rom_gds_verdict.json"
+    if v.is_file():
+        try:
+            d = json.loads(v.read_text())
+        except Exception as e:                                # noqa: BLE001
+            return NM, "reports/rom verdict json unreadable: %s" % e, S_SIGNOFF
+        stream = (d.get("stream") or {})
+        path = stream.get("path") or "?"
+        verdict = (d.get("verdict") or "").lower()
+        own = str(run_dir) in path
+        read = "%s (sha256 %s)" % (path, (stream.get("sha256") or "?")[:12])
+        if not own:
+            return NM, ("reports/rom grades a stream OUTSIDE this run: %s" % path),                    S_SIGNOFF, None, read
+        if verdict == "pass":
+            # No size here: the top-level verdict json carries class/path/
+            # sha256/ships, and the size lives in the per-ROM manifest.
+            # Printing "? bytes" would be a fabricated unknown sitting next
+            # to a real hash, which is the shape of a number people trust.
+            return (PASS, "ROM bits match firmware in THIS run's own stream (%s)"
+                    % pathlib.Path(path).name, S_SIGNOFF, None, read)
+        return FAIL, "reports/rom verdict is %r" % (d.get("verdict")), S_SIGNOFF, None, read
+
     d = run_dir / "romlibs" / "verify"
     if not d.is_dir():
-        return NM, "no romlibs/verify evidence - ROM bits were not compared", S_SIGNOFF
+        return NM, "no ROM evidence in this run", S_SIGNOFF
     verdicts = {}
     for j in sorted(d.glob("*.json")):
         try:
             verdicts[j.stem] = json.loads(j.read_text()).get("verdict")
         except Exception:                                     # noqa: BLE001
             verdicts[j.stem] = None
-    if not verdicts:
-        return NM, "romlibs/verify holds no verdict json", S_SIGNOFF
-    bad = [k for k, v in verdicts.items() if v != "PASS"]
-    # Which stream were the GDS bits taken from?
-    foreign = []
+    srcs = set()
     for g in sorted(d.glob("*_gds.log")):
         txt = g.read_text(errors="replace")
-        if str(run_dir) not in txt:
-            src = txt.strip().split(" in ")[-1].strip() or "?"
-            foreign.append("%s <- %s" % (g.stem.replace("_gds", ""), src))
+        srcs.add(txt.strip().split(" in ")[-1].strip() or "?")
+    foreign = [x for x in srcs if str(run_dir) not in x]
+    bad = [k for k, val in verdicts.items() if val != "PASS"]
+    read = "; ".join(sorted(srcs)) or "?"
     if bad:
-        return FAIL, "ROM verdict not PASS for: %s" % ", ".join(bad), S_SIGNOFF
+        return FAIL, "ROM verdict not PASS for: %s" % ", ".join(bad), S_SIGNOFF, None, read
     if foreign:
-        return NM, ("ROM-vs-firmware PASSES for %s, but the GDS bit extraction "
-                    "was run against a stream that is NOT this build: %s. The "
+        return NM, ("ROM-vs-firmware PASSES for %s, but there is no "
+                    "reports/rom evidence and the older romlibs/verify path "
+                    "extracted its bits from a stream that is NOT this run. The "
                     "firmware comparison is measured; the in-stream check is "
                     "measured against another file"
-                    % (", ".join(sorted(verdicts)), "; ".join(foreign))), S_SIGNOFF
-    return PASS, ("ROM bits match firmware and were extracted from this "
-                  "build's stream (%s)" % ", ".join(sorted(verdicts))), S_SIGNOFF
+                    % ", ".join(sorted(verdicts))), S_SIGNOFF, None, read
+    return PASS, ("ROM bits match firmware (%s)" % ", ".join(sorted(verdicts))),            S_SIGNOFF, None, read
 
 
 def g_lvs(run_dir):
@@ -480,11 +500,11 @@ def g_foundry_result(run_dir):
     if not doc.is_file():
         return NM, "no IMEC cross-check on record", S_SUBMIT
     return NM, ("an IMEC signoff report exists (782 checks reading zero) but it "
-                "grades nanosoc_eth_chiplet_pads_logo_full_L300.gds, md5 "
-                "7f62149655..., a logo-merged snapshot from the LEGACY "
-                "genus-innovus engine dated 2026-08-11. Different lineage, "
-                "different stream, older date - it is not a verdict on this "
-                "build. See docs/tapeout/48"), S_SUBMIT
+                "grades a logo-merged L300 snapshot from the LEGACY genus-innovus "
+                "engine dated 2026-08-11. Different lineage, different stream, "
+                "older date - it is not a verdict on this build. See "
+                "docs/tapeout/48"), S_SUBMIT, None, \
+           "nanosoc_eth_chiplet_pads_logo_full_L300.gds (md5 7f6214965501c911bd65069378ae911d, 2026-08-11)"
 
 
 LADDER = [
@@ -511,15 +531,16 @@ def run_ladder(run_dir, skip=()):
             rows.append({"gate": name, "status": NM,
                          "detail": "skipped by --skip", "stream": S_NA})
             continue
-        caveat = None
+        caveat = read = None
         try:
             r = fn(run_dir)
             st, detail, stream = r[0], r[1], r[2]
             caveat = r[3] if len(r) > 3 else None
+            read = r[4] if len(r) > 4 else None
         except Exception as e:                                # noqa: BLE001
             st, detail, stream = NM, "probe raised %s: %s" % (type(e).__name__, e), S_NA
         rows.append({"gate": name, "status": st, "detail": detail,
-                     "stream": stream, "caveat": caveat})
+                     "stream": stream, "caveat": caveat, "read": read})
     return rows
 
 
@@ -618,6 +639,9 @@ def render_md(doc):
         L.append("  %s %-26s %s" % (tag, r["gate"], r["stream"]))
         for line in _wrap(r["detail"], 64):
             L.append("           %s" % line)
+        if r.get("read"):
+            for i, line in enumerate(_wrap(str(r["read"]), 58)):
+                L.append("           %s %s" % ("read:" if i == 0 else "     ", line))
         if r.get("caveat"):
             for i, line in enumerate(_wrap(r["caveat"], 60)):
                 L.append("           %s %s" % ("QUALIFIED:" if i == 0 else "          ", line))
@@ -628,6 +652,13 @@ def render_md(doc):
     if n_qual:
         L.append("QUALIFIED means the check passed a NARROWER question than its")
         L.append("name suggests. The qualifier is part of the result.")
+    L.append("")
+    L.append("READ: is the artefact each verdict was actually computed from, and it")
+    L.append("is a column rather than a footnote because this project has now hit")
+    L.append("the same class three times - a green result pointing at the wrong")
+    L.append("file: LVS against an 08-10 artefact, IMEC against an 08-11 snapshot,")
+    L.append("ROM bits against an 08-07 legacy stream. Each check was sound; each")
+    L.append("input was foreign. Read the path before quoting the verdict.")
     return "\n".join(L)
 
 
