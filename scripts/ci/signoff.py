@@ -746,7 +746,23 @@ def cmd_prove(args):
         if want and sid not in want:
             continue
         if not s.get("check"):
-            continue                   # nothing to prove: the tool's rc is the gate
+            # No check: means the verdict IS the runner's exit code. That is a
+            # per-stage ASSERTION, not a general truth: it holds for
+            # lvs-preflight (measured rc=2 on rejection) and fails for anything
+            # driving Calibre, which exits 0 whether or not it found violations
+            # -- the exact reason the drc stage counts results in its own check.
+            #
+            # Skipping it in a full sweep is fine. Skipping it when the CALLER
+            # NAMED IT is not: `prove erc padring-gds` reported "0 case(s),
+            # 0 problem(s)", which reads as proof and is the absence of any.
+            # Asking to prove a stage that cannot be proved is a finding.
+            if want:
+                results.append((sid, "check_proof", "NO-CHECK",
+                                "stage has no check:, so its verdict is the runner's "
+                                "exit code alone -- nothing here can be proved, and a "
+                                "Calibre runner exits 0 even when it finds violations"))
+                bad += 1
+            continue
 
         proof = s.get("check_proof")
         if not proof:
