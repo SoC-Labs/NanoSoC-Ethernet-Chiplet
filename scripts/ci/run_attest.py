@@ -307,6 +307,40 @@ def _lec_inputs(leg_dir):
     return fields, inputs
 
 
+def _phase1_pass_in_log(run_dir, leg):
+    """Is there a full-scale PASS in the tool log that does NOT cover the RTL?
+
+    THE TRAP THIS EXISTS TO NAME. lec_syn_tool.log runs a two-phase compare:
+
+        phase 1   fv_map.v.gz -> gate.v    (Genus's own map against the netlist)
+        phase 2   RTL         -> fv_map    (the leg this project has never closed)
+
+    Phase 1 prints "6. Compare Results: PASS" with ~58,000 EQ points at about
+    line 410 - BEFORE the first RTL .sv file is read, at about line 680.
+    Measured on both full-20260814 and gate1r. So `grep "Compare Results"`
+    returns a genuine, full-scale PASS that says nothing whatever about whether
+    the netlist implements the RTL.
+
+    It is not an early fragment and it is not a stale session, which is what
+    makes it dangerous: every heuristic for picking "the real block" - first
+    match, last match, biggest point count - selects it.
+    """
+    log = run_dir / "logs" / ("lec_%s_tool.log" % leg)
+    if not log.is_file():
+        return None
+    pass_line = rtl_line = None
+    for i, line in enumerate(log.read_text(errors="replace").splitlines(), 1):
+        if pass_line is None and "Compare Results" in line and "PASS" in line:
+            pass_line = i
+        if rtl_line is None and "-golden" in line and ".sv" in line and "read_design" in line:
+            rtl_line = i
+        if pass_line and rtl_line:
+            break
+    if pass_line and rtl_line and pass_line < rtl_line:
+        return (pass_line, rtl_line)
+    return None
+
+
 def g_lec_chain(run_dir):
     """THE CHAIN IS A CHAIN, and a chain with a hole proves nothing end to end.
 
@@ -414,15 +448,32 @@ def g_lec_chain(run_dir):
                              "non-equivalence may be recorded here - read them."
                              % (len(real), ", ".join(real[:2])))
                 else:
-                    extra = (" It left %d noneq.* file(s), but all are EMPTY "
-                             "(\"0 compared points written\" / \"No result\") - "
-                             "the report step firing over an empty result, NOT "
-                             "evidence of non-equivalence. This is an attempt "
-                             "that began and did not finish." % len(empties))
+                    # THESE FILES ARE NAMED FOR THE PHASE-1 PAIR
+                    # (<design>.fv_map.<design>_gatev) and are the NORMAL output
+                    # of a phase-1 compare that found zero non-equivalences: the
+                    # report step writing an empty result. They are evidence
+                    # phase 1 COMPLETED, not evidence that anything failed.
+                    # Measured on gate1r: emitted 9 minutes into the run, while
+                    # phase 2 was still going. Reading them as distress - which
+                    # an earlier version of this text did - infers a failure
+                    # from a filename twice over.
+                    extra = (" It left %d EMPTY noneq.* file(s) named for the "
+                             "PHASE-1 pair - the normal output of a phase-1 "
+                             "compare with zero non-equivalences, so they show "
+                             "phase 1 finished and say nothing about the RTL "
+                             "phase." % len(empties))
+            trap = _phase1_pass_in_log(run_dir, "syn")
+            warn = ""
+            if trap:
+                warn = (" CAUTION: logs/lec_syn_tool.log contains a full-scale "
+                        "'Compare Results: PASS' at line %d, but the first RTL "
+                        "file is not read until line %d - that PASS is phase 1, "
+                        "fv_map vs gate.v, and does NOT cover the RTL. Do not "
+                        "read it as this leg passing." % trap)
             return (NM, "the RTL->gate.v leg has inputs pinned and NO verdict "
-                    "file.%s Legs with verdicts: %s. Until a verdict lands "
+                    "file.%s%s Legs with verdicts: %s. Until a verdict lands "
                     "nothing proves the netlist implements the RTL"
-                    % (extra, ", ".join(have) or "none"), S_NETLIST, None, read)
+                    % (extra, warn, ", ".join(have) or "none"), S_NETLIST, None, read)
         return (NM, "no RTL->gate.v leg anywhere: legs present = %s. Nothing "
                 "proves the netlist implements the RTL, so the chain is OPEN at "
                 "the RTL end" % (", ".join(have) or "none"), S_NETLIST, None, read)
