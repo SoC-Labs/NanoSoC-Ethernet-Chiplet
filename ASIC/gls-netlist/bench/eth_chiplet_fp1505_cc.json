@@ -184,5 +184,14 @@
     "RMII_MDIO",
     "I2C_SCL",
     "I2C_SDA"
+  ],
+  "forces": [
+    {
+      "name": "cpu0_bootgate",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.chip_core_remap_ctrl_w[2]",
+      "value": "1'b1",
+      "after_reset_cycles": 100,
+      "reason": "CPU0_BOOTGATE. chip_core_remap_ctrl[2] holds CPU0/eth in reset until CPU1 writes 0x4 to it, which its stage-0 bootrom only does after a QSPI XiP bring-up. This bench models no flash device, so CPU1 never reaches that write and CPU0 never fetches at all (eth_rom_port.accessed=0). Forcing the bootgate proves CPU0'S ROM FETCH PATH ONLY - that the eth_rom macro is reachable, addressed and returns its firmware to a running core. It does NOT prove the CPU1->CPU0 handshake, and a pass here must never be quoted as one. Net verified present in the fp1505 netlist: wire [3:0] chip_core_remap_ctrl_w, driven by flop u_chip_core_remap_0_remap_q_reg[2]."
+    }
   ]
 }
