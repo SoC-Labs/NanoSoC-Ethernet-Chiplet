@@ -415,3 +415,53 @@ describe a commit that adds twelve symlinks.
 
 No Innovus licence is needed: every claim above is filesystem path resolution plus Tcl `source`
 semantics, both reproducible with `tclsh`.
+
+## The branch was repaired: `fix/migration-rebased` @ `43c360e` (2026-08-18)
+
+The content/provenance problem above is fixed. `72febb7` was 108 commits behind and silently
+dropping `15b0501` and `2dca8ae`; rebasing its two commits onto `8ad9f3b` replays the `git mv`
+against HEAD's files, so both fixes carry into the new paths. The four constraint SDCs auto-merged.
+
+**Do not re-derive this by hand.** The branch ref is durable in the repository; the sessions that
+produced and reviewed it are not.
+
+### Three conflicts, and why they were resolved the way they were
+
+- **`hooks/post_synth.tcl` (add/add).** HEAD created this file as the link-clock-divider survival
+  check; the branch created it as the 206-line CPF repair lifted out of `cpf-patch`. Two unrelated
+  jobs. An add/add conflict presents them as alternatives, so taking either side whole silently
+  deletes a real protection. **Both are kept**, with an in-file comment saying so.
+
+- **`scripts/config.tcl`.** HEAD added the PDK-path resolver (`site_env` / `pdk_path`) — the fix that
+  stops this public repository naming a licensed deck release. The branch added the data-moved notice
+  and an absolute `hdl_file_list`. **All three kept**; 492 lines against 437 and 355, brace-balanced.
+
+- **`eth-chiplet/design.mk` — two hunks, HEAD taken on both, and both were judgement calls.**
+  - `DRC_SCRIPT`: the branch unsets it, arguing `drc-project` hands `run_drc.sh` an incomplete
+    environment. Tested at toolkit `531c4f2` and the argument does not hold — `run_drc.sh` derives
+    `FOUNDRY_DECK` itself (:101), the four `DIE_*` appear **only in a comment** (:49) and are never
+    consumed, and the one hard requirement is `BLOCK` (:66), which `drc-project` does pass. So
+    `DRC_SCRIPT` stays set and `make drc` reaches the runner that has actually been exercised.
+  - `.NOTPARALLEL`: the branch **re-adds** it; HEAD deliberately removed it. `flow.mk`'s `all:` is a
+    recipe of four sequential sub-makes, so ordering is structural, and make here is **4.2.1**, where
+    the bare directive serialises the *entire* makefile. Re-adding it is a regression, not a
+    restoration. HEAD's now-stale prose about `place` depending on `cpf-patch` was corrected, since
+    the branch moved that repair into the hook.
+
+### Verified on the result
+
+Presence: 12 symlinks at mode `120000`, **zero dangling** (each blob resolved against the tree's own
+path set, not the filesystem). Contract: `asic-flows` 9/10, `dft_setup.tcl` absent as before.
+`legacy-paths`: 7/7. Provenance: `15b0501` and `2dca8ae` are both ancestors. Content:
+`constraints.sdc` is 911 → 958 lines, the delta being exactly the branch's `source`-path repair —
+pre-rebase it was 542, i.e. missing ~204 lines of `15b0501`.
+
+### Two things block landing it, neither of them a decision
+
+1. **Dirty files.** `ethernet_constraints.sdc`, `floorplan.tcl` and `power_plan.tcl` carry
+   uncommitted work in the main checkout, so `git merge` aborts with *local changes would be
+   overwritten*. Whoever holds them must commit or stash first.
+2. **The `rom-gds` gate is dead at HEAD.** `romlibs-gds-check` exists only as unstaged work inside a
+   471-insertion in-flight edit to `ASIC/genus-innovus/Makefile`. Until that lands, a `gate: block`
+   stage in `ci/signoff.yaml` names a target that does not exist at HEAD, so a `gate1` stream would
+   be signed off with the ROM-versus-GDS check never having run.
