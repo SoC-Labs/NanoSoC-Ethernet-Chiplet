@@ -21,47 +21,74 @@
 
 The working assumption going into this page was that both foundry runs measured the same
 thing twice. **That is half right, and the half that is wrong is the most useful finding
-here.** Both ran against the same retired 2026-08-10 stream (md5 `7f621496…`, unchanged
-between them), but **IMEC replaced a different set of libraries each time**, and neither
-time was it the right set.
+here.** Both descend from the same retired 2026-08-10 stream (md5 `7f621496…`), but **IMEC
+replaced a different set of libraries each time**, and neither time was it the right set.
 
 From the `Libraries used for replacement :` block of each run's `Final_Report_*.rpt`:
 
-| Run | Libraries replaced | `CompareCells` outcome |
+| Run | Libraries replaced | Outcome |
 |---|---|---|
-| **17 Aug** | the **bond-pad** library only (family `tpbn65v`) | **"No identical cell names found!"** — matched **nothing** |
-| **18 Aug** | the **IO-driver** library (`tphn65lpgv2od3_sl`) **and the standard-cell** library (`tcbn65lp`) | matched both: 14 IO/corner/filler cells, and the full standard-cell set |
+| **17 Aug** | the **bond-pad** library only (family `tpbn65v`), from its **wire-bond** branch | `*** Warning *** … without matching library cellnames found` and **`No identical cell names found!`** — **0 cells matched** |
+| **18 Aug** | the **IO-driver** library (`tphn65lpgv2od3_sl`) **and the standard-cell** library (`tcbn65lp`) | matched **14** IO/corner/filler cells and **377** standard cells. The pad library was not replaced at all |
 
-Three consequences, each checkable:
+### 0.1 Why the 17-Aug replacement matched nothing — proven, not inferred
 
-1. **The 17-Aug run replaced one library and matched none of it.** Every count in that
-   report that depends on cell interiors is a zero that measured nothing.
-2. **The 18-Aug run was a genuine advance, not a repeat.** Real standard-cell diffusion was
-   present for the first time. The device census went **6,420,952 → 8,599,725** (+33.9%),
-   `PO.R.8` went **691 → 0** — the controlled result that closes
-   [39](39-po-r8-resolved.md)'s black-boxing theory — and 157 rule categories fired for the
-   first time. The `_dummy` in that archive's name is IMEC's pipeline naming, and the topcell
-   is literally `..._dummy_dummy_WithSealRing`: they filled an already-filled derivative.
-   The uniform **+160 nm per side** frame offset the coordinates show is visible directly in
-   the header — the boundary grew `1640 × 2040` → `1640.32 × 2040.32`.
-3. **The bond-pad library has never been successfully replaced, in either run.** It is
-   absent from the 18-Aug replacement list entirely — the string `tpbn65v` appears **zero**
-   times in that report (control: `tcbn65lp` appears three times). So `PM.*` results, the
-   padring check and the whole bond-pad story remain structurally unmeasured after two runs.
+IMEC replaced from the pad library's **`wb` (wire-bond, non-cup)** branch. This design is
+built against the **`cup` (circuit-under-pad)** branch — the LEF the flow actually resolves
+(`pdk_paths.sh io-pad-lef`) sits under `…/cup/9m/<stack>/…`. Those branches carry **different
+cell names**, so a name-based comparison between them matches nothing:
 
-**A likely single cause, worth one question rather than a guess.** Both archives declare
-`#DEFINE PITCH_80_STAGGER` (three occurrences across the two), but this design uses **70 µm
-staggered pad parts** — `PAD70GU`/`PAD70NU`, whose names are independently verified present
-and correctly counted in the submitted stream ([52](52-padring-gds-check.md) §5). An
-80 µm-pitch pad library would not contain 70 µm-pitch cell names, which would produce
-exactly the "No identical cell names found!" we saw. `PAD80` appears nowhere in either
-archive (control: `PAD70` is findable in both), so this is a strong inference, not a proof —
-and it is Q2 in §7.
+- `PAD70GU` and `PAD70NU` are both present in the `cup` branch LEF we build against.
+- **Control:** the same library's `fc` branch LEF contains `PAD70GU` **zero** times — proving
+  that branches of one library genuinely differ in cell names, and that the grep can match
+  when the name is there.
+- Our installation carries **only** `cup/` and `fc/`. The `wb/` branch IMEC used does not
+  exist here at all, so we could not have anticipated the mismatch from our own data.
 
-**What this changes for tomorrow:** the goal is not merely "send a newer file". It is to
-send a newer file **and get all three libraries replaced in one pass, in the right order**.
-That is a request we have to make explicitly, because two runs of not making it have now
-cost two runs.
+A second, consistent signal: both archives' option tables record an **80 µm staggered pad
+pitch**, while our parts are 70 µm. Same class of mis-set option, and `PAD80` appears nowhere
+in either archive (control: `PAD70` is findable in both).
+
+**This is not our naming error.** Our padframe names, counts and per-side order are
+independently verified correct in the submitted stream
+([52](52-padring-gds-check.md) §5). It is a replacement-source mismatch on their side — and
+IMEC's own guidance sheet, shipped inside both archives, lists *"wrong library used for
+replacement"* and *"warnings in the Compare Cells section"* among the conditions under which
+the customer should **contact the engineer for a re-run**. That is the basis on which to ask.
+
+### 0.2 What each run therefore did and did not measure
+
+- **17 Aug measured almost nothing at device level.** Its `Total number of devices: 6,420,952`
+  looks reassuring and is not: roughly 93% of it is three memory-bitcell device types.
+  **Non-bitcell devices were 439,768 — about 17% of the real layout.** Thick-oxide IO devices
+  and poly resistors are absent entirely. Every FEOL zero in that report is a zero that
+  measured nothing. **This corrects [48](48-imec-signoff-results-analysis.md) §1.1**, which
+  attributes a "geometry-populated" antenna pass to this run on the strength of the 6.42 M
+  headline; the populated run is the 18-Aug one.
+- **18 Aug was a genuine advance.** Real standard-cell diffusion was present for the first
+  time: non-bitcell devices **439,768 → 2,618,541**, antenna runtime doubled, and `PO.R.8`
+  went **691 → 0** — the controlled result that closes [39](39-po-r8-resolved.md)'s
+  black-boxing theory. 157 rule categories fired for the first time.
+- **The bond pads have still never been replaced, after two runs.** `tpbn65v` appears **zero**
+  times in the 18-Aug report (control: `tcbn65lp` appears there 380 times, and `tpbn65v`
+  appears 4 times in the 17-Aug one — both patterns demonstrably match). So `PM.*`, the
+  padring check and the whole bond-pad story remain structurally unmeasured.
+
+### 0.3 The `_dummy` derivative, and the +160 nm frame
+
+The 18-Aug input was **IMEC's own intermediate**, not anything of ours: its topcell is
+`nanosoc_eth_chiplet_pads_dummy`, and the merged output is
+`…_dummy_merged_dummy_with_sealring` with topcell `…_pads_dummy_dummy_WithSealRing` — the fill
+suffix applied twice. The **+160 nm per side** offset is real and verified exactly: all **275**
+`G.4:M4i` results are 1:1 in emitted order with a single distinct delta of `(+160, +160)` dbu,
+and the merged boundary grew `1640 × 2040` → `1640.32 × 2040.32`. Controls: `G.4:M5i` and
+`G.4:M7i` match the same way; `M8.DN.2` matches at **zero** shift (density windows snap to a
+fixed grid); and `G.4:M2i` **fails** the claim (8 → 24, the 8 a proper subset) because real
+geometry arrived in the pad ring. The shift is uniform; the population is not.
+
+**What this changes for tomorrow:** the goal is not merely "send a newer file". It is to send
+a newer file **and get all three libraries replaced, from the right branches, in one pass, in
+the right order**. Two runs of not asking for that have now cost two runs.
 
 ---
 
@@ -106,8 +133,19 @@ a design already clean except for those violations that dummy filling itself sol
 (density, TCDDMY, max-OD-space), and only if we have not blanketed the design in fill-blocking
 layers.
 
-Read together: **a preliminary GDS cannot meet the precondition for their fill service.** The
-18-Aug pass inverted the order — fill applied to an already-filled derivative of an
+Read together: **a preliminary GDS cannot meet the precondition for their fill service.**
+
+**And the damage is visible, not theoretical.** Because the 17-Aug import matched zero cells,
+the fill computed in that run was laid over a layout whose standard cells and IO cells were
+*empty*. The 18-Aug run was then executed on top of that same fill, with the real cells finally
+imported underneath it. The result is four dummy-layer rules pinned at the result cap —
+"space to OD / space to PO, overlap is not allowed", on the **dummy** OD and PO layers — whose
+emitted coordinates all sit in the left IO column, exactly where the IO library was merged in.
+That is the defective fill colliding with the cells it was computed without. **Neither run is a
+valid FEOL result: the first checked no cells, the second checked cells against a fill built
+without them.**
+
+The 18-Aug pass inverted the order — fill applied to an already-filled derivative of an
 incompletely-imported stream — which is why its most valuable result (the standard-cell
 import) arrived tangled up with 157 untriaged new categories and an unexplained CSR growth.
 The covering mail must state the order explicitly (§5.2).
@@ -351,17 +389,21 @@ not copy them back into a tracked file.
    the file they check** in their report.
 3. **All three replacement libraries**, with revisions and the complete phantom-view path each
    (**R14**) — and, given §0, say plainly: *the previous two runs replaced the pad library
-   alone (matching nothing) and then the IO and standard-cell libraries without the pads;
-   please replace all three in this pass.* Name the 8 memory macros as **already merged, not
-   for replacement**.
+   alone from the wire-bond branch (matching nothing), and then the IO and standard-cell
+   libraries without the pads. Please replace all three in this pass, taking the pad library
+   from the `cup` branch our abstracts come from, and the standard-cell library at the
+   revision named here.* Name the 8 memory macros as **already merged, not for replacement**.
 4. **The stream is unfilled** and carries no seal ring. One sentence; no separate artefact is
    required (§1.4).
 5. **The order, explicitly: IMPORT all three black-box libraries first, then dummy filling if
    you are running it, then the DRC / ANT / BND decks** — per §1.4(6) and §6.5. Note that a
    preliminary stream cannot meet §7.1's precondition for their fill service, so we expect
    import-then-decks and are content for fill to wait.
-6. **Our pad parts are 70 µm staggered** (`PAD70GU`/`PAD70NU`); both previous reports declared
-   an 80 µm pitch switch. Ask them to confirm the pitch and the matching pad library (Q2).
+6. **Our pad parts are 70 µm staggered, cup-type** (`PAD70GU`/`PAD70NU`); both previous reports
+   recorded an 80 µm pitch. Ask them to confirm the pitch and the branch (Q2), and to include
+   the `plots/` image so the replacement can be checked visually.
+   **Also note the four pad-corner orientations are now fixed** — their 18-Aug padring check
+   reported all four wrong; that is corrected in this stream and should clear.
 7. **Backlapping 7 mils (default) and the packaging intent** (**R15**).
 8. **What we already know is not clean**, stated rather than discovered: the corner `CSR.x.x`
    position (§3.3), antenna never run against the foundry deck, black-box LVS returning
@@ -374,33 +416,45 @@ not copy them back into a tracked file.
 ## 6. Reading the returned report — before any count
 
 **This is the section that matters most.** The 17-Aug run's replacement matched nothing, and
-every FEOL number in it is therefore a zero that measured nothing. A report can be read cover
-to cover and look reassuring while having checked no transistor at all.
+every device-level number in it is therefore a zero that measured nothing. A report can be
+read cover to cover and look reassuring while having checked almost no transistor at all.
 
-**Read all six of these before a single violation count.** All live near the top of
-`design/reports/Final_Report_*.rpt`.
+Everything below is in the header of `design/reports/Final_Report_*.rpt`, except where noted.
+**Read all eight before a single violation count.**
 
-| # | What to read | Where | Good | Bad — and what it means |
-|---:|---|---|---|---|
-| 1 | **`Gds-file :` / `Layout Path(s):` and the md5** | report header | names the file we uploaded, with our md5 | names an older file, or a `_dummy` derivative of a previous submission → the run measured a stream we did not send. **Stop.** Everything downstream is about a different chip |
-| 2 | **`Libraries used for replacement :`** | report header | **three** paths: standard cells, IO drivers, **and bond pads** | fewer than three, or a family/revision we did not name. 17 Aug listed one; 18 Aug listed two, neither the pads. Any FEOL number for an unreplaced family is void |
-| 3 | **`CompareCells`** — one block **per replaced library** | after the header | `Identical cell names:` followed by a real list | **`No identical cell names found!`** → that library matched **nothing**. Our padframe names and counts are independently verified correct ([52](52-padring-gds-check.md) §5), so this is their side, not ours |
-| 4 | **`DevCheck` → `Total number of devices:`** | after CompareCells | **millions.** 6,420,952 with pads only; 8,599,725 with std cells + IO | zero or a few thousand → nothing was imported |
-| 5 | **The declared `#DEFINE` set, per deck** | each deck's header | full-chip on, chip window = our die box, seal-ring switch off, **70 µm staggered pitch** | `PITCH_80_STAGGER` (what both runs declared) → wrong pad geometry basis. §11 says CSR and floating-gate counts differ between us and them for exactly this reason |
-| 6 | **`Topcell :` and `Boundary :`** | report header | one `_WithSealRing` suffix; boundary = our die + their seal-ring frame | `_dummy_dummy_` → they filled an already-filled derivative. A boundary that grew again (e.g. `1640 → 1640.32`) is a second frame offset, i.e. a re-run on their own output |
+| # | What to read | Good | Bad — and what it means |
+|---:|---|---|---|
+| 1 | **`File(.gds*)`, `md5sum(.gds*)`, `File(.gds*) modification date`** | names the file we uploaded, with our md5 and our date | an older file, or a `_dummy` derivative of a previous submission → the run measured a stream we did not send. **Stop.** |
+| 2 | **`Libraries used for replacement :`** | **three** paths — standard cells, IO drivers, **and bond pads from the `cup` branch** | fewer than three, or the wrong branch. 17 Aug listed one (wrong branch); 18 Aug listed two, neither the pads. Any device-level number for an unreplaced family is void |
+| 3 | **`*** Warning *** … without matching library cellnames found`** | absent | present → a hard stop, and IMEC's own guidance says to ask for a re-run |
+| 4 | **`CompareCells`** — one block **per replaced library** | `Identical cell names:` with a real list (14 IO cells, 377 standard cells is what a good one looked like) | **`No identical cell names found!`** → that library matched **nothing** |
+| 5 | **`CheckIPWM`** | TSMC tags for both `tcbn65lp` and `tphn65lpgv2od3_sl`, **at the revisions we named** | no TSMC tag at all (17 Aug), or a revision we did not name — 18 Aug merged standard-cell geometry one drop older than the one this design is placed against (Q5) |
+| 6 | **`DevCheck` → the device table, not just the total** | **non-bitcell devices ≈ 2.4 M.** Read `mn(nch) + mp(pch)`; thick-oxide IO devices and poly resistors must be present | the **total** is the trap: 6,420,952 in the 17-Aug run was ~93% memory bitcells and only ~440 k real devices. **Never read the total alone** |
+| 7 | **`padring/Padring_check.rpt`, the `Padring will use library:` line** | the pad library, `cup` branch | `Design does not contain any TSMC IO cells or bondpads` → the pad replacement did not happen |
+| 8 | **`Topcell :` and `Boundary :`** | one `_WithSealRing` suffix; boundary = our die + their seal-ring frame | `_dummy_dummy_` → they filled an already-filled derivative. A boundary that grew again is a second frame offset, i.e. a re-run on their own output |
 
 **Only now read the counts. And when you do:**
 
 - `N (M)` is **hierarchical (flat)**. It is *not* count (capped).
 - **Calibre caps at 1000 and writes the truncated value into *both* fields.** Any rulecheck
-  reading exactly 1000 is **saturated**: the true count is unknown and unbounded above. It is
-  not "1000 violations".
+  reading exactly 1000 is **saturated**: the true count is unknown and unbounded above.
+  Proof from these two archives: `LOGO.R.4` reads `1000 (1000)` in one run and `1000 (1199)`
+  in the other, for the *same* artwork. The flat field is sometimes truncated and sometimes
+  not, so `N (1000)` is simply unreadable. In the 18-Aug run **49 rules were saturated and 36
+  of them read `1000 (1000)`**.
+- **A capped rule's coordinates are a scan-order prefix, not a sample** — they cluster at one
+  edge of the die. Do not infer where a problem *is* from a saturated rule.
 - A **0** is meaningful only if the layer it inspects carries geometry in the checked stream.
   `PM.W.1` reads zero on our streams because there is no pad-metal geometry to measure, not
   because the pad metal is legal ([50](50-bnd-and-logo-checks.md) Part A).
-- A count that **grew** between runs may be a merge artefact rather than a new defect: several
-  of the 157 newly-firing categories in the 18-Aug archive are capped and plausibly
-  duplication noise, untriaged either way.
+- A count that **grew** between runs may be a merge artefact rather than a new defect.
+- **The per-rule `.rep` files are header-only.** All 218 in both archives contain nothing but
+  the topcell name and the cap value; a "non-empty" one of ~50 bytes means *zero results*. The
+  actual per-violation data is only in each deck's `cali_<deck>_<design>.txt`. Do not read a
+  `.rep` file's size as evidence of anything.
+- The archive's own `README_for_archive` promises a `plots/` directory with a rendered image
+  of the design — **absent from both archives**. IMEC's guidance says that plot is how you
+  visually confirm the libraries were replaced. Ask for it (Q2).
 - Before treating any category as clean, **name what it ran over.**
 
 ---
@@ -414,14 +468,15 @@ residue that genuinely needs an answer.
 | # | Question | Why it survived the manual | Urgency |
 |---:|---|---|---|
 | **Q1** | **Turnaround, not the date.** The Final GDS date (1 September) is confirmed. What we need instead: **how long does your import-and-decks loop take**, what is the **cut-off for a revised stream**, and does a 19 August preliminary still leave room for a second corrected pass before 1 September? | §1.4(4) gives a "2 weeks before" guideline but no turnaround figure, and we have now spent two loops without a usable result | **High** — it sets how many attempts remain |
-| **Q2** | **Which bond-pad library will you use, and at what pad pitch?** Two runs, and the pad library has been replaced once (matching nothing) and then omitted. Our parts are **70 µm staggered**; both your reports declare an **80 µm** pitch switch. Please confirm the pitch and use the matching library — and replace **all three** libraries in one pass | The manual says they import our black boxes (§7) but nothing about what happens when the match fails. This is the defect that made an entire report's FEOL numbers meaningless | **Highest** — without it the next report is untrustworthy too |
+| **Q2** | **Please re-run with the pad library replaced from the `cup` (circuit-under-pad) branch, and send the `plots/` image.** Your 17-Aug run replaced from the **wire-bond (non-cup)** branch; this design is built against the **cup** branch, and the two carry different cell names, which is why `CompareCells` matched nothing. Please also confirm the pad pitch: our parts are **70 µm staggered**, both your reports record **80 µm**. And the `plots/` directory your `README_for_archive` promises was missing from both archives — it is how we would have seen the replacement had failed | The manual says they import our black boxes (§7) but nothing about branch selection. **Your own guidance sheet lists "wrong library used for replacement" and "warnings in the Compare Cells section" as grounds to ask the engineer for a re-run** | **Highest** — this is what made two runs unusable |
 | **Q3** | **Die corners: what must be empty, to what dimension, for this process — and which remedy do you accept?** (remove the corner cells and backfill; a chamfer at your import; or move the pad ring inward). If the cells go, how do we keep VDDIO/VSSIO/VDD/VSS ring continuity and the ESD arrangement? Note the rotation fix is applied but cannot clear this — the cell is geometrically identical under all four rotations | §6.2 makes cleaning `CSR.x.x` mandatory and rejection-grade but gives no dimension for this process and lists no accepted remedies | **High** — the one rejection-grade item visible from here |
 | **Q4** | **Send your exact deck switch set, and a fuller by-cell breakdown for CSR.** §10 settles the seal-ring, wire-bond, full-chip and chip-window switches, so only the ambiguous ones remain: the low-power flavour switch, the WLCSP seal-ring switch (active as shipped, and it changes the seal-ring/CSR derivation for a wire-bond design), mixed-scheme, and low-density checking. Separately, **~800 of 804 `CSR.R.2:D`, 644 of 644 `CSR.R.2:B` and 96 of 96 `CSR.EN.8` hits are unattributed** — your report truncates before naming the cells. Please send the full attribution | §10 gives a worked example for a different node and says the rest follow "similarly"; §11 confirms switch differences drive count disagreements. The attribution gap is in their output, not the manual | **High** — currently the largest open DRC item |
-| **Q5** | **Is your import a structure-level replacement or a merge?** Our pad structures are placed but empty. Should they stay empty, or carry their LEF obstruction geometry? Would anything left inside them be discarded, or duplicated against what you import? | §7 establishes the black-box model but not what happens to content inside a black-boxed structure. Bears directly on Q2 | Medium |
-| **Q6** | **The bond-pad deck command file named in §1.4(5) is not in our installation.** Please supply it, or confirm the revision we hold is what you accept for a 70 µm staggered wire-bond ring | §1.4(5) names the document; it is simply absent here. **Route to foundry support, not eptsmc** | Medium |
-| **Q7** | **What is the actual seal-ring width for this process?** §6.1 gives it only as a symbol with a worked example at a different value | Needed to state packaged die size and finalise the bonding diagram | Medium |
-| **Q8** | **`PVDD2POC_G` — "multiple cells in digital domain".** We instantiate it once per side (4 total), all on the same VDDIO net. Is this cell expected **once per ring**? No POC datasheet is available to us | New in the 18-Aug archive; not addressed anywhere in the manual | Medium |
-| **Q9** | **Confirm the area and seat.** 3.2 mm² against a 1 mm² block (§6.1), aspect 1:1.25, inside the 6 mm² ceiling. Confirm the extra-area charge is applied and the seat booked | §6.1 gives the mechanism, not our invoice | Administrative — **route to sales/PO** |
+| **Q5** | **Which standard-cell library revision will you merge?** Your 18-Aug run merged standard-cell geometry from a drop **older than the one this design is placed against** — the LEF abstracts, timing and physical constraints all came from the newer drop. Please merge the revision we name, or tell us the older one is what the shuttle uses so we can re-place against it | Nothing in the manual addresses a revision skew between our abstracts and their back-ends. It silently invalidates any device-level result | **High** — a geometry/abstract mismatch makes even a successful merge untrustworthy |
+| **Q6** | **Is your import a structure-level replacement or a merge?** Our pad structures are placed but empty. Should they stay empty, or carry their LEF obstruction geometry? Would anything left inside them be discarded, or duplicated against what you import? | §7 establishes the black-box model but not what happens to content inside a black-boxed structure. Bears directly on Q2 | Medium |
+| **Q7** | **The bond-pad deck command file named in §1.4(5) is not in our installation.** Please supply it, or confirm the revision we hold is what you accept for a 70 µm staggered wire-bond ring | §1.4(5) names the document; it is simply absent here. **Route to foundry support, not eptsmc** | Medium |
+| **Q8** | **What is the actual seal-ring width for this process?** §6.1 gives it only as a symbol with a worked example at a different value | Needed to state packaged die size and finalise the bonding diagram | Medium |
+| **Q9** | **`PVDD2POC_G` — "multiple cells in digital domain".** We instantiate it once per side (4 total), all on the same VDDIO net. Is this cell expected **once per ring**? No POC datasheet is available to us | New in the 18-Aug archive; not addressed anywhere in the manual | Medium |
+| **Q10** | **Confirm the area and seat.** 3.2 mm² against a 1 mm² block (§6.1), aspect 1:1.25, inside the 6 mm² ceiling. Confirm the extra-area charge is applied and the seat booked | §6.1 gives the mechanism, not our invoice | Administrative — **route to sales/PO** |
 
 **Removed as answered — do not ask these.** Whether a seal ring goes in our GDS (§6.1 — no);
 whether black-box submission is supported and who imports (§7 — supported, they do); whether
@@ -434,9 +489,9 @@ entirely**); that `LUP.6` only appears after their import (§7); whether a logo 
 whether an "IP merge" changes the deadline (no such class — §6.3 is about chip boundaries; the
 date is confirmed as 1 September).
 
-**Three mailboxes, per §1.3 of the manual.** Submission questions (Q1–Q5, Q7, Q8) to the
-tape-out submission address; the deck-delivery item (Q6) and the black-box LVS application note
-to foundry support; Q9 to sales/PO. Do not let the PDK requests queue behind the submission thread.
+**Three mailboxes, per §1.3 of the manual.** Submission questions (Q1–Q6, Q8, Q9) to the
+tape-out submission address; the deck-delivery item (Q7) and the black-box LVS application note
+to foundry support; Q10 to sales/PO. Do not let the PDK requests queue behind the submission thread.
 
 ---
 
