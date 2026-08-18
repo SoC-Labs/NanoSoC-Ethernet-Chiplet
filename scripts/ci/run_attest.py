@@ -366,9 +366,11 @@ def g_rom_content(run_dir):
     if foreign:
         return NM, ("ROM-vs-firmware PASSES for %s, but there is no "
                     "reports/rom evidence and the older romlibs/verify path "
-                    "extracted its bits from a stream that is NOT this run. The "
-                    "firmware comparison is measured; the in-stream check is "
-                    "measured against another file"
+                    "extracted its bits from a stream that is NOT this run. This "
+                    "is cause (c): an out-of-band check of this run's real stream "
+                    "may well have passed - it is not recorded HERE, so this run "
+                    "cannot show it. Re-run the gate to leave evidence; do not "
+                    "read this as the ROM being unverified"
                     % ", ".join(sorted(verdicts))), S_SIGNOFF, None, read
     return PASS, ("ROM bits match firmware (%s)" % ", ".join(sorted(verdicts))),            S_SIGNOFF, None, read
 
@@ -647,8 +649,15 @@ def render_md(doc):
                 L.append("           %s %s" % ("QUALIFIED:" if i == 0 else "          ", line))
     L.append("")
     if n_nm:
-        L.append("NOT MEASURED means the check did not run, or ran over nothing.")
-        L.append("It is not a pass and must not be quoted as one.")
+        L.append("NOT MEASURED has three causes and they need different fixes:")
+        L.append("  (a) the check did not run;")
+        L.append("  (b) it ran over nothing;")
+        L.append("  (c) it ran CORRECTLY somewhere else and left no artefact in")
+        L.append("      this run, so nobody auditing the run can find it.")
+        L.append("None of the three is a pass. (c) in particular is NOT a claim")
+        L.append("that the thing is broken - it is a claim that this run cannot")
+        L.append("show you. The remedy for (c) is to re-run the gate so it writes")
+        L.append("evidence, not to redo the analysis.")
     if n_qual:
         L.append("QUALIFIED means the check passed a NARROWER question than its")
         L.append("name suggests. The qualifier is part of the result.")
