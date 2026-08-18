@@ -1107,7 +1107,9 @@ stages:
       sys.exit(1 if bad else 0)
       EOF
     #
-    # !! check_proof IS VACUOUS UNTIL THE FIXTURES ARE MOVED — 2026-08-18 !!
+    # FIXTURES MOVED 2026-08-18 — check_proof DISCRIMINATES AGAIN. The note below
+    # is kept because it is the only record of how a green proof went hollow, and
+    # of what must never be done to restore one.
     # Same cause as the drc stage below; read the long note there for the
     # mechanism. Symptom here is the mirror image: the real build/fp1505 has no
     # logs/lec_pnr.log yet, so all three cases now report "no post-P&R LEC log
@@ -1116,11 +1118,11 @@ stages:
     # notices Conformal saying NON-EQUIVALENT — now fails because a file is
     # missing. It has stopped testing what it names.
     #
-    # THE FIX IS FIXTURE-SIDE:
+    # THE FIX WAS FIXTURE-SIDE, AND IS DONE (2026-08-18):
     #   git mv ci/fixtures/lec-pnr/<case>/ASIC/eth-chiplet/build/full-20260814 \
     #          ci/fixtures/lec-pnr/<case>/ASIC/eth-chiplet/build/fp1505
-    # for pass, fail-nonequivalent and fail-no-log. Owned by whoever owns
-    # ci/fixtures; not done here. And as with drc: do NOT restore the green by
+    # applied to pass, fail-nonequivalent and fail-no-log, keeping each
+    # .__exclusive__ marker in place. And as with drc: do NOT restore a green by
     # pointing check: back at full-20260814, which would leave this stage
     # running fp1505 and grading a log full-20260814 wrote.
     check_proof:
@@ -1283,7 +1285,9 @@ stages:
     # and `prove` goes red. That is the intended behaviour — a budget set high
     # enough to swallow real violations has made the gate blind.
     #
-    # !! check_proof IS VACUOUS UNTIL THE FIXTURES ARE MOVED — 2026-08-18 !!
+    # FIXTURES MOVED 2026-08-18 — check_proof DISCRIMINATES AGAIN. The note below
+    # is kept because it is the only record of how a green proof went hollow, and
+    # of what must never be done to restore one.
     # Measured, not predicted: `signoff.py prove drc` reports must_pass BROKEN
     # and all four must_fail cases "ok", and EVERY ONE of the five printed the
     # same 837 results / 6159 density windows — the REAL fp1505 numbers.
@@ -1299,11 +1303,10 @@ stages:
     # is what all five cases grade, and the proof stops discriminating.
     # signoff.py:80-89 anticipates exactly this leak, for exactly this stage.
     #
-    # THE FIX IS FIXTURE-SIDE, and is a rename, not a rewrite:
+    # THE FIX WAS FIXTURE-SIDE, a rename not a rewrite, AND IS DONE (2026-08-18):
     #   git mv ci/fixtures/drc/<case>/ASIC/eth-chiplet/build/full-20260814 \
     #          ci/fixtures/drc/<case>/ASIC/eth-chiplet/build/fp1505
-    # for all five cases, keeping the .__exclusive__ marker where it is. Owned
-    # by whoever owns ci/fixtures; not done here.
+    # applied to all five cases, each .__exclusive__ marker left where it was.
     #
     # DO NOT "FIX" THIS BY POINTING check: BACK AT full-20260814. That would
     # restore a green proof over a stage that runs fp1505 and grades
