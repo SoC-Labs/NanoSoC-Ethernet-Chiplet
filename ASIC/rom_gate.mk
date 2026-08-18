@@ -149,6 +149,23 @@ ROMLIBS_EFFECTIVE  := $(strip $(if $(and \
                         $(wildcard $(ROM_RUN_ROMLIBS)/cc_rom/rom_via.memlib)),\
                         $(ROM_RUN_ROMLIBS),$(ROMLIBS_DIR)))
 
+# ── AND ASSERT IT, RATHER THAN LEAVING THE KNOB FOR SOMEONE TO REMEMBER ────
+#
+# ROM_GDS_GEOM_ROOT makes the geometry source a CHECK instead of a printed note.
+# It is set here only when the geometry actually came from the run's own tree --
+# if the guards above fell back to the shared ASIC/romlibs, declaring the run
+# root would fail every ROM for being outside it, which is a false failure and
+# would train someone to switch the assertion off.
+#
+# Proven to discriminate, 2026-08-18, both directions on the real fp1505 stream:
+#   correct run tree -> "geometry containment asserted for memlib against .../fp1505", PASS
+#   wrong run tree   -> "the memlib ... is OUTSIDE the declared run tree", FAIL
+# The toolkit only applies containment to run-emitted artefacts (the .memlib);
+# the .spec is a checked-in request shared by every run, is recorded in the
+# manifest, and is answered for by rom_verify.py's provenance check instead.
+ROM_GDS_GEOM_ROOT ?= $(strip $(if $(filter $(ROM_RUN_ROMLIBS),$(ROMLIBS_EFFECTIVE)),\
+                       $(ROM_GDS_RUN_ROOT),))
+
 # Evidence: into the run's own reports/ when we are gating that run's stream, so
 # the packager collects it BY CONSTRUCTION rather than by someone remembering an
 # override. Falls back to the old gitignored location otherwise -- which is

@@ -1899,6 +1899,62 @@ stages:
         - ci/fixtures/ir-drop-selftest/fail-battery-cut-down
         - ci/fixtures/ir-drop-selftest/fail-positive-control-missing
 
+  - id: gls-netlist
+    phase: physical
+    gate: report
+    label: soclabs-sim
+    description: "Gate-level simulation of the routed netlist: can a CPU built out of these gates actually fetch and execute from its mask-programmed boot ROM?"
+    # WHY THIS IS report AND NOT block, and what would change it.
+    # CPU1 boots out of cc_rom on the fp1505 routed netlist. CPU0 does not, and
+    # its four checks are left DECLARED AND FAILING rather than deleted: CPU0 is
+    # gated behind CPU1 writing chip_core_remap_ctrl[2] after a QSPI XiP
+    # bring-up, and this bench models no flash device. A red gate naming a real
+    # unmet requirement is worth more than a green one that stopped asking.
+    # Promote to block the day a flash model lands and RESULT reads fail=0.
+    #
+    # WHAT A PASS HERE DOES NOT MEAN, and it must travel with any quote of it:
+    #   * the file simulated is NOT the tapeout netlist. fp1505's _pnr.v leaves
+    #     17,231 instances across 63 cell types with no .VDD()/.VSS(), so
+    #     neither vendor library can simulate it as written; the gate completes
+    #     the supplies into a COPY and records what it changed in pg_complete.txt.
+    #   * it is not a timing check. Zero-delay, no SDF, and the simulation
+    #     Verilog is an older cell revision than the Liberty the design was
+    #     timed against. It says the logic works, not that it closes.
+    run: make -C ASIC/gls-netlist gls
+    # THE CHECK NEVER CONSULTS AN EXIT CODE. `make gls` exits non-zero on the
+    # known CPU0 reds, so a status-based check cannot tell "CPU1 still boots"
+    # from "the whole run collapsed" - and those need different responses. The
+    # verdict is recomputed from the published per-item verdict.txt, which
+    # anyone can re-read months later with no simulator and no licence.
+    check: |
+      V=$(ls ASIC/eth-chiplet/build/*/reports/gls/*/verdict.txt 2>/dev/null)
+      if [ -z "$V" ]; then
+        echo "FAIL: no netlist-GLS verdict published anywhere."
+        echo "  Either nothing ran, or GLSN_EVIDENCE_<item> is unset so the"
+        echo "  evidence stayed in a build/ directory no packager collects."
+        echo "  UNVERIFIED IS NOT A PASS."
+        exit 1
+      fi
+      rc=0
+      for f in $V; do
+        echo "  verdict: $f"
+        sed -n 's/^RESULT /    RESULT /p' "$f"
+        for k in cc_rom.content cc_rom_port.accessed cc_rom_msp_on_Q cc_rom_rstvec_on_Q; do
+          if grep -q "^$k PASS" "$f"; then
+            echo "    ok   $k"
+          else
+            echo "    ** $k is not PASS -- CPU1 no longer boots from its boot ROM"
+            rc=1
+          fi
+        done
+      done
+      exit $rc
+    artifacts:
+      - ASIC/eth-chiplet/build/*/reports/gls/*/verdict.txt
+      - ASIC/eth-chiplet/build/*/reports/gls/*/census.txt
+      - ASIC/eth-chiplet/build/*/reports/gls/*/inputs.txt
+      - ASIC/eth-chiplet/build/*/reports/gls/*/pg_complete.txt
+
 # -----------------------------------------------------------------------------
 # Checks a complete ASIC signoff would include that this pipeline does NOT do.
 # Listed so the report states its own limits — a signoff report that only shows

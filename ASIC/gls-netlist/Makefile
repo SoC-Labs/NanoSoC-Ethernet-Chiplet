@@ -67,8 +67,30 @@ BUILD_DIR     ?= $(REPO)/build
 #   MEM_BASE        the compiled-memory root
 #   STDCELL_PKG / STDCELL_REL   the standard-cell package and release dirs
 #   IOCELL_PKG  / IOCELL_REL    the IO-library package and release dirs
-TSMC_65_HOME ?=
-MEM_BASE     ?=
+# THESE TWO ARE SITE FACTS AND THIS FILE MUST NOT CARRY THEM. Both are already
+# defined, once, in ASIC/common.mk (TSMC_65_HOME:94, MEM_BASE:340) and EXPORTED,
+# so any invocation that went through it inherits them. Invoked directly with
+# neither set, this gate now fails NAMING the variable instead of building a
+# path out of an empty string -- see the collateral guard below.
+# MEM_BASE: READ FROM ITS ONE DEFINITION, NOT RETYPED AND NOT LEFT EMPTY.
+# ASIC/common.mk:340 is where this repository defines the compiled-memory root,
+# and it EXPORTS it -- so any invocation routed through common.mk inherits it.
+# This gate is invoked DIRECTLY (`make -C ASIC/gls-netlist ...`), which is not
+# such an invocation, so the export never reaches it and the bare default left
+# every model path as "/rf_01k/rf_01k.v" -- absolute, plausible, non-existent.
+# The vendor hook is right that the path must not be spelled in this public
+# file, so resolve it from that single definition at use time. A pointer cannot
+# drift; a second copy is a second thing to keep in step. Same reasoning as
+# STDCELL_V/IOCELL_V above, which resolve through pdk_paths.sh.
+# A command-line or environment MEM_BASE still wins, because `?=`.
+# ONE HELPER, NOT THREE COPIES OF A sed. Reads a variable from its single
+# definition in ASIC/common.mk. Every one of these is a SITE FACT that this
+# public file must not spell, and that common.mk already spells exactly once.
+common_mk_var = $(shell sed -n 's/^export $(1)[[:space:]]*?*=[[:space:]]*//p' $(REPO)/ASIC/common.mk 2>/dev/null | head -1)
+
+MEM_BASE     ?= $(call common_mk_var,MEM_BASE)
+TSMC_65_HOME ?= $(call common_mk_var,TSMC_65_HOME)
+PHYS_IP      ?= $(call common_mk_var,PHYS_IP)
 STDCELL_PKG  ?=
 STDCELL_REL  ?=
 IOCELL_PKG   ?=
@@ -82,8 +104,26 @@ IOCELL_REL   ?=
 # passes completely and elaboration then fails on the first instance. Measured
 # here 2026-08-18: 370/370 cell types "resolved", 318 cell types interface-
 # mismatched. gls-netlist-census now catches it statically.
-STDCELL_V := $(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/$(STDCELL_PKG)/TSMCHOME/digital/Front_End/verilog/$(STDCELL_REL)/tcbn65lp_pwr.v
-IOCELL_V  := $(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/$(IOCELL_PKG)/TSMCHOME/digital/Front_End/verilog/$(IOCELL_REL)/tphn65lpgv2od3_sl.v
+# RESOLVED, NOT SPELLED -- and not assembled from five separately-defaulted
+# parts either. The vendor-collateral hook was right to strip the absolute site
+# mounts out of this public file, but the replacement left TSMC_65_HOME,
+# STDCELL_PKG, STDCELL_REL, IOCELL_PKG and IOCELL_REL all defaulting to EMPTY,
+# so this line produced
+#     /CMOS/LP/stclib/9-track/tcbn65lp-set//TSMCHOME/.../verilog//tcbn65lp_pwr.v
+# -- an absolute path that looks plausible and does not exist. Measured
+# 2026-08-18: `make collateral` failed on every model and this harness, which
+# had booted CPU1 hours earlier, no longer ran from committed state.
+#
+# ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh is this repository's own PDK
+# resolver and already answers exactly these two questions. Using it removes
+# FOUR variables rather than defaulting them, keeps no site layout in this file,
+# and means a release-directory bump is picked up instead of silently mismatched.
+# Same mechanism ASIC/eth-chiplet/design.mk uses for ARM_CLN65LP_TECH.
+PDK_PATHS_SH ?= $(dir $(lastword $(MAKEFILE_LIST)))../tech_wrappers/tsmc65/scripts/pdk_paths.sh
+STDCELL_V := $(shell TSMC_65_HOME='$(TSMC_65_HOME)' PHYS_IP='$(PHYS_IP)' \
+                     bash $(PDK_PATHS_SH) stdcell-vlog 2>/dev/null)
+IOCELL_V  := $(shell TSMC_65_HOME='$(TSMC_65_HOME)' PHYS_IP='$(PHYS_IP)' \
+                     bash $(PDK_PATHS_SH) io-vlog 2>/dev/null)
 
 # CAVEAT, and it must be carried into every claim made from a run of this:
 # the simulation Verilog above is an OLDER CELL REVISION than the Liberty the
@@ -121,6 +161,30 @@ GLSN_ITEMS := fp1505_cc full0814_cc
 GLSN_NETLIST_fp1505_cc := $(REPO)/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads_pnr.v
 GLSN_TOP_fp1505_cc     := nanosoc_eth_chiplet_pads
 GLSN_SPEC_fp1505_cc    := $(THIS_DIR)/bench/eth_chiplet_fp1505_cc.json
+# EVIDENCE INTO EACH ITEM'S OWN BUILD -- BUT ONLY THE EVIDENCE.
+#
+# scripts/ci/package_submission.sh collects exactly one tree, $(ASIC_DIR)/reports.
+# Written under $(BUILD_DIR)/gls-netlist -- gitignored, outside every build tree
+# -- this gate's proof reaches nobody, the hole the ROM lane closed on 2026-08-18.
+#
+# THE FIRST ATTEMPT AT THIS WAS WRONG AND THE MEASUREMENT IS WHY IT CHANGED.
+# Pointing the RUN directory at reports/gls put 257 MB per item into a tree that
+# gets packaged -- simv.daidir 164M, csrc 48M, and a 41M PG-completed netlist
+# copy -- against about 28 KB of actual evidence. A run directory and an
+# evidence directory are not the same thing: one is a simulator's working set,
+# the other is the small set of files that answer "what ran, over what, and what
+# did it decide". Only the second belongs in reports/.
+#
+# So the run stays in build/ and the gate PUBLISHES its evidence. The netlist
+# path already names the run that produced it, so derive it: <run>/outputs/x.v
+# -> <run>. `=` not `:=` -- these dereference GLSN_NETLIST_<n> declared further
+# down, and an immediate assignment expands to nothing and yields "//reports/…",
+# an absolute path that looks plausible and is not (measured here 2026-08-18).
+glsn_run_root = $(abspath $(dir $(GLSN_NETLIST_$(1)))/..)
+GLSN_EVIDENCE_fp1505_cc    = $(call glsn_run_root,fp1505_cc)/reports/gls/fp1505_cc
+GLSN_EVIDENCE_full0814_cc  = $(call glsn_run_root,full0814_cc)/reports/gls/full0814_cc
+
+GLSN_MODELS_N_fp1505_cc  := 10
 GLSN_MODELS_fp1505_cc  := $(STDCELL_V) $(IOCELL_V) $(MEM_V) $(ROM_V)
 
 GLSN_STUBS_fp1505_cc      := $(BONDPAD_STUBS)
@@ -196,11 +260,16 @@ GLSN_RUN_TIMEOUT_fp1505_cc   := 7200
 # prove the boot PATH exists in the design, and separate "the CPU cannot fetch"
 # from "this particular file cannot be simulated".
 #-----------------------------------------------------------------------------
-STDCELL_V_NOPG := $(TSMC_65_HOME)/CMOS/LP/stclib/9-track/tcbn65lp-set/$(STDCELL_PKG)/TSMCHOME/digital/Front_End/verilog/$(STDCELL_REL)/tcbn65lp.v
+# The non-PG twin is the SAME release directory, different basename. Derived
+# from STDCELL_V rather than resolved again, so the two cannot drift onto
+# different releases -- which is the mixed-vintage trap this project already
+# lost time to on gate_power.v.
+STDCELL_V_NOPG := $(patsubst %_pwr.v,%.v,$(STDCELL_V))
 
 GLSN_NETLIST_full0814_cc := $(REPO)/ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate.v
 GLSN_TOP_full0814_cc     := nanosoc_eth_chiplet_pads
 GLSN_SPEC_full0814_cc    := $(THIS_DIR)/bench/eth_chiplet_full0814_cc.json
+GLSN_MODELS_N_full0814_cc  := 10
 GLSN_MODELS_full0814_cc  := $(STDCELL_V_NOPG) $(IOCELL_V) $(MEM_V) $(ROM_V)
 # Synthesis inserted no bond pads; P&R did. Nothing to stub.
 GLSN_STUBS_full0814_cc      :=
