@@ -71,6 +71,7 @@ self-documentation commands that make Innovus stop being opaque.
 | 39 | [`PO.R.8` resolved](39-po-r8-resolved.md) | Why 691 of 837 DRC results are a black-boxing artefact, how that was proved, and the cell-scoped waiver built on it |
 | 43 | [DRC on `fp1505`](43-drc-fp1505.md) | The uncapped Calibre run over the short-free build, like-for-like against the shipping stream, and every check classified measured / unmeasurable |
 | 44 | [eth ROM sim/silicon divergence](44-eth-rom-sim-divergence.md) | Why the eth `sim_divergence` WARN is a declared, deliberate divergence and not a defect, and why regenerating the slot would be a false green |
+| 45 | [Measured status, 2026-08-18](45-measured-status-2026-08-18.md) | A freshly measured, whole-project status: git and pin reachability, the build inventory, every signoff verdict with what it actually measured, the physical numbers with their build named, and the flist that really builds |
 
 *(29–38, 40–42 exist but are not yet listed here.)*
 
