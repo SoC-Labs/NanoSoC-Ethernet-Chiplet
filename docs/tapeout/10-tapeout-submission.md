@@ -163,7 +163,16 @@ top cell `nanosoc_eth_chiplet_pads`, libraries `tcbn65lp` (9-track, `tcbn65lp_<r
 Our 8 memory macros are **already merged in** — they must not double-merge them.
 
 **What to ask:** which library revisions do they hold, and do they want our stream with the
-memories merged (as shipped) or stripped out so they merge everything themselves?
+memories merged (as shipped) or stripped out so they merge everything themselves? **Also
+ask them to confirm the exact `tpbn65v`/`tphn65lpgv2od3` package+revision their own
+`CompareCells`/`Padringcheck` tooling is keyed against** — our cell names
+(`PDDW16DGZ_G`, `PAD70GU`, `PAD70NU`, `PCORNER_G`, …) come from a specific
+`tpbn65v_<rev>` / `tphn65lpgv2od3_sl_<rev>` package+revision pair (resolved locally via
+`pdk_paths.sh`, never spelled here — same convention as every other foundry release code
+in this repo), and [52 — Padring GDS check](52-padring-gds-check.md)
+has already confirmed those exact names/counts/order are correctly present in our stream —
+so a naming mismatch against a *different* library revision is one of the two live
+candidates for why their compare came back "No identical cell names found!".
 
 **Watch for:** one **patched LEF** is in the LEF set — the TSMC IO driver LEF with
 `USE POWER ;` / `USE GROUND ;` added to exactly three pins (`VDDPST` on `PVDD2DGZ_G` and
@@ -319,6 +328,8 @@ Do not rely on the recipient reading `MANIFEST.txt`. Put this in the email:
 - [03 — Floorplan](03-floorplan.md) — die/core geometry, why `CORE_TO_IO` is coupled to
   macro placement
 - [06 — Fill, antenna, bond pads](06-fill-antenna-bondpads.md) — what fill *is* inserted
+- [52 — Padring GDS check](52-padring-gds-check.md) — local, license-free padframe
+  name/count/order check; run against the exact GDS IMEC evaluated (§5 there)
 - [`docs/PHYSICAL_HANDOFF.md`](../PHYSICAL_HANDOFF.md) — what has and has not been verified
   at RTL level
 - [`docs/PIN_MAP.md`](../PIN_MAP.md) · [`docs/PIN_POLICY.md`](../PIN_POLICY.md) ·

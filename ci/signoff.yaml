@@ -1653,6 +1653,66 @@ stages:
     artifacts:
       - ASIC/eth-chiplet/build/fp1505/work/drc_run/**
 
+  - id: erc
+    phase: physical
+    gate: report
+    label: soclabs-pdk
+    description: "Calibre ERC — does the routed GDS carry power/ground TEXT LABELS?"
+    # ADDED 2026-08-18, IN RESPONSE TO A REAL FOUNDRY SIGNOFF ERROR. IMEC's own
+    # ERC run against a GDS we sent them (2026-08-17/18) returned one hard
+    # [Error]: "No labels found in topcell. At least power/ground labels are
+    # required." We had NOTHING local that checked for this — no `erc` stage
+    # existed here at all (`grep -c "id: erc" ci/signoff.yaml` was 0 before this
+    # commit) — so a defect a real foundry signoff flow catches immediately was
+    # invisible to us until they told us. docs/tapeout/51-erc-pg-labels.md is
+    # the full write-up; this stage is its CI half.
+    #
+    # gate: report, DELIBERATELY, same reasoning as lvs-preflight above it. This
+    # is the FIRST time this exact check has ever run against a current-toolkit
+    # stream — there is not yet enough runtime history to trust it as a hard
+    # gate, and unlike drc's census this has no fixture-proven waiver story yet.
+    # Promote to block once it has run clean (or with an understood, waived
+    # PARTIAL) across several builds in a row.
+    #
+    # WHAT THIS STAGE MEASURED, so a future reader does not have to re-derive it
+    # from the log alone (full detail: docs/tapeout/51-erc-pg-labels.md §5):
+    #   * calibrated against the EXACT GDS IMEC checked (md5
+    #     7f6214965501c911bd65069378ae911d) — reproduces IMEC's finding exactly,
+    #     both via Calibre's own ERC and an independent klayout structural scan.
+    #   * fp1505 (this stage's target, same build `drc` above grades): the
+    #     SPNET stream-map fix (ASIC/asic-toolkit/tech/tsmc65/derive.tcl,
+    #     gdsmap_derive) DOES now label VDD/VSS — Calibre resolves both and the
+    #     klayout scan finds real text on the M9 text/SPNET layer. It does NOT label
+    #     VDDIO/VSSIO — zero text for either name anywhere in the whole GDS
+    #     hierarchy, not just the top cell. Verdict: PARTIAL, not OK.
+    #   * full-20260814 (NOT this stage's target — superseded, see the drc
+    #     stage's own note on why fp1505 was promoted): this ERC run
+    #     INDEPENDENTLY reproduces, via Calibre's short-isolation report rather
+    #     than Innovus check_drc, the already-known VDD/VSS rail-to-rail short
+    #     documented in docs/tapeout/43-drc-fp1505.md §3.
+    #
+    # ERC_RUNDIR is pinned into the BUILD TREE, same reasoning as the drc stage
+    # comment above (CI clones the repo and only ever sees the build tree, not
+    # ASIC/genus-innovus/work/ which ASIC/*/work in .gitignore excludes).
+    run: |
+      make -C ASIC/genus-innovus erc \
+        ERC_GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
+        ERC_RUNDIR=$PWD/ASIC/eth-chiplet/build/fp1505/work/erc_run \
+        BLOCK=nanosoc_eth_chiplet_pads
+    # No check: — same shape as lvs-preflight. run_erc.sh's own exit code IS the
+    # verdict (0 = OK or PARTIAL-with-warning printed, non-zero = NOT SIGNED OFF
+    # or a tool/preflight failure), and PARTIAL is deliberately not distinguished
+    # from OK at the exit-code level (see docs/tapeout/51-erc-pg-labels.md §4.3)
+    # — this is a report gate, so the printed OVERALL line is what a human reads,
+    # not a machine-parsed census. A block-gate promotion should add a real
+    # check: that greps OVERALL and fails the census on PARTIAL specifically,
+    # the same way drc's census fails on a saturated check rather than trusting
+    # calibre's own exit status.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+    artifacts:
+      - ASIC/eth-chiplet/build/fp1505/work/erc_run/**
+
   # --- Power delivery ---------------------------------------------------------
   # THE FIRST VOLTAGE THIS PIPELINE HAS EVER COMPUTED. Before this row the
   # nearest thing to a power-delivery check was `pg_capacity`, which rates the
@@ -1954,6 +2014,32 @@ stages:
       - ASIC/eth-chiplet/build/*/reports/gls/*/census.txt
       - ASIC/eth-chiplet/build/*/reports/gls/*/inputs.txt
       - ASIC/eth-chiplet/build/*/reports/gls/*/pg_complete.txt
+
+  - id: padring-gds
+    phase: physical
+    gate: report
+    label: soclabs-pdk
+    needs_implementation: true
+    description: "GDS-level padframe name/count/order check -- the local analog of the broker's CompareCells + Padringcheck"
+    # report, not block: this is a NEW check (added after IMEC's CompareCells
+    # said "No identical cell names found!" and Padringcheck said "Design does
+    # not contain any TSMC IO cells or bondpads" on a GDS this repo had no
+    # local way to have predicted). It needs a run against more builds before
+    # its own false-positive rate is trusted enough to gate on. Promote to
+    # block once triaged, same policy as lvs-preflight and cdc above.
+    #
+    # WHAT THIS DOES NOT DO: prove the padframe is DRC-clean or that the
+    # streamed geometry electrically matches the real TSMC cell -- we hold no
+    # usable tpbn65v/tphn65lpgv2od3 GDS to diff against on this machine. It
+    # only proves OUR OWN intended pad/corner/bond-pad names, counts and
+    # per-side order actually made it into the stream. See
+    # scripts/check_padring_gds.py's docstring for the full scope and limits,
+    # and docs/tapeout/52-padring-gds-check.md for what running it against the
+    # exact GDS IMEC saw found (short version: our names/counts/order were all
+    # correct — IMEC's failure is NOT explained by a local naming mistake).
+    run: make asic-padring-gds
+    artifacts:
+      - ASIC/genus-innovus/reports/padring_gds_report.json
 
 # -----------------------------------------------------------------------------
 # Checks a complete ASIC signoff would include that this pipeline does NOT do.
