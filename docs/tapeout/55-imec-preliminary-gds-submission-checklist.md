@@ -329,9 +329,12 @@ Nothing here blocks the send — a preliminary GDS need not be clean (§1.4(4)).
 
 ### 3.5 Metadata that must accompany the upload (R14, R15, R17)
 
-- [ ] **DDF filled in and emailed to eptsmc after the upload completes.** *No Design Delivery
-      Form exists anywhere in this repository* — searched, with a control (the same search
-      finds `package_submission.sh`). Obtain it from eptsmc **before** the upload.
+- [ ] **DDF filled in and emailed to eptsmc after the upload completes.** The broker file
+      records the Design Delivery Form as **already received** — but *no copy exists anywhere
+      in this repository* (searched, with a control: the same search finds
+      `package_submission.sh`). So it is in somebody's mail, not in the tree, and it also
+      carries the FTP upload instructions §12 points at. **Locate it before the upload
+      begins**, not after.
 - [ ] IP inventory: all three library families **with revisions and the complete path to each
       phantom view** (R14 asks for the path, not just the name), plus the 8 memory macros by
       name, explicitly flagged as already carrying real merged GDS and **not** to be replaced.
@@ -350,7 +353,7 @@ in this pass.**
 |---|---|---|
 | G1 | **Packages three artefacts IMEC will not use, and treats them as mandatory.** `*_pnr.v`, `*_pnr.sdf`, `*_syn.sdc` are declared deliverables whose absence fails the completeness gate. Per R7 eptsmc ask only for the layout and run no LVS. The SDF alone is ~360 MB | the `MISSING+=()` gate; manual §7.1 |
 | G2 | **Normalises the filename to `nanosoc_eth_chiplet_pads.gds`, destroying stream identity.** No manual rule requires this (§1.4). IMEC name the returned archive after the submitted file, so identical names produce indistinguishable archives — the exact failure that hid two runs on one stream | the `cp -p "$GDS" "$STAGE/$BLOCK.gds"` step |
-| G3 | **No DDF, and no slot for one.** R17 makes it the one mandatory accompanying document; the repo has no copy | manual §12; repo-wide search, with control |
+| G3 | **No DDF, and no slot for one.** R17 makes it the one mandatory accompanying document. It has been received but lives only in mail — the repo has no copy, and the bundle has nowhere to put one | manual §12; repo-wide search, with control |
 | G4 | **The IP inventory R14 demands is not produced.** `MANIFEST.txt` names the three families in prose but gives no revisions, no phantom-view paths, and does not list the 8 memory macros. Given §0, the manifest is also the natural place to say *which* libraries must be replaced — the field IMEC got wrong twice | manual §1.4(6) vs MANIFEST item 1 |
 | G5 | **Backlapping and packaging (R15) never stated** | manual §1.4(6) |
 | G6 | **Collects Innovus reports, not the Calibre DRC/ANT/BND summaries** — and R10/R7 make Calibre the only evidence eptsmc act on. MANIFEST item 4 admits the reports are `check_drc` over an incomplete stream, which is honest, but leaves the bundle with no signoff-grade deck evidence at all | `cp -rp "$REP"`; MANIFEST item 4 |
@@ -379,6 +382,15 @@ complete phantom-view paths R14 requires are in the untracked
 [27](27-broker-correspondence-NOT-TRACKED.md) gives: this repository is public, and an
 inventory of revisions is commercial information about the site. Fill them in from there; do
 not copy them back into a tracked file.
+
+**Name each library by the version the LEF itself reports, not by the FE package directory
+it sits in — they differ, and the difference matters.** The standard-cell front-end package
+directory is named for one revision while the LEF inside it self-reports an *older* one; the
+IO and pad LEFs self-report the same revision as their directories. Quoting the package
+directory would name a standard-cell revision we do not actually hold abstracts for. Checked
+2026-08-18: the two libraries IMEC merged on 18 August match what our LEFs report, so there is
+**no revision skew** and nothing to raise — the apparent mismatch is an artefact of reading
+the directory name instead of the file.
 
 ### 5.2 What the mail must say
 
@@ -471,12 +483,11 @@ residue that genuinely needs an answer.
 | **Q2** | **Please re-run with the pad library replaced from the `cup` (circuit-under-pad) branch, and send the `plots/` image.** Your 17-Aug run replaced from the **wire-bond (non-cup)** branch; this design is built against the **cup** branch, and the two carry different cell names, which is why `CompareCells` matched nothing. Please also confirm the pad pitch: our parts are **70 µm staggered**, both your reports record **80 µm**. And the `plots/` directory your `README_for_archive` promises was missing from both archives — it is how we would have seen the replacement had failed | The manual says they import our black boxes (§7) but nothing about branch selection. **Your own guidance sheet lists "wrong library used for replacement" and "warnings in the Compare Cells section" as grounds to ask the engineer for a re-run** | **Highest** — this is what made two runs unusable |
 | **Q3** | **Die corners: what must be empty, to what dimension, for this process — and which remedy do you accept?** (remove the corner cells and backfill; a chamfer at your import; or move the pad ring inward). If the cells go, how do we keep VDDIO/VSSIO/VDD/VSS ring continuity and the ESD arrangement? Note the rotation fix is applied but cannot clear this — the cell is geometrically identical under all four rotations | §6.2 makes cleaning `CSR.x.x` mandatory and rejection-grade but gives no dimension for this process and lists no accepted remedies | **High** — the one rejection-grade item visible from here |
 | **Q4** | **Send your exact deck switch set, and a fuller by-cell breakdown for CSR.** §10 settles the seal-ring, wire-bond, full-chip and chip-window switches, so only the ambiguous ones remain: the low-power flavour switch, the WLCSP seal-ring switch (active as shipped, and it changes the seal-ring/CSR derivation for a wire-bond design), mixed-scheme, and low-density checking. Separately, **~800 of 804 `CSR.R.2:D`, 644 of 644 `CSR.R.2:B` and 96 of 96 `CSR.EN.8` hits are unattributed** — your report truncates before naming the cells. Please send the full attribution | §10 gives a worked example for a different node and says the rest follow "similarly"; §11 confirms switch differences drive count disagreements. The attribution gap is in their output, not the manual | **High** — currently the largest open DRC item |
-| **Q5** | **Which standard-cell library revision will you merge?** Your 18-Aug run merged standard-cell geometry from a drop **older than the one this design is placed against** — the LEF abstracts, timing and physical constraints all came from the newer drop. Please merge the revision we name, or tell us the older one is what the shuttle uses so we can re-place against it | Nothing in the manual addresses a revision skew between our abstracts and their back-ends. It silently invalidates any device-level result | **High** — a geometry/abstract mismatch makes even a successful merge untrustworthy |
-| **Q6** | **Is your import a structure-level replacement or a merge?** Our pad structures are placed but empty. Should they stay empty, or carry their LEF obstruction geometry? Would anything left inside them be discarded, or duplicated against what you import? | §7 establishes the black-box model but not what happens to content inside a black-boxed structure. Bears directly on Q2 | Medium |
-| **Q7** | **The bond-pad deck command file named in §1.4(5) is not in our installation.** Please supply it, or confirm the revision we hold is what you accept for a 70 µm staggered wire-bond ring | §1.4(5) names the document; it is simply absent here. **Route to foundry support, not eptsmc** | Medium |
-| **Q8** | **What is the actual seal-ring width for this process?** §6.1 gives it only as a symbol with a worked example at a different value | Needed to state packaged die size and finalise the bonding diagram | Medium |
-| **Q9** | **`PVDD2POC_G` — "multiple cells in digital domain".** We instantiate it once per side (4 total), all on the same VDDIO net. Is this cell expected **once per ring**? No POC datasheet is available to us | New in the 18-Aug archive; not addressed anywhere in the manual | Medium |
-| **Q10** | **Confirm the area and seat.** 3.2 mm² against a 1 mm² block (§6.1), aspect 1:1.25, inside the 6 mm² ceiling. Confirm the extra-area charge is applied and the seat booked | §6.1 gives the mechanism, not our invoice | Administrative — **route to sales/PO** |
+| **Q5** | **Is your import a structure-level replacement or a merge?** Our pad structures are placed but empty. Should they stay empty, or carry their LEF obstruction geometry? Would anything left inside them be discarded, or duplicated against what you import? | §7 establishes the black-box model but not what happens to content inside a black-boxed structure. Bears directly on Q2 | Medium |
+| **Q6** | **The bond-pad deck command file named in §1.4(5) is not in our installation.** Please supply it, or confirm the revision we hold is what you accept for a 70 µm staggered wire-bond ring | §1.4(5) names the document; it is simply absent here. **Route to foundry support, not eptsmc** | Medium |
+| **Q7** | **What is the actual seal-ring width for this process?** §6.1 gives it only as a symbol with a worked example at a different value | Needed to state packaged die size and finalise the bonding diagram | Medium |
+| **Q8** | **`PVDD2POC_G` — "multiple cells in digital domain".** We instantiate it once per side (4 total), all on the same VDDIO net. Is this cell expected **once per ring**? No POC datasheet is available to us | New in the 18-Aug archive; not addressed anywhere in the manual | Medium |
+| **Q9** | **Confirm the area and seat.** 3.2 mm² against a 1 mm² block (§6.1), aspect 1:1.25, inside the 6 mm² ceiling. Confirm the extra-area charge is applied and the seat booked | §6.1 gives the mechanism, not our invoice | Administrative — **route to sales/PO** |
 
 **Removed as answered — do not ask these.** Whether a seal ring goes in our GDS (§6.1 — no);
 whether black-box submission is supported and who imports (§7 — supported, they do); whether
@@ -485,13 +496,14 @@ among them (§7.1 — DRC/ANT/BND, no LVS); whether dummy fill is mandatory on o
 (§1.4(6), §7.1 — no, but their service has a precondition); why `PO.R.8` fires on black boxes
 (§11 — **and it is now empirically closed at 0 under a real merge, so drop the waiver request
 entirely**); that `LUP.6` only appears after their import (§7); whether a logo is required
-(never mentioned); whether a filename or top-cell name is imposed (never mentioned); and
-whether an "IP merge" changes the deadline (no such class — §6.3 is about chip boundaries; the
+(never mentioned); whether a filename or top-cell name is imposed (never mentioned);
+**whether the two libraries they merged were the wrong revisions** (they were not — see
+below); and whether an "IP merge" changes the deadline (no such class — §6.3 is about chip boundaries; the
 date is confirmed as 1 September).
 
-**Three mailboxes, per §1.3 of the manual.** Submission questions (Q1–Q6, Q8, Q9) to the
-tape-out submission address; the deck-delivery item (Q7) and the black-box LVS application note
-to foundry support; Q10 to sales/PO. Do not let the PDK requests queue behind the submission thread.
+**Three mailboxes, per §1.3 of the manual.** Submission questions (Q1–Q5, Q7, Q8) to the
+tape-out submission address; the deck-delivery item (Q6) and the black-box LVS application note
+to foundry support; Q9 to sales/PO. Do not let the PDK requests queue behind the submission thread.
 
 ---
 
