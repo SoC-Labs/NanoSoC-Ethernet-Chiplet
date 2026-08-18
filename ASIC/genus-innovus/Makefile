@@ -23,6 +23,63 @@ DESIGN_DIR := $(CURDIR)
 include $(CURDIR)/../common.mk
 
 ASIC_FLOWS_DIR := $(DESIGN_DIR)/../asic-flows/Cadence
+
+#-----------------------------------------------------------------------------
+# DEPRECATED: syn / pnr_place / pnr_cts / pnr_route -- the LEGACY ENGINE
+#
+# Those four targets, and only those four, drive $(ASIC_FLOWS_DIR) -- the
+# ../asic-flows submodule, which is lab-shared and pinned. They are Step 3 of
+# docs/tapeout/41-retiring-asic-flows.md: FROZEN, NOT DELETED. They still run.
+#
+# WHAT REPLACES THEM (../asic-toolkit/mk/flow.mk):
+#
+#     make syn        ->  make -C ASIC/eth-chiplet syn      (flow.mk syn)
+#     make pnr_place  ->  make -C ASIC/eth-chiplet place    (flow.mk place)
+#     make pnr_cts    ->  make -C ASIC/eth-chiplet cts      (flow.mk cts)
+#     make pnr_route  ->  make -C ASIC/eth-chiplet route    (flow.mk route)
+#     make pnr_all    ->  make -C ASIC/eth-chiplet all      (flow.mk all)
+#
+# BE ACCURATE ABOUT WHAT THIS FALLBACK IS. It is a second ENGINE. It is not a
+# second OPINION, and it never has been: ../eth-chiplet/design.mk defines
+# LEGACY_ASIC_DIR as THIS directory and takes ten design inputs from it --
+# floorplan.tcl, power_plan.tcl, the .mmmc, the .io, the .upf power intent,
+# place_bondpads.tcl, every inputs/*.sdc, SDC_DIR and the Calibre run_drc.sh.
+# Both flows have therefore always read ONE copy of every design file. Running
+# the legacy path and the toolkit path over the same design and comparing tells
+# you about the two engines and NOTHING about the design data, so a legacy run
+# must never be quoted as corroborating a toolkit result. There is no control
+# here to lose, which is also why deleting these four targets loses no control.
+#
+# WHY THEY ARE STILL HERE. Not because they are a check -- see above -- but
+# because the four things that would actually justify deleting them are not yet
+# true. 41-retiring-asic-flows.md section 4 lists them; re-measure before
+# quoting it, the doc is dated.
+#
+# WHAT IS *NOT* DEPRECATED IN THIS DIRECTORY: everything else. drc, lec*, rail,
+# romlibs*, the *_eval stages, gdsmap, restream and lvs* are owned here, are
+# what CI invokes, and none of them touches ../asic-flows. Retiring asic-flows
+# and retiring genus-innovus are different changes with different blast radii;
+# this notice is only about the first.
+#-----------------------------------------------------------------------------
+define legacy_notice
+@printf '  %s\n' \
+  "" \
+  "-- DEPRECATED ------------------------------------------------------------" \
+  "'make $(1)' drives the LEGACY engine: $(ASIC_FLOWS_DIR)" \
+  "Replacement:  make -C $(abspath $(DESIGN_DIR)/../eth-chiplet) $(2)" \
+  "" \
+  "It still runs, and it is NOT a second opinion. ../eth-chiplet/design.mk" \
+  "points the toolkit at THIS directory for the floorplan, power plan, mmmc," \
+  "io, upf, bondpads, every SDC and the DRC deck, so both flows read ONE copy" \
+  "of every design file. A legacy run cannot corroborate a toolkit run." \
+  "" \
+  "Every shipping artefact is under ../eth-chiplet/build/. This tree's" \
+  "outputs/ holds no netlist and no GDS." \
+  "docs/tapeout/41-retiring-asic-flows.md" \
+  "--------------------------------------------------------------------------" \
+  ""
+endef
+
 REPORT_DIR := $(DESIGN_DIR)/reports
 LOG_DIR    := $(DESIGN_DIR)/logs
 OUT_DIR    := $(DESIGN_DIR)/outputs
@@ -111,6 +168,7 @@ _cpf-patch-one:
 ## The artefact test is not belt-and-braces: Genus exits ZERO on a failed script,
 ## so without it `pnr_all` runs P&R on a netlist that was never written.
 syn: setup_dirs asic-flist romlibs-check
+	$(call legacy_notice,syn,syn)
 	cd $(WORK_DIR)/; genus -f $(ASIC_FLOWS_DIR)/1_synthesis.tcl -log $(LOG_DIR)/syn_logs
 	@$(MAKE) --no-print-directory cpf-patch
 	@test -s $(OUT_DIR)/$(BLOCK)_gate_power.v || { \
@@ -248,11 +306,13 @@ sdc-check:
 ## cpf-patch is idempotent and cheap; running it here means a hand-run or
 ## resumed placement cannot proceed on an unpatched CPF. See power_plan.tcl.
 pnr_place: setup_dirs sdc-check cpf-patch
+	$(call legacy_notice,pnr_place,place)
 	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/2_pnr_setup.tcl
 	@test -d $(WORK_DIR)/$(BLOCK) || { \
 	    echo "FAIL: placement wrote no DB at $(WORK_DIR)/$(BLOCK)"; exit 1; }
 
 pnr_cts:
+	$(call legacy_notice,pnr_cts,cts)
 	cd $(WORK_DIR)/; $(INNOVUS) $(ASIC_FLOWS_DIR)/3_pnr_clock.tcl
 	@test -s $(REPORT_DIR)/timing_summary_03_cts_opt.rep || { \
 	    echo "FAIL: CTS wrote no post-opt timing summary — stage did not complete."; exit 1; }
@@ -264,6 +324,7 @@ pnr_cts:
 ## `make drc` is the working Calibre path. Fixed here rather than in asic-flows,
 ## which other designs share.
 pnr_route:
+	$(call legacy_notice,pnr_route,route)
 	cd $(WORK_DIR)/; env -u CALIBRE_HOME $(INNOVUS) $(ASIC_FLOWS_DIR)/4_pnr_route.tcl
 	@test -s $(OUT_DIR)/$(BLOCK).gds \
 	    && echo "OK: GDSII $(OUT_DIR)/$(BLOCK).gds ($$(du -h $(OUT_DIR)/$(BLOCK).gds | cut -f1))" \
@@ -559,6 +620,16 @@ help:
 	@echo "    make drc           Calibre DRC on that GDS    (headless)"
 	@echo ""
 	@echo "    make pnr_all       syn + all three P&R stages, unattended. Multi-hour."
+	@echo ""
+	@echo "  Those five are DEPRECATED — they drive the legacy ../asic-flows"
+	@echo "  engine. Replacement (make -C ../eth-chiplet <target>):"
+	@echo "    syn -> syn   pnr_place -> place   pnr_cts -> cts"
+	@echo "    pnr_route -> route                pnr_all  -> all"
+	@echo "  They still run, but they are NOT a second opinion — ../eth-chiplet/"
+	@echo "  design.mk takes ten design inputs from THIS directory (floorplan,"
+	@echo "  power plan, mmmc, io, upf, bondpads, every SDC, the DRC deck), so"
+	@echo "  both flows read ONE copy of every design file. Nothing else in this"
+	@echo "  directory is deprecated.  docs/tapeout/41-retiring-asic-flows.md"
 	@echo ""
 	@echo "  The stages share a DB in work/ and MUST run in order. To resume a"
 	@echo "  part-finished flow, invoke the stage you stopped at — 'make status'"
