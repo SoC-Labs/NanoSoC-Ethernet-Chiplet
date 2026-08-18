@@ -434,6 +434,64 @@ DRC_DENSITY_BUDGET ?= 0
 DRC_SCRIPT ?= $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh
 LVS_SCRIPT ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/lvs-flow/run_lvs.sh
 
+# ── THE LVS DECK AND LEAF-CELL INPUTS ───────────────────────────────────────
+# [2026-08-18] These four never came across when LVS moved to the toolkit, and
+# the omission was not visible as a failure. `make asic-lvs-pre` -- what
+# ci/signoff.yaml runs -- forwards to the LEGACY tree, where they are still
+# defined, so CI reported "OK - both layers clean" while grading
+# runs/20260810T065131Z_honest-full-pnr2 (2026-08-10, 312,031,404 B): an
+# eight-day-old artefact of the flow the root Makefile itself no longer ships.
+# The toolkit path failed honestly the whole time ("UNSET LVS_DECK / UNSET
+# STDCELL_VLOG"), which is the gate working, not the gate broken.
+#
+# SEMANTICS CHECKED, NOT ASSUMED. Same name is not same meaning, and this
+# project's own runner is not the toolkit's. Both were read:
+# asic-toolkit/flow/verify/lvs/CONTRACT.md 1 and ASIC/lvs-flow/run_lvs.sh:91-102
+# declare these four with identical wording -- "standard-cell simulation Verilog
+# (Front-End view)", "real transistor CDLs for hard macros". $(LVS_SCRIPT) is
+# what layer 2 actually invokes, so it is the one that had to agree, and it does.
+#
+# DERIVED, NEVER SPELLED. Every PDK path comes from pdk_paths.sh via ../common.mk.
+# The two release directories in those paths name which deck revision and which
+# libraries this site is licensed for, so a literal here would publish that; the
+# pre-commit vendor check enforces it. Deriving also means run_lvs.sh and this
+# manifest cannot drift onto different decks.
+LVS_DECK         ?= $(PDK_LVS_DECK)
+LVS_SOURCE_ADDED ?= $(PDK_LVS_SOURCE_ADDED)
+
+# THE _pwr.v SUFFIX IS THE WHOLE THING. This design's _pnr.v wires .VDD/.VSS on
+# every standard-cell instance, so the leaf stubs must declare those pins too or
+# Calibre rejects the entire source with "Wrong pin count" and never reaches a
+# compare -- measured at 256 errors on the legacy flow. TSMC ships both variants
+# side by side and pdk_paths.sh keeps the basename for exactly this reason.
+# Source: ../genus-innovus/lvs_project.mk:138, CONTRACT.md 6b
+STDCELL_VLOG ?= $(PDK_STDCELL_VLOG)
+IO_VLOG      ?= $(PDK_IO_VLOG)
+
+# The eight hard macros this chiplet instances. These are the part of the run
+# that is real verification: they are never black-boxed, and their interiors
+# compare device-for-device against the macro GDS merged into the stream. A
+# macro instanced but not listed gets "No matching .SUBCKT" and the compare is
+# worthless, so this list must agree with the P&R GDS merge list.
+#
+# THE ROMs COME FROM THIS RUN, NOT FROM THE SHARED TREE. $(ROMLIBS_DIR) is
+# $(ROM_RUN_DIR) here (see 500 below), i.e. build/$(RUN_TAG)/romlibs -- the ROMs
+# actually built into THIS stream. The legacy manifest pointed at the shared
+# ASIC/romlibs instead, which is a different file whenever a run rebuilt its
+# ROMs, and comparing a stream against a ROM it does not contain is precisely
+# the failure the ROM gates exist to catch. A RUN_TAG whose romlibs were never
+# built reports `MISS MACRO_CDLS <path>` per file in preflight layer 1 -- named,
+# not silent. Source: ../genus-innovus/lvs_project.mk:165
+MACRO_CDLS ?= \
+    $(MEM_BASE)/rf_01k/rf_01k.cdl \
+    $(MEM_BASE)/rf_08k/rf_08k.cdl \
+    $(MEM_BASE)/rf_16k/rf_16k.cdl \
+    $(MEM_BASE)/rf_32k/rf_32k.cdl \
+    $(MEM_BASE)/flash_cache_data/flash_cache_data.cdl \
+    $(MEM_BASE)/flash_cache_tag/flash_cache_tag.cdl \
+    $(ROMLIBS_DIR)/cc_rom/rom_via.cdl \
+    $(ROMLIBS_DIR)/eth_rom/eth_rom_via.cdl
+
 # ── WHY DRC_DECK IS DELIBERATELY EMPTY ──────────────────────────────────────
 # [2026-08-17] This is what reconciles the toolkit's drc-project recipe with
 # this project's run_drc.sh. The recipe passes exactly five things -- DRC_GDS,
