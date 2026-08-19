@@ -137,6 +137,45 @@ def check_pad_ring(boundary, be) -> list[str]:
     reached = {re.sub(r"\[.*", "", mm.group(1))
                for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(\s*~?\s*([A-Za-z_]\w*)", src)}
 
+    # ---- IEEE 1149.1 boundary register indirection ---------------------------
+    # Once the boundary-scan register is spliced in, a bonded port no longer
+    # lands on a pad cell directly. It lands on `nanosoc_eth_chiplet_bscan`,
+    # which drives the pad through its own net. So the core-side net is one hop
+    # further away and the "reaches no pad cell" test below would fail on all 35
+    # bonded ports at once.
+    #
+    # The weak fix is to treat every net on the register as reached and stop
+    # thinking. That would let the register HIDE a genuinely disconnected pad,
+    # which is exactly the class of hole this file exists to close. So do both
+    # halves: absorb the core-side nets, and then assert that every pad-side net
+    # the register drives really does land on a pad cell. A signal now has to
+    # survive core -> register -> pad, and each hop is checked.
+    #
+    # Absent the register (the pre-splice tree, or any other design) this block
+    # finds no instance and changes nothing.
+    bm = re.search(r"nanosoc_eth_chiplet_bscan\s+(\w+)\s*\((.*?)\n\s*\)\s*;", src, re.S)
+    if bm:
+        bconn = {p.group(1): re.sub(r"\[.*", "", p.group(2).strip())
+                 for p in re.finditer(r"\.(\w+)\s*\(\s*~?\s*([^()]*?)\s*\)", bm.group(2))}
+        core_side = {n for p, n in bconn.items() if p.endswith(("_core_in", "_core_out", "_core_oe"))}
+        pad_side = {n for p, n in bconn.items() if p.endswith(("_pin_in", "_pad_out", "_pad_oe"))}
+        reached |= core_side
+
+        # Every net the register presents to the ring must actually reach a pad.
+        # `_muxed` nets are the TAP pin overrides in the pad ring: the register
+        # drives them, the ring re-muxes them onto the pad, so accept a pad cell
+        # net that is this net with that suffix.
+        pad_nets = {re.sub(r"\[.*", "", mm.group(1))
+                    for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(\s*~?\s*\(?\s*[^)]*?([A-Za-z_]\w*)",
+                                          src)}
+        pad_nets |= {re.sub(r"\[.*", "", mm.group(1))
+                     for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(\s*~?\s*([A-Za-z_]\w*)", src)}
+        for n in sorted(pad_side):
+            if n in pad_nets or (n + "_muxed") in pad_nets:
+                continue
+            bad.append(f"  boundary scan: '{n}' is driven by the boundary register "
+                       f"but reaches no pad cell — the register is wired to nothing")
+
     # ---- open-drain pads ----------------------------------------------------
     # An open-drain pad built from a push-pull cell folds the DATA onto OEN and
     # hard-ties .I low, so sending a 1 tristates and lets the external pull-up
