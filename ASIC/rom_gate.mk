@@ -107,6 +107,31 @@ ASIC_TOOLKIT_DIR ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/asic-toolkit
 ROM_TOOLKIT_MK   ?= $(ASIC_TOOLKIT_DIR)/mk/rom.mk
 ROM_GDS_EXTRACT  ?= $(ASIC_TOOLKIT_DIR)/scripts/asic-flow-rom-gds-bits
 
+# ── THIS FILE OWNS THE ROM GATE HERE, SO THE TOOLKIT'S COPY STAYS OUT ──────
+#
+# The toolkit's mk/flow.mk includes mk/rom.mk BY DEFAULT (it used to be opt-in,
+# which is how this fork came to exist unnoticed in the first place). Both files
+# define `rom-vars`, and mk/rom.mk also defines `rom-compiler-stage`, which
+# ASIC/common.mk:444 defines too. GNU make does not refuse a redefinition: it
+# prints "overriding recipe for target" and silently keeps the LAST one - and
+# the toolkit's is last, because design.mk includes common.mk (and so this
+# file) at line 65 and mk/flow.mk at line 522.
+#
+# MEASURED, with this line removed:
+#   mk/rom.mk:533: warning: overriding recipe for target 'rom-vars'
+#   ASIC/rom_gate.mk: warning: ignoring old recipe for target 'rom-vars'
+#   mk/rom.mk:939: warning: overriding recipe for target 'rom-compiler-stage'
+#   ASIC/common.mk:444: warning: ignoring old recipe for target 'rom-compiler-stage'
+# `rom-vars` happens to print identically (the toolkit's recipe reads THIS
+# file's table), but `rom-compiler-stage` is a different recipe entirely, and a
+# silently substituted ROM compiler stage is not something to discover later.
+#
+# So this project declares that it supplies the `rom` fragment itself. DELETE
+# THIS LINE when the fork below is retired in favour of $(ROM_TOOLKIT_MK), which
+# is the whole point of keeping the two in step - and re-run
+# `make -C ASIC/eth-chiplet rom-vars` when you do: it must stay warning-free.
+ASIC_FLOW_SKIP_MK += rom
+
 # ── THE RUN'S OWN TREE, DERIVED FROM THE STREAM UNDER TEST ─────────────────
 #
 # Two defects share one cause, and one derivation closes both. Found 2026-08-18
