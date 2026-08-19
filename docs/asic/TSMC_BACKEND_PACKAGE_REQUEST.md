@@ -3,7 +3,8 @@
 
 > **STATUS — the request stands, but its 2026-08-06 framing is wrong on one point.**
 > "The single blocker … on running LVS at all" is false: Calibre nmLVS and `v2lvs`
-> are installed here (`/eda/mentor/calibre/bin/`) and **black-box LVS runs today** —
+> are installed here (both on `$PATH`; `make lvs` finds them) and **black-box LVS runs
+> today** —
 > see `../asic/LVS_FINDINGS.md`, which records measured runs, and
 > `../asic/DRC_WAIVER_INVENTORY.md` §7, which supersedes the status section below.
 > What the `_BE` packages genuinely unblock is **full-chip** LVS and manufacturing-layer
