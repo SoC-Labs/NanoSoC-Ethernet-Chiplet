@@ -233,15 +233,70 @@ fix, lower priority.) **Not yet applied** — ready to apply on request.
   attributed by IMEC to a cell named `CORNER_B`, which does not exist in our own merged GDS —
   IMEC substitutes real vendor corner-cell content we cannot see locally, and that content
   plausibly has orientation-sensitive seal-ring features our blank placeholder doesn't.
-- **Does NOT explain most of the actual growth.** `CSR.R.2:B` 104→644 (+519%), `CSR.R.2:D`
-  91→804 (+783%), `CSR.EN.8` 28→96 (+243%) between the two archives — but `CORNER_B`'s own
-  by-cell count is **byte-identical** in the `bnd` deck between both archives, and in the main
-  `drc` deck carries only **4 of 804** `CSR.R.2:D` hits (was 91/91 = 100% in the 17Aug archive).
-  **The bulk of the CSR growth — roughly 800 of 804, 644 of 644, 96 of 96 — is NOT attributed
-  to the corner cells at all**, and the reports truncate before naming what is. This is
-  unresolved: raw RVE polygons carry coordinates, not instance names, so full attribution needs
-  either a fuller by-cell report from the broker or a local re-check against a
-  corner-rotation-fixed, fully-merged stream.
+- **Does NOT explain most of the actual growth by NAME** — but geometric attribution
+  (2026-08-19, parsed every violation's coordinates from the raw RVE dumps in both archives,
+  ~1670 polygons total) closes the "is this even the same problem" question completely:
+  **100% of every `CSR.R.2:B`/`CSR.R.2:D`/`CSR.EN.8` violation, both archives, lands within
+  14–70µm of one of the four die corners** — strictly inside the same `CSR_CORNER_KEEPOUT`
+  74×74µm chamfer / `PCORNER_G` 135×135µm footprint `floorplan.tcl:219-223` already names as
+  the `CSR.R.1` mechanism. `CORNER_B`'s own by-cell count is byte-identical between archives
+  and contributes only 4/804 to `CSR.R.2:D` (was 91/91 = 100% in the 17Aug archive) — genuinely
+  not the source of the growth. Archive 1's hits are a strict spatial subset of archive 2's:
+  same location, not a different or new problem, just more intense once real seal-ring
+  library content (`tcbn65lp`) was merged in and collided with our still-occupied corners.
+  **The subset result also independently rules out a tempting misreading — "the design got
+  worse between runs."** It didn't: archive 1's merge was substantially null (only
+  `tpbn65v.gds`, the bond-pad library, was merged; `CompareCells` returned "No matching
+  library cellnames … Please check!"), so a large share of the archive-1→archive-2
+  rulecheck-count jump (117→246 distinct rulechecks) is the checker starting to measure
+  something, not the design regressing.
+  Growth pattern: `CSR.R.2:B`/`CSR.EN.8` scale uniformly ~6.2×/~3.4× at all four corners
+  (already firing in archive 1); `CSR.R.2:D` goes from firing at one corner only (BL, 91) to
+  all four (~200 each) under full merge.
+
+  **⚠ Population caveat — do not merge these two numbers.** This ~1670-violation population
+  is *IMEC's full-library-merge deck's own count*, not ours. Our own local Calibre run on
+  `fp1505` uses a different deck/population entirely: 837 raw / 140 design-owned, with
+  `CSR.R.1` itself returning **56** there against **28** in this IMEC archive — same rule
+  name, different deck, already disagreeing by 2×. So the correct statement of this finding
+  is **"within the IMEC full-merge archives, 100% of unattributed CSR.R.2/EN.8 is
+  corner-resident"** — not "our stream has ~1670 clearable results." What this licenses about
+  our own `fp1505`/`full-20260814` lineage is an *inference about leverage* (the same ESD
+  ruling that clears `CSR.R.1` plausibly clears a much larger population, if our own stream
+  behaves like IMEC's merged one), not a *measurement* of our own stream — because
+  `csr_ratchet_budget.yaml`'s own `baseline_is_stale_reference: true` already records that our
+  current lineage has never had a full-library-merge DRC run at all. Nobody can close that gap
+  locally.
+
+  **Best-evidenced name for the untruncated residue: `SBC331_SUB_CORNER`** — a corner-scoped
+  cell carrying the same rule families, sitting exactly where the by-cell `.rpt` truncates
+  before naming it (127 of its own 649 results never listed). **The limit is structural, not
+  just sparse data**: the raw RVE coordinate dump carries **zero** `CN` (cell-name) records
+  anywhere (`grep -c "^CN"` → 0) — not "mostly missing names," *no* instance names at all, by
+  construction of the archive as delivered. No amount of local re-analysis can close this;
+  it needs an untruncated by-cell report from IMEC. Draft ask for whatever goes to the broker:
+  *"Please send the UNTRUNCATED by-cell rulecheck statistics for the drc deck. The
+  Final_Report's by-cell section terminates in `...` after 8 cells, and the RVE database
+  carries no CN (cell name) records, so we cannot attribute the remaining results to a cell
+  from the archive as delivered."* Worth bundling with a second, unrelated but cheap ask: **49
+  rulechecks in the 18Aug archive are capped at exactly 1000** (13 of them leak a true count
+  above the cap in the pair signature, e.g. `LOGO.R.4` reads `1000 (1199)`, `ESD.23g` reads
+  `1000 (5368)`) — ask them to raise the result cap (`DRC MAXIMUM RESULTS ALL` or `ESTIMATE
+  1000` both work on their Calibre 2026.2; **do not propose `ESTIMATE` for a local run** — our
+  older local Calibre treats it as a hard error.
+
+  **Leverage, stated for whoever is taking this to David**: until this finding, PCORNER_G
+  removal was scoped as clearing 56 `CSR.R.1` results in our own local numbers — a real but
+  modest return for breaking pad-ring bus continuity at all four corners and needing an
+  electrical ruling. If our own lineage's CSR.R.2/EN.8 population behaves the way IMEC's
+  full-merge archive's does, the same ruling governs a population roughly thirty times larger
+  — reframing this from "a fix we might not bother with" to the single highest-leverage open
+  item on the DRC side, *if* the inference holds. That "if" is exactly the population caveat
+  above; state both together or the leverage claim will get quoted without its limits.
+
+  **This does not change the fix path — it confirms `CSR.R.1`'s ESD ruling on corner-cell/
+  pad-ring continuity is the actual unblock for this whole family, not a separate
+  investigation.**
 
 **Bottom line on CSR: fix the rotation because it's free, real, and requested — but budget for
 CSR remaining the single largest open item afterward, not treat it as closed.**
