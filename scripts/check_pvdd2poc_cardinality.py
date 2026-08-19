@@ -94,7 +94,7 @@ BONDPAD_TCL = HERE / "ASIC" / "genus-innovus" / "scripts" / "place_bondpads.tcl"
 # docs/tapeout/53-gate-promotion-plan.md §2. This is a BASELINE for drift
 # detection, not an endorsement: doc 53 explicitly withholds judgment on
 # whether 4 or 1 is correct pending broker/vendor input.
-DEFAULT_EXPECT = 4
+DEFAULT_EXPECT = 1
 
 # The cell this design instantiates once per side as the IO-supply anchor,
 # and its sibling -- the "plain" IO-supply pad every side otherwise uses.

@@ -211,6 +211,14 @@ wire VSSIO;   // IO   ground -- 12 pads
 wire VDD;     // core supply --  6 pads
 wire VSS;     // core ground --  4 pads
 
+// PVDD2POC_G is the ring's power-on-control anchor cell. Padring convention
+// (MiniASIC user guide p.32-33 item 6) requires exactly ONE per power domain
+// that contains a functional digital IO cell -- this design has exactly one
+// domain (PD_TOP, see docs/tapeout/62). Kept on side T; sides B/L/R use the
+// plain PVDD2DGZ_G IO-supply cell instead (same VDDPST/VDDIO pin binding,
+// same 25x135um footprint -- a like-for-like swap, not a ring edit).
+// Rationale for siting on T specifically, and everything this does NOT
+// change, is in docs/tapeout/63-pvdd2poc-single-instance-fix.md.
 // Top
 PVDD2POC_G uPAD_VDDIO_T_0 (.VDDPST (VDDIO));
 PVDD2DGZ_G uPAD_VDDIO_T_1 (.VDDPST (VDDIO));
@@ -225,7 +233,7 @@ PVSS1DGZ_G uPAD_VSS_T_0   (.VSS    (VSS));
 PVSS1DGZ_G uPAD_VSS_T_1   (.VSS    (VSS));
 
 // Bottom
-PVDD2POC_G uPAD_VDDIO_B_0 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_B_0 (.VDDPST (VDDIO));
 PVDD2DGZ_G uPAD_VDDIO_B_1 (.VDDPST (VDDIO));
 PVDD2DGZ_G uPAD_VDDIO_B_2 (.VDDPST (VDDIO));
 PVSS2DGZ_G uPAD_VSSIO_B_0 (.VSSPST (VSSIO));
@@ -238,7 +246,7 @@ PVSS1DGZ_G uPAD_VSS_B_0   (.VSS    (VSS));
 PVSS1DGZ_G uPAD_VSS_B_1   (.VSS    (VSS));
 
 // Left
-PVDD2POC_G uPAD_VDDIO_L_0 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_L_0 (.VDDPST (VDDIO));
 PVDD2DGZ_G uPAD_VDDIO_L_1 (.VDDPST (VDDIO));
 PVDD2DGZ_G uPAD_VDDIO_L_2 (.VDDPST (VDDIO));
 PVSS2DGZ_G uPAD_VSSIO_L_0 (.VSSPST (VSSIO));
@@ -246,7 +254,7 @@ PVSS2DGZ_G uPAD_VSSIO_L_1 (.VSSPST (VSSIO));
 PVSS2DGZ_G uPAD_VSSIO_L_2 (.VSSPST (VSSIO));
 
 // Right
-PVDD2POC_G uPAD_VDDIO_R_0 (.VDDPST (VDDIO));
+PVDD2DGZ_G uPAD_VDDIO_R_0 (.VDDPST (VDDIO));
 PVDD2DGZ_G uPAD_VDDIO_R_1 (.VDDPST (VDDIO));
 PVDD2DGZ_G uPAD_VDDIO_R_2 (.VDDPST (VDDIO));
 PVSS2DGZ_G uPAD_VSSIO_R_0 (.VSSPST (VSSIO));
