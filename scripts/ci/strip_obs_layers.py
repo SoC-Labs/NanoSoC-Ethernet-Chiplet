@@ -41,6 +41,7 @@ ELEM_START = {0x08: "BOUNDARY", 0x09: "PATH", 0x0A: "SREF", 0x0B: "AREF",
 LAYER, DATATYPE, BOXTYPE, TEXTTYPE, ENDEL = 0x0D, 0x0E, 0x2E, 0x16, 0x11
 # SREF/AREF carry no LAYER and must always be kept.
 LAYERLESS = {0x0A, 0x0B}
+ENDLIB    = 0x04   # last record of a well-formed stream
 
 
 def strip(src, dst, base, dry_run):
@@ -50,6 +51,7 @@ def strip(src, dst, base, dry_run):
     placements = [0]    # SREF/AREF: no layer, never removed, counted apart
     buf = []            # records of the element currently being read
     in_elem = False
+    saw_endlib = False
     elem_rt = None
     lay = dt = None
     out = None if dry_run else open(dst, "wb")
@@ -65,14 +67,29 @@ def strip(src, dst, base, dry_run):
     with open(src, "rb") as fh:
         while True:
             head = fh.read(4)
+            if not head:
+                break                       # clean end of file
             if len(head) < 4:
-                break
+                # A stream that runs out mid-record is not a stream that ended.
+                # Breaking here would copy a truncated input and report a
+                # successful filter, so the caller ships a short GDS whose only
+                # symptom is its size.
+                sys.exit(f"strip_obs_layers: FATAL: {len(head)} trailing byte(s) "
+                         f"at offset {fh.tell() - len(head)} - too few for a "
+                         f"record header. {src} is truncated or corrupt; refusing "
+                         f"to present a partial copy as a filtered one.")
             length = struct.unpack(">H", head[:2])[0]
             rtype = head[2]
             if length < 4:
                 sys.exit(f"strip_obs_layers: FATAL: bad record length {length} "
                          f"at offset {fh.tell() - 4}. Not a well-formed GDSII.")
             body = fh.read(length - 4) if length > 4 else b""
+            if len(body) != length - 4:
+                sys.exit(f"strip_obs_layers: FATAL: record at offset "
+                         f"{fh.tell() - 4 - len(body)} declares {length} bytes "
+                         f"but only {len(body) + 4} remain. {src} is truncated.")
+            if rtype == ENDLIB:
+                saw_endlib = True
             rec = head + body
 
             if rtype in ELEM_START:
@@ -105,6 +122,14 @@ def strip(src, dst, base, dry_run):
 
     if out is not None:
         out.close()
+    # An element left open at EOF, or a library with no ENDLIB, means the walk
+    # ended somewhere other than the end of a well-formed stream.
+    if in_elem:
+        sys.exit(f"strip_obs_layers: FATAL: {src} ends inside an element - no "
+                 f"ENDEL. Truncated or corrupt.")
+    if not saw_endlib:
+        sys.exit(f"strip_obs_layers: FATAL: {src} has no ENDLIB record. It is "
+                 f"not a complete GDSII stream.")
     return kept, removed, placements[0]
 
 
