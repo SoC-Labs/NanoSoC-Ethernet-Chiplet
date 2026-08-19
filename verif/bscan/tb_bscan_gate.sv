@@ -73,10 +73,20 @@ module tb_bscan_gate;
   localparam logic [IR_W-1:0] I_CLAMP  = 4'b0011;
   localparam logic [IR_W-1:0] I_BYPASS = 4'b1111;
 
-  // 32'h1000_1001 -- version 1, part 0x0001, manufacturer 0x000, LSB 1. The
-  // contract prints a 36-bit literal SystemVerilog truncates; see README.md
-  // "Contract ambiguities" #1. Override with +idcode=<8 hex digits>.
-  localparam logic [31:0] IDCODE_INTENDED  = 32'h1000_1001;
+  // THE EXPECTED IDCODE BELONGS TO THE NETLIST, NOT TO TODAY'S RTL.
+  //
+  // The routed netlist this bench drives is a SNAPSHOT. It was built with
+  // IDCODE_VALUE = 32'h1000_05A1 and it answers 32'h1000_05A1 -- MEASURED, T1.
+  // src/rtl/bscan/nanosoc_eth_chiplet_bscan.sv has since moved to
+  // 32'h1000_1001 (commit 61aa090: 0x2D0 is Neterion's assigned JEDEC ID and
+  // this project has none, so the placeholder was retired). Expecting the RTL's
+  // NEW value here would turn a netlist that is answering correctly into a red
+  // and say nothing true about either.
+  //
+  // run_gate.sh compares the two and says so when they diverge. When a netlist
+  // built after 61aa090 arrives, run it with  +idcode=10001001  -- or move this
+  // constant, once the netlist under test has actually changed.
+  localparam logic [31:0] IDCODE_INTENDED  = 32'h1000_05A1;
   localparam logic [31:0] IDCODE_TRUNCATED = 32'h0000_05A1;
   logic [31:0] IDCODE_EXP = IDCODE_INTENDED;
 
@@ -90,12 +100,16 @@ module tb_bscan_gate;
                                      // only sets what a shift costs in sim time.
   localparam time T_DRV    =  5ns;   // TMS/TDI driven this long after negedge
   localparam time T_SMP    =  5ns;   // TDO/pads sampled this long before posedge
+  localparam time T_HOLD   = 10ns;   // T2 may move TDI this long after posedge
   localparam time T_SETTLE = 20ns;   // combinational settle for an untimed peek
   localparam time WATCHDOG = 500ms;
 
   localparam int WARM_CYCLES = 256;  // functional-clock cycles in reset, SE=0
 
-  int SEED = 32'h6E5C_A401;          // +seed=N
+  // +seed=N. Each plusarg lands in a temporary and is copied over only when the
+  // call reports a hit, so an absent plusarg cannot touch the default whatever
+  // the simulator does with the reference on a miss.
+  int SEED = 32'h6E5C_A401;
 
   //--------------------------------------------------------------------------
   // THE CHAIN MAP.
@@ -357,6 +371,7 @@ module tb_bscan_gate;
   int  tdo_drv_off_shift = 0;  // TDO driven when it must not be -> pad contention
   int  tdo_hygiene_ticks = 0;
   bit  hygiene_on        = 1'b0;
+  bit  tdi_flip_after_edge = 1'b0;   // see tick(), and T2
 
   logic tdo_s;
 
@@ -393,7 +408,22 @@ module tb_bscan_gate;
     end
     #(T_SMP);
     tck_r = 1'b1;
-    #(TCK_HALF);
+    // 1149.1 specifies TDI only AT THE RISING EDGE of TCK, so well after that
+    // edge and well before the falling one this bench may legally move it --
+    // and T2 has to. TDO is retimed onto the falling edge, so a BYPASS stage
+    // that had been optimised away into a plain wire would STILL deliver TDI
+    // exactly one TCK late: the retiming flop supplies the cycle on its own.
+    // MEASURED (mutation M4b, README "Gate-level"): a zero-stage bypass is
+    // completely invisible to a bench that holds TDI steady across the high
+    // phase. Moving it here separates the two, and nothing else in the design
+    // may look at TDI off the rising edge, so nothing else may notice.
+    if (tdi_flip_after_edge) begin
+      #(T_HOLD);
+      tdi_r = ~tdi_v;
+      #(TCK_HALF - T_HOLD);
+    end else begin
+      #(TCK_HALF);
+    end
     tck_r = 1'b0;
     ncyc++;
   endtask
@@ -595,7 +625,9 @@ module tb_bscan_gate;
     load_ir_q(I_BYPASS);
 
     rnd_bits(din, BYPASS_NB);
-    scan_dr(din, BYPASS_NB, dout);
+    tdi_flip_after_edge = 1'b1;      // see tick(): this is what makes a
+    scan_dr(din, BYPASS_NB, dout);   // zero-stage bypass distinguishable
+    tdi_flip_after_edge = 1'b0;
 
     chk($sformatf("Capture-DR loads 0 into BYPASS (1149.1); first bit out = %b", dout[0]),
         dout[0] === 1'b0);
@@ -893,9 +925,12 @@ module tb_bscan_gate;
     $finish;
   end
 
+  int          arg_i;
+  logic [31:0] arg_h;
+
   initial begin : main
-    void'($value$plusargs("seed=%d",   SEED));
-    void'($value$plusargs("idcode=%h", IDCODE_EXP));
+    if ($value$plusargs("seed=%d",   arg_i)) SEED       = arg_i;
+    if ($value$plusargs("idcode=%h", arg_h)) IDCODE_EXP = arg_h;
     keep_clk = $test$plusargs("clk");
     void'($urandom(SEED));
 
