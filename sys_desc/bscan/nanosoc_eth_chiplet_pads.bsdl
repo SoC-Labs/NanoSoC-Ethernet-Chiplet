@@ -14,7 +14,7 @@
 -- AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY.
 -- Generator : scripts/gen_bscan.py
 -- Input     : src/rtl/bscan/pad_table.json
---             sha256 440b714a821ca214dc9d3d9c36552c3b0e2abb010ec6d225ab6085373c9e7ea7
+--             sha256 44b85b3ce5f26b15875c76ba0a1063a40774a7a31f435b758397170eb7d35577
 -- Regenerate: python3 scripts/gen_bscan.py
 -- Verify    : python3 scripts/gen_bscan.py --check
 --

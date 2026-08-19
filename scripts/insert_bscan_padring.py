@@ -37,17 +37,16 @@ Idempotent: running twice is a no-op (it detects the already-spliced marker).
 import json, re, sys, argparse, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PADS = ROOT / "ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v"
 TABLE = ROOT / "src/rtl/bscan/pad_table.json"
-MARK = "u_nanosoc_eth_chiplet_bscan"
 
-# The four pads the TAP is muxed onto when the SE pad is high. See
-# src/rtl/bscan/INTERFACE_CONTRACT.md section 7.
-TAP_TCK = "uPAD_SWDCK_I"
-TAP_TMS = "uPAD_SWDIO_IO"
-TAP_TDI = "uPAD_HOST_IO_0"
-TAP_TDO = "uPAD_HOST_IO_1"
-TAP_EN = "uPAD_SE_I"
+# NOTHING DESIGN-SPECIFIC IS HARDCODED HERE. The pad-ring path, the wrapper
+# module name and the five TAP pads all come from the table's `design` block,
+# which gen_pad_table.py wrote. A second chiplet supplies its own table and this
+# file is untouched.
+#
+# Which pads carry the TAP is a per-chiplet judgement, not a constant: the eth
+# ring lends HOSTIO4_P1[0:1] to TDI/TDO, and a ring without a spare bidir pair
+# has to lend something else. See INTERFACE_CONTRACT.md section 7.
 
 
 def short(inst):
@@ -63,12 +62,26 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if the pad ring is not already spliced")
-    ap.add_argument("-o", "--output", default=str(PADS))
+    ap.add_argument("--table", default=str(TABLE), help="pad table JSON")
+    ap.add_argument("--padring", help="override the pad ring named in the table")
+    ap.add_argument("-o", "--output", help="default: edit the pad ring in place")
     args = ap.parse_args()
 
-    src = PADS.read_text()
-    tbl = json.loads(TABLE.read_text())
+    tbl = json.loads(pathlib.Path(args.table).read_text())
     pads = tbl["pads"]
+    design = tbl.get("design")
+    if not design:
+        sys.exit("ERROR: pad table has no `design` block -- regenerate it with "
+                 "scripts/gen_pad_table.py.")
+    pads_path = pathlib.Path(args.padring or design["padring"])
+    if not pads_path.is_absolute():
+        pads_path = ROOT / pads_path
+    MARK = "u_" + design["module"]
+    tap = design["tap"]
+    TAP_TCK, TAP_TMS = tap["tck"], tap["tms"]
+    TAP_TDI, TAP_TDO = tap["tdi"], tap["tdo"]
+    TAP_EN = tap["en"]
+    src = pads_path.read_text()
 
     if MARK in src:
         print("pad ring already spliced (marker %r present) - nothing to do" % MARK)
@@ -87,7 +100,7 @@ def main():
         m = re.search(r"(\b[A-Z0-9_]+\s+%s\s*\((?:[^()]|\([^()]*\))*?\)\s*;)" % re.escape(inst),
                       src, re.S)
         if not m:
-            sys.exit("ERROR: could not locate pad instance %s" % inst)
+            sys.exit("ERROR: could not locate pad instance %s in %s" % (inst, pads_path))
         body = m.group(1)
         new = body
 
@@ -192,13 +205,13 @@ def main():
     pos = anchor.start()
     src = src[:pos] + "\n" + "\n".join(blk) + src[pos:]
 
-    pathlib.Path(args.output).write_text(src)
+    pathlib.Path(args.output or pads_path).write_text(src)
     print("spliced %d signal pads" % patched)
     print("  wire declarations : %d" % len(seen))
     print("  bscan connections : %d" % len(conns))
     print("  TAP muxed onto    : %s(TCK) %s(TMS) %s(TDI) %s(TDO), enabled by %s"
           % (short(TAP_TCK), short(TAP_TMS), short(TAP_TDI), short(TAP_TDO), short(TAP_EN)))
-    print("  wrote %s" % args.output)
+    print("  wrote %s" % (args.output or pads_path))
     return 0
 
 

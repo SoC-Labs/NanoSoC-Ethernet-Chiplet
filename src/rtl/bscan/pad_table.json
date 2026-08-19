@@ -1,4 +1,25 @@
 {
+ "design": {
+  "block": "nanosoc_eth_chiplet_pads",
+  "module": "nanosoc_eth_chiplet_bscan",
+  "padring": "ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v",
+  "io_file": "ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io",
+  "tap": {
+   "en": "uPAD_SE_I",
+   "tck": "uPAD_SWDCK_I",
+   "tms": "uPAD_SWDIO_IO",
+   "tdi": "uPAD_HOST_IO_0",
+   "tdo": "uPAD_HOST_IO_1"
+  },
+  "idcode": "0x100005A1",
+  "boundary_length": 76,
+  "signal_cells": [
+   "PDDW04DGZ_G",
+   "PDDW16DGZ_G",
+   "PDUW08DGZ_G",
+   "PDUW16DGZ_G"
+  ]
+ },
  "ports": {
   "SE": {
    "dir": "input",

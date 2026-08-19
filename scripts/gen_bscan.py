@@ -74,14 +74,22 @@ TABLE = ROOT / "src/rtl/bscan/pad_table.json"
 RTL_OUT = ROOT / "src/rtl/bscan/nanosoc_eth_chiplet_bscan.sv"
 BSDL_OUT = ROOT / "sys_desc/bscan/nanosoc_eth_chiplet_pads.bsdl"
 
-MODULE = "nanosoc_eth_chiplet_bscan"
-ENTITY = "nanosoc_eth_chiplet_pads"
+# IDENTITY IS NOT HARDCODED. It is read from the pad table's `design` block by
+# load_design(), so a second chiplet needs no edit to this file -- only its own
+# table. The module-level names below are placeholders that load_design()
+# overwrites before anything uses them; they exist so the module still imports.
+MODULE = None
+ENTITY = None
 GENERATOR = "scripts/gen_bscan.py"
 
 IR_WIDTH = 4
-EXPECTED_BOUNDARY_LENGTH = 76      # INTERFACE_CONTRACT.md section 1
-EXPECTED_PAD_COUNT = 48
-IDCODE_VALUE = 0x100005A1          # section 5. PLACEHOLDER -- see the banner text.
+# DERIVED, never literals. eth is 76 cells over 48 pads; compute is 80 over 62.
+# A hardcoded expectation is how a silently-dropped pad passes review, so these
+# come from the table and the assert compares the chain built here against the
+# count the parser independently derived from the ring.
+EXPECTED_BOUNDARY_LENGTH = None
+EXPECTED_PAD_COUNT = None
+IDCODE_VALUE = None                # PLACEHOLDER until a JEDEC ID is assigned.
 TCK_MAX_HZ = 10.0e6                # not yet characterised; declared so the BSDL parses
 
 # Instruction encoding -- INTERFACE_CONTRACT.md section 4. SAMPLE and PRELOAD are
@@ -122,11 +130,11 @@ ROLES = {
 
 # The four pads the TAP is muxed onto when SE is high (section 7). Kept in step
 # with scripts/insert_bscan_padring.py, which performs the actual mux.
-TAP_TCK_PAD = "uPAD_SWDCK_I"
-TAP_TMS_PAD = "uPAD_SWDIO_IO"
-TAP_TDI_PAD = "uPAD_HOST_IO_0"
-TAP_TDO_PAD = "uPAD_HOST_IO_1"
-TAP_EN_PAD = "uPAD_SE_I"
+TAP_TCK_PAD = None
+TAP_TMS_PAD = None
+TAP_TDI_PAD = None
+TAP_TDO_PAD = None
+TAP_EN_PAD = None
 
 BSDL_DIR = {"input": "in", "output": "out", "inout": "inout"}
 
@@ -169,12 +177,37 @@ def sha256_of(path):
 # ---------------------------------------------------------------------------
 # THE one ordering
 # ---------------------------------------------------------------------------
+def load_design(table):
+    """Bind this module's identity from the table's `design` block.
+
+    Everything design-specific enters here and nowhere else. gen_pad_table.py
+    wrote the block; this reads it. Two tools, one source of truth.
+    """
+    global MODULE, ENTITY, IDCODE_VALUE, EXPECTED_BOUNDARY_LENGTH, EXPECTED_PAD_COUNT
+    global TAP_TCK_PAD, TAP_TMS_PAD, TAP_TDI_PAD, TAP_TDO_PAD, TAP_EN_PAD
+    d = table.get("design")
+    if not d:
+        sys.exit("ERROR: pad table has no `design` block -- regenerate it with "
+                 "scripts/gen_pad_table.py (it is the tool that writes it).")
+    MODULE, ENTITY = d["module"], d["block"]
+    IDCODE_VALUE = int(str(d["idcode"]), 0)
+    EXPECTED_BOUNDARY_LENGTH = d["boundary_length"]
+    EXPECTED_PAD_COUNT = len(table["pads"])
+    t = d["tap"]
+    TAP_TCK_PAD, TAP_TMS_PAD = t["tck"], t["tms"]
+    TAP_TDI_PAD, TAP_TDO_PAD = t["tdi"], t["tdo"]
+    TAP_EN_PAD = t["en"]
+    assert IDCODE_VALUE & 1, "IEEE 1149.1 requires IDCODE bit 0 == 1"
+    return d
+
+
 def build_cells(table):
     """Return (pads_in_ring_order, cells_in_TDI_order).
 
     This is the single point at which chain order is decided. Both outputs are
     rendered from the returned list; nothing else may sort, reverse or regroup.
     """
+    load_design(table)
     pads = sorted(table["pads"], key=lambda p: p["ring_index"])
     ports = table["ports"]
 

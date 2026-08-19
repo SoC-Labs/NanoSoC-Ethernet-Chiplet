@@ -57,6 +57,7 @@ TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
 .PHONY: vendor-check hooks
+.PHONY: bscan bscan-table bscan-gen bscan-splice bscan-check bscan-sim
 .PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc asic-padring-gds
 .PHONY: asic-lvs asic-lvs-pre asic-lec-pnr asic-pipeline asic-pipeline-resume
 .PHONY: asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy
@@ -413,6 +414,64 @@ cdc:
 ## ~25 min; needs an Xcelium/HAL license. See docs/ELAB_STRICT_FINDINGS.md.
 elab-strict:
 	"$(CHIPLET_HOME)/verif/elab_strict/run.sh"
+
+#-----------------------------------------------------------------------------
+# IEEE 1149.1 boundary scan
+#
+# THE PER-DESIGN CONFIGURATION IS THESE SEVEN LINES AND NOTHING ELSE. The three
+# scripts below are design-agnostic; everything specific to this chiplet is here,
+# and a second chiplet adopting the flow changes only this block.
+#
+# WHY THE TABLE IS PARSED FROM A PRISTINE RING. Once the register is spliced in,
+# the pad cells no longer touch the core nets, so re-parsing the live ring yields
+# a table wired to the register itself -- which still elaborates, still lints,
+# still counts 76 cells, and is wrong. gen_pad_table.py refuses to parse a
+# spliced ring for exactly this reason. `bscan-table` therefore recovers the
+# pre-splice ring out of git, parses THAT, and records the repo path.
+#-----------------------------------------------------------------------------
+BSCAN_BLOCK    := nanosoc_eth_chiplet_pads
+BSCAN_MODULE   := nanosoc_eth_chiplet_bscan
+BSCAN_PADRING  := ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v
+BSCAN_IO       := ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io
+BSCAN_TABLE    := src/rtl/bscan/pad_table.json
+# TAP pins are muxed onto existing pads -- no new bonds. SE was bonded and
+# driving nothing, which is why it is the enable.
+BSCAN_TAP      := --tap-en uPAD_SE_I --tap-tck uPAD_SWDCK_I --tap-tms uPAD_SWDIO_IO \
+                  --tap-tdi uPAD_HOST_IO_0 --tap-tdo uPAD_HOST_IO_1
+# PLACEHOLDER. SoC Labs holds no JEDEC manufacturer ID; until one is assigned a
+# tester will bind the wrong BSDL to this die.
+BSCAN_IDCODE   := 0x100005A1
+# The commit whose pad ring predates the splice.
+BSCAN_PRISTINE := 458d108
+
+## bscan-table: re-derive the pad table from the PRE-SPLICE pad ring
+bscan-table:
+	@git show $(BSCAN_PRISTINE):$(BSCAN_PADRING) > $(BUILD)/pristine_pads.v
+	python3 "$(CHIPLET_HOME)/scripts/gen_pad_table.py" \
+	    --padring $(BUILD)/pristine_pads.v --record-padring $(BSCAN_PADRING) \
+	    --io $(BSCAN_IO) --block $(BSCAN_BLOCK) --module $(BSCAN_MODULE) \
+	    $(BSCAN_TAP) --idcode $(BSCAN_IDCODE) -o $(BSCAN_TABLE)
+
+## bscan-gen: regenerate the wrapper RTL and the BSDL from the table
+bscan-gen:
+	python3 "$(CHIPLET_HOME)/scripts/gen_bscan.py"
+
+## bscan-splice: wire the register into the pad ring (idempotent)
+bscan-splice:
+	python3 "$(CHIPLET_HOME)/scripts/insert_bscan_padring.py"
+
+## bscan-check: fail if the generated files have drifted from the table
+bscan-check:
+	python3 "$(CHIPLET_HOME)/scripts/gen_bscan.py" --check
+	python3 "$(CHIPLET_HOME)/scripts/insert_bscan_padring.py" --check
+	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py"
+
+## bscan-sim: run the self-checking boundary-scan bench under VCS
+bscan-sim:
+	cd "$(CHIPLET_HOME)/verif/bscan" && ./run.sh
+
+## bscan: table -> generate -> splice -> check
+bscan: bscan-table bscan-gen bscan-splice bscan-check
 
 ## chip-boundary: check the chip-boundary spec covers every RTL port, exactly once.
 ## Fails on an unclassified port, a stale name, or a direction/width mismatch.
