@@ -886,10 +886,18 @@ export ROUTE_EXPECT_UNROUTED ?= 2
 # "NOT GATED" at that value on every run). Retiring the crossings ceiling
 # WITHOUT gating this leaves the real hazard uncovered, which is worse than
 # today's state, not better. REQUIRED BEFORE THE NEXT CANDIDATE RUN: derive a
-# real floor for PLACE_MIN_MACRO_PG_GAP - the 2.70um clearance figure above is
-# this design's own aliasing arithmetic, not yet confirmed as the right PG
-# floor value, and must be checked before being used as one - and set it, with
-# the derivation and the date, in the same style as every other budget in this
+# real floor for PLACE_MIN_MACRO_PG_GAP. VERIFIED WRONG, do not reuse: the
+# 2.70um clearance figure above is `(S+2W) - (D mod P)` from the PHASE-OVERLAP
+# formula - how much room a macro had to MOVE before its ladder aliased a
+# neighbour's, not an edge-to-edge PG gap. The census already measures 0.5000um
+# on all 42 macro/net rows on a HEALTHY grid (power_plan.tcl:890's own
+# -spacing 0.5) - so a floor at 2.70 would fire on every one of the 300
+# crossings at nominal spacing, look authoritative because it is a real number
+# from this design's own history, and be wrong for exactly that reason. The
+# floor wants to come from the M5 SPACINGTABLE for the relevant width and
+# parallel-run length in the TECH LEF, not this design's own arithmetic, and it
+# must sit BELOW 0.5um or it flags the nominal grid too. Set it, with the
+# derivation and the date, in the same style as every other budget in this
 # file. Left unset here deliberately: naming the requirement is the point,
 # exactly as an unratcheted default sat inert twice already in this section.
 #
