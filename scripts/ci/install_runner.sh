@@ -17,8 +17,8 @@
 #                                         srv03335. Adding it is a Puppet change.
 #
 #   GROUP MEMBERSHIP IS NOT THE DIFFERENCE. Both hosts are in `tsmc65pdkgrp`,
-#   which is what guards /tsmc65pdk/65 (mode 2770); `tsmc65` guards an older
-#   tree ASIC/common.mk moved off. The difference is purely the mount. Inside
+#   which is what guards the PDK mount named by TSMC_65_HOME (mode 2770);
+#   `tsmc65` guards an older tree ASIC/common.mk moved off. The difference is purely the mount. Inside
 #   the CI sandbox's user namespace a group cannot be resolved to its NAME at
 #   all (SSSD is unreachable) while access still works, so preflight treats PDK
 #   READABILITY — not group name — as authoritative.
