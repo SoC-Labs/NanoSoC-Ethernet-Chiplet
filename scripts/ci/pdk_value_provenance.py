@@ -172,6 +172,7 @@ def parse_lef(path):
 
 
 def has(layers, layer, rule, val, tol=1e-9):
+    """True if `layer`/`rule` carries a value equal to `val` within `tol`."""
     return any(abs(v - val) <= tol
                for v in layers.get(layer, {}).get(rule, set()))
 
@@ -293,6 +294,7 @@ def read_line(spec):
 
 
 def specs_from_stdin():
+    """Read file:line spec references from stdin, in order, without duplicates."""
     seen, out = set(), []
     pat = re.compile(r"^\s+(\S+:\d+)\s")
     for line in sys.stdin:
@@ -304,6 +306,7 @@ def specs_from_stdin():
 
 
 def main():
+    """Resolve each spec reference to the PDK file and line that supplies its value."""
     argv = sys.argv[1:]
     if not argv:
         sys.stderr.write(__doc__)

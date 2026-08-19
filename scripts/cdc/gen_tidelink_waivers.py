@@ -91,6 +91,7 @@ def modules_in(path: str) -> dict[str, str]:
 
 
 def in_namespace(name: str) -> bool:
+    """True if `name` matches any vendor namespace pattern."""
     return any(fnmatch.fnmatch(name, p) for p in VENDOR_NAMESPACES)
 
 
@@ -110,6 +111,7 @@ def parse_waiver_du(path: str) -> list[tuple[str, bool, int]]:
 
 
 def main(argv=None) -> int:
+    """Generate the waiver file, or with --check verify the committed one matches."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true")

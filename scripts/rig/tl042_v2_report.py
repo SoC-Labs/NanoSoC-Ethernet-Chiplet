@@ -26,6 +26,7 @@ import sys
 
 
 def load(path):
+    """Read RUNS.tsv into a list of dicts; rows with the wrong column count are skipped."""
     with open(path) as f:
         lines = [l.rstrip("\n") for l in f if l.strip()]
     if not lines:
@@ -41,32 +42,39 @@ def load(path):
 
 
 def pair(r):
+    """The run's anchor pair as 'a/b'."""
     return "%s/%s" % (r.get("anchor_a", "?"), r.get("anchor_b", "?"))
 
 
 def is_void(r):
+    """True if the link never came up or the LOCALMEM verify was unreadable."""
     return r.get("linkup") != "1" or r.get("delivery_pass") == "VOID"
 
 
 def is_yes_no(r):
+    """True for the die_a=YES / die_b=NO anchor cell, reported apart from the rates."""
     return r.get("anchor_a") == "YES" and r.get("anchor_b") == "NO"
 
 
 def is_indeterminate(r):
+    """True if the anchor pair could not be parsed."""
     return "?" in (r.get("anchor_a"), r.get("anchor_b"))
 
 
 def delivered(r):
+    """True if this run delivered byte-exact."""
     return r.get("delivery_pass") == "1"
 
 
 def rate(rows):
+    """(delivered, total, percent) over a set of runs."""
     n = len(rows)
     d = sum(1 for r in rows if delivered(r))
     return d, n, (100.0 * d / n if n else float("nan"))
 
 
 def main():
+    """Stratify RUNS.tsv and print the NO-HARM verdict."""
     if len(sys.argv) != 2:
         print("usage: tl042_v2_report.py RUNS.tsv", file=sys.stderr)
         return 2

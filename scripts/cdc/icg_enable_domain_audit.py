@@ -184,6 +184,7 @@ def enable_source_flops(enable_net, drv, icg_re, max_depth=8):
 
 
 def main(argv=None):
+    """Walk the gate netlist and report every ICG whose enable crosses a clock domain."""
     ap = argparse.ArgumentParser(
         description="Flag ICGs whose enable is driven from another clock domain."
     )

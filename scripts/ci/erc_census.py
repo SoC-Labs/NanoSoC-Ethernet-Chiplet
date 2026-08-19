@@ -61,6 +61,7 @@ OVERALL_RE = re.compile(r"OVERALL:\s*(OK|PARTIAL|NOT SIGNED OFF)\b")
 
 
 def strip_ansi(text):
+    """Strip terminal colour escapes so the OVERALL line matches as plain text."""
     return ANSI_RE.sub("", text)
 
 
@@ -76,6 +77,7 @@ def find_overall(text):
 
 
 def main(argv=None):
+    """Read the transcript, find OVERALL, and exit 0 only if it reads exactly OK."""
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("rundir", help="ERC_RUNDIR -- directory holding the "

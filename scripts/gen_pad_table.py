@@ -47,6 +47,11 @@ Usage
     gen_pad_table.py --padring <pads.v> --io <ring.io> --block <name> \
                      --tap-en/-tck/-tms/-tdi/-tdo <uPAD_...> [--idcode 0x...] \
                      [--module <name>] [-o pad_table.json]
+
+Reads the pad-ring Verilog and the Innovus .io; writes ONE JSON table.
+Exit: 0 table written; non-zero (via sys.exit with a message) if the ring has
+no signal pads, the .io lacks a side block, a named TAP pad is not a signal pad
+in this ring, or the ring has already been spliced by insert_bscan_padring.py.
 """
 from __future__ import annotations
 
@@ -68,6 +73,7 @@ SIDES = (("top", False), ("right", True), ("bottom", True), ("left", False))
 
 
 def strip_comments(s: str) -> str:
+    """Remove /* */ and // comments so the regex parsers never match commented RTL."""
     s = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
     return re.sub(r"//[^\n]*", "", s)
 
@@ -82,6 +88,7 @@ def discover_signal_cells(src: str) -> tuple[str, ...]:
 
 
 def parse_ports(src: str, block: str) -> dict:
+    """Port name -> direction for the pad-ring module `block`."""
     hm = re.search(r"module\s+%s\s*\((.*?)\n\s*\)\s*;" % re.escape(block), src, re.S)
     if not hm:
         sys.exit("ERROR: no module %s in the pad ring" % block)
@@ -97,12 +104,14 @@ def parse_ports(src: str, block: str) -> dict:
 
 
 def parse_pads(src: str, signal_cells: tuple[str, ...]) -> list[dict]:
+    """One record per signal pad: instance, cell, the C/I/OEN/REN nets and the PAD port."""
     pads = []
     for cell, inst, body in re.findall(r"\b(P[A-Z0-9_]+)\s+(u\w+)\s*\((.*?)\)\s*;", src, re.S):
         if cell not in signal_cells:
             continue
 
         def get(p):
+            """Net bound to port `p` of this pad instance, or "" if unbound."""
             m = re.search(r"\.%s\s*\(\s*(.*?)\s*\)" % p, body, re.S)
             return (m.group(1).strip() if m else "")
 
@@ -153,6 +162,7 @@ def parse_ring_order(io_path: str) -> list[tuple[str, str]]:
 
 
 def main() -> int:
+    """Parse the ring, order it by the .io, and write the pad table."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--padring", required=True,
                     help="the PRISTINE pad-ring Verilog to parse (pre-splice)")
@@ -166,13 +176,14 @@ def main() -> int:
     ap.add_argument("--block", required=True, help="pad-ring module name, e.g. foo_chiplet_pads")
     ap.add_argument("--module", help="wrapper module to generate (default: <block minus _pads>_bscan)")
     ap.add_argument("--tap-en", required=True, help="pad instance enabling boundary scan, e.g. uPAD_SE_I")
-    ap.add_argument("--tap-tck", required=True)
-    ap.add_argument("--tap-tms", required=True)
-    ap.add_argument("--tap-tdi", required=True)
-    ap.add_argument("--tap-tdo", required=True)
+    ap.add_argument("--tap-tck", required=True, help="pad instance carrying TCK")
+    ap.add_argument("--tap-tms", required=True, help="pad instance carrying TMS")
+    ap.add_argument("--tap-tdi", required=True, help="pad instance carrying TDI")
+    ap.add_argument("--tap-tdo", required=True, help="pad instance carrying TDO")
     ap.add_argument("--idcode", default="0x100005A1",
                     help="32-bit JTAG IDCODE. PLACEHOLDER until a JEDEC ID is assigned.")
-    ap.add_argument("-o", "--out", default="pad_table.json")
+    ap.add_argument("-o", "--out", default="pad_table.json",
+                    help="where to write the pad table (default: pad_table.json)")
     args = ap.parse_args()
 
     src = strip_comments(open(args.padring).read())

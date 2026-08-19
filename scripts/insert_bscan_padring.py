@@ -33,6 +33,12 @@ will fail the build if it is ever broken -- a 16 mA push-pull driver on a wired-
 bus is a cross-die short no tool warns about.
 
 Idempotent: running twice is a no-op (it detects the already-spliced marker).
+
+Reads src/rtl/bscan/pad_table.json (--table) and the pad ring it names; writes
+the spliced ring back in place (or to -o).
+Exit: 0 spliced, already spliced, or --check satisfied; 1 --check found an
+unspliced ring; non-zero with a message if the table has no `design` block or a
+named pad instance is absent from the ring.
 """
 import json, re, sys, argparse, pathlib
 
@@ -55,10 +61,12 @@ def short(inst):
 
 
 def netname(inst, suffix):
+    """Pad-side net for one pad terminal, e.g. (uPAD_FOO, "c") -> bsp_foo_c."""
     return "bsp_%s_%s" % (short(inst).lower(), suffix)
 
 
 def main():
+    """Splice (or, with --check, verify) the register into the pad ring."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if the pad ring is not already spliced")
@@ -158,6 +166,7 @@ def main():
     # Point the TDO pad at the muxed nets, and force the TMS/TDI pads to input-only
     # while boundary scan is live so the core cannot fight the tester.
     def repad(inst, port, expr):
+        """Rebind one port of one pad instance to `expr`, returning the new source."""
         m = re.search(r"(\b[A-Z0-9_]+\s+%s\s*\((?:[^()]|\([^()]*\))*?\)\s*;)" % re.escape(inst),
                       src, re.S)
         body = m.group(1)

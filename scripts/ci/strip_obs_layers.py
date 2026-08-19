@@ -44,6 +44,7 @@ LAYERLESS = {0x0A, 0x0B}
 
 
 def strip(src, dst, base, dry_run):
+    """Copy `src` to `dst`, dropping every element on a layer at or above `base`."""
     kept = Counter()
     removed = Counter()
     placements = [0]    # SREF/AREF: no layer, never removed, counted apart
@@ -54,6 +55,7 @@ def strip(src, dst, base, dry_run):
     out = None if dry_run else open(dst, "wb")
 
     def flush(drop):
+        """Emit the buffered element unless `drop`; SREF/AREF are counted, never dropped."""
         nonlocal buf
         if not drop and out is not None:
             for rec in buf:
@@ -107,6 +109,7 @@ def strip(src, dst, base, dry_run):
 
 
 def main():
+    """Strip obstruction layers from one GDS, or with --dry-run just report them."""
     ap = argparse.ArgumentParser()
     ap.add_argument("src")
     ap.add_argument("dst")

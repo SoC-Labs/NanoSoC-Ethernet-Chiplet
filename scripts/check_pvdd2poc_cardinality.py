@@ -114,6 +114,7 @@ class SourceError(Exception):
 
 
 def strip_comments(src: str) -> str:
+    """Remove /* */ and // comments before regex-parsing RTL."""
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     return re.sub(r"//[^\n]*", "", src)
 
@@ -168,6 +169,7 @@ def cross_check_sources(target_insts: list[str]) -> list[str]:
 
 
 def main() -> int:
+    """Count the PVDD2POC cells in the pad ring and compare against --expect."""
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pads-v", type=Path, default=PADS_V,

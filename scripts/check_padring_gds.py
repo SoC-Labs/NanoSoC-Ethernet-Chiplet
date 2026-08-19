@@ -181,7 +181,7 @@ WATCH_PREFIXES = ("PAD7", "PCORNER", "PDDW", "PDUW", "PVDD", "PVSS")
 #
 #     WHY NOT a derived formula (e.g. "each corner is +90 degrees from the
 #     last, walking the ring"): this exact mistake has already been made once
-#     in this repo. docs/tapeout/04-floorplan-and-io.md Section 4.2 (commit
+#     in this repo. docs/tapeout/scripts/04-floorplan-and-io.md Section 4.2 (commit
 #     b5d249c8) *asserted* a "verified" +90-degrees-per-step rotational
 #     pattern around the four corners, stated with confidence, and it was
 #     WRONG -- PCORNER_G is rotation-symmetric for CSR.R.1 (ESD ruling)
@@ -370,6 +370,7 @@ class Expected:
     from pads.v + the .io floorplan file + place_bondpads.tcl every run."""
 
     def __init__(self) -> None:
+        """Rebuild the expected padframe from pads.v, the .io and place_bondpads.tcl."""
         self.pads_v = parse_pads_verilog(PADS_V)
         self.corners, self.io_sides = parse_io_file(IO_FILE)
         self.bondpads = parse_bondpad_tcl(BONDPAD_TCL)
@@ -466,6 +467,7 @@ class Expected:
 
 
 def read_top_cell_name(path: Path) -> str | None:
+    """Top-cell name recorded beside the GDS, or None if it is not there."""
     if not path.is_file():
         return None
     m = re.search(r"set\s+block_name\s+(\S+)", path.read_text())
@@ -558,7 +560,11 @@ def _gds_real8(b: bytes) -> float:
 
 
 class GdsFindings:
+    """What one GDS scan observed: which watched cells are defined, where they are
+    placed in the top cell, and what geometry each holds."""
+
     def __init__(self) -> None:
+        """Start an empty finding set."""
         self.defined: set[str] = set()
         self.near_miss: set[str] = set()
         # watched structure's OWN definition: layer -> geometry record count
@@ -575,6 +581,7 @@ class GdsFindings:
 
 
 def scan_gds(path: Path, top_name: str, watch_exact: set[str]) -> GdsFindings:
+    """Stream the GDS once and collect every fact the checks need."""
     f = GdsFindings()
     size = os.path.getsize(path)
 
@@ -773,6 +780,7 @@ def classify_sides(top_children: list[dict]):
     notes = []
 
     def side_of(x: int, y: int) -> str:
+        """Which die edge a placement sits nearest."""
         d = {
             "left": abs(x - left_x),
             "right": abs(x - right_x),
@@ -809,6 +817,7 @@ def sequences_match(observed: list[str], expected: list[str]) -> bool:
 
 
 def run_check(gds_path: Path, top_override: str | None) -> tuple[int, dict]:
+    """Compare the streamed GDS against Expected(); return (exit code, report)."""
     exp = Expected()
     report: dict = {"gds": str(gds_path), "problems": [], "info": []}
 
@@ -997,6 +1006,7 @@ def run_check(gds_path: Path, top_override: str | None) -> tuple[int, dict]:
 # 4. Reporting
 # ---------------------------------------------------------------------------
 def print_report(report: dict) -> None:
+    """Print the human-readable form of a run_check report."""
     print(f"padring_gds '{report.get('top_cell', '?')}' <- {report['gds']}")
     counts = report.get("counts", {})
     n_ok = sum(1 for v in counts.values() if v["expected"] == v["observed"] and v["defined"])
@@ -1051,6 +1061,7 @@ def print_report(report: dict) -> None:
 
 
 def main(argv: list[str]) -> int:
+    """Parse arguments, run the check, print and optionally write the report."""
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gds", required=True, help="the streamed GDSII to check")

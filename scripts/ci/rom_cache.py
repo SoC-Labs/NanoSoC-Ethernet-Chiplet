@@ -112,16 +112,19 @@ DEFAULT_GENERATORS = [
 
 
 def die(msg: str, code: int = 1) -> None:
+    """Print a failure and exit."""
     sys.stderr.write("rom_cache: FAIL: %s\n" % msg)
     sys.exit(code)
 
 
 def note(msg: str) -> None:
+    """Print a progress line."""
     sys.stdout.write("rom_cache: %s\n" % msg)
     sys.stdout.flush()
 
 
 def sha256_file(path: str) -> str:
+    """SHA-256 of a file, streamed."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -130,10 +133,12 @@ def sha256_file(path: str) -> str:
 
 
 def sha256_bytes(b: bytes) -> str:
+    """SHA-256 of a byte string."""
     return hashlib.sha256(b).hexdigest()
 
 
 def iso(epoch: float) -> str:
+    """UTC timestamp for a POSIX epoch."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
 
 
@@ -257,6 +262,7 @@ def compiler_identity(compiler: str) -> dict:
 
 def compute_key(rom: str, spec_path: str, code_path: str, generators: list,
                 ident: dict) -> tuple:
+    """Content-address one ROM build: everything that can change its bits."""
     spec = parse_spec(spec_path)
     code_sha = sha256_file(code_path)
     canon = {
@@ -278,10 +284,12 @@ def compute_key(rom: str, spec_path: str, code_path: str, generators: list,
 # -----------------------------------------------------------------------------
 
 def entry_dir(cache_root: str, rom: str, key: str) -> str:
+    """Cache directory holding the build for one (rom, key)."""
     return os.path.join(cache_root, rom, key)
 
 
 def load_manifest(edir: str):
+    """Manifest of a cache entry, or None if the entry is absent."""
     mpath = os.path.join(edir, "build.json")
     if not os.path.isfile(mpath):
         return None
@@ -583,6 +591,7 @@ def import_entry(cache_root: str, rom: str, key: str, canon: dict, spec: dict,
 # -----------------------------------------------------------------------------
 
 def link_or_copy(src: str, dst: str) -> str:
+    """Hard-link `src` to `dst`, falling back to a copy across filesystems."""
     if os.path.lexists(dst):
         os.unlink(dst)
     try:
@@ -685,6 +694,7 @@ def stage_into_run(edir: str, run_romlibs: str, rom: str, label: str,
 # -----------------------------------------------------------------------------
 
 def add_common(ap):
+    """Add the options every subcommand shares."""
     ap.add_argument("--rom", required=True,
                     help="ROM identity, e.g. eth_rom / cc_rom")
     ap.add_argument("--label", help="directory name inside the run (default: --rom)")
@@ -698,6 +708,7 @@ def add_common(ap):
 
 
 def main(argv=None):
+    """Parse arguments and dispatch to the subcommand."""
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 

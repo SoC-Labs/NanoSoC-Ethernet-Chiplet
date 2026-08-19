@@ -52,6 +52,7 @@ RULE_RE = re.compile(r"^([^\s#=][^:=]*?):(?![=])")
 
 
 def targets_defined_in(text):
+    """Every make target defined by one makefile's text (recipe lines ignored)."""
     out = set()
     for line in text.splitlines():
         if line.startswith("\t"):
@@ -66,6 +67,7 @@ _head_cache = {}
 
 
 def head_text(path):
+    """Committed text of a path at HEAD, cached; None if it is not tracked."""
     if path not in _head_cache:
         p = subprocess.run(["git", "show", f"HEAD:{path}"], cwd=REPO,
                            capture_output=True, text=True)
@@ -74,6 +76,7 @@ def head_text(path):
 
 
 def head_defines(dirf, target):
+    """(verdict, detail) for whether HEAD's include chain defines `target`."""
     chain = CHAINS.get(dirf)
     if chain is None:
         return "?", "no include chain mapped"
@@ -90,6 +93,7 @@ def head_defines(dirf, target):
 
 
 def wt_probe(directory, mkfile, target, assigns):
+    """Probe the worktree with `make -q`: is `target` defined on this disk now?"""
     d = directory if os.path.isabs(directory) else os.path.join(REPO, directory)
     if not os.path.isdir(d):
         return "NO-DIR", d
@@ -119,6 +123,7 @@ ARG_FLAGS = {"-C", "-f", "-j", "-l", "-o", "-W", "-I", "--directory", "--file",
 
 
 def make_invocations(snippet):
+    """Yield the (directory, makefile, target) each make invocation in a snippet names."""
     for piece in SEP_RE.split(snippet):
         piece = piece.strip().rstrip("\\").strip()
         # strip leading shell keywords / redirections

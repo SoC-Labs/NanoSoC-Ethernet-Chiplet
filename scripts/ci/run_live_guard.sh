@@ -5,22 +5,14 @@
 #
 # Copyright 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
-# THE HAZARD THIS CLOSES, MEASURED
+# THE HAZARD THIS CLOSES
 #
-# scripts/ci/new_run.sh section 3 does, unconditionally:
-#
-#     for d in work logs reports outputs; do
-#         [ -d "$d" ] && mv "$d" "$RUN/prev_$d"
-#     done
-#
-# on the SHARED ASIC/genus-innovus tree. On 2026-08-13 another session's Innovus
-# had its working directory inside ASIC/genus-innovus/work while a full flow was
-# running. Renaming a directory out from under a live process does not fail and
-# does not warn: the process keeps its now-detached inode, writes its databases
-# into a path nobody will look in, and the ONE thing that would have told anyone
-# — the log — moves with it. Several sessions edit this tree all day, so "nobody
-# else is running anything" is never a safe assumption, and it is not one a
-# script should make silently.
+# scripts/ci/new_run.sh section 3 renames work/ logs/ reports/ outputs/ out of
+# the SHARED ASIC/genus-innovus tree. Renaming a directory out from under a live
+# process does not fail and does not warn: the process keeps its now-detached
+# inode, writes its databases into a path nobody will look in, and the one thing
+# that would have said so — the log — moves with it. Several sessions use this
+# tree at once, so "nobody else is running anything" is never a safe assumption.
 #
 # So: before rotating anything, ask whether a process is standing in it.
 #
@@ -54,9 +46,9 @@ die()  { echo "run_live_guard: $*" >&2; exit 2; }
 note() { echo "run_live_guard: $*" >&2; }
 
 # --- who is standing in these directories ------------------------------------
-# Implemented in python3 because the bash form was unusable: readlink-ing every
-# descriptor of every process is tens of thousands of forks and took over two
-# minutes on this host. A guard that slow gets commented out.
+# Implemented in python3, not bash: readlink-ing every descriptor of every
+# process is tens of thousands of forks and takes minutes. A guard that slow
+# gets switched off.
 #
 # `fuser` WAS used here and has been removed on measurement. `fuser -m <dir>`
 # asks about the mounted FILESYSTEM, not the directory, so on a shared home it

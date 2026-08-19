@@ -5,12 +5,11 @@
 #
 # Copyright 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
-# WHY THIS EXISTS. Every result this project has produced has been a number
-# without a provenance. "DRC was 580" — against which floorplan, which SDC,
-# which MMMC? The scripts are edited between runs, sometimes several times a
-# day, so a report read a week later cannot be tied to the inputs that made it.
-# Twice already a conclusion has been drawn from a report belonging to a
-# DIFFERENT run than the one being discussed.
+# WHY THIS EXISTS. A number without a provenance is not a result: "DRC was 580"
+# — against which floorplan, which SDC, which MMMC? The flow scripts are edited
+# between runs, sometimes several times a day, so a report read a week later
+# cannot otherwise be tied to the inputs that produced it, and a conclusion can
+# be drawn from a report belonging to a different run entirely.
 #
 # So: before the flow starts, snapshot EVERYTHING that determines the result
 # into runs/<stamp>_<label>/config/. Afterwards, move the artefacts in beside
@@ -98,12 +97,9 @@ cd "$ASIC"
 
 # 3a. DO NOT ROTATE A DIRECTORY SOMEONE IS STANDING IN.
 # The `mv` below operates on the SHARED ASIC/genus-innovus tree, and several
-# sessions work in this repository at once. On 2026-08-13 another session's
-# Innovus had its working directory inside ASIC/genus-innovus/work while this
-# script would have renamed it: mv does not fail and does not warn, the live
-# tool keeps writing into a detached inode, and its log moves out from under
-# whoever is watching it. This script has been unsafe to run alongside a live
-# flow since it was written; the guard closes that.
+# sessions work in this repository at once. Renaming work/ out from under a live
+# Innovus does not fail and does not warn: the tool keeps writing into a
+# detached inode and its log moves out from under whoever is watching it.
 #
 # It is a DETECTOR, not a proof -- /proc entries for other UNIX users are not
 # readable -- so it reports "nothing detected", never "nothing running". Set
@@ -134,11 +130,10 @@ else
     echo "!! $GUARD is missing or not executable -- rotating UNGUARDED" >&2
 fi
 
-# outputs/ IS ROTATED TOO. It was not, in the first version of this script, and
-# that is a real hole: `make syn` asserts on outputs/<block>_gate_power.v, so a
-# netlist left from a previous run satisfies the check and a FAILED synthesis
-# reports success -- then place/CTS/route proceed on stale logic. The same trap
-# the reports/ rotation exists to close.
+# outputs/ IS ROTATED TOO, not just reports/. `make syn` asserts on
+# outputs/<block>_gate_power.v, so a netlist left from a previous run satisfies
+# the check: a FAILED synthesis then reports success and place/CTS/route proceed
+# on stale logic.
 for d in work logs reports outputs; do
     [ -d "$d" ] && mv "$d" "$RUN/prev_$d" && echo "   moved stale $d/ aside"
 done
@@ -146,8 +141,8 @@ mkdir -p work logs reports outputs
 
 # --- 3b. optionally seed outputs/ from a previous run -------------------------
 # RESUMING A RUN THAT DIED DOWNSTREAM OF SYNTHESIS. Synthesis is the expensive
-# stage (1h38m on 2026-08-07); when the flow dies in cpf-patch/place/CTS/route
-# there is no reason to pay for it again. Point SEED_OUTPUTS_FROM at the run
+# stage (order 1.5 hours); when the flow dies in cpf-patch/place/CTS/route there
+# is no reason to pay for it again. Point SEED_OUTPUTS_FROM at the run
 # directory holding the good netlist and its outputs/ are copied in before make
 # starts, so `make cpf-patch pnr_place ...` finds its inputs.
 #
@@ -162,11 +157,10 @@ if [ -n "${SEED_OUTPUTS_FROM:-}" ]; then
     [ -d "$src/outputs" ] && src="$src/outputs"
     if [ -s "$src/nanosoc_eth_chiplet_pads_gate_power.v" ]; then
         # SDF IS DELIBERATELY EXCLUDED. _pnr.sdf is ~390 MB and _gate.sdf ~200 MB,
-        # and NOTHING downstream of a seeded run reads either: P&R takes the
+        # and nothing downstream of a seeded run reads either: P&R takes the
         # netlist and the SDC, lec takes _gate.v, LVS takes _pnr.v. Copying them
-        # forward on 2026-08-07 put six near-identical SDFs into runs/ and helped
-        # push the filesystem to 94%. They remain in the SOURCE run if anyone
-        # wants them for gate-level simulation.
+        # forward fills the filesystem with near-identical duplicates. They stay
+        # in the SOURCE run for anyone who wants gate-level simulation.
         find "$src" -maxdepth 1 -mindepth 1 ! -name '*.sdf' \
              -exec cp -a {} outputs/ \;
         echo "   SEEDED outputs/ from $src"
@@ -285,10 +279,10 @@ done
 #   read_db ... -> **ERROR: (TCLCMD-989): cannot open SDC file
 #                  '.../work/<block>/libs/mmmc/<block>_syn.sdc'
 #
-# One dangling link per database, in every run ever archived. That is why the
-# resume workflow route_setup.tcl:10-11 advertises has never worked on an
-# archived run, and why "just reload the database and re-check it" was never
-# an option - each question cost a fresh 3.5-hour flow instead.
+# That is one dangling link per database in every archived run, which is what
+# stops the resume workflow route_setup.tcl:10-11 advertises from working on an
+# archived run at all: "reload the database and re-check it" turns into a fresh
+# multi-hour flow.
 #
 # Copy rather than re-link: a copy still resolves after the run directory is
 # moved, renamed or shipped elsewhere, and the file is a few hundred KB.
@@ -332,12 +326,11 @@ if [ -f "$PROV" ]; then
     python3 "$PROV" replay --run "$RUN" 2>&1 | sed 's/^/   /' || true
 fi
 
-# `latest` FOLLOWS SUCCESS, NOT RECENCY. It used to be updated unconditionally,
-# so a run that died in its first seconds captured the pointer — on 2026-08-07 it
-# spent an evening aimed at a run with rc=2, empty reports/ and no GDS, and the
-# author of docs/tapeout/24-*.md cited it as the source of the shipped GDS. A
-# pointer that can name a failure is worse than no pointer. `last` always moves,
-# for when you genuinely want the most recent attempt including a failed one.
+# `latest` FOLLOWS SUCCESS, NOT RECENCY. Updated unconditionally, it would let a
+# run that died in its first seconds — rc!=0, empty reports/, no GDS — capture
+# the pointer and be cited as the source of a shipped stream. A pointer that can
+# name a failure is worse than no pointer. `last` always moves, for when you do
+# want the most recent attempt including a failed one.
 ln -sfn "$RUN" "$ASIC/runs/last"
 if [ "$rc" = "0" ]; then
     ln -sfn "$RUN" "$ASIC/runs/latest"

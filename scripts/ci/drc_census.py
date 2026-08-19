@@ -5,30 +5,24 @@ act on. Exit non-zero when the run is either unmeasurable or not clean.
 
 WHY THIS EXISTS
 ---------------
-The previous `drc` gate in ci/signoff.yaml did this:
-
-    R=ASIC/genus-innovus/work/drc_run/DRC.rep
-    test -s "$R" || { echo "no DRC summary at $R"; exit 1; }
-    ... else print "DRC clean"
-
-Three independent faults, all measured on this design 2026-08-10/11:
+A DRC gate written as `test -s <report> && echo clean` has three ways to be
+wrong, and this design hit all three:
 
  1. WRONG FILENAME. Calibre writes the name given in the deck's
-    `DRC SUMMARY REPORT`, which is `<block>.drc.summary`, not `DRC.rep`
-    (`DRC.rep` is the *placeholder* in the unmodified foundry deck). The gate
-    could therefore only ever take its `exit 1` arm -- while the success branch
-    printed the literal string "DRC clean". Unpassable and mislabelled at once.
+    `DRC SUMMARY REPORT`, which is `<block>.drc.summary`. `DRC.rep` is only the
+    PLACEHOLDER in the unmodified foundry deck, so a gate looking for it can
+    only ever take its failure arm -- while printing the words "DRC clean" on
+    the branch it never reaches.
 
- 2. IT DOUBLE-COUNTED. Its regex ran over the whole file with re.S, so it also
-    matched the `RULECHECK RESULTS STATISTICS (BY CELL)` section, where every
-    result appears a second time under its owning cell.
+ 2. DOUBLE COUNTING. A regex run over the whole file with re.S also matches the
+    `RULECHECK RESULTS STATISTICS (BY CELL)` section, where every result appears
+    a second time under its owning cell.
 
- 3. IT WAS BLIND TO DENSITY -- the largest real defect in the design. Calibre
+ 3. BLINDNESS TO DENSITY, which is the largest real defect class here. Calibre
     reports ONE merged result per DENSITY check and writes the per-window detail
-    to a separate `<check>.density` file. On the 2026-08-10 baseline, M6.DN.1
-    reported `TOTAL Result Count = 1` against 1262 genuinely failing windows and
-    M7.DN.1 reported 1 against 1415. A count-based gate scores a 7006-window
-    density failure as 72 results, i.e. as noise.
+    to a separate `<check>.density` file, so a metal-density check failing on
+    over a thousand windows shows up in the summary as the number 1. A
+    count-based gate scores a seven-thousand-window density failure as noise.
 
 WHAT THIS DOES INSTEAD
     * reads the real summary, main section only, no double-count
@@ -46,30 +40,28 @@ results are inside ARM Artisan compiler GDS. Neither is actionable by a P&R
 iteration, so gating on them would make the gate permanently and uninformatively
 red. The design bucket has NO exemptions and defaults to a budget of zero.
 
-TWO SENTENCES HERE WERE WRONG, IN OPPOSITE DIRECTIONS. Corrected 2026-08-18:
+TWO PROPERTIES OF THIS DESIGN THAT CHANGE HOW THE NUMBERS READ
 
-  * THE BACK-END PACKAGES ARE NOT COMING. That was decided, not discovered; see
-    docs/DRC_WAIVER_INVENTORY.md. So the missing base layers are a standing
-    property of every stream this project will ever produce, and the design
-    bucket is a FLOOR, not a total -- a route-to-cell-internal check cannot fire
-    against geometry that is not in the stream. Do not read design == 0 as
-    clean; read it as "clean in the layers we actually have". THIS ONE STANDS.
-  * "PO.R.8 IS NOT AN ABSTRACTION ARTEFACT ... its 691 results are real merged
-    memory GDS" -- THAT WAS FALSE, and it is now measured false. It IS an
-    artefact of black-boxing, and the foundry's cell-layout import is exactly
-    what resolves it. The same macros inside a previously taped-out chip that
-    HAS real cell layout report ZERO, against 429 expected if the results were
-    inherent to the macros. The deck-revision evidence (691 under both the 2012
-    and 2024 decks) is real but proves something else: it rules out a rule
-    REVISION artefact, and says nothing about CONTEXT. Do not read one as the
-    other. Full evidence: docs/tapeout/39-po-r8-resolved.md.
+  * THE BACK-END PACKAGES ARE NOT COMING (docs/asic/DRC_WAIVER_INVENTORY.md). The
+    missing base layers are therefore a standing property of every stream this
+    project will produce, and the design bucket is a FLOOR, not a total -- a
+    route-to-cell-internal check cannot fire against geometry that is not in
+    the stream. Do not read design == 0 as clean; read it as "clean in the
+    layers we actually have".
+  * PO.R.8 IS AN ARTEFACT OF BLACK-BOXING, and the foundry's cell-layout import
+    is what resolves it: the same macros inside a taped-out chip that HAS real
+    cell layout report ZERO, against the hundreds expected if the results were
+    inherent to the macros. Its deck-revision evidence (the same count under
+    both the 2012 and 2024 decks) rules out a rule REVISION artefact and says
+    nothing about CONTEXT -- do not read one as the other. Full evidence:
+    docs/tapeout/39-po-r8-resolved.md.
 
-WAIVERS (added 2026-08-18)
-    Because that is now established, PO.R.8 is waived --- CELL-SCOPED, in
+WAIVERS
+    PO.R.8 is therefore waived --- CELL-SCOPED, in
     ASIC/genus-innovus/scripts/calibre/drc_waivers.yaml, which this script is
     the only consumer of. The deck cannot carry it: make_project_deck.sh copies
     the foundry rule bodies verbatim from the read-only PDK on every run, so
-    Calibre goes on reporting all 837 and the raw summary stays untouched
+    Calibre goes on reporting every result and the raw summary stays untouched
     evidence. This script subtracts the waived (check, cell) pairs from what it
     LEADS WITH, and prints both numbers, always.
 
@@ -229,6 +221,7 @@ def apply_waivers(waivers, by_cell, checks, primary):
 
 
 def owner(cell, primary):
+    """Attribute a violating cell to the design, a memory macro, an IO pad or vendor IP."""
     if cell == primary:
         return DESIGN
     if cell.startswith(MEMORY_PREFIXES):
@@ -377,6 +370,7 @@ def density_windows(rundir, pad_inset):
     BONDPAD_DEPTH = 171.0
 
     def band(check):
+        """Inset band a check is judged against: bond-pad depth for top metal, else the pad inset."""
         return BONDPAD_DEPTH if check.startswith(("M8.", "M9.", "AP.")) else pad_inset
 
     out = {}
@@ -456,6 +450,7 @@ def density_windows(rundir, pad_inset):
 
 
 def main():
+    """Parse the run, classify every violation by owner, and apply the budget."""
     ap = argparse.ArgumentParser()
     ap.add_argument("rundir")
     ap.add_argument("--budget", type=int,
@@ -652,7 +647,7 @@ def main():
             print(f"      {waived} of those are WAIVED and excluded above; "
                   f"Calibre still reported all {total}. Every waived pair was "
                   f"present at its recorded count — see "
-                  f"docs/DRC_WAIVER_INVENTORY.md.")
+                  f"docs/asic/DRC_WAIVER_INVENTORY.md.")
     return rc
 
 

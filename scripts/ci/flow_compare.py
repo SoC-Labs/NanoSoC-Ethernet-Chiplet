@@ -28,20 +28,14 @@ fired at least once and been mistaken for a measurement:
 
 RULE 3, AND WHY IT IS NOT OPTIONAL
 ----------------------------------
-Measured 2026-08-13. The production synthesis netlist every archived P&R run
-consumes was produced 2026-08-09 19:30. The toolkit's runs were produced
-2026-08-13. Between those dates all three RTL-bearing submodules moved:
-
-    nanosoc-multicore-system  da2735a -> d6c8173
-    tidechart                 f298d73 -> 7a6dc35
-    tidelink                  5d58c2a -> d317c98   (different branch lineage)
-
-A comparison across that gap measures four days of RTL drift and calls it an
-engine difference. The instance-count delta it produces (~+0.8 %) sits just
-inside the migration doc's +/-1 % Tier 1 band, so it reads as a PASS. It is not
-a pass; it is not a measurement of anything. This tool therefore refuses to
-emit an equivalence verdict unless both sides record the same RTL provenance,
-and says INCOMPARABLE rather than PASS when it cannot tell.
+The two engines' archived runs are days apart, and all three RTL-bearing
+submodules (nanosoc-multicore-system, tidechart, tidelink) move in that window.
+A comparison across the gap measures RTL drift and calls it an engine
+difference -- and the instance-count delta it produces lands INSIDE the
+migration doc's +/-1 % Tier 1 band, so it reads as a PASS while measuring
+nothing. This tool therefore refuses to emit an equivalence verdict unless both
+sides record the same RTL provenance, and says INCOMPARABLE rather than PASS
+when it cannot tell.
 
 NEVER GATE ON AN EXIT CODE
 --------------------------
@@ -91,8 +85,7 @@ KNOWN_CAPS = {1000, 200000}
 # production EVAL_ERROR_ALLOWLIST / toolkit SYN_ERROR_ALLOWLIST, ROUTE_ERROR_ALLOWLIST.
 DEFAULT_ALLOWLIST = {"RCLP-203", "RCLP-208", "IMPLF-223", "IMPMSMV-3501"}
 
-# Only genuine ERROR-severity lines. Two traps this encodes, both hit on
-# 2026-08-13 while building this tool:
+# Only genuine ERROR-severity lines. Two traps this encodes:
 #   * matching a bare `IMPSYT-\d+` also matches `**WARN: (IMPSYT-1507)`, so a
 #     warning is reported as an error and a clean run reads as broken.
 #   * Innovus echoes the stage script into its log, so a COMMENT that merely
@@ -322,6 +315,7 @@ def compare_provenance(a, b):
 # --------------------------------------------------------------------------
 
 def verify_artifact(path, min_bytes=1):
+    """Verdict on one artefact by inspection -- exists, size, hash -- never by exit code."""
     r = {"path": path, "exists": False, "bytes": 0, "ok": False}
     if path and os.path.isfile(path):
         r["exists"] = True
@@ -370,6 +364,7 @@ def cap_check(name, value):
 # --------------------------------------------------------------------------
 
 def find_first(base, candidates):
+    """First of `candidates` that exists under `base`, or None."""
     for c in candidates:
         p = os.path.join(base, c)
         if os.path.isfile(p):
@@ -469,6 +464,7 @@ def parse_prod_route(rundir):
     block = "nanosoc_eth_chiplet_pads"
 
     def rd(p):
+        """Read a file, returning "" rather than raising."""
         try:
             return open(p, errors="replace").read()
         except Exception:
@@ -496,6 +492,7 @@ def parse_prod_route(rundir):
         cells = [c.strip() for c in rows[-1].strip("|").split("|")]
         # Snapshot WNS TNS FEPS WNS_R2R TNS_R2R FEPS_R2R DRV(T) DRV(C) POWER UTIL INSTS AREA DRC WALL
         def num(i, cast=float):
+            """Field `i` of the QoR row, cast, or None if it is absent or unparseable."""
             try:
                 return cast(cells[i])
             except Exception:
@@ -527,6 +524,7 @@ def parse_prod_route(rundir):
     # answering about the wrong file, which is the whole failure mode this
     # comparison exists to catch. Ambiguity is skipped, not guessed.
     def _derived_map(d):
+        """The one *.derived.map in `d`; None if there is not exactly one."""
         hits = sorted(glob.glob(os.path.join(d, "*.derived.map")))
         return hits[0] if len(hits) == 1 else None
 
@@ -590,6 +588,7 @@ def map_identity(map_path):
 
 
 def compare_maps(a, b):
+    """Compare two stream-out maps; UNVERIFIED if either could not be read."""
     findings = []
     if not (a.get("readable") and b.get("readable")):
         return "UNVERIFIED", ["one or both stream-out maps could not be read; "
@@ -630,6 +629,7 @@ NO_REGRESSION = ["setup_fep", "hold_fep", "drc_total"]
 
 
 def compare_metrics(a, b, stage="syn"):
+    """Row-by-row comparison of two stages' metrics."""
     rows = []
     for key in sorted(set(a) | set(b)):
         if key.startswith("_"):
@@ -684,6 +684,7 @@ def resolve_reports(base, stage):
 
 
 def main():
+    """Compare one stage across the two flow engines and print the verdict table."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stage", required=True, choices=["syn", "place", "cts", "route"])
@@ -822,6 +823,7 @@ def main():
     w(f"{'metric':<22}{'prod':>18}{'toolkit':>18}{'delta':>14}{'%':>9}  verdict")
     w("-" * 90)
     def fmt(v):
+        """Format a metric value for the comparison table."""
         if v is None:
             return ""
         if isinstance(v, bool):

@@ -25,16 +25,14 @@ BLOCK="${BLOCK:-nanosoc_eth_chiplet_pads}"
 
 # WHICH BUILD TREE. THERE IS NO DEFAULT RUN, AND THAT IS THE FIX.
 #
-# This script used to open with `ASIC_DIR="${ASIC_DIR:-ASIC/genus-innovus}"`.
-# That is the LEGACY engine's directory. Its outputs/ holds two subdirectories
-# (eval/, romlibs/) and no stream at all, so the script exited 1 at the GDS
-# check for EVERY invocation — measured 2026-08-18, including the CI one, which
-# pins the same path in .github/workflows/asic-gds.yml's `env:`. The flow that
-# actually builds this chip writes to ASIC/eth-chiplet/build/<RUN_TAG>/outputs/
-# (top-level Makefile, "THE FLOW THAT BUILDS THIS CHIP").
+# ASIC_DIR must be given; it is NOT defaulted. Defaulting it to the LEGACY
+# ASIC/genus-innovus directory names a tree whose outputs/ holds no stream at
+# all, so every invocation fails at the GDS check. The flow that actually builds
+# this chip writes to ASIC/eth-chiplet/build/<RUN_TAG>/outputs/ (top-level
+# Makefile, "THE FLOW THAT BUILDS THIS CHIP").
 #
-# A silent default naming a directory nobody meant to package is what produced
-# that state, so it is NOT replaced with a different silent default. Pinning a
+# A silent default naming a directory nobody meant to package is the defect, so
+# it is NOT replaced with a different silent default. Pinning a
 # run tag here would rot the moment the next run is made, and would re-create
 # the same defect one directory over. Naming the run is the call
 # ASIC/genus-innovus/rail_project.mk already makes, for the same reason: "Two
@@ -95,13 +93,12 @@ DEST="${1:-$ASIC_DIR/submission}"
 # THE SUBMISSION ARTEFACT IS NOT THE SIGNOFF ARTEFACT.
 # The logo is merged as a SEPARATE step from write_stream, deliberately, so that
 # a DRC count can never be quoted against the wrong file: the un-logoed stream
-# stays the signoff artefact and the logoed one is what ships. This script had
-# no way to be pointed at the merged stream, so it always packaged the signoff
-# GDS. That is how the 2026-08-17 16:56 bundle came to carry an un-logoed
-# stream while looking finished.
+# stays the signoff artefact and the logoed one is what ships. Without SUBMIT_GDS
+# this script packages the SIGNOFF stream, which for a shipping bundle is the
+# wrong file and looks finished either way.
 #
 #   SUBMIT_GDS=<...>_logo.gds  package the logo-merged stream
-#   unset                      package the signoff stream (previous behaviour)
+#   unset                      package the signoff stream
 #
 # Whichever is chosen, MANIFEST.txt records the path and sha256 of the file that
 # was actually copied, so the bundle states which one it is.
@@ -110,8 +107,7 @@ GDS="${SUBMIT_GDS:-$OUT/$BLOCK.gds}"
 # `${SUBMIT_GDS:-...}` only substitutes when SUBMIT_GDS is unset or empty, so a
 # SET-but-nonexistent path lands here as $GDS and is rejected. That is the whole
 # point: if the logo merge has not been run for this build, the correct outcome
-# is a refusal, not a bundle carrying the signoff stream under the shipping
-# name. Silent fallback is how the 2026-08-17 16:56 bundle came to exist.
+# is a refusal, not a bundle carrying the signoff stream under the shipping name.
 if [ ! -s "$GDS" ]; then
     if [ -n "${SUBMIT_GDS:-}" ]; then
         {
@@ -155,10 +151,10 @@ for f in "${BLOCK}_pnr.v" "${BLOCK}_pnr.sdf" "${BLOCK}_syn.sdc"; do
     if [ -s "$OUT/$f" ]; then cp -p "$OUT/$f" "$STAGE/"; echo "  + $f"
     else echo "  ! MISSING $f"; MISSING+=("$f"); fi
 done
-# reports/ was previously copied by `[ -d "$REP" ] && cp ... && echo`, whose
-# failure is exempt from set -e because it is not the last command of the &&
-# list. An absent reports/ therefore left NO trace at all: not a warning, not a
-# non-zero exit. It is a declared deliverable, so it is tracked like the rest.
+# reports/ is a declared deliverable, so track it like the rest. Copying it with
+# `[ -d "$REP" ] && cp ... && echo` would not do: a failing test in the middle of
+# an && list is exempt from set -e, so an absent reports/ would leave no trace at
+# all — no warning and no non-zero exit.
 if [ -d "$REP" ]; then cp -rp "$REP" "$STAGE/reports"; echo "  + reports/"
 else echo "  ! MISSING reports/"; MISSING+=("reports/"); fi
 
@@ -186,13 +182,11 @@ M="$STAGE/MANIFEST.txt"
     grep -m1 'set CORE_TO_IO' "$ASIC_DIR/scripts/floorplan.tcl" 2>/dev/null | sed 's/^/  /' || true
     grep -m1 'create_floorplan -site' "$ASIC_DIR/scripts/floorplan.tcl" 2>/dev/null | sed 's/^/  /' || true
     echo
-    # THE STREAM THIS BUNDLE ACTUALLY CARRIES.
-    # The comment on SUBMIT_GDS above promises MANIFEST.txt records "the path
-    # and sha256 of the file that was actually copied". Until this block it did
-    # not: `contents (sha256)` hashes $STAGE, where the file has already been
-    # renamed to $BLOCK.gds, so a logoed and an un-logoed bundle were textually
-    # identical apart from one hash with nothing to compare it against. The
-    # source path and the stream KIND are stated here in words.
+    # THE STREAM THIS BUNDLE ACTUALLY CARRIES, stated in words.
+    # `contents (sha256)` alone cannot say it: that hashes $STAGE, where the
+    # file has already been renamed to $BLOCK.gds, so a logoed and an un-logoed
+    # bundle read identically apart from one hash with nothing to compare it
+    # against. The source path and the stream KIND go here.
     if [ -s "$GDS" ]; then
         echo "GDS actually packaged:"
         echo "  staged as : $BLOCK.gds"
@@ -302,11 +296,10 @@ echo "== $Z ($(du -h "$Z" | cut -f1)) =="
 echo "$Z"
 
 # ── THE COMPLETENESS GATE ───────────────────────────────────────────────────
-# Until this gate existed the script exited 0 for ANY subset of the
-# deliverables. Measured 2026-08-17 against a directory containing one 7-byte
-# file: it produced a correctly SHA-named 4 KB zip holding that file and a
-# MANIFEST, printed three "! MISSING" lines, and exited 0. Nothing downstream
-# of an exit status could tell that bundle from a complete one.
+# Without this gate the script exits 0 for ANY subset of the deliverables: a
+# build directory holding one small file still yields a correctly SHA-named zip
+# with a MANIFEST and three "! MISSING" lines on stdout, and nothing downstream
+# of the exit status can tell that bundle from a complete one.
 #
 # The MANIFEST is scrupulous about declaring what the DESIGN does not have. It
 # cannot declare a file that was never copied, because it only hashes what is

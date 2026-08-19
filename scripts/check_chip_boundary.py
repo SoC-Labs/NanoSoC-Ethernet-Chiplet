@@ -22,7 +22,12 @@ Usage
 -----
     check_chip_boundary.py [--emit <rtl_dir>]
 
-Exit 0 means: every port of the chiplet top is accounted for exactly once.
+Reads src/rtl/nanosoc_eth_chiplet.sv, sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml
+and the TSMC65 pad ring; with --emit it writes the chip wrapper into RTL_DIR.
+
+Exit 0 means: every port of the chiplet top is accounted for exactly once, and
+the pad ring agrees. Exit 1 means at least one check failed; the offending port
+names are printed.
 """
 from __future__ import annotations
 
@@ -50,6 +55,7 @@ def parse_ports(path: Path) -> list[dict]:
         raise SystemExit(f"check_chip_boundary: cannot find the module header in {path}")
 
     def width(w: str | None) -> int:
+        """Bit width of a port range like [N-1:0], resolved against PARAMS."""
         if not w:
             return 1
         mm = re.match(r"\[\s*(.+?)\s*:\s*0\s*\]", w.strip())
@@ -79,6 +85,7 @@ def parse_ports(path: Path) -> list[dict]:
 
 
 def _strip_comments(src: str) -> str:
+    """Remove /* */ and // comments before regex-parsing RTL."""
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     return re.sub(r"//[^\n]*", "", src)
 
@@ -160,6 +167,7 @@ def check_pad_ring(boundary, be) -> list[str]:
     # sees `bscan_en` and reports the real net as unconnected. That is a checker
     # bug that reads exactly like a wiring bug, so extract properly.
     def _pad_arg_idents(text: str) -> set[str]:
+        """Every identifier appearing inside a pad cell's .C/.I/.OEN arguments."""
         out: set[str] = set()
         for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(", text):
             i, depth = mm.end(), 1
@@ -266,6 +274,7 @@ def check_pad_ring(boundary, be) -> list[str]:
 
 
 def main() -> int:
+    """Check the spec against the RTL and, with --emit, generate the wrapper."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--emit", metavar="RTL_DIR",
                     help="also generate the chip wrapper into RTL_DIR")

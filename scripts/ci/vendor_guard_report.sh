@@ -146,7 +146,7 @@ if [ "$exit_rc" -eq 0 ]; then verdict='PASS'; else verdict='FAIL'; fi
         echo '```'
     fi
     echo
-    echo "_Gate: \`make vendor-check\` / \`scripts/ci/check_no_vendor_collateral.sh\`. See docs/IMPLEMENTATION.md._"
+    echo "_Gate: \`make vendor-check\` / \`scripts/ci/check_no_vendor_collateral.sh\`. See docs/design/IMPLEMENTATION.md._"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
 exit "$exit_rc"

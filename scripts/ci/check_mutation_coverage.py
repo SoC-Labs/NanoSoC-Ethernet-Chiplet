@@ -42,6 +42,7 @@ MANIFEST = ROOT / "ci" / "signoff.yaml"
 
 
 def as_list(v):
+    """Coerce a ledger scalar-or-list field to a list."""
     if v is None:
         return []
     return v if isinstance(v, list) else [v]
@@ -60,6 +61,7 @@ def read_ledger():
 
 
 def main():
+    """Compare the declared ledger against the manifest; exit 1 on any mismatch."""
     if not LEDGER.exists():
         sys.exit(f"check_mutation_coverage: no ledger at {LEDGER}")
     ledger = read_ledger()

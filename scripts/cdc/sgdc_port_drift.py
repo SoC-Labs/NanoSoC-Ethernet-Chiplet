@@ -89,6 +89,7 @@ GENERATED_PARTS = (
 
 
 def is_generated(path: str) -> bool:
+    """True if `path` is generated RTL rather than authored source."""
     return any(p in path for p in GENERATED_PARTS)
 
 
@@ -111,6 +112,7 @@ _KEYWORDS = {
 
 
 def _strip_comments(text: str) -> str:
+    """Remove comments, keeping both arms of any preprocessor conditional."""
     text = _BLOCK_COMMENT.sub(" ", text)
     text = _LINE_COMMENT.sub("", text)
     # Preprocessor conditionals: drop the directive line but KEEP both arms.
@@ -138,6 +140,7 @@ def _balanced(text: str, start: int, open_ch: str = "(", close_ch: str = ")") ->
 
 
 def _split_top_level(text: str, sep: str = ",") -> list[str]:
+    """Split on `sep` at bracket depth zero."""
     out, depth, cur = [], 0, []
     for c in text:
         if c in "([{":
@@ -181,6 +184,7 @@ def _port_name_from_decl(item: str) -> str | None:
 
 @dataclass
 class ModuleDef:
+    """One module declaration: its name, the file it came from, and its ports."""
     name: str
     path: str
     ports: list[str] = field(default_factory=list)
@@ -191,6 +195,7 @@ _MODULE_RE = re.compile(r"\bmodule\s+([A-Za-z_][A-Za-z0-9_$]*)")
 
 
 def parse_modules(path: str) -> list[ModuleDef]:
+    """Every module declared in one RTL file."""
     try:
         with open(path, "r", errors="replace") as fh:
             raw = fh.read()
@@ -316,6 +321,7 @@ def build_index(root: str, wanted: set[str] | None = None) -> dict[str, list[Mod
 
 
 def _precedence(path: str) -> int:
+    """Sort key deciding which copy of a duplicated module name wins."""
     rel = path.replace(REPO_ROOT, "")
     base = 100 if is_generated(rel) else 0
     for i, frag in enumerate(PATH_PRECEDENCE):
@@ -338,6 +344,7 @@ def pick_definition(defs: list[ModuleDef]) -> tuple[ModuleDef, bool]:
 
 @dataclass
 class Decl:
+    """One SGDC declaration line, parsed into its kind and arguments."""
     kind: str          # abstract_port | clock | reset | quasi_static | set_case_analysis
     spec: str          # the name/pattern as written
     clock: str | None  # -clock argument, when present
@@ -346,12 +353,14 @@ class Decl:
 
 @dataclass
 class SgdcBlock:
+    """One `current_design` block of an SGDC file and the declarations inside it."""
     design: str
     line: int
     decls: list[Decl] = field(default_factory=list)
 
 
 def parse_sgdc(path: str) -> list[SgdcBlock]:
+    """Parse an SGDC file into its per-design blocks."""
     with open(path, "r", errors="replace") as fh:
         raw = fh.readlines()
 
@@ -406,6 +415,7 @@ def parse_sgdc(path: str) -> list[SgdcBlock]:
 
 
 def _tcl_opt(text: str, opt: str) -> str | None:
+    """Value of Tcl option `opt` in `text`, or None if it is absent."""
     m = re.search(re.escape(opt) + r"\s+(\"[^\"]*\"|\{[^}]*\}|\S+)", text)
     if not m:
         return None
@@ -434,11 +444,13 @@ def spec_to_glob(spec: str) -> str:
 
 @dataclass
 class FileResult:
+    """Per-SGDC-file findings, one entry per `current_design` block."""
     path: str
     blocks: list[dict] = field(default_factory=list)
 
 
 def analyse(sgdc_path: str, index: dict[str, list[ModuleDef]]) -> FileResult:
+    """Compare one SGDC file against the RTL: which declared ports still exist."""
     res = FileResult(sgdc_path)
     for blk in parse_sgdc(sgdc_path):
         if blk.design == "<none>":
@@ -519,6 +531,7 @@ def analyse(sgdc_path: str, index: dict[str, list[ModuleDef]]) -> FileResult:
 # ---------------------------------------------------------------------------
 
 def find_sgdc(root: str, include_generated: bool = False) -> list[str]:
+    """Every .sgdc under `root`, skipping generated trees unless asked for them."""
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules", "AN.DB")]
@@ -533,6 +546,7 @@ def find_sgdc(root: str, include_generated: bool = False) -> list[str]:
 
 
 def _fmt_list(items, limit=None):
+    """Format a list for the report, truncating at `limit`."""
     if not items:
         return "—"
     if limit and len(items) > limit:
@@ -541,6 +555,7 @@ def _fmt_list(items, limit=None):
 
 
 def main(argv=None) -> int:
+    """Scan the SGDC files and report every declaration that no longer matches the RTL."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=REPO_ROOT)

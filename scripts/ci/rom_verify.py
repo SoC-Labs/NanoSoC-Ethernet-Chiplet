@@ -23,9 +23,9 @@
 #   * the simulation-only RTL boot ROM against the ASIC code file, so that a
 #     sim/silicon divergence is at worst a loud warning and never silent.
 #
-# Design rule, learned the hard way on this project: a check that finds
-# nothing to check FAILS.  There is no code path here where a missing, empty,
-# truncated or unparseable file produces anything other than a failure.
+# Design rule: a check that finds nothing to check FAILS.  There is no code
+# path here where a missing, empty, truncated or unparseable file produces
+# anything other than a failure.
 #
 # Stdlib only -- this runs on EDA hosts with no pip.
 #
@@ -42,10 +42,9 @@
 #
 #   --wrapper MUST name the wrapper the design's flist compiles -- for this
 #   chip that is nanosoc-multicore-system/syn/asic/tech_wrappers/tsmc65/, NOT
-#   the chiplet's own ASIC/tech_wrappers/tsmc65/.  Aiming it at an uncompiled
-#   copy was a real defect here (2026-08-14): it produced four geometry
-#   failures against RTL nothing builds, and would equally have hidden a real
-#   one.  ASIC/rom_gate.mk asserts this rather than trusting it.
+#   the chiplet's own ASIC/tech_wrappers/tsmc65/.  Aimed at an uncompiled copy
+#   it grades RTL nothing builds, which both invents geometry failures and
+#   hides real ones.  ASIC/rom_gate.mk asserts the path rather than trusting it.
 #
 #   Several ROMs in one invocation -- repeat the group.  Each --rom-dir opens
 #   a new group; the options after it belong to that group:
@@ -98,15 +97,18 @@ class ParseError(Exception):
 
 
 class Finding:
+    """One verdict line: which check, PASS/WARN/FAIL, and its supporting detail."""
     __slots__ = ("check", "severity", "message", "detail")
 
     def __init__(self, check, severity, message, detail=None):
+        """Record one check result."""
         self.check = check
         self.severity = severity
         self.message = message
         self.detail = detail or {}
 
     def as_dict(self):
+        """JSON-serialisable form of this finding."""
         return {
             "check": self.check,
             "severity": self.severity,
@@ -119,6 +121,7 @@ class Finding:
 # small helpers
 # --------------------------------------------------------------------------
 def sha256_file(path):
+    """SHA-256 of a file, streamed."""
     h = hashlib.sha256()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 16), b""):
@@ -136,6 +139,7 @@ def sha256_words(words, width):
 
 
 def mtime_str(path):
+    """File mtime as a local-time string, or None if it cannot be read."""
     try:
         return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(path)))
     except OSError:
@@ -143,6 +147,7 @@ def mtime_str(path):
 
 
 def require_file(path, what):
+    """Raise ParseError unless `path` names an existing, readable regular file."""
     if path is None:
         raise ParseError("%s: no path supplied" % what)
     if not os.path.exists(path):
@@ -155,11 +160,13 @@ def require_file(path, what):
 
 
 def read_text(path):
+    """Read a text file, replacing undecodable bytes rather than raising."""
     with open(path, "r", errors="replace") as fh:
         return fh.read()
 
 
 def popcount_total(words):
+    """Total number of set bits across a word list (a cheap content fingerprint)."""
     return sum(bin(w).count("1") for w in words)
 
 
@@ -652,6 +659,7 @@ def parse_wrapper(path, macro_name=None):
 def _eval_width(hi, lo):
     """Evaluate an [hi:lo] range built from integer literals and +/-."""
     def ev(e):
+        """Evaluate a digits-only arithmetic expression from the RTL; None if not one."""
         e = e.strip()
         if re.fullmatch(r"[0-9+\-* ]+", e):
             try:
@@ -669,6 +677,7 @@ _RE_SIZED_LIT = re.compile(r"^\s*(\d+)\s*'\s*[bodhBODH]")
 
 
 def literal_width(expr):
+    """Declared width of a sized Verilog literal, or None if the expression is not one."""
     m = _RE_SIZED_LIT.match(expr)
     return int(m.group(1)) if m else None
 
@@ -734,7 +743,9 @@ def parse_region_rtl(path):
 # the ROM checker
 # --------------------------------------------------------------------------
 class RomCheck:
+    """All checks for ONE ROM: its views, its CDL, its firmware, its geometry, its chain."""
     def __init__(self, group, opts):
+        """Bind one --rom-dir group and the global options to a fresh result set."""
         self.name = group.get("name") or os.path.basename(
             os.path.normpath(group["rom_dir"]))
         self.g = group
@@ -751,23 +762,29 @@ class RomCheck:
 
     # -- finding helpers ----------------------------------------------------
     def add(self, check, severity, message, detail=None):
+        """Append a finding."""
         self.findings.append(Finding(check, severity, message, detail))
 
     def ok(self, check, message, detail=None):
+        """Record a passing check."""
         self.add(check, PASS, message, detail)
 
     def warn(self, check, message, detail=None):
+        """Record a non-fatal concern; warnings never change the exit status."""
         self.add(check, WARN, message, detail)
 
     def fail(self, check, message, detail=None):
+        """Record a failing check; any FAIL makes the whole run exit 1."""
         self.add(check, FAIL, message, detail)
 
     @property
     def failed(self):
+        """True if any check on this ROM failed."""
         return any(f.severity == FAIL for f in self.findings)
 
     # -- main ---------------------------------------------------------------
     def run(self):
+        """Run every check for this ROM, in order, stopping only if discovery fails."""
         try:
             self._discover()
         except ParseError as e:
@@ -795,6 +812,7 @@ class RomCheck:
 
     # -- steps --------------------------------------------------------------
     def _discover(self):
+        """Locate the compiler outputs in --rom-dir; a missing or ambiguous view is fatal."""
         d = self.g["rom_dir"]
         if not os.path.isdir(d):
             raise ParseError("--rom-dir is not a directory: %s" % d)
@@ -823,6 +841,7 @@ class RomCheck:
         }
 
     def _check_views(self):
+        """Read every per-tool content view and require them to agree word for word."""
         self.views = {}
         missing = []
         for s, p in self.view_paths.items():
@@ -1643,6 +1662,7 @@ class RomCheck:
                       detail)
 
     def _wrapper_module(self):
+        """Module name of the wrapper RTL this ROM is compiled into."""
         if self.g.get("wrapper"):
             return os.path.splitext(os.path.basename(self.g["wrapper"]))[0]
         return self.name
@@ -1736,6 +1756,7 @@ def split_groups(argv):
 
 
 def main(argv=None):
+    """Parse the argument groups, run every ROM, print the report, return the exit status."""
     argv = list(sys.argv[1:] if argv is None else argv)
     groups, rest = split_groups(argv)
 
@@ -1864,6 +1885,7 @@ def main(argv=None):
 def _print_diffs(out, detail, limit):
     """Print the first differing addresses wherever they appear in a detail."""
     def walk(node, path=""):
+        """Recursively print the first differing addresses recorded anywhere in a result tree."""
         if isinstance(node, dict):
             if "first_diffs" in node and node["first_diffs"]:
                 out.write("       %s first differing addresses:\n"

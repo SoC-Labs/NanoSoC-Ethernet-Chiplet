@@ -2,7 +2,7 @@
 # =============================================================================
 # tl042_v2_arm.sh — ONE arm of the TL-042 v2 NO-HARM delivery A/B (KR260 pair).
 #
-# WHAT THIS MEASURES (read docs/HW_VALIDATION_PLAN_TL042_V2.md first)
+# WHAT THIS MEASURES (read docs/bringup/HW_VALIDATION_PLAN_TL042_V2.md first)
 # ------------------------------------------------------------------
 # This is v2 *NO-HARM*, NOT v2-fixes-the-wedge. The acceptance question is:
 #

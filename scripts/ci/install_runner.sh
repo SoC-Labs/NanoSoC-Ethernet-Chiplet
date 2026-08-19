@@ -16,13 +16,12 @@
 #                                         FPSEallocated/tsmc65pdk) exists only on
 #                                         srv03335. Adding it is a Puppet change.
 #
-#   GROUP MEMBERSHIP IS NOT THE DIFFERENCE, contrary to what this comment used
-#   to say. BOTH hosts are in `tsmc65pdkgrp`, which is what guards /tsmc65pdk/65
-#   (mode 2770). `tsmc65` guards an older tree that ASIC/common.mk moved off.
-#   The difference is purely the mount. Note also that inside the CI sandbox's
-#   user namespace a group cannot be resolved to its NAME at all (SSSD is not
-#   reachable) while access still works, so preflight treats PDK readability —
-#   not group name — as authoritative.
+#   GROUP MEMBERSHIP IS NOT THE DIFFERENCE. Both hosts are in `tsmc65pdkgrp`,
+#   which is what guards /tsmc65pdk/65 (mode 2770); `tsmc65` guards an older
+#   tree ASIC/common.mk moved off. The difference is purely the mount. Inside
+#   the CI sandbox's user namespace a group cannot be resolved to its NAME at
+#   all (SSSD is unreachable) while access still works, so preflight treats PDK
+#   READABILITY — not group name — as authoritative.
 #
 #   The ASIC flow (syn -> pnr -> DRC) hardcodes the Calibre ruledeck and GDS-out
 #   layer map under /tsmc65pdk, so it can ONLY run on srv03335 — hence a separate

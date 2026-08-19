@@ -20,16 +20,14 @@ under all four. It opens in a viewer, it streams, it passes.
 That blind spot is stated in ASIC/genus-innovus/scripts/gdsmap_derive.py:
 
     "NOTHING IN DRC OR ANTENNA CATCHES IT -- both test whether present
-     geometry breaks a rule, never whether required geometry is absent. This
-     was found on 2026-08-13 only by comparing against a previously taped-out
-     GDS."
+     geometry breaks a rule, never whether required geometry is absent."
 
-The inverse error costs just as much. On 2026-08-17 a shape-count census showed
-the bond pad structures holding zero shapes and that was read as a missing pad
-ring; the pads were in fact present, correctly placed, and legitimately empty
-(the PDK ships no back-end GDS for the pad library, so they are LEF-only black
-boxes - ci/signoff.yaml `gds-completeness`). Absence wrongly diagnosed and
-absence wrongly missed are the same missing instrument.
+The inverse error costs just as much. A shape-count census showing the bond pad
+structures holding zero shapes reads like a missing pad ring, but on this design
+the pads are present, correctly placed, and legitimately empty: the PDK ships no
+back-end GDS for the pad library, so they are LEF-only black boxes
+(ci/signoff.yaml `gds-completeness`). Absence wrongly diagnosed and absence
+wrongly missed are the same missing instrument.
 
 WHAT THIS IS NOT
 ================
@@ -91,8 +89,7 @@ TRAPS THIS PARSER HANDLES, DO NOT SIMPLIFY THEM AWAY
    structure hash comparison against the standalone .gds2 reports 0 of 126
    structures identical on a CORRECT chip (ci/signoff.yaml `rom-gds`). The
    merged-macro assertion here compares per-structure, per-(layer,datatype)
-   SHAPE COUNTS, which is invariant under re-encoding and was validated on
-   three streams on 2026-08-13.
+   SHAPE COUNTS, which is invariant under re-encoding.
 
 5. A PATH's XY is its centreline; its true extent is wider by half its WIDTH.
    Bounding boxes here are therefore computed from BOUNDARY and BOX elements
@@ -156,12 +153,14 @@ def _real8(b):
 # whole and a skipped record body is never copied out of the buffer.
 # ---------------------------------------------------------------------------
 class RecordReader:
+    """Stream a GDSII file one record at a time, without building a layout database."""
     # NOTE: the buffer is immutable `bytes`, not a bytearray, and a refill
     # REPLACES it rather than resizing it. That is deliberate: the yielded
     # bodies are memoryviews into this buffer, and a bytearray with a live
     # export cannot be resized ("BufferError: Existing exports of data"). A
     # memoryview onto the old bytes object simply stays valid.
     def __init__(self, path, chunk=1 << 22):
+        """Open the stream and prime the read buffer."""
         self.fh = open(path, "rb")
         self.chunk = chunk
         self.buf = b""
@@ -169,6 +168,7 @@ class RecordReader:
         self.records = 0
 
     def _need(self, n):
+        """Ensure at least `n` bytes are buffered; False at end of file."""
         if len(self.buf) - self.pos >= n:
             return True
         parts = [self.buf[self.pos:]]
@@ -185,6 +185,7 @@ class RecordReader:
         return True
 
     def __iter__(self):
+        """Yield (record type, data type, body) for every record in the stream."""
         while True:
             if not self._need(4):
                 return
@@ -219,6 +220,7 @@ class RecordReader:
             yield rtype, body
 
     def close(self):
+        """Close the underlying file."""
         self.fh.close()
 
 
@@ -335,6 +337,7 @@ def census(path, bbox_structs=frozenset(), bbox_all=False):
 
 
 def _grow(store, key, xy):
+    """Grow the bounding box stored under `key` to include the points in `xy`."""
     xs = xy[0::2]
     ys = xy[1::2]
     b = store.get(key)
@@ -355,6 +358,7 @@ def hier_counts(c, root):
     stack_guard = set()
 
     def walk(name):
+        """Flattened counts for one structure, resolving its references recursively."""
         if name in memo:
             return memo[name]
         if name in stack_guard:      # cyclic hierarchy is not legal GDSII
@@ -374,6 +378,7 @@ def hier_counts(c, root):
 
 
 def flat_totals(c):
+    """Sum a census's per-structure counters into (geometry, text) totals."""
     g, t = Counter(), Counter()
     for v in c["geo"].values():
         g.update(v)
@@ -386,6 +391,7 @@ def flat_totals(c):
 # JSON round-tripping. (layer, datatype) tuples become "L/D" strings.
 # ---------------------------------------------------------------------------
 def _enc(c):
+    """Encode a census for JSON: (layer, datatype) tuples become "L/D" strings."""
     out = dict(c)
     out["geo"] = {s: {"%d/%d" % k: v for k, v in d.items()} for s, d in c["geo"].items()}
     out["txt"] = {s: {"%d/%d" % k: v for k, v in d.items()} for s, d in c["txt"].items()}
@@ -395,6 +401,7 @@ def _enc(c):
 
 
 def _dec(d):
+    """Decode a census from JSON, accepting either the bare or the gate-wrapped shape."""
     # `check --json` wraps the census next to its verdicts; `census --json`
     # writes it bare. Accept either, so a diff can be taken between a gate run
     # and a plain measurement without anyone having to remember which is which.
@@ -402,6 +409,7 @@ def _dec(d):
         d = d["census"]
 
     def un(k):
+        """Turn a "L/D" key back into a (layer, datatype) tuple."""
         a, b = k.split("/")
         return (int(a), int(b))
     d = dict(d)
@@ -435,6 +443,7 @@ def parse_stream_map(path):
 
 
 def map_lookup(rows, name, objtype):
+    """(layer, datatype) the stream-out map assigns to `name` for `objtype`."""
     for r in rows:
         if r["name"] == name and objtype in r["objtypes"].split(","):
             return r["layer"], r["datatype"]
@@ -513,12 +522,14 @@ def parse_stream_rep(rep):
 
 
 def parse_top_routing_layer(preplace_tcl):
+    """Top routing layer the pre-place Tcl sets, or None if it does not set one."""
     src = open(preplace_tcl).read()
     m = re.search(r"^\s*set_db\s+design_top_routing_layer\s+(\d+)", src, re.M)
     return int(m.group(1)) if m else None
 
 
 def derive(args):
+    """derive: build the expectation file from the run's own inputs, not by hand."""
     run = args.run_dir
     scripts = args.scripts_dir
     exp = {"meta": {}, "top": {}, "structures": [], "layers": [],
@@ -694,12 +705,15 @@ def derive(args):
 # CHECK
 # ---------------------------------------------------------------------------
 class Report:
+    """Accumulates check verdicts by section and prints them with a summary."""
     def __init__(self):
+        """Start an empty report."""
         self.rows = []
         self.fails = 0
         self.errors = 0
 
     def add(self, verdict, section, text):
+        """Record one verdict line."""
         self.rows.append((verdict, section, text))
         if verdict == "FAIL":
             self.fails += 1
@@ -707,6 +721,7 @@ class Report:
             self.errors += 1
 
     def emit(self, unasserted):
+        """Print every row, then the pass/fail summary and any unasserted expectations."""
         sec = None
         for verdict, section, text in self.rows:
             if section != sec:
@@ -724,6 +739,7 @@ class Report:
 
 
 def check(args):
+    """check: grade a stream against a derived expectation file."""
     exp = json.load(open(args.expect))
     top = exp["top"].get("name")
     want_bbox = {top} | {s["structure"] for s in exp.get("structure_geometry", [])}
@@ -932,6 +948,7 @@ def check(args):
 
 
 def _fmtbox(b):
+    """Format a bounding box as (x0,y0)-(x1,y1)."""
     return "(%.3f,%.3f)-(%.3f,%.3f)" % tuple(b)
 
 
@@ -939,6 +956,7 @@ def _fmtbox(b):
 # CENSUS / DIFF
 # ---------------------------------------------------------------------------
 def do_census(args):
+    """census: count what is in a stream and print or write it."""
     try:
         c = census(args.gds, bbox_all=args.bbox_all)
     except (OSError, ValueError) as e:
@@ -981,6 +999,7 @@ def do_census(args):
 
 
 def do_diff(args):
+    """diff: report what moved between two censuses."""
     a = _dec(json.load(open(args.a)))
     b = _dec(json.load(open(args.b)))
     ga, _ = flat_totals(a)
@@ -1032,6 +1051,7 @@ def do_diff(args):
 
 # ---------------------------------------------------------------------------
 def main():
+    """Parse arguments and dispatch to the subcommand."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 

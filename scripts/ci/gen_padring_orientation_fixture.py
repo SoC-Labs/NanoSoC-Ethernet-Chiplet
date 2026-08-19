@@ -74,6 +74,7 @@ DT_NONE, DT_BITARRAY, DT_INT2, DT_INT4, DT_REAL8, DT_STR = 0, 1, 2, 3, 5, 6
 
 
 def rec(rtype: int, dtype: int, payload: bytes = b"") -> bytes:
+    """One GDSII record: length, record type, data type, payload."""
     length = 4 + len(payload)
     if length % 2:
         raise ValueError("GDSII records must be even length")
@@ -81,6 +82,7 @@ def rec(rtype: int, dtype: int, payload: bytes = b"") -> bytes:
 
 
 def rec_str(rtype: int, s: str) -> bytes:
+    """A GDSII ASCII-string record, NUL-padded to even length."""
     b = s.encode("ascii")
     if len(b) % 2:
         b += b"\x00"
@@ -88,6 +90,7 @@ def rec_str(rtype: int, s: str) -> bytes:
 
 
 def rec_int2(rtype: int, *vals: int) -> bytes:
+    """A GDSII 2-byte-integer record."""
     return rec(rtype, DT_INT2, struct.pack(">%dh" % len(vals), *vals))
 
 
@@ -118,10 +121,12 @@ def encode_real8(value: float) -> bytes:
 
 
 def rec_real8(rtype: int, *vals: float) -> bytes:
+    """A GDSII 8-byte-real record."""
     return rec(rtype, DT_REAL8, b"".join(encode_real8(v) for v in vals))
 
 
 def rec_xy(x: int, y: int) -> bytes:
+    """A GDSII XY record holding one point."""
     return rec(XY, DT_INT4, struct.pack(">ii", x, y))
 
 
@@ -147,6 +152,7 @@ def structure(name: str, boundary_layer: int | None = None) -> bytes:
 
 
 def sref(sname: str, x: int, y: int, angle_deg: float | None = None) -> bytes:
+    """A structure reference, optionally rotated."""
     body = rec(SREF, DT_NONE) + rec_str(SNAME, sname)
     if angle_deg is not None:
         body += rec(STRANS, DT_BITARRAY, b"\x00\x00")  # no mirror
@@ -198,6 +204,7 @@ POST_FIX_TODAY = {"topleft": 270, "bottomleft": 0, "bottomright": 90, "topright"
 
 
 def main() -> int:
+    """Write the pass and fail padring-orientation fixtures."""
     cases = [
         ("fail-corner-180", PRE_FIX_9F57214,
          "all four corners rotated 180deg from correct -- the exact values "

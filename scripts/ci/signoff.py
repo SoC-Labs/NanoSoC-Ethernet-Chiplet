@@ -39,6 +39,7 @@
 #
 # Usage:
 #   scripts/ci/signoff.py list                 # stages, gates, host requirement
+#   scripts/ci/signoff.py expand <selector>    # which stages 'rtl'/'physical'/'all' name
 #   scripts/ci/signoff.py lint                 # manifest self-check + gap refutation
 #   scripts/ci/signoff.py prove [stage ...]    # can each `check:` actually FAIL?
 #   scripts/ci/signoff.py provenance           # record exactly what is being signed off
@@ -90,6 +91,7 @@ EXCLUSIVE_MARKER = ".__exclusive__"
 
 
 def load():
+    """Load ci/signoff.yaml and return (manifest, stages-by-id)."""
     if not MANIFEST.exists():
         sys.exit(f"signoff: no manifest at {MANIFEST}")
     m = yaml.safe_load(MANIFEST.read_text())
@@ -108,6 +110,7 @@ def _stamp():
     rows describe the tree it is describing.
     """
     def git(*a):
+        """Run a git command in the repo, returning stdout or "" on any failure."""
         try:
             return subprocess.run(("git",) + a, cwd=str(ROOT), capture_output=True,
                                   text=True, timeout=20).stdout.strip()
@@ -232,6 +235,7 @@ def cmd_expand(args):
 
 
 def cmd_list(_args):
+    """list: print every declared stage with its gate, phase and host requirement."""
     m, stages = load()
     print(f"design: {m.get('design','?')}   manifest: {MANIFEST.relative_to(ROOT)}")
     print(f"{'stage':<16}{'gate':<8}{'needs-label':<14}{'phase':<10}description")
@@ -270,6 +274,7 @@ def cmd_provenance(_args):
     dest.mkdir(parents=True, exist_ok=True)
 
     def out(c):
+        """Run a shell command in the repo root, returning stdout or "" on any failure."""
         try:
             return subprocess.run(c, shell=True, cwd=ROOT, capture_output=True,
                                   text=True, timeout=120).stdout.strip()
@@ -349,6 +354,7 @@ def missing_implementation(stage):
 
 
 def cmd_run(args):
+    """run: execute the named stages, score each PASS/FAIL/UNVERIFIED, collect artefacts."""
     m, stages = load()
     rc_final = 0
     for sid in args.stages:
@@ -366,9 +372,8 @@ def cmd_run(args):
             """Record the stage as NOT MEASURED. Blocks signoff; is not a FAIL.
 
             Both callers below are cases where the CHECK NEVER RAN — no tool, or
-            no artefact to read. Scoring them `passed: false` alongside a genuine
-            violation, as this driver did until 2026-08-17, sends someone to
-            debug a design defect that was never reported.
+            no artefact to read. Scoring those `passed: false` beside a genuine
+            violation sends someone to debug a design defect nobody reported.
             """
             print(f"\n-- {sid}: UNVERIFIED (not measured) — {reason}", file=sys.stderr)
             rec = {"id": sid, "gate": gate, "rc": rc, "seconds": 0,
@@ -467,13 +472,14 @@ def cmd_run(args):
 
 
 def cmd_report(_args):
+    """report: collate every stage status.json into one markdown + JSON report."""
     m, _ = load()
     rows, blocking, unmeasured = [], 0, 0
     for st in sorted(OUT.glob("*/status.json")):
         r = json.loads(st.read_text())
-        # mtime is the FALLBACK only. Rows written before 2026-08-18 carry no
-        # stamp of their own, and a file mtime survives a `cp -p` that the
-        # measurement it describes does not.
+        # mtime is the FALLBACK only, for rows that carry no stamp of their
+        # own: a file mtime survives a `cp -p` that the measurement it
+        # describes does not.
         r.setdefault("utc", time.strftime("%Y-%m-%dT%H:%M:%SZ",
                                           time.gmtime(st.stat().st_mtime)) + " (mtime)")
         r.setdefault("repo_sha", "")
@@ -481,17 +487,15 @@ def cmd_report(_args):
     prov_p = OUT / "provenance" / "provenance.json"
     prov = json.loads(prov_p.read_text()) if prov_p.exists() else {}
 
-    # ── NOTHING EXPIRED A status.json, AND THAT IS WHY THIS REPORT LIED ──────
-    # `report` renders whatever is in build/signoff/, and those directories are
-    # only ever overwritten, never invalidated. Measured 2026-08-18: a header of
-    # commit 3f3e6c3 (191 commits behind HEAD, and not an ancestor of it) over
-    # rows spanning Aug 7 -> Aug 18, two of whose PASS rows were known false —
-    # lec-selftest's was from Aug 7 and predates the three-state driver.
-    # A result measured at another commit is not a result about this one, so it
-    # is now marked STALE and is NOT counted as a pass. Rows with no recorded
-    # commit (every row written before today) cannot be shown current and are
-    # stale by the same rule: unprovable freshness is not freshness.
+    # STALENESS. `report` renders whatever is in build/signoff/, and those
+    # directories are only ever overwritten, never invalidated — so rows of
+    # widely different vintages can sit under one header. A result measured at
+    # another commit is not a result about this one: it is marked STALE and is
+    # NOT counted as a pass. A row with no recorded commit cannot be shown
+    # current and is stale by the same rule — unprovable freshness is not
+    # freshness.
     def _head():
+        """Current HEAD commit, or "" where git cannot answer."""
         try:
             return subprocess.run(("git", "rev-parse", "HEAD"), cwd=str(ROOT),
                                   capture_output=True, text=True,
@@ -500,6 +504,7 @@ def cmd_report(_args):
             return ""
     head = _head()
     def _stale(r):
+        """(stale, why) for one result row: was it measured at the commit being reported?"""
         if not head:
             return False, ""          # no git here: cannot judge, do not invent
         if not r.get("repo_sha"):
@@ -730,6 +735,7 @@ def _sandbox(fixture: Path, dest: Path):
 
 
 def cmd_prove(args):
+    """prove: run each stage check against its must-pass and must-fail fixtures."""
     m, stages = load()
     want = set(args.stages or [])
     for w in want:
@@ -824,6 +830,7 @@ def cmd_prove(args):
 
 
 def _as_list(v):
+    """Coerce a manifest scalar-or-list field to a list."""
     if v is None:
         return []
     return v if isinstance(v, list) else [v]
@@ -838,6 +845,7 @@ STAGE_KEYS = {"id", "phase", "gate", "label", "description", "run", "pre",
 GAP_KEYS = {"id", "reason", "refuted_by"}
 
 def cmd_lint(args):
+    """lint: self-check the manifest and re-run each declared gap's refutation probe."""
     m, stages = load()
     problems, notes = [], []
 
@@ -917,20 +925,16 @@ def cmd_lint(args):
             print(f"  {uid:<26} still real     (refuted_by exited 1)")
         else:
             # ANY OTHER STATUS MEANS THE PROBE FAILED, NOT THAT THE GAP IS REAL.
-            # Read as "still real", which is what this branch used to do, a gap
-            # whose probe can never succeed is UNFALSIFIABLE WHILE LOOKING
-            # FALSIFIABLE — the manifest reports it as checked, and nothing can
-            # ever notice the day the gap closes.
+            # Reading a broken probe as "gap still real" makes the gap
+            # UNFALSIFIABLE WHILE LOOKING FALSIFIABLE: the manifest reports it
+            # as checked, and nothing can ever notice the day the gap closes.
             #
-            # Live example, measured 2026-08-17: io-rail-ir-drop's probe is
-            # `grep -qE ... ASIC/.../*_gate1.cpf 2>/dev/null`, and exits 2
-            # because the glob matches no file. 2 is grep's "an error occurred",
-            # which does not distinguish "no CPF exists" from "the CPF has no
-            # VDDIO nets" from "the path was mistyped" — and stderr is discarded,
-            # so it cannot be told apart afterwards either. It reported "still
-            # real" for eight lint runs on the strength of a failed command.
-            #
-            # 127 (command not found) and 124 (timeout) land here too.
+            # The common case is a `grep -qE ... 2>/dev/null` whose glob matches
+            # no file: grep exits 2 for "an error occurred", which does not
+            # separate "no such artefact" from "the artefact has no match" from
+            # "the path was mistyped", and the discarded stderr cannot be
+            # consulted afterwards. 127 (command not found) and 124 (timeout)
+            # land here too.
             why = {124: "timed out", 127: "command not found"}.get(
                 rc, f"exited {rc} — not 0 (refuted) and not 1 (cleanly not refuted)")
             print(f"  {uid:<26} UNVERIFIABLE   the probe FAILED, {why}; this says "
@@ -958,15 +962,18 @@ def cmd_lint(args):
 
 
 def main():
+    """Parse arguments and dispatch to the subcommand."""
     ap = argparse.ArgumentParser(description="ASIC signoff stage driver")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("list").set_defaults(fn=cmd_list)
-    e = sub.add_parser("expand")
+    sub.add_parser("list", help="stages, gates and host requirement").set_defaults(fn=cmd_list)
+    e = sub.add_parser("expand", help="resolve a selector to the stage ids it names")
     e.add_argument("selector", help="'rtl' | 'physical' | 'all' | explicit stage ids")
     e.set_defaults(fn=cmd_expand)
-    sub.add_parser("provenance").set_defaults(fn=cmd_provenance)
-    r = sub.add_parser("run")
-    r.add_argument("stages", nargs="+")
+    sub.add_parser("provenance",
+                   help="record exactly what is being signed off"
+                   ).set_defaults(fn=cmd_provenance)
+    r = sub.add_parser("run", help="run stage(s) and collect their artefacts")
+    r.add_argument("stages", nargs="+", help="stage ids, or a selector expand accepts")
     r.add_argument("--keep-going", action="store_true",
                    help="continue after a blocking failure (collect more evidence)")
     r.add_argument("--skip-preflight", action="store_true",
@@ -976,18 +983,22 @@ def main():
                         "declares are absent (debugging only — the stage cannot "
                         "produce a verdict without them)")
     r.set_defaults(fn=cmd_run)
-    sub.add_parser("report").set_defaults(fn=cmd_report)
+    sub.add_parser("report",
+                   help="collate every collected stage result into one report"
+                   ).set_defaults(fn=cmd_report)
 
     p = sub.add_parser("prove", help="run every check: against its must-pass and "
                                      "must-fail fixtures")
     p.add_argument("stages", nargs="*", help="default: every stage with a check:")
     p.add_argument("--keep-sandboxes", action="store_true",
                    help="do not delete the sandbox of a case that behaved")
-    p.add_argument("--timeout", type=int, default=300)
+    p.add_argument("--timeout", type=int, default=300,
+                   help="seconds allowed per check invocation (default: 300)")
     p.set_defaults(fn=cmd_prove)
 
     l = sub.add_parser("lint", help="manifest self-check; runs each gap's refuted_by")
-    l.add_argument("--timeout", type=int, default=120)
+    l.add_argument("--timeout", type=int, default=120,
+                   help="seconds allowed per refuted_by probe (default: 120)")
     l.set_defaults(fn=cmd_lint)
 
     args = ap.parse_args()

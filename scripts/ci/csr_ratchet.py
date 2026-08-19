@@ -220,6 +220,7 @@ def load_budget(path: Path):
 # naming.
 # ---------------------------------------------------------------------------
 def find_summary(path: Path) -> Path | None:
+    """Locate the Calibre .drc.summary under a file or run directory."""
     if path.is_file():
         return path
     if path.is_dir():
@@ -270,6 +271,7 @@ def evaluate(tracked: dict, new_categories: dict, checks: dict):
 
 
 def print_report(summary_path, tracked_rows, untracked_new, over, meta):
+    """Print the per-check table, the untracked-category list and the verdict."""
     print(f"summary        : {summary_path}")
     print(f"budget block   : {meta.get('block', '?')}")
     print(f"baseline       : archive2 = {meta.get('archive2', '?')}  "
@@ -304,6 +306,7 @@ def print_report(summary_path, tracked_rows, untracked_new, over, meta):
 
 
 def cmd_check(args) -> int:
+    """check: score this run's CSR counts against the budget. 0 within, 1 over."""
     budget_path = Path(args.budget)
     tracked, new_categories, meta, problems = load_budget(budget_path)
     if problems:
@@ -346,6 +349,7 @@ def cmd_check(args) -> int:
 # flag, from synthetic fixtures that need no archive at all.
 # ---------------------------------------------------------------------------
 def _archive_checks(archives_root: Path, archive_dirname: str, report_rel: str):
+    """(checks, path) parsed from one archive's report, or (None, path) if absent."""
     p = archives_root / archive_dirname / report_rel
     if not p.is_file():
         return None, p
@@ -505,6 +509,7 @@ def selftest_fixtures(tmpdir: str):
 
 
 def cmd_selftest(args) -> int:
+    """selftest: re-derive the budget from the raw archives and confirm it matches."""
     budget_path = Path(args.budget)
     tracked, new_categories, meta, problems = load_budget(budget_path)
 
@@ -552,6 +557,7 @@ def cmd_selftest(args) -> int:
 
 
 def main() -> int:
+    """Dispatch to check or selftest."""
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("target", nargs="?",

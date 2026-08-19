@@ -20,7 +20,7 @@
 #   means a drifted host DROPS a label instead of lying about it.
 #
 # WHY THE VERILATOR VERSION IS PINNED:
-#   docs/LINT_FINDINGS.md calibrates the lint against 4.028 specifically — its
+#   docs/verification/LINT_FINDINGS.md calibrates the lint against 4.028 specifically — its
 #   waiver set (UNUSED|PINCONNECTEMPTY) and the UNOPTFLAT sanity expectations
 #   predate the UNUSEDSIGNAL split in 5.x. Two hosts on two verilator versions
 #   would return DIFFERENT verdicts for the same commit, which is worse than

@@ -22,13 +22,10 @@ sibling that has not earned that risk yet. Duplication here is the deliberate,
 lower-risk choice; if `bnd` promotes to block and this drifts from
 drc_census.py's proven behaviour, THEN factor the shared engine out.
 
-WHAT MAKES BND DIFFERENT FROM DRC, MEASURED NOT ASSUMED (2026-08-18 real run)
-------------------------------------------------------------------------------
-Running `make bnd` against the exact GDS IMEC checked
-(md5 7f6214965501c911bd65069378ae911d,
-runs/20260811T103338Z_fill-verify/prev_outputs/nanosoc_eth_chiplet_pads_logo_full_L300.gds)
-reproduces docs/tapeout/50-bnd-and-logo-checks.md's numbers exactly: 18 raw
-results (12 AP.W.1 + 2 AP.W.2 + 4 AP.S.1), 0 PM.W.1, 0 AP.S.4. That 0 is not
+WHAT MAKES BND DIFFERENT FROM DRC
+---------------------------------
+A `make bnd` run on this design reports a handful of raw AP.* results and ZERO
+PM.W.1 / AP.S.4 (see docs/tapeout/50-bnd-and-logo-checks.md). That 0 is not
 "clean" -- LAYER PMi/CBi/CB2i all read 0 original geometry in this stream
 (no dummy fill or seal ring merged locally), so PM.*/CB.*/CBVIA*.*/CBM*.*/
 CUPCB.*/CUPVIAT.* and AP.S.4 (space *to* PM/CB2) cannot fire against geometry
@@ -103,13 +100,11 @@ ABSENT_GEOMETRY_PREFIXES = (
 # neither a zero nor a nonzero result is trustworthy either way, so this
 # family is never gated AND never flagged as an anomaly regardless of value
 # -- same discipline drc_census.py already applies to front-end (OD/PO)
-# density. Measured 2026-08-18 against ASIC/eth-chiplet/build/fp1505 (the
-# toolkit-lineage stream this design's `bnd` CI stage actually runs
-# against): LAYER APi carries only 7 (12) shapes there, against 40 (285) in
-# the legacy pad-ring-merged reference stream, and AP.DN.1.L (density < 0.1)
-# fires a spurious single result purely because there is almost no AP
-# content to measure a density from. See docs/tapeout/
-# 50-bnd-and-logo-checks.md Part A.2.
+# density. On the toolkit-lineage stream this design's `bnd` CI stage runs
+# against, LAYER APi carries roughly a tenth of the shapes the pad-ring-merged
+# reference stream does, and AP.DN.1.L (density < 0.1) fires a spurious single
+# result purely because there is almost no AP content to measure a density
+# from. See docs/tapeout/50-bnd-and-logo-checks.md Part A.2.
 SPARSE_DENSITY_PREFIXES = ("AP.DN.1",)
 
 STRUCTURALLY_UNMEASURABLE_PREFIXES = ABSENT_GEOMETRY_PREFIXES + SPARSE_DENSITY_PREFIXES
@@ -224,6 +219,7 @@ def apply_waivers(waivers, by_cell, checks, primary):
 
 
 def owner(cell, primary):
+    """Attribute a violating cell to the design, an IO pad, or vendor collateral."""
     if cell == primary:
         return DESIGN
     if cell.startswith(IOPAD_PREFIXES):
@@ -267,22 +263,27 @@ def parse_summary(path):
 
 
 def _matches(check, prefixes):
+    """True if `check` equals or starts with any of `prefixes`."""
     return any(check == p or check.startswith(p) for p in prefixes)
 
 
 def is_absent_geometry(check):
+    """Rules that cannot fire because the geometry they need is absent from this stream."""
     return _matches(check, ABSENT_GEOMETRY_PREFIXES)
 
 
 def is_sparse_density(check):
+    """Density rules that cannot be judged on a stream carrying no fill."""
     return _matches(check, SPARSE_DENSITY_PREFIXES)
 
 
 def is_unmeasurable(check):
+    """True for any rule this stream structurally cannot measure."""
     return is_absent_geometry(check) or is_sparse_density(check)
 
 
 def main():
+    """Parse the run, classify every violation by owner, and apply the budget."""
     ap = argparse.ArgumentParser()
     ap.add_argument("rundir")
     ap.add_argument("--budget", type=int,

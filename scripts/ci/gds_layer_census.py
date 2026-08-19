@@ -7,7 +7,7 @@ WHY THIS EXISTS
 "Did the map change do what we intended?" is a question about record counts on
 specific layers, and nothing in the flow answered it. write_stream's own
 -report_file is a header in this tool version -- it records the command line and
-no per-layer inventory -- so a map edit could previously only be judged by
+no per-layer inventory -- so without this, a map edit can only be judged by
 opening the stream in a viewer and squinting.
 
 This parses the GDSII record stream directly. No geometry is constructed and no
@@ -18,15 +18,15 @@ THE TRAP THIS AVOIDS, and it is easy to hit if you write your own: an SREF/AREF
 element carries no LAYER record. If the parser does not reset its "current
 layer" when it sees one, every instance placement inherits the previous
 element's layer and gets tallied -- as TEXT, if that is the fallback branch. On
-this design that inflated the top cell from 50 text records to 2,362,294, an
-error large enough to invert the conclusion being drawn. Measured 2026-08-13.
-The guard is the `cur='ref'` arm below; do not simplify it away.
+a real stream that inflates the top cell's text count by four or five orders of
+magnitude, which is enough to invert the conclusion being drawn. The guard is
+the `cur='ref'` arm below; do not simplify it away.
 
 USAGE
     gds_layer_census.py <file.gds> [--per-structure] [--match REGEX] [--json OUT]
 
-Cross-check when changing this file: the 2026-08-12 tapeout stream totals
-349,274 text records. If a refactor moves that number, the refactor is wrong.
+Cross-check when changing this file: re-run it on a stream you have counted
+before. If a refactor moves the totals, the refactor is wrong.
 """
 import argparse
 import json
@@ -91,6 +91,7 @@ def parse(path):
 
 
 def totals(per):
+    """Sum per-structure counters into (geometry, text) totals."""
     g, t = Counter(), Counter()
     for v in per.values():
         g.update(v["g"])
@@ -99,6 +100,7 @@ def totals(per):
 
 
 def main():
+    """Stream the GDS, tally records per (layer, datatype), and print or write the census."""
     ap = argparse.ArgumentParser()
     ap.add_argument("gds")
     ap.add_argument("--per-structure", action="store_true")

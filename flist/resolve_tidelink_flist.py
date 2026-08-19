@@ -42,8 +42,12 @@ Usage
 -----
     resolve_tidelink_flist.py <tidelink_fpga.flist> > resolved.f
 
-`-f` includes are expanded recursively so the result is flat and every path is
-absolute. Environment variables in paths are expanded.
+Reads TIDELINK_HOME from the environment. `-f` includes are expanded recursively
+so the result is flat and every path is absolute; environment variables in paths
+are expanded.
+
+Exit: 0 the resolved flist is on stdout; 1 TIDELINK_HOME unset or a declared
+override file is missing; 2 usage.
 """
 from __future__ import annotations
 
@@ -60,10 +64,13 @@ SHADOWED = {
 
 
 def expand(tok: str) -> str:
+    """Expand environment variables in one flist token."""
     return os.path.expandvars(tok).strip()
 
 
 def read_flist(path: Path, seen: set[Path], out: list[str], dropped: list[str]) -> None:
+    """Append `path`'s entries to `out`, recursing into `-f` includes and
+    recording any shadowed file it skipped in `dropped`."""
     path = path.resolve()
     if path in seen:
         return
@@ -96,6 +103,8 @@ def read_flist(path: Path, seen: set[Path], out: list[str], dropped: list[str]) 
 
 
 def main() -> int:
+    """Resolve the flist named on argv and print it. 0 ok, 1 TIDELINK_HOME
+    unset or an override missing, 2 usage."""
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
         return 2
@@ -133,15 +142,10 @@ def main() -> int:
     # per module and NOT touching the submodule. Each override should carry a
     # matching patches/NNNN-*.patch for upstreaming.
     #
-    # CURRENTLY EMPTY, and that is the desired state. The one override this
-    # mechanism ever carried (tidelink_top.sv, for the ahb_sub peer-read
-    # pipe-offset fix / patches/0003) was retired on 2026-08-03 after the fix
-    # landed upstream. By then it had been stale for three weeks and was
-    # silently discarding 23 commits to tidelink_top.sv — including the I1
-    # SELF_ARM_TRAIN_EN fix proven on silicon and the RX-FIFO TWIN 2
-    # chip-killer fix. It only surfaced because Genus rejected a parameter the
-    # overridden module did not have; `make elab` had been passing against the
-    # stale module for weeks.
+    # KEEP THIS LIST EMPTY once a fix lands upstream. An override shadows the
+    # submodule's file wholesale, so a forgotten entry silently discards EVERY
+    # later upstream commit to that file while `make elab` stays green. Retire
+    # each override as soon as its patch is merged.
     #
     # So: the match is by BASENAME and is invisible at the point of use — the
     # flist reads normally and the swap is one stderr line. Before adding an

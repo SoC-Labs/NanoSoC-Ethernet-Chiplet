@@ -38,6 +38,9 @@ Each input is a newline-separated list of absolute RTL paths (e.g. the outputs o
 flatten_soc_flist.py and resolve_tidelink_flist.py, and the TideChart flist
 expanded). Lines that are switches (+incdir, +define, -f, //comment) pass through
 untouched, in order, before the deduplicated file list.
+
+Exit: 0 the merged list is on stdout and every module is defined once; 1 some
+file holds BOTH new and already-defined modules, so no safe drop exists; 2 usage.
 """
 from __future__ import annotations
 
@@ -54,6 +57,7 @@ MODULE_RE = re.compile(r"^[ \t]*module\s+([A-Za-z_]\w*)\s*(?:#|\(|;)", re.M)
 
 
 def modules_in(path: Path) -> list[str]:
+    """Names of every module declared in one RTL file; [] if it cannot be read."""
     try:
         return MODULE_RE.findall(path.read_text(errors="replace"))
     except OSError:
@@ -61,6 +65,8 @@ def modules_in(path: Path) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Merge the given path lists, dropping wholly-duplicate files. 0 clean,
+    1 a file mixes new and already-defined modules (needs a human), 2 usage."""
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
         return 2

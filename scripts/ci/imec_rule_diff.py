@@ -75,12 +75,14 @@ def resolve(spec):
 
 
 def fmt(n, cap_n):
+    """Format a count, showing the true value in brackets when Calibre capped it."""
     if n is None:
         return "     -"
     return f"{n:>4} ({cap_n})" if cap_n != n else f"{n:>4}"
 
 
 def main():
+    """Diff the named rules across two summaries and print the per-rule change."""
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rules", required=True,

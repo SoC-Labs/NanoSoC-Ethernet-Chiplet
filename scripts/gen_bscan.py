@@ -171,6 +171,7 @@ def disable_level(pad):
 
 
 def sha256_of(path):
+    """SHA-256 of a file, stamped into the generated RTL and BSDL."""
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
@@ -407,6 +408,7 @@ RTL_BANNER = """\
 
 
 def render_rtl(table, pads, cells, table_sha):
+    """Render the boundary-scan wrapper RTL as one string."""
     kc = {k: sum(1 for p in pads if p["kind"] == k) for k in ROLES}
     L = []
     L.append(RTL_BANNER.format(
@@ -760,6 +762,7 @@ BSDL_BANNER = """\
 
 
 def render_bsdl(table, pads, cells, table_sha):
+    """Render the BSDL description of the same register as one string."""
     ports = table["ports"]
     by_inst = {p["inst"]: p for p in pads}
     n = len(cells)
@@ -976,6 +979,7 @@ def render_bsdl(table, pads, cells, table_sha):
 # Driver
 # ---------------------------------------------------------------------------
 def generate(table_path):
+    """Build the register from a pad table; return (pads, cells, rtl, bsdl)."""
     table = json.loads(pathlib.Path(table_path).read_text())
     pads, cells = build_cells(table)
     sha = sha256_of(table_path)
@@ -983,6 +987,7 @@ def generate(table_path):
 
 
 def diff(path, want, label):
+    """Print a unified diff of `path` against `want`; return 1 if they differ."""
     have = path.read_text() if path.exists() else ""
     if have == want:
         return 0
@@ -996,6 +1001,7 @@ def diff(path, want, label):
 
 
 def main(argv=None):
+    """Generate, or with --check verify, the wrapper RTL and BSDL."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--table", default=str(TABLE), help="pad table JSON (default: %(default)s)")
     ap.add_argument("--rtl", default=str(RTL_OUT), help="wrapper output path")

@@ -6,51 +6,39 @@ A joint work commissioned on behalf of SoC Labs, under Arm Academic Access licen
 Copyright 2026, SoC Labs (www.soclabs.org)
 
 ===============================================================================
-WHY THIS EXISTS
+WHAT IT GUARANTEES
 ===============================================================================
-Every failure below was measured on this project in the 24 hours to 2026-08-14.
-None of them is hypothetical, and every one of them cost real time.
+An ASIC flow run is only trustworthy if you can say, afterwards, exactly what
+went into it. This program writes that record into the run directory itself, so
+the run carries its own provenance rather than depending on memory or on a
+tree that has since moved on. Each guarantee below closes a way a run can
+quietly stop being reproducible:
 
-  * A run's own configuration snapshot was OVERWRITTEN mid-run. The file left on
-    disk was no longer a pre-run capture, and it took a separate measurement
-    exercise (runs/20260813T231658Z_fullrun-scratch-padfix/config/
-    SNAPSHOT_PROVENANCE.txt) to establish the run was still valid.
-        -> here: captures are APPEND-ONLY. `capture` allocates the next free
-           index and refuses to write over an existing one. There is no code
-           path that overwrites a capture.
+  * CAPTURES ARE APPEND-ONLY. `capture` allocates the next free index and
+    refuses to overwrite an existing one, so a snapshot cannot be replaced
+    mid-run and silently stop describing the state it was taken at.
 
-  * RTL changed underneath a live run. tidelink/src/rtl/tidelink_top.sv was
-    edited by another session an hour into synthesis.
-        -> here: the RTL is resolved from the flist and hashed FILE BY FILE, and
-           a `post` capture diffs itself against `pre` automatically.
+  * RTL IS RESOLVED FROM THE FLIST AND HASHED FILE BY FILE, so an edit landing
+    under a live run is visible. A `post` capture diffs itself against `pre`
+    automatically and writes MUTATED_UNDER_RUN.txt if anything moved.
 
-  * power_plan.tcl, Makefile, common.mk and the ROM specs all changed mid-run.
-        -> here: `freeze` copies the flow scripts into the run directory, swaps
-           the symlink, and records both the freeze point and the delta against
-           the last capture, so the seam is stated rather than discovered.
+  * `freeze` COPIES THE FLOW SCRIPTS INTO THE RUN and swaps the symlink,
+    recording the freeze point and the delta, so the seam between "live
+    scripts" and "the scripts this run used" is stated, not inferred.
 
-  * Toolkit run manifests reference submodule SHAs that no longer exist
-    (dce2e51, 7473345 -- the submodule history was squashed). Those runs cannot
-    be reproduced against any current revision, and nothing said so.
-        -> here: EVERY submodule pin is probed at capture time with
-           `git cat-file -e`, and separately for reachability from a remote ref.
-           A pin that is gone, or that exists only in a local worktree and was
-           never pushed, is written into UNRECOVERABLE.txt AT CAPTURE TIME --
-           not left to be discovered years later.
+  * EVERY SUBMODULE PIN IS PROBED AT CAPTURE TIME with `git cat-file -e`, and
+    separately for reachability from a remote ref. A pin that no longer exists,
+    or that exists only in a local worktree and was never pushed, is written
+    into UNRECOVERABLE.txt while the fact is still cheap to act on.
 
-  * baseline_2026-08-07 has no configuration snapshot at all. Twelve archived
-    runs have happened since.
-        -> here: cheap enough to always be on. A capture is ~2 seconds. If it is
-           expensive or optional it will be skipped exactly when it matters.
+  * CAPTURE IS CHEAP (~2 seconds) SO IT IS ALWAYS ON. An expensive or optional
+    provenance step is skipped exactly when it matters.
 
-  * A DRC number quoted all night descended from a placement that FAILED ITS OWN
-    GATE with the gate disabled (EVPLACE strict=0), and nothing in the run
-    recorded that.
-        -> here: deviations are declared AND auto-detected. Any environment
-           variable the spec marks as gate-controlling, set to anything other
-           than its declared default, becomes a DEVIATION -- written to a
-           top-level DEVIATIONS.txt in the run directory where nobody can miss
-           it, and stamped into the manifest.
+  * DEVIATIONS ARE DECLARED AND AUTO-DETECTED. Any environment variable the
+    spec marks as gate-controlling, set to anything other than its declared
+    default, becomes a DEVIATION -- written to a top-level DEVIATIONS.txt in
+    the run directory and stamped into the manifest. A result produced with a
+    gate disabled must not read like a result produced with it enabled.
 
 ===============================================================================
 DESIGN RULES THIS OBEYS
@@ -60,14 +48,14 @@ this project. Nothing here consults an exit status to decide anything. Every
 verdict is by artefact: the file exists, is non-empty, and its content hash is
 what the manifest says it is.
 
-A MISSING INPUT IS A FAILURE, NEVER A SKIP. The recurring failure mode on this
-project is a check that silently finds nothing to check and reports success --
-snapshot take 1 in the run above resolved ZERO RTL files because set_env.sh had
-not been sourced, and printed no error. So: every group declares a `min=`; a
-group resolving fewer files than its minimum is a hard failure; a `glob` that
-matches nothing is a hard failure; and an unexpandable ${VAR} in a flist is a
-hard failure, mirroring expand_env in ASIC/genus-innovus/scripts/procs.tcl which
-raises rather than substituting empty.
+A MISSING INPUT IS A FAILURE, NEVER A SKIP. A check that silently finds nothing
+to check and reports success is the failure mode this whole file guards against
+-- with set_env.sh unsourced, a capture can resolve ZERO RTL files and say
+nothing. So: every group declares a `min=`; a group resolving fewer files than
+its minimum is a hard failure; a `glob` that matches nothing is a hard failure;
+and an unexpandable ${VAR} in a flist is a hard failure, mirroring expand_env in
+ASIC/genus-innovus/scripts/procs.tcl which raises rather than substituting
+empty.
 
 A FAILED CAPTURE STILL WRITES ITS MANIFEST. A capture that fails and writes
 nothing leaves the run with no provenance at all, which is the disease. It
@@ -103,6 +91,8 @@ SUBCOMMANDS
             codes, no trust.
   replay    Emit the replay procedure and the recoverability verdict for an
             archived run, including what CANNOT be reproduced and why.
+  audit     Score an existing run's provenance from outside; writes its report
+            to --out and never modifies the run directory.
 
   Typical use, wrapped around a flow invocation:
 
@@ -116,6 +106,17 @@ SUBCOMMANDS
 
   `capture --phase post` diffs itself against the first capture automatically
   and writes MUTATED_UNDER_RUN.txt if anything moved.
+
+===============================================================================
+EXIT CODES
+===============================================================================
+  0  the subcommand completed and everything it checked held
+  1  a hard failure: a capture group under its `min=`, an unresolvable path, a
+     verify hash mismatch, a replay that found the run unrecoverable, or an
+     audit that found a dead submodule pin
+  2  usage / spec error, or an input the subcommand needs is absent (no
+     captures in the run, no such capture index, missing freeze source);
+     from `audit`, evidence that is merely missing rather than dead
 """
 
 import argparse
@@ -175,6 +176,7 @@ SAFE_VERSION_PROBE = {
 # ---------------------------------------------------------------------------
 
 def utcstamp():
+    """UTC timestamp in the format every capture and manifest records."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -192,6 +194,7 @@ def sh(cmd, cwd=None, timeout=120, env=None):
 
 
 def sh_ok(cmd, cwd=None, timeout=120):
+    """Run a command and return its stdout, discarding the exit status."""
     return sh(cmd, cwd, timeout)[1].strip()
 
 
@@ -503,12 +506,14 @@ class VcsIndex:
     not."""
 
     def __init__(self):
+        """Caches git state per repository so one capture does not re-shell per file."""
         self._repo_of = {}
         self._tracked = {}
         self._modified = {}
         self._ignored = {}
 
     def repo_of(self, path):
+        """Repository root containing `path`, walking up to the first .git."""
         d = os.path.dirname(os.path.abspath(path))
         if d in self._repo_of:
             return self._repo_of[d]
@@ -527,6 +532,7 @@ class VcsIndex:
             probe = nxt
 
     def _load(self, repo):
+        """Populate the tracked/modified/ignored sets for one repository."""
         if repo in self._tracked:
             return
         rc, out = sh(["git", "ls-files", "-z"], cwd=repo, timeout=300)
@@ -690,6 +696,7 @@ def tool_versions(names):
 
 
 def os_state():
+    """Host, OS, kernel and locale, recorded so a rerun can be compared to it."""
     rel = {}
     try:
         with open("/etc/os-release") as f:
@@ -719,6 +726,7 @@ class Spec:
     indented. Deliberately not YAML: this must run with nothing installed."""
 
     def __init__(self, path, root):
+        """A parsed provenance spec: what to capture, from where, and the minimum count."""
         self.path = os.path.abspath(path)
         self.root = root
         self.vars = {"REPO": root, "ROOT": root}
@@ -734,19 +742,23 @@ class Spec:
         self._parse()
 
     def want_make(self, var):
+        """Also record `var` from every make directory the spec names."""
         for md in self.make_dirs:
             md[1].append(var)
 
     def want_tcl(self, var):
+        """Also record `var` from every Tcl config the spec names."""
         for tc in self.tcl_configs:
             tc[2].append(var)
 
     def _sub(self, s):
+        """Expand $VAR / ${VAR} against the spec's own variable table."""
         for k, v in sorted(self.vars.items(), key=lambda kv: -len(kv[0])):
             s = s.replace("$" + k, v).replace("${" + k + "}", v)
         return s
 
     def _parse(self):
+        """Read the spec file into groups, variables and error list."""
         if not os.path.isfile(self.path):
             self.errors.append(f"spec not found: {self.path}")
             return
@@ -854,10 +866,12 @@ class Spec:
 # ---------------------------------------------------------------------------
 
 def provdir(run):
+    """Path of the provenance directory inside a run."""
     return os.path.join(run, "provenance")
 
 
 def captures(run):
+    """Every capture in a run as (index, phase, path), ordered by index."""
     d = provdir(run)
     if not os.path.isdir(d):
         return []
@@ -870,16 +884,19 @@ def captures(run):
 
 
 def next_index(run):
+    """Next free capture index; captures are append-only and never overwritten."""
     got = captures(run)
     return (max(i for i, _, _ in got) + 1) if got else 0
 
 
 def load_capture(path):
+    """Load one capture manifest."""
     with open(path, errors="replace") as f:
         return json.load(f)
 
 
 def cmd_capture(args):
+    """capture: resolve, hash and archive every group the spec declares."""
     root = os.path.abspath(args.root)
     run = os.path.abspath(args.run)
     t0 = time.time()
@@ -1270,6 +1287,7 @@ BAR = "=" * 79
 
 
 def render_text(cap, path):
+    """Render a capture as the human-readable report beside its JSON."""
     L = []
     w = L.append
     w(BAR)
@@ -1443,6 +1461,7 @@ def write_loud_files(run, cap):
 # ---------------------------------------------------------------------------
 
 def _index(cap):
+    """Map path -> (sha256, group, mtime) for every file in a capture."""
     out = {}
     for name, gd in cap["groups"].items():
         for e in gd["files"]:
@@ -1451,6 +1470,7 @@ def _index(cap):
 
 
 def diff_captures(a, b):
+    """What moved between two captures: changed, added, removed, submodules, HEAD."""
     ia, ib = _index(a), _index(b)
     findings = {"changed": [], "added": [], "removed": [],
                 "tree_a": a["tree_sha256"], "tree_b": b["tree_sha256"]}
@@ -1474,6 +1494,7 @@ def diff_captures(a, b):
 
 
 def write_mutation_report(run, a, b, f):
+    """Write MUTATED_UNDER_RUN.txt, or NO_MUTATION.txt when nothing moved."""
     n = len(f["changed"]) + len(f["added"]) + len(f["removed"]) \
         + len(f["submodules_moved"]) + (1 if f["head_moved"] else 0)
     path = os.path.join(run, "MUTATED_UNDER_RUN.txt")
@@ -1533,6 +1554,7 @@ def write_mutation_report(run, a, b, f):
 
 
 def cmd_diff(args):
+    """diff: compare two captures of one run."""
     run = os.path.abspath(args.run)
     got = captures(run)
     if len(got) < 2:
@@ -1755,6 +1777,7 @@ def cmd_verify(args):
 # ---------------------------------------------------------------------------
 
 def cmd_replay(args):
+    """replay: emit the replay procedure and what cannot be reproduced."""
     run = os.path.abspath(args.run)
     got = captures(run)
     if not got:
@@ -2021,6 +2044,7 @@ REQUIRED = [
 
 
 def _read(path, limit=4_000_000):
+    """Read a text file, truncated, returning "" rather than raising."""
     try:
         with open(path, errors="replace") as f:
             return f.read(limit)
@@ -2054,6 +2078,7 @@ def probe_pin(repo_dir, sha):
 
 
 def cmd_audit(args):
+    """audit: score an archived run's provenance from outside, without touching it."""
     run = os.path.abspath(args.run)
     root = os.path.abspath(args.root)
     if not os.path.isdir(run):
@@ -2249,6 +2274,7 @@ def cmd_audit(args):
 # ---------------------------------------------------------------------------
 
 def main():
+    """Parse arguments and dispatch to the subcommand."""
     ap = argparse.ArgumentParser(
         description="run provenance and replay for the ASIC flow")
     ap.add_argument("--root", default=os.path.abspath(
@@ -2256,45 +2282,63 @@ def main():
         help="repository root (default: this script's repo)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    c = sub.add_parser("capture")
-    c.add_argument("--run", required=True)
-    c.add_argument("--spec", required=True)
+    c = sub.add_parser("capture",
+                       help="hash every declared input and write an append-only "
+                            "manifest into <run>/provenance/")
+    c.add_argument("--run", required=True, help="run directory to capture into")
+    c.add_argument("--spec", required=True,
+                   help="provenance spec listing what to capture "
+                        "(e.g. ASIC/genus-innovus/provenance.spec)")
     c.add_argument("--phase", required=True,
                    help="pre | post | a stage name. 'post' auto-diffs vs 000.")
-    c.add_argument("--label", default=None)
+    c.add_argument("--label", default=None,
+                   help="free-text label recorded with this capture")
     c.add_argument("--deviation", action="append", default=[],
                    help="declare a deviation from a clean invocation; repeatable")
     c.add_argument("--tool", action="append",
-                   default=["genus", "innovus", "calibre", "lec", "tclsh", "make", "git"])
+                   default=["genus", "innovus", "calibre", "lec", "tclsh", "make", "git"],
+                   help="tool whose version to record; repeatable. Passing any "
+                        "--tool replaces nothing -- it appends to the default list.")
     c.add_argument("--no-copy", action="store_true",
                    help="record hashes only; do not archive byte copies")
-    c.add_argument("--diff-against", type=int, default=None)
+    c.add_argument("--diff-against", type=int, default=None,
+                   help="capture index to diff this one against "
+                        "(default: 000 when --phase is post)")
     c.set_defaults(fn=cmd_capture)
 
-    f = sub.add_parser("freeze")
-    f.add_argument("--run", required=True)
+    f = sub.add_parser("freeze",
+                       help="copy a live script directory into the run and swap "
+                            "the symlink, recording the freeze point")
+    f.add_argument("--run", required=True, help="run directory to freeze into")
     f.add_argument("--source", required=True, help="live directory to freeze")
     f.add_argument("--name", default=None,
                    help="name inside the run dir (default: basename of source)")
-    f.add_argument("--note", default="")
+    f.add_argument("--note", default="", help="free-text note recorded at the freeze point")
     f.set_defaults(fn=cmd_freeze)
 
-    d = sub.add_parser("diff")
-    d.add_argument("--run", required=True)
-    d.add_argument("--a", type=int, default=None)
-    d.add_argument("--b", type=int, default=None)
+    d = sub.add_parser("diff",
+                       help="compare two captures of one run: what moved under it")
+    d.add_argument("--run", required=True, help="run directory holding the captures")
+    d.add_argument("--a", type=int, default=None,
+                   help="index of the earlier capture (default: the first)")
+    d.add_argument("--b", type=int, default=None,
+                   help="index of the later capture (default: the last)")
     d.set_defaults(fn=cmd_diff)
 
-    v = sub.add_parser("verify")
-    v.add_argument("--run", required=True)
+    v = sub.add_parser("verify",
+                       help="re-hash what the archive claims to hold; verdict by "
+                            "artefact, never by exit code")
+    v.add_argument("--run", required=True, help="run directory to verify")
     v.set_defaults(fn=cmd_verify)
 
-    r = sub.add_parser("replay")
-    r.add_argument("--run", required=True)
+    r = sub.add_parser("replay",
+                       help="emit the replay procedure and say what CANNOT be "
+                            "reproduced, and why")
+    r.add_argument("--run", required=True, help="archived run directory to replay")
     r.set_defaults(fn=cmd_replay)
 
     a = sub.add_parser("audit", help="score an existing run; never writes into it")
-    a.add_argument("--run", required=True)
+    a.add_argument("--run", required=True, help="run directory to score")
     a.add_argument("--out", required=True,
                    help="where the audit report goes. The run directory is "
                         "never modified -- runs/ holds quoted evidence.")

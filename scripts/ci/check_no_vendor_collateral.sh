@@ -11,14 +11,12 @@
 # is licensed to this site and the licence does not permit reproducing or
 # redistributing it. Committing a vendor LEF publishes foundry IP to the world.
 #
-# This is not hypothetical. The tree carried a 414 kB verbatim copy of TSMC's
-# `tphn65lpgv2od3_sl_9lm.lef` at ASIC/tech_wrappers/tsmc65/local_overrides/ for
-# months, because three lines of it needed changing and copying the file was the
-# obvious way to change them. The fix was to ship the TRANSFORM instead of the
-# RESULT: ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py reads the vendor
-# file from the read-only PDK at build time and writes the patched LEF into a
-# gitignored build directory. The repository holds three lines of intent and the
-# code to apply them, and no vendor bytes at all.
+# The rule this enforces: SHIP THE TRANSFORM, NEVER THE RESULT. When a vendor
+# file needs changing, do not commit an edited copy of it — commit the patch
+# script. ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py is the pattern: it
+# reads the vendor file from the read-only PDK at build time and writes the
+# patched LEF into a gitignored build directory, so the repository holds the
+# intent and the code to apply it, and no vendor bytes at all.
 #
 # The failure mode this guards is not malice, it is helpfulness: a future
 # session sees a build referencing a file that is not in the tree, "fixes" it by

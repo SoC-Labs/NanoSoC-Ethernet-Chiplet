@@ -38,6 +38,7 @@ VENDOR_ROOT = (os.environ.get('LAB_IP_LIBRARY_ROOT')
 
 
 def provenance(path):
+    """Classify where a reported file came from: repo, submodule, vendor IP, or none."""
     if path in ('N.A.', 'N/A', ''):
         return 'no-file'
     if not ROOT or not path.startswith(ROOT):
@@ -60,6 +61,7 @@ def provenance(path):
 
 
 def owner(path):
+    """Repo-relative owner of a reported file; vendor IP paths are redacted."""
     if not ROOT or not path.startswith(ROOT):
         return 'lab-vendor-ip (path redacted)' if path.startswith('/') else 'n-a'
     p = path[len(ROOT):]
@@ -73,8 +75,10 @@ def owner(path):
 
 
 def parse(rpt):
+    """Parse a SpyGlass report into (header counts, violation rows, unparsed lines)."""
     txt = open(rpt, errors='replace').read()
     def hdr(k):
+        """Integer value of one header field, or -1 if it is absent."""
         m = re.search(k + r'\s*:\s*(\d+)', txt)
         return int(m.group(1)) if m else -1
     meta = dict(total=hdr('Total Number of Generated Messages'),
@@ -112,6 +116,7 @@ def parse(rpt):
 
 
 def main():
+    """Print the census for the report named on argv."""
     rpt = sys.argv[1]
     meta, rows, bad = parse(rpt)
     print(f'report      : {rpt}')

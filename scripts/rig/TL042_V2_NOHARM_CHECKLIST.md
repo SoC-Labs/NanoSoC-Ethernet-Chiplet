@@ -1,6 +1,6 @@
 # TL-042 v2 NO-HARM — rig pre-flight checklist
 
-Turnkey harness for `docs/HW_VALIDATION_PLAN_TL042_V2.md`. Read the plan §0 first:
+Turnkey harness for `docs/bringup/HW_VALIDATION_PLAN_TL042_V2.md`. Read the plan §0 first:
 this is **v2 NO-HARM, not v2-fixes-the-wedge**. Acceptance = v2 delivers
 byte-exact at the **same rate as baseline on anchor-good runs**. A v2 build
 **will still wedge on an inject — that is EXPECTED**, and this harness injects

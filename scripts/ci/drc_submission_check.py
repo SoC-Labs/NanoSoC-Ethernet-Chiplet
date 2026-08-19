@@ -13,27 +13,27 @@ DRC evidence is gitignored (.gitignore ASIC/*/calibre_runs and build/), so a CI
 clone finds nothing. That is how a submission bundle reached a broker carrying a
 keep-out violation whose true count was never known.
 
-MEASURED, on the current build. Merging the logo takes design-owned results from
-140 to 2161, and the delta is exactly five checks:
+Merging the logo takes design-owned results from roughly 140 to over 2000 on
+this build, and the delta is exactly five checks:
     LOGO.S.1  +1000   (SATURATED at the hierarchical cap)
     LOGO.R.4  +1000   (SATURATED)
     AP.W.1.WB   +12
     AP.S.1.WB    +4
     AP.S.1.FC    +4
-Both LOGO checks are capped in EVERY logoed stream ever built here, so their true
-counts are unknown. A previously quoted "5497 -> 1134 improvement" is NOT one:
-`N (M)` is hierarchical (flat), both runs read N=1000, and only flat multiplicity
-moved. Do not quote either number as a measurement until the deck is re-run with
-the cap raised.
+Both LOGO checks are capped in EVERY logoed stream built here, so their true
+counts are unknown. Beware the `N (M)` form: N is hierarchical and M is flat, so
+two runs that both read N=1000 differ only in flat multiplicity -- a change in M
+alone is NOT an improvement. Do not quote either number as a measurement until
+the deck is re-run with the cap raised.
 
 WHAT THIS SCRIPT ADDS OVER `drc_census.py`, AND ONLY THIS. The census already
 fails on any saturated rulecheck and on design-owned over budget, and it stays
 the authority on the verdict — no grading logic is duplicated here. Two things it
 cannot do on its own:
 
-  1. AN ABSENT RUN MUST NOT READ AS CLEAN. The 2026-08-17 16:56 bundle was
-     assembled with no logo merge at all. A stage that passed on a missing file
-     would have waved exactly that through. No summary => refuse.
+  1. AN ABSENT RUN MUST NOT READ AS CLEAN. A bundle can be assembled with no
+     logo merge at all, and a stage that passes on a missing file waves exactly
+     that through. No summary => refuse.
 
   2. AN UN-LOGOED STREAM MUST NOT PASS TRIVIALLY. Point a logo check at the
      signoff artefact and it finds no LOGO.* results and reads clean — the

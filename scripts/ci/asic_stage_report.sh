@@ -70,13 +70,11 @@ area_field() {  # area_field <1=instcount 2=totalarea>
     ' "$f" 2>/dev/null | grep . || echo "n/a"
 }
 
-# Trust the report's OWN trailer ("Total Violations : 580 Viols.") ahead of counting
-# record lines. Counting with ^[A-Z]+: SILENTLY UNDERCOUNTS: `EndOfLine:` is mixed
-# case, so 41 of 580 records were dropped and the total was reported as 539 — a 7%
-# error that also shifted every derived percentage (PG shorts read as 59% of DRC
-# when the true share is 54.8%). Any new violation class whose keyword is not all
-# caps would have done the same. Fall back to a CASE-INSENSITIVE count only if the
-# trailer is missing.
+# Trust the report's OWN trailer ("Total Violations : N Viols.") ahead of counting
+# record lines. A case-SENSITIVE `^[A-Z]+:` count silently undercounts, because
+# some violation keywords are mixed case (`EndOfLine:`), which also shifts every
+# percentage derived from the total. Fall back to a case-INSENSITIVE count only
+# when the trailer is missing.
 drc_total() {
     local f="${1:-$REP}/${BLOCK}_imp_drc.rep"
     [ -s "$f" ] || { echo "n/a"; return 0; }
@@ -100,13 +98,11 @@ drc_pg_bp() {
     grep -c 'Special Wire of Net V.* & Blockage of Cell BuPAD' "$f" 2>/dev/null || true
 }
 
-# NOTE check_connectivity caps its message list (1000 by default), so this is a
-# LOWER BOUND once it saturates. Labelled as such in the table for that reason.
-# check_connectivity CAPS its message list (1000 by default) and says so in the file:
-# "1000 total info(s) created." Once saturated the counts are LOWER BOUNDS, and
-# comparing a capped run against an uncapped one is meaningless — a "329 -> 318"
-# delta was reported that way once and was not a measurement at all. Mark it.
-# To get a true count, re-run: check_connectivity -error 200000 -warning 200000
+# check_connectivity CAPS its message list (1000 by default) and says so in the
+# file: "1000 total info(s) created." Once saturated the count is a LOWER BOUND,
+# and a delta between a capped run and an uncapped one is not a measurement at
+# all — so a capped count is labelled (CAPPED) in the table.
+# For a true count, re-run: check_connectivity -error 200000 -warning 200000
 pg_opens() {
     local f="${1:-$REP}/${BLOCK}_imp_connectivity.rep"
     [ -s "$f" ] || { echo "n/a"; return 0; }
@@ -122,10 +118,9 @@ pg_opens() {
 #
 # `report_timing_summary` with no options emits "# SETUP", "# DRV" and
 # "# Clock checks" sections and NOTHING for hold — the tool even labels its own
-# closing line `timing.setup.wns`. Reporting only that file is how a design with
-# hold WNS -1.167 ns, TNS -66,212 ns and 96,545 violating paths was described as
-# "timing closed, 0 failing endpoints" for an entire day. The hold numbers exist
-# only in the stage log's "Hold mode" table, so parse that.
+# closing line `timing.setup.wns`. A design deep in hold violation therefore
+# reads as "timing closed, 0 failing endpoints" from that file alone. The hold
+# numbers exist only in the stage log's "Hold mode" table, so parse that.
 #
 # Field 2 of the table is the "all" column: WNS / TNS / Violating Paths.
 hold_field() {  # hold_field <logdir> <WNS|TNS|Violating>

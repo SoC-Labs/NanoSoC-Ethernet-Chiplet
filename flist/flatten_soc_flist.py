@@ -4,37 +4,38 @@
 # A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
 # license.  Copyright 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
-# WHY THIS EXISTS
+# WHAT IT DOES
 #
-# nanosoc_gen emits its per-module filelists (build_soc/flist/*.flist) from
-# Jinja templates that write Makefile-style `$(VAR)` paths. VCS expands `${VAR}`
-# and `$VAR` but NOT `$(VAR)`, so it treats those paths as literal and fails
-# with Error-[SFCOR]. The repo ships a hand-maintained flat `${}`-syntax flist
-# (nanosoc_multicore_generic.flist) to work around this — but it lags the
-# generated RTL (it still names DMA_230_0 / CPU_*_DBG_WINDOW after the D2D
-# regen renamed them to DMAC_0 / {NETWORK,CHIP}_CORE_*), so it cannot open the
-# current build_soc.
-#
-# Rather than fork either flist (both live in the READ-ONLY SoC submodule),
-# this script consumes the IN-SYNC generated flist (nanosoc_multicore.flist,
-# which `-f`-includes the freshly rendered build_soc/flist/*.flist) and emits a
-# single flat, fully-resolved flist VCS can read. It is regenerated on every
-# `make elab`, so it can never go stale against build_soc.
+# Reads the SoC's generated root flist (nanosoc_multicore.flist, which
+# `-f`-includes the freshly rendered build_soc/flist/*.flist) and writes ONE
+# flat, fully-resolved file list on stdout.
 #
 # Transform: inline every `-f` include (one level; the generated leaf flists
 # nest no further), rewrite `$(VAR)` -> `${VAR}`, and expand all variables to
 # absolute paths against the current environment.
 #
+# The rewrite is the point. nanosoc_gen renders its filelists from Jinja
+# templates that emit Makefile-style `$(VAR)` paths; VCS expands `${VAR}` and
+# `$VAR` but NOT `$(VAR)`, so it reads those paths literally and fails with
+# Error-[SFCOR]. The SoC submodule also ships a hand-maintained flat flist, but
+# it is maintained separately from the generated RTL and drifts out of step with
+# module renames. Consuming the GENERATED flist instead, and regenerating on
+# every `make elab`, means this output cannot go stale against build_soc. The
+# SoC submodule is read-only from here, so neither of its flists is forked.
+#
 # Usage: flatten_soc_flist.py <root.flist> > <out.f>
+# Exit:  0 written; 1 wrong argument count. A missing or unreadable flist
+#        raises, so a broken include is never silently dropped.
 #-----------------------------------------------------------------------------
 import os, re, sys
 
 def convert(tok):
-    # $(VAR) -> ${VAR}, then expand ${VAR}/$VAR against the environment.
+    """Rewrite $(VAR) to ${VAR}, then expand ${VAR}/$VAR against the environment."""
     tok = re.sub(r'\$\(([A-Za-z_]\w*)\)', r'${\1}', tok)
     return os.path.expandvars(tok)
 
 def flatten(path, out, seen):
+    """Append `path`'s entries to `out`, recursing into every `-f` include."""
     ap = os.path.abspath(path)
     if ap in seen:                      # guard against accidental cycles
         return

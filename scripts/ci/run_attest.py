@@ -19,12 +19,12 @@ THE RULE THIS PROGRAM EXISTS TO ENFORCE
     A CHECK THAT DID NOT RUN IS `NOT MEASURED`. IT IS NEVER A PASS, AND A RUN
     HOLDING ONE CANNOT BE CALLED CLEAN.
 
-That is not a stylistic preference. Five checks in this project currently
-report green, or report nothing, while measuring nothing at all - each one
-verified on 2026-08-18, each one carried below with its evidence:
+That is not a stylistic preference. Several checks in this project report
+green, or report nothing, while measuring nothing at all. Each is carried below
+with the evidence for its real state:
 
-  - `make asic-lvs-pre` returns OK against an artefact from 08-10, because it
-    delegates to the legacy directory rather than the build under test.
+  - `make asic-lvs-pre` can return OK against an artefact from another build,
+    when it delegates to the legacy directory rather than the build under test.
   - scripts/ci/check_no_vendor_collateral.sh exits 0 while printing "the
     verbatim-vendor-text check was SKIPPED. It is not a pass".
   - check_cpf fails on every run and is allowlisted by SYN_SOFT_CPF, which
@@ -88,6 +88,7 @@ def sh(cmd, cwd=None, timeout=60):
 
 
 def out(cmd, cwd=None):
+    """Run a command and return its stdout, discarding the exit status."""
     return sh(cmd, cwd)[1]
 
 
@@ -100,6 +101,7 @@ def out(cmd, cwd=None):
 # a re-run or an unattributable stream.
 
 def provenance(run_dir, run_tag):
+    """Everything that identifies this run: commits, submodule pins, tools, inputs."""
     p = {}
 
     p["superproject"] = {
@@ -195,6 +197,7 @@ def provenance(run_dir, run_tag):
 # facts and only one of them is about the design.
 
 def g_design_report(run_dir):
+    """Ladder gate: is there a design report, and what does it say."""
     f = run_dir / "reports" / "design_report.json"
     if not f.is_file():
         return NM, "no design_report.json - run `make design-report`", S_NA
@@ -207,6 +210,7 @@ def g_design_report(run_dir):
 
 
 def g_setup_timing(run_dir):
+    """Ladder gate: setup timing, read from the design report."""
     f = run_dir / "reports" / "design_report.json"
     if not f.is_file():
         return NM, "no design_report.json", S_NETLIST
@@ -221,6 +225,7 @@ def g_setup_timing(run_dir):
 
 
 def g_hold_timing(run_dir):
+    """Ladder gate: hold timing, read from the design report."""
     f = run_dir / "reports" / "design_report.json"
     if not f.is_file():
         return NM, "no design_report.json", S_NETLIST
@@ -235,6 +240,7 @@ def g_hold_timing(run_dir):
 
 
 def g_drc_census(run_dir):
+    """Ladder gate: has Calibre DRC been graded, and against which stream."""
     f = run_dir / "reports" / "drc_census_manifest.txt"
     if not f.is_file():
         return NM, "no drc_census_manifest.txt - Calibre DRC has not been graded", S_SIGNOFF
@@ -255,6 +261,7 @@ def g_drc_census(run_dir):
 
 
 def g_pg_shorts(run_dir):
+    """Ladder gate: PG integrity, read from the Innovus imp_drc report."""
     f = run_dir / "reports" / "nanosoc_eth_chiplet_pads_imp_drc.rep"
     if not f.is_file():
         return NM, "no imp_drc report - PG integrity was not checked", S_SIGNOFF
@@ -627,21 +634,17 @@ def g_rom_content(run_dir):
 
 
 def g_lvs(run_dir):
-    """LIAR #1, NOW HALF-FIXED - AND THE FIX CHANGED THE QUESTION.
+    """Ladder gate: LVS, always reported WITH the qualifier below.
 
-    Until 2026-08-18 `make asic-lvs-pre` returned OK against an artefact from
-    08-10, because it delegated to the legacy directory rather than the build
-    under test. That is repaired: the four leaf-cell variables are in design.mk
-    and CI is repointed, so the command now grades THIS build and returns rc=2
-    with named MISS lines when pointed at a run that does not exist.
+    THE QUALIFIER IS NOT OPTIONAL. Transistor-level LVS needs the unlicensed
+    TSMC _BE packages and is not available here. The path that does run is
+    Front-End methodology with the leaf cells BLACK-BOXED, so a pass means
+    "clean modulo black boxes and modulo the pad ring" - it is not signoff LVS,
+    and a bare `LVS PASS` in this artefact would mislead exactly the reader it
+    is written for.
 
-    THE QUALIFIER IS NOT OPTIONAL. The legacy path was TRANSISTOR-level LVS and
-    needed the unlicensed TSMC _BE packages. The toolkit path is Front-End
-    methodology with the leaf cells BLACK-BOXED. So a pass means "clean modulo
-    black boxes and modulo the pad ring" - it is not signoff LVS, and a bare
-    `LVS PASS` in this artefact would mislead precisely the reader it is for.
-    The stage went red-to-green in one commit; a change of that size is usually
-    a change of question, and here it was.
+    Note also that the legacy `asic-lvs-pre-legacy` target grades an OLD
+    baseline, so its rc=0 says nothing about the build under test.
     """
     qualifier = ("Front-End methodology with leaf cells BLACK-BOXED, and the "
                  "pad ring not covered. This is not transistor-level signoff "
@@ -667,8 +670,10 @@ def g_lvs(run_dir):
 
 
 def g_vendor_scan(run_dir):
-    """LIAR #2. The scanner exits 0 while printing that it skipped its main
-    check when TSMC_65_HOME is unset. The exit status is not the verdict."""
+    """Ladder gate: the vendor-collateral scan, read by its OUTPUT not its rc.
+
+    The scanner exits 0 while printing that it skipped its main check when
+    TSMC_65_HOME is unset, so the exit status is not the verdict."""
     s = ROOT / "scripts" / "ci" / "check_no_vendor_collateral.sh"
     if not s.is_file():
         return NM, "scripts/ci/check_no_vendor_collateral.sh not present", S_NA
@@ -724,6 +729,7 @@ def g_shipping_stream(run_dir):
 
 
 def g_sdc_gate(run_dir):
+    """Ladder gate: does the SDC gate exist and what did it measure."""
     s = ROOT / "ASIC" / "sta" / "sdc_gate.py"
     if not s.is_file():
         return NM, "ASIC/sta/sdc_gate.py not present", S_NETLIST
@@ -737,17 +743,14 @@ def g_sdc_gate(run_dir):
 
 
 def g_foundry_result(run_dir):
-    """A FOUNDRY VERDICT IS A CLAIM ABOUT ONE FILE, AND THE FILE IS THE POINT.
+    """Ladder gate: the foundry's own signoff report, and WHICH FILE it graded.
 
-    IMEC returned a signoff report with 782 checks reading zero. It is real and
-    it is good news - about `nanosoc_eth_chiplet_pads_logo_full_L300.gds`,
-    md5 7f6214965501c911bd65069378ae911d, a LOGO-MERGED snapshot produced by the
-    now-legacy ASIC/genus-innovus engine on 2026-08-11.
-
-    That is a different lineage, a different stream and an older date than the
-    build under test. "IMEC checked it" is therefore itself a claim needing a
-    provenance line, and confusing it with a verdict on this run is the same
-    error as reading an 08-10 LVS artefact as this build's LVS.
+    A FOUNDRY VERDICT IS A CLAIM ABOUT ONE FILE, AND THE FILE IS THE POINT. The
+    IMEC report on record is real and clean, but it grades a logo-merged
+    snapshot from the now-legacy ASIC/genus-innovus engine: a different lineage,
+    a different stream and an older date than the build under test. So "IMEC
+    checked it" is itself a claim needing a provenance line, and this gate
+    always emits the stream identity alongside the verdict.
     """
     doc = ROOT / "docs" / "tapeout" / "48-imec-signoff-results-analysis.md"
     if not doc.is_file():
@@ -778,6 +781,7 @@ LADDER = [
 
 
 def run_ladder(run_dir, skip=()):
+    """Run every ladder gate and collect (gate, status, detail, stream) rows."""
     rows = []
     for name, fn in LADDER:
         if name in skip:
@@ -802,6 +806,7 @@ def run_ladder(run_dir, skip=()):
 # =============================================================================
 
 def _wrap(s, w):
+    """Wrap text to width `w`."""
     words = s.split()
     line = ""
     o = []
@@ -817,6 +822,7 @@ def _wrap(s, w):
 
 
 def render_md(doc):
+    """Render the attestation document as markdown."""
     p = doc["provenance"]
     rows = doc["ladder"]
     n_pass = sum(1 for r in rows if r["status"] == PASS)
@@ -930,15 +936,20 @@ def render_md(doc):
 
 
 def main(argv=None):
+    """Write run_attestation.md and .json for one run. Always exits 0."""
     ap = argparse.ArgumentParser(
         description="What is proven about one GDS, and what is not.")
-    ap.add_argument("--run-tag", required=True)
+    ap.add_argument("--run-tag", required=True,
+                    help="run directory name under --build-dir to attest")
     ap.add_argument("--build-dir",
                     default=str(ROOT / "ASIC" / "eth-chiplet" / "build"))
-    ap.add_argument("--block", default="nanosoc_eth_chiplet_pads")
+    ap.add_argument("--block", default="nanosoc_eth_chiplet_pads",
+                    help="top block name used to find per-block reports "
+                         "(default: %(default)s)")
     ap.add_argument("--skip", action="append", default=[],
                     help="gate name to record as NOT MEASURED without running")
-    ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--quiet", action="store_true",
+                    help="write the artefacts without printing the ladder")
     a = ap.parse_args(argv)
 
     run_dir = pathlib.Path(a.build_dir) / a.run_tag

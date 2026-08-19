@@ -78,6 +78,7 @@ def true_count(path, rule):
 
 
 def main():
+    """Report the LOGO rules' true (uncapped) counts for one drc-logo-check run."""
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <drc-logo-check rundir>")
         return 2
