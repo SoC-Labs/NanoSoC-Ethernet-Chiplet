@@ -261,7 +261,7 @@ jobs:
       # CMBCDC, INSYNC, FLSYNC, RSTSYN, RSTSCB) report zero BY CONSTRUCTION. The
       # runner reports those as NOT MEASURED and gates only on "the analysis ran
       # and produced clock/reset-domain findings at all". See verif/cdc/run.sh
-      # and docs/CDC_FINDINGS.md.
+      # and docs/verification/CDC_FINDINGS.md.
       - name: 'rung 7 — cdc (Xcelium/HAL)'
         if: fromJSON(steps.plan.outputs.level) >= 7
         run: make cdc
