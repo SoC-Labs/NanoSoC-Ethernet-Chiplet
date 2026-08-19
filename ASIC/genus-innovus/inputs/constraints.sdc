@@ -245,6 +245,7 @@ source ../inputs/tidelink_constraints.sdc
 source ../inputs/ethernet_constraints.sdc
 
 source ../inputs/i2c_constraints.sdc
+source ../inputs/bscan_constraints.sdc
 
 #### DELAY DEFINITION
 
@@ -625,7 +626,16 @@ set_input_transition -max 2.00 [get_ports {HOSTIO4_P1[*]}]
 # NOTE these are the only two set_case_analysis in the whole constraint set --
 # reports/eval/syn_case_analysis.rep was 0 bytes before this. If you ever DO
 # want to time the scan chain, comment these out rather than adding overrides.
-set_case_analysis 0 [get_ports SE]
+# SE: REMOVED 2026-08-19. It is no longer a static strap — it is the IEEE 1149.1
+# boundary-scan enable, driving trst_n on the TAP and the select on every TAP pin
+# mux. Case-analysing it to 0 puts the TAP in permanent reset and makes all 76
+# boundary cells unreachable AND unobservable, at which point Genus deleting the
+# entire boundary-scan register is not a bug, it is correct constant propagation.
+# The netlist would ship with no boundary scan and no warning anywhere.
+#
+# The note six lines up — "if you ever DO want to time the scan chain, comment
+# these out rather than adding overrides" — is exactly what has been done. SE's
+# replacement timing lives in ../inputs/bscan_constraints.sdc, sourced above.
 set_case_analysis 0 [get_ports TEST]
  ;# [CONVENTION] generic 3.3V LVCMOS driver (FPGA / host adapter) over a short trace
 
