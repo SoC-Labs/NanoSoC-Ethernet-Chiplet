@@ -329,14 +329,48 @@ domain-boundary/anchor cell **once per ring**, not once per side. Likely fix: ke
 instance, convert the other three to `PVDD2DGZ_G`. **Not confirmable from what's on disk** —
 no TSMC POC-cell datasheet is in-repo; needs a broker question or vendor doc before applying.
 
-### New: 157 previously-invisible rule categories fired for the first time
+### 157 previously-invisible rule categories — triaged, 2026-08-19 (all 157, not a sample)
 
-Two groups, neither yet triaged: (1) transistor/standard-cell-internal geometry rules
-(OD/PO/CO/PP/NP/NW/VIA-spacing/G.2/ESD families) that can only fire once real diffusion
-exists to check — several capped at 1000, plausible merge-duplication artefacts rather than
-design defects, unconfirmed; (2) seal-ring/corner construction rules (`CSR.S.*`, `CSR.EN.*`,
-`CSR.R.3`, `SR.*`) coinciding with the second merged library, suggesting `tcbn65lp` supplied
-real seal-ring/ESD-guard content the first archive's pad-only merge never showed us.
+**The two-group framing above was a false dichotomy — corrected by evidence, not guesswork.**
+Coordinate-sampled ~20 representative rules from the raw archive-2 RVE dump and read the
+`.rpt`'s own truncated BY-CELL section in full: **every named cell across all 157 rules is
+periphery/seal-ring/ESD-guard/corner content** (`CORNER_B`, `SBC331_SUB_CORNER`,
+`SBC331_MOS_ESDN01_VDD2_RPO_095`, `SBC331_POSTVDD2POC_G`, `SBC331_POSTP`, `PVDD2DGZ_G`,
+`UCSRN`, `UCSRN_NOVIA`) — never once a core-logic std-cell name. **The interior standard-cell
+library was not generally exposed by the full merge; only periphery/seal-ring/ESD-guard/corner
+content was.** Most "transistor-family" rules (`PP.R.1`, `NP.R.1`, `OD.A.2`, `PO.R.1`, `CO.S.1`…)
+also land at the die periphery or known hard-macro peripheries, the same site class as the
+already-closed `PO.R.8` — not scattered across the reported 8.6M devices.
+
+Full classification (all 157 individually coded, annotated inline in
+`ASIC/genus-innovus/scripts/calibre/csr_ratchet_budget.yaml`):
+
+- **a-1, 59 rules — REAL, actionable, same root as `CSR.R.1`/`CSR.R.2`/`CSR.EN.8`.**
+  Seal-ring/corner/M1–M8+CO+VIA-stack construction (`CSR.*`, `SR.*`, `CO.*`, `VIAx.S.*`,
+  `M1/M2.A.2+S.2*`, `M3/M5/M7.S.3/.4`). The geometric-attribution finding above extends
+  directly to this whole family, not just the three originally-tracked rules.
+- **a-2, 10 rules — REAL, actionable, and the cheapest real fix in this whole set.** Dummy
+  OD/PO/metal fill colliding with periphery/seal-ring content that was invisible (black-boxed)
+  when the fill was generated (`DOD.*`, `DPO.*`, `USER_GUIDE.2`, `RM.WARN.2`, `DTCD.*`).
+  Coordinate-sampled as periodic, non-overlapping — fixable via a fill keepout margin, not a
+  broker question. **Highest-confidence, most actionable bucket.**
+- **a-3, 74 rules — REAL, but vendor-IP-internal.** ESD/IO-device and transistor geometry
+  inside pad/ESD-guard/corner-cell interiors — same evidentiary class as the already-closed
+  `PO.R.8`. Real content, likely not independently fixable without a broker/vendor waiver.
+- **(b), 14 rules — LIKELY MERGE/DUPLICATION ARTEFACT.** The `G.2:*`/`G.4:*` acute-angle and
+  short-edge sanity family. `G.2:OD_25i` and `G.2:OD25_33` report **byte-identical raw
+  coordinates under two different rule names** at the die corners — a direct duplication tell,
+  not inference.
+- **(c), 0 rules** landed as genuinely ambiguous.
+
+**43 of 157 are capped at exactly 1000** (true count unknown), spread across every bucket —
+including `ESD.23g` at `1000 (5368)`, a 5.4× underreport, the largest true-count gap in the set.
+
+**Priority, ranked:** (1) a-2's capped rules (8 of 10) — cheapest fix, unknown true severity;
+(2) a-1's capped rules (27 of 59) — same root as the already-open `CSR.R.1` family, the
+corner-rotation `.io` fix won't touch these; (3) `ESD.23g` specifically — needs a vendor read
+on whether it's pre-qualified; (4) bucket (b) — needs a direct duplication test (rerun with the
+two merged libraries de-duplicated) before treating as noise or as real.
 
 ### Updated priority order for a DRC-clean push
 

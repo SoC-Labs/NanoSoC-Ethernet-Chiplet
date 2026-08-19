@@ -173,162 +173,201 @@ tracked_checks:
 # "Maximum Results/RuleCheck" header in either archive to test against); the
 # ratchet's `ceiling`/comparison logic uses the number AS REPORTED, the same
 # way doc 53/CONVERGENCE_PLAN §8's own headline numbers do.
+#
+# INLINE TRIAGE PASS (2026-08-19, read-only investigation -- see the eth
+# session's report of this date for the full table + coordinate/by-cell
+# evidence). Every entry below now carries a trailing `# <code> <reason>`
+# comment. Codes, not a rewrite of the two "untriaged groups" above --
+# a refinement based on raw-coordinate sampling (~20 rules read directly
+# from the archive-2 .txt RVE dump) plus the report's own truncated
+# BY-CELL section (only 8 cells ever named: CORNER_B, SBC331_SUB_CORNER,
+# SBC331_MOS_ESDN01_VDD2_RPO_095, SBC331_POSTVDD2POC_G, SBC331_POSTP,
+# PVDD2DGZ_G, UCSRN, UCSRN_NOVIA -- all periphery/seal-ring/ESD-guard/
+# corner cells, never a core-logic std-cell name):
+#   a-1 REAL, actionable by us -- seal-ring/corner/M1-M8+CO+VIA stack
+#       construction (CSR.*, SR.*, CO.*, VIAx.S.*, M1/M2.A.2+S.2*, M3/M5/M7
+#       .S.3/.S.4). Same root mechanism as the already-tracked, already-real
+#       CSR.R.1/CSR.R.2:B/D/CSR.EN.8 findings; by-cell hits land in
+#       CORNER_B/SBC331_SUB_CORNER. 59 rules.
+#   a-2 REAL, actionable by us -- dummy OD/PO/metal fill colliding with
+#       periphery/seal-ring content that was invisible (black-boxed) when
+#       the fill was generated (DOD.*, DPO.*, USER_GUIDE.2, RM.WARN.2,
+#       DTCD.*). Coordinate-sampled: periodic, non-overlapping polygons at
+#       the seal-ring band -- fixable via a fill keepout margin. 10 rules.
+#   a-3 REAL, but vendor-IP-internal -- transistor/ESD-device geometry
+#       inside pad/ESD-guard/corner-cell interiors (ESD.*g, ESDIMP.*,
+#       RPO.R.1, LDP.O.2, VT.S.1, OD25_33.W.*, and the OD/PO/PP/NP/NW/OD2
+#       "transistor" family). Same evidentiary class as the already-CLOSED
+#       PO.R.8 finding (real geometry inside vendor/macro content that
+#       isn't ours to redesign) -- real, but likely not independently
+#       actionable without a broker/vendor waiver conversation. 74 rules.
+#   b   LIKELY MERGE/DERIVED-LAYER ARTEFACT -- the G.2:*/G.4:* acute-angle
+#       and short-adjacent-edge sanity family. Sampled G.2:OD_25i and
+#       G.2:OD25_33 report BYTE-IDENTICAL edge coordinates under different
+#       rule names, at the die corners -- the coincident-edge/overlap
+#       signature this budget file's own header (and the investigating
+#       session's task brief) flags as the duplication tell. 14 rules.
+# No rule was left in an unresolved (c) AMBIGUOUS bucket, but a-3's
+# "likely not independently actionable" is itself an unconfirmed read --
+# treat it as informed, not proven; none of this promotes csr-category-
+# ratchet's gate tier per doc 53 §1's bar, which still requires a
+# full-library-merge check against the CURRENT build.
 # ---------------------------------------------------------------------------
 new_categories:
-  CO.EN.1: [200, 200]
-  CO.EN.1.1: [22, 22]
-  CO.EN.3__CO.EN.4: [316, 316]
-  CO.S.1: [1000, 1000]
-  CO.S.2: [876, 876]
-  CO.S.3: [1000, 1000]
-  CO.S.4: [311, 311]
-  CO.S.5: [1000, 1000]
-  CO.S.6: [308, 336]
-  CO.W.1: [714, 3648]
-  CSR.EN.1: [120, 120]
-  CSR.EN.2: [1000, 1006]
-  CSR.EN.4: [36, 48]
-  "CSR.R.3:CO": [57, 96]
-  "CSR.R.3:VIA1": [56, 92]
-  "CSR.R.3:VIA2": [24, 48]
-  "CSR.R.3:VIA3": [60, 84]
-  "CSR.R.3:VIA4": [60, 84]
-  "CSR.R.3:VIA5": [60, 84]
-  "CSR.R.3:VIA6": [60, 84]
-  "CSR.R.3:VIA7": [22, 28]
-  CSR.S.1: [715, 715]
-  CSR.S.2: [1000, 1000]
-  DOD.EN.1: [1000, 1000]
-  DOD.S.2: [1000, 1000]
-  DOD.S.3: [1000, 1000]
-  DOD.S.5: [1000, 1000]
-  DPO.S.2: [1000, 1000]
-  DPO.S.3: [1000, 1000]
-  DTCD.R.2: [1000, 1000]
-  DTCD.R.3: [42, 42]
-  ESD.18g: [62, 62]
-  ESD.20g: [192, 192]
-  ESD.21g: [147, 2370]
-  ESD.22g: [28, 1344]
-  ESD.23g: [1000, 5368]
-  ESD.28g: [46, 46]
-  ESD.30g: [76, 76]
-  ESD.32g: [189, 189]
-  ESD.3g: [1000, 1000]
-  ESD.4g: [147, 147]
-  ESD.5g: [2, 2]
-  ESD.6g: [2, 2]
-  ESD.WARN.2: [8, 8]
-  ESDIMP.EN.1: [240, 240]
-  "ESDIMP.EN.1:R": [240, 240]
-  "G.2:COi": [1000, 1000]
-  "G.2:OD25_33": [8, 8]
-  "G.2:OD_25i": [8, 8]
-  "G.2:ODi": [72, 72]
-  "G.2:PPi": [32, 32]
-  "G.2:VIA1i": [640, 640]
-  "G.2:VIA2i": [208, 208]
-  "G.2:VIA3i": [1000, 1000]
-  "G.2:VIA4i": [1000, 1000]
-  "G.2:VIA5i": [1000, 1000]
-  "G.2:VIA6i": [1000, 1000]
-  "G.4:M1i": [32, 32]
-  "G.4:ODi": [61, 61]
-  "G.4:POi": [53, 53]
-  LDP.O.2: [72, 72]
-  M1.A.2: [64, 64]
-  M1.S.2: [60, 60]
-  M1.S.2.1: [84, 84]
-  M2.A.2: [16, 16]
-  M2.S.2: [36, 36]
-  M2.S.2.1: [36, 36]
-  M3.S.3: [16, 16]
-  M5.S.3: [16, 16]
-  M5.S.4: [4, 4]
-  M7.S.3: [16, 16]
-  NP.EX.1: [5, 5]
-  NP.EX.2: [34, 34]
-  NP.EX.4: [400, 400]
-  NP.O.1: [53, 53]
-  NP.R.1: [138, 138]
-  NP.S.1: [3, 3]
-  NP.S.2: [51, 51]
-  NP.S.4: [1, 1]
-  NP.S.5: [476, 476]
-  NW.EN.1: [54, 54]
-  NW.EN.2: [72, 72]
-  NW.EN.3: [52, 52]
-  NW.S.5: [64, 2484]
-  OD.A.2: [349, 349]
-  OD.L.1: [6, 6]
-  OD.S.1: [482, 482]
-  OD.S.2: [351, 351]
-  OD.S.3: [83, 83]
-  OD.S.3.1: [193, 193]
-  OD.S.4: [72, 72]
-  OD.S.5: [1000, 1000]
-  OD.W.1: [3, 3]
-  OD.W.2: [1000, 1000]
-  OD.W.3: [849, 849]
-  OD2.S.1: [8, 8]
-  OD2.S.7: [8, 8]
-  OD25_33.W.1: [184, 184]
-  OD25_33.W.2: [239, 239]
-  PO.A.2: [54, 54]
-  PO.EX.1: [1000, 1000]
-  PO.EX.2: [931, 931]
-  PO.EX.3: [227, 227]
-  PO.R.1: [726, 726]
-  PO.R.4: [1000, 1000]
-  PO.S.1: [1000, 1000]
-  PO.S.10: [113, 113]
-  PO.S.2: [1000, 1000]
-  PO.S.2.1: [968, 968]
-  PO.S.3: [538, 538]
-  PO.S.4: [494, 494]
-  PO.S.4.1: [177, 177]
-  PO.S.5: [379, 379]
-  PO.S.6: [438, 438]
-  PO.S.7: [50, 50]
-  PO.S.9: [209, 209]
-  PO.W.1: [19, 19]
-  PP.EX.1: [129, 129]
-  PP.EX.2: [2, 2]
-  PP.EX.4: [446, 446]
-  PP.O.1: [95, 95]
-  PP.R.1: [345, 345]
-  PP.R.2: [120, 120]
-  PP.S.1: [33, 33]
-  PP.S.2: [68, 68]
-  PP.S.4: [48, 48]
-  PP.S.5: [639, 639]
-  RM.WARN.2: [114, 768]
-  RPO.R.1: [8, 8]
-  "SR.CO_VIA:WARNING": [1000, 1014]
-  "SR.R.3:CO": [1000, 1014]
-  "SR.R.3:VIA1": [642, 656]
-  "SR.R.3:VIA2": [445, 808]
-  "SR.R.3:VIA3": [1000, 1144]
-  "SR.R.3:VIA4": [1000, 1144]
-  "SR.R.3:VIA5": [1000, 1144]
-  "SR.R.3:VIA6": [1000, 1144]
-  SR.S.1: [1000, 1000]
-  "SR.S.1:M3": [16, 16]
-  "SR.S.1:M4": [16, 16]
-  "SR.S.1:M5": [16, 16]
-  "SR.S.1:M6": [16, 16]
-  "SR.S.1:M7": [16, 16]
-  USER_GUIDE.2: [1000, 1000]
-  VIA1.S.1: [1000, 1000]
-  VIA1.S.2: [472, 472]
-  VIA2.S.1: [1000, 1000]
-  VIA2.S.2: [916, 916]
-  VIA3.S.1: [1000, 1000]
-  VIA3.S.2: [1000, 1000]
-  VIA4.S.1: [1000, 1000]
-  VIA4.S.2: [1000, 1000]
-  VIA5.S.1: [1000, 1000]
-  VIA5.S.2: [1000, 1000]
-  VIA6.S.1: [1000, 1000]
-  VIA6.S.2: [1000, 1000]
-  VT.S.1: [24, 24]
+  CO.EN.1: [200, 200]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.EN.1.1: [22, 22]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.EN.3__CO.EN.4: [316, 316]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.S.1: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.S.2: [876, 876]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.S.3: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.S.4: [311, 311]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.S.5: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.S.6: [308, 336]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CO.W.1: [714, 3648]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  CSR.EN.1: [120, 120]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  CSR.EN.2: [1000, 1006]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  CSR.EN.4: [36, 48]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:CO": [57, 96]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:VIA1": [56, 92]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:VIA2": [24, 48]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:VIA3": [60, 84]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:VIA4": [60, 84]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:VIA5": [60, 84]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:VIA6": [60, 84]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "CSR.R.3:VIA7": [22, 28]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  CSR.S.1: [715, 715]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  CSR.S.2: [1000, 1000]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  DOD.EN.1: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  DOD.S.2: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  DOD.S.3: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  DOD.S.5: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  DPO.S.2: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  DPO.S.3: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  DTCD.R.2: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  DTCD.R.3: [42, 42]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  ESD.18g: [62, 62]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.20g: [192, 192]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.21g: [147, 2370]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.22g: [28, 1344]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.23g: [1000, 5368]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.28g: [46, 46]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.30g: [76, 76]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.32g: [189, 189]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.3g: [1000, 1000]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.4g: [147, 147]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.5g: [2, 2]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.6g: [2, 2]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESD.WARN.2: [8, 8]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  ESDIMP.EN.1: [240, 240]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  "ESDIMP.EN.1:R": [240, 240]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  "G.2:COi": [1000, 1000]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:OD25_33": [8, 8]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:OD_25i": [8, 8]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:ODi": [72, 72]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:PPi": [32, 32]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:VIA1i": [640, 640]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:VIA2i": [208, 208]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:VIA3i": [1000, 1000]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:VIA4i": [1000, 1000]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:VIA5i": [1000, 1000]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.2:VIA6i": [1000, 1000]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.4:M1i": [32, 32]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.4:ODi": [61, 61]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  "G.4:POi": [53, 53]  # b LIKELY MERGE/DERIVED-LAYER ARTEFACT: acute-angle/short-edge sanity family; G.2:OD_25i vs G.2:OD25_33 coord-sampled BYTE-IDENTICAL
+  LDP.O.2: [72, 72]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  M1.A.2: [64, 64]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M1.S.2: [60, 60]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M1.S.2.1: [84, 84]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M2.A.2: [16, 16]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M2.S.2: [36, 36]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M2.S.2.1: [36, 36]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M3.S.3: [16, 16]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M5.S.3: [16, 16]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M5.S.4: [4, 4]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  M7.S.3: [16, 16]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  NP.EX.1: [5, 5]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.EX.2: [34, 34]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.EX.4: [400, 400]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.O.1: [53, 53]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.R.1: [138, 138]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.S.1: [3, 3]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.S.2: [51, 51]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.S.4: [1, 1]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NP.S.5: [476, 476]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NW.EN.1: [54, 54]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NW.EN.2: [72, 72]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NW.EN.3: [52, 52]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  NW.S.5: [64, 2484]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.A.2: [349, 349]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.L.1: [6, 6]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.S.1: [482, 482]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.S.2: [351, 351]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.S.3: [83, 83]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.S.3.1: [193, 193]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.S.4: [72, 72]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.S.5: [1000, 1000]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.W.1: [3, 3]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.W.2: [1000, 1000]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD.W.3: [849, 849]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD2.S.1: [8, 8]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD2.S.7: [8, 8]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  OD25_33.W.1: [184, 184]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  OD25_33.W.2: [239, 239]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  PO.A.2: [54, 54]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.EX.1: [1000, 1000]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.EX.2: [931, 931]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.EX.3: [227, 227]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.R.1: [726, 726]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.R.4: [1000, 1000]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.1: [1000, 1000]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.10: [113, 113]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.2: [1000, 1000]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.2.1: [968, 968]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.3: [538, 538]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.4: [494, 494]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.4.1: [177, 177]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.5: [379, 379]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.6: [438, 438]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.7: [50, 50]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.S.9: [209, 209]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PO.W.1: [19, 19]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.EX.1: [129, 129]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.EX.2: [2, 2]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.EX.4: [446, 446]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.O.1: [95, 95]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.R.1: [345, 345]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.R.2: [120, 120]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.S.1: [33, 33]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.S.2: [68, 68]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.S.4: [48, 48]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  PP.S.5: [639, 639]  # a-3 REAL, vendor-IP-internal: transistor-level geometry inside pad/ESD/corner-cell periphery (coord-sampled near die edge / macro periphery), same class as closed PO.R.8
+  RM.WARN.2: [114, 768]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  RPO.R.1: [8, 8]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
+  "SR.CO_VIA:WARNING": [1000, 1014]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.R.3:CO": [1000, 1014]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.R.3:VIA1": [642, 656]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.R.3:VIA2": [445, 808]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.R.3:VIA3": [1000, 1144]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.R.3:VIA4": [1000, 1144]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.R.3:VIA5": [1000, 1144]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.R.3:VIA6": [1000, 1144]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  SR.S.1: [1000, 1000]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.S.1:M3": [16, 16]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.S.1:M4": [16, 16]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.S.1:M5": [16, 16]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.S.1:M6": [16, 16]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  "SR.S.1:M7": [16, 16]  # a-1 REAL/actionable: seal-ring+corner construction (same root as tracked CSR.R.1/R.2/EN.8)
+  USER_GUIDE.2: [1000, 1000]  # a-2 REAL/actionable: dummy OD/PO fill collides with newly-visible periphery content (coord-sampled: periodic, non-overlapping)
+  VIA1.S.1: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA1.S.2: [472, 472]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA2.S.1: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA2.S.2: [916, 916]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA3.S.1: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA3.S.2: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA4.S.1: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA4.S.2: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA5.S.1: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA5.S.2: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA6.S.1: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VIA6.S.2: [1000, 1000]  # a-1 REAL/actionable: M1-M8/CO/VIA seal-ring stack construction, by-cell-attributed to CORNER_B/SBC331_SUB_CORNER
+  VT.S.1: [24, 24]  # a-3 REAL, vendor-IP-internal: ESD/IO guard-cell geometry (by-cell: SBC331_MOS_ESDN01/POSTVDD2POC/PVDD2DGZ_G), same class as closed PO.R.8, likely not independently actionable
