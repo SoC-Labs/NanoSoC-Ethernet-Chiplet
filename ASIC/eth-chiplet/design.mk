@@ -838,74 +838,22 @@ export ROUTE_EXPECT_UNROUTED ?= 2
 # whether a stripe was inside a macro at all; the shorts surfaced at check_drc,
 # hours later, inside a budgeted total the same change had reduced.
 #
-# CORRECTED 2026-08-19, SAME DAY: the paragraph above (mechanism, the four real
-# shorts) is still true. What follows it in every prior version of this section
-# was NOT - the CROSSINGS ceiling itself was the defect, not the crossings. Kept
-# here rather than deleted because the reasoning that reached the wrong ceiling
-# is exactly the reasoning someone will reach for again.
+# THREE HONEST RESPONSES, in order of preference:
+#   1. the structural fix power_plan.tcl already names - one M5 ladder over the
+#      whole core instead of one per row region. It closes this AND the
+#      macro-blockage DRC class, and is the only one that removes the hazard.
+#   2. ratchet PLACE_MAX_MACRO_STRIPES to the measured count, WITH the count and
+#      this defect named beside it. A regression detector, nothing more.
+#   3. set PLACE_MACRO_PG_CHECK=0, only with a written reason. It returns this
+#      design to the state it was in when the shorts arrived.
 #
-# THE CROSSINGS ARM IS RETIRED. Four independent findings, two of them checked
-# directly against source rather than taken on report:
-#   1. PHYSICS, decisive, verified against the LEF: every macro's OBS block
-#      (eth_rom_via, flash_cache_data, flash_cache_tag, rf_01k/08k/16k/32k,
-#      rom_via) lists M1-M4 and VIA1-VIA3 and NOTHING above M4. No macro
-#      obstructs M5. An M5 stripe running THROUGH a macro footprint violates
-#      nothing - the toolkit comment this ceiling was built on ("M5 is a layer a
-#      mesh pass is meant to cut at a macro boundary") describes a tech this
-#      library is not.
-#   2. ARITHMETIC. Sum of macro heights / the 15um set-to-set pitch x 2 stripes
-#      predicts 278 crossings for an UNCUT UNIFORM ladder; 300 was measured, 8%
-#      over from partial-overlap boundary effects. 300 is what the mesh looks
-#      like built exactly as power_plan.tcl specifies it - not a defect count.
-#   3. PROVENANCE, verified against the commit: PLACE_MAX_MACRO_STRIPES 0
-#      landed inside the toolkit's c66522c, a 4,465-line commit ABOUT METAL
-#      DENSITY whose message never mentions macro stripes once, confirmed by
-#      grep. The stated reason at the site was process hygiene ("a ratchet
-#      nobody ratchets is the defect this file is full of"), never achievability.
-#   4. NO REFERENCE. No census manifest, on either chiplet, has ever recorded
-#      macro_pg_crossings at 0. The one number anyone has ever cited as a
-#      reference - 306/300 from the toolkit fix's own live-verification commit -
-#      was measured on THIS design, not an independent one.
-# A 0 ceiling would additionally have been ACTIVELY HARMFUL if enforced by
-# cutting M5 at every macro: M5 is add_stripes_stacked_via_bottom_layer for the
-# M8/M9 passes above, and M4 is the only macro-pin layer, so cutting M5 at the
-# boundary removes the M8/M9 mesh's only landing point over every macro in the
-# design - manufacturing the exact supply hole the grid exists to prevent.
-# One supporting signature, independently noticed before the measurement
-# confirmed it: the crossings were uniform across all 21 macros at EXACTLY the
-# M5 ladder's own design spacing (-width 1 -spacing 0.5, power_plan.tcl:890),
-# not a scatter of near-collisions - systematic mesh geometry, not a stochastic
-# alias. `PLACE_MAX_MACRO_STRIPES` is retired to its toolkit default; do not
-# ratchet a ceiling now known to have no achievable value.
-#
-# THE ORIGINAL HAZARD IS STILL REAL AND IS NOT COVERED BY ANY OF THIS. The
-# crossings arm never would have caught the four shorts - that was a min_gap ->
-# 0 event between two DIFFERENT macros' ladders, not a stripe crossing one
-# macro's own footprint. The arm that answers this is PLACE_MIN_MACRO_PG_GAP,
-# and it is currently -1 (UNGATED - see 2_place.tcl:1174-1195, which warns
-# "NOT GATED" at that value on every run). Retiring the crossings ceiling
-# WITHOUT gating this leaves the real hazard uncovered, which is worse than
-# today's state, not better. REQUIRED BEFORE THE NEXT CANDIDATE RUN: derive a
-# real floor for PLACE_MIN_MACRO_PG_GAP. VERIFIED WRONG, do not reuse: the
-# 2.70um clearance figure above is `(S+2W) - (D mod P)` from the PHASE-OVERLAP
-# formula - how much room a macro had to MOVE before its ladder aliased a
-# neighbour's, not an edge-to-edge PG gap. The census already measures 0.5000um
-# on all 42 macro/net rows on a HEALTHY grid (power_plan.tcl:890's own
-# -spacing 0.5) - so a floor at 2.70 would fire on every one of the 300
-# crossings at nominal spacing, look authoritative because it is a real number
-# from this design's own history, and be wrong for exactly that reason. The
-# floor wants to come from the M5 SPACINGTABLE for the relevant width and
-# parallel-run length in the TECH LEF, not this design's own arithmetic, and it
-# must sit BELOW 0.5um or it flags the nominal grid too. Set it, with the
-# derivation and the date, in the same style as every other budget in this
-# file. Left unset here deliberately: naming the requirement is the point,
-# exactly as an unratcheted default sat inert twice already in this section.
-#
-# set PLACE_MACRO_PG_CHECK=0 remains forbidden for the reason the mechanism
-# paragraph above still states - it silences BOTH arms, including the one
-# (min_gap) that is the actual live hazard once gated. A run that did this
-# anyway on 2026-08-19 (RUN_TAG gdsrun-20260819) is carried as a baseline with
-# this blind spot named, not as a signoff candidate.
+# Left at the toolkit default of 0 deliberately: naming the knob without setting
+# it is the point, since an unratcheted default is exactly how the two ratchets
+# above sat inert. The NEAR-MISS arm (PLACE_MIN_MACRO_PG_GAP) stays ungated until
+# it has been measured on this design - the clearances above come from
+# power_plan.tcl's aliasing arithmetic, not from this census, and a floor set from
+# another instrument's number is not a ratchet. The census reports the value every
+# run, so a CHANGE is visible meanwhile.
 
 # ── 11e. MISSING POWER VIAS, OVER THE WHOLE STACK ───────────────────────────
 #

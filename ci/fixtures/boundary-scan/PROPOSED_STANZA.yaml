@@ -1,0 +1,275 @@
+# =============================================================================
+# PROPOSED ci/signoff.yaml STANZA — boundary-scan register survival
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+# =============================================================================
+# THIS FILE IS A PATCH, NOT A STAGE. ci/signoff.yaml is being edited by other
+# sessions; splice this in rather than letting two writers collide.
+#
+# WHERE IT GOES
+#   ci/signoff.yaml, as the LAST line of the `stages:` list before `  - id: lec`.
+#   At the commit this was written against (feat/padring-boundary-scan, working
+#   tree of 2026-08-19) that is line 851 — the blank line after rom-gds's
+#   `artifacts:` block:
+#
+#       848      artifacts:
+#       849        - build/rom_verify/*_gds.bits
+#       850        - build/rom_verify/*_gds.log
+#       851                       <-- INSERT THE STANZA BELOW HERE
+#       852    - id: lec
+#
+#   Placement is by phase, not by alphabet: this is the third physical stage,
+#   beside rom-content and rom-gds, which are the other two that ask "did a
+#   thing that must be in the die actually reach the die". It must come BEFORE
+#   `lec`, because a netlist with no boundary-scan register is not worth an
+#   hour of a Conformal seat.
+#
+#   Two spaces of indent on `- id:`, six on the keys, as everywhere else in the
+#   file. `signoff.py lint` rejects any key outside STAGE_KEYS, and every key
+#   used here is in it.
+#
+# WHY THE STAGE EXISTS
+#   With `set_case_analysis 0 [get_ports SE]` the boundary-scan register is
+#   unreachable and unobservable. Genus deleting all 76 cells is then CORRECT
+#   constant propagation: no error, no warning, exit 0, green log, and no
+#   boundary scan in silicon. Nothing in the ladder notices — before this
+#   stanza, `grep -ci bscan ci/signoff.yaml` returned 0 (measured 2026-08-19).
+#
+# AFTER SPLICING, RUN
+#   scripts/ci/signoff.py lint
+#   scripts/ci/signoff.py prove boundary-scan
+#   scripts/ci/signoff.py run boundary-scan
+# =============================================================================
+
+  - id: boundary-scan
+    phase: physical
+    gate: block
+    label: soclabs-sim
+    description: "The IEEE 1149.1 boundary-scan register survived synthesis: its module is in the netlist, instantiated exactly once, holding at least as many sequential cells as the pad table declares boundary cells, with all 48 pad instances still present"
+    # NO TOOL, NO LICENCE, ~1 s. It reads one file and one table. `soclabs-sim`
+    # is the honest label: the gate needs neither a PDK nor a simulator, and
+    # soclabs-sim is the weaker of the two the preflight probe can grant.
+    #
+    # THE FAILURE THIS CATCHES IS SILENT BY CONSTRUCTION.
+    # The register's only stimulus is the TAP, and the TAP's enable is the SE
+    # pad. `set_case_analysis 0 [get_ports SE]` makes the whole register
+    # unreachable and unobservable, at which point deleting all 76 boundary
+    # cells is not a tool defect - it is correct constant propagation. Genus
+    # prints nothing, exits 0, and the netlist ships with no boundary scan. No
+    # exit status anywhere in this flow can see that, which is why the count is
+    # ASSERTED against the artefact rather than eyeballed in a log.
+    #
+    # AND NOTE WHAT THE SE PAD DOES *NOT* DO: its output is unconnected in the
+    # padring, so the case-analysis constrains nothing downstream and there is
+    # no scan chain behind it. The constraint is inert as timing and lethal as
+    # optimisation - it removes logic without changing a single reported number.
+    #
+    # THE EXPECTATION COMES FROM src/rtl/bscan/pad_table.json, NEVER A LITERAL.
+    # `design.boundary_length` is 76 on this chiplet and 80 on the compute
+    # chiplet, and `pads` is the 48-entry list the padring generator emitted. A
+    # number typed into this manifest would be right for one die and quietly
+    # wrong for the other, and this manifest is meant to be ported by editing
+    # YAML.
+    #
+    # run: PRODUCES THE HUMAN-READABLE EVIDENCE, check: IS THE GATE.
+    # scripts/bscan_syn_verdict.py also reports path-group timing and can diff
+    # against a no-BSR control run, which is worth collecting and is not worth
+    # gating on here. check: below re-derives the structural verdict from the
+    # netlist itself and does not read run:'s output at all, so a stale or
+    # absent syn_verdict.txt cannot make this stage green - the same doctrine as
+    # drc/lec/rom-content, one step stricter, because there is no intermediate
+    # report to be stale.
+    run: |
+      set -uo pipefail
+      mkdir -p build/bscan
+      python3 scripts/bscan_syn_verdict.py \
+          --build ASIC/eth-chiplet/build/bscan-probe \
+          --table src/rtl/bscan/pad_table.json 2>&1 | tee build/bscan/syn_verdict.txt
+      exit ${PIPESTATUS[0]}
+    check: |
+      python3 - <<'EOF'
+      import json, os, re, sys
+      # ── ONE STRING, THREE PLACES ────────────────────────────────────────────────
+      # This tag appears in run:, in check: below, and in needs_implementation:. They
+      # are the same string ON PURPOSE, so this stage cannot declare one build and
+      # grade another (rom-content's 2026-08-18 red was exactly that). When the
+      # tapeout run is retagged, change all three AND `git mv` the fixture
+      # directories' build/<tag>/ path in the SAME commit -- see GDS_RUN_PLAN G13:
+      # a stage repointed at a new tag while its fixtures still name the old one
+      # grades the fixture-shaped hole in the sandbox, and every case still goes green.
+      NETLIST = "ASIC/eth-chiplet/build/bscan-probe/outputs/nanosoc_eth_chiplet_pads_gate.v"
+      TABLE   = "src/rtl/bscan/pad_table.json"
+
+      def unverified(msg):
+          # 2, not 1. FAIL indicts the design; this indicts the run. `signoff.py run`
+          # renders the truly-absent case as UNVERIFIED from needs_implementation:
+          # before check: is ever reached -- this arm is the backstop for
+          # --skip-needs-implementation and for a file that exists but cannot be read.
+          print("UNVERIFIED (not measured) - %s" % msg)
+          print("  This says nothing about the boundary-scan register. It is NOT a pass.")
+          sys.exit(2)
+
+      # ── the expectation comes from the TABLE, never from a literal ──────────────
+      # 76 for this chiplet, 80 for the compute chiplet. A number written here would
+      # be right for one die and silently wrong for the other.
+      if not os.path.isfile(TABLE):
+          unverified("no pad table at %s - nothing declares what to expect" % TABLE)
+      try:
+          tbl     = json.loads(open(TABLE, errors="replace").read())
+          design  = tbl["design"]
+          pads    = tbl["pads"]
+          module  = design["module"]
+          want    = design["boundary_length"]
+      except Exception as e:
+          unverified("%s does not parse as a pad table (%s)" % (TABLE, e))
+
+      if not os.path.isfile(NETLIST):
+          unverified("no gate netlist at %s - synthesis did not get far enough to judge"
+                     % NETLIST)
+      src = open(NETLIST, errors="replace").read()
+      if not src.strip():
+          unverified("%s is empty" % NETLIST)
+      if src.rstrip().splitlines()[-1].strip() != "endmodule":
+          # Replaces bscan_syn_verdict.py's `st_size < 1_000_000` heuristic, which is
+          # a proxy for "truncated" that no fixture under a megabyte can exercise.
+          # A killed Genus leaves a file that opens, greps and looks like a netlist.
+          unverified("%s does not end in `endmodule` - the writer was interrupted, so "
+                     "an absence measured in it is the writer's, not the design's"
+                     % NETLIST)
+
+      print("netlist  : %s (%.1f MB)" % (NETLIST, os.path.getsize(NETLIST) / 1e6))
+      print("table    : %s (module %s, boundary_length %r, %d pads)"
+            % (TABLE, module, want, len(pads)))
+
+      fails = []
+
+      # ── VACUITY ARM. Run BEFORE any measurement, and it is the whole point. ─────
+      # `0 cells found >= 0 expected` is true, `0/0 pads survived` is true, and a gate
+      # that reports them as a pass has measured nothing and said so in green. This
+      # project's characteristic failure is exactly that shape, so the expectations
+      # are asserted to be non-vacuous before they are ever compared against.
+      if not isinstance(want, int) or isinstance(want, bool) or want <= 0:
+          fails.append("the pad table declares boundary_length=%r, so 'found >= expected' "
+                       "would be satisfied by an EMPTY register. This gate refuses to "
+                       "grade against a zero expectation - regenerate the table (make "
+                       "bscan-table) before reading anything below as a verdict" % (want,))
+      if not pads:
+          fails.append("the pad table names 0 pad instances, so '0/0 survived' would be a "
+                       "pass measured over nothing. Regenerate the table")
+      if fails:
+          print("\nVERDICT: FAIL (vacuous expectation - nothing was measured)")
+          for f in fails:
+              print("  - %s" % f)
+          sys.exit(1)
+
+      # ── 1. the module exists, and is instantiated exactly once ──────────────────
+      mm = re.search(r"\nmodule\s+%s\s*\(.*?\nendmodule" % re.escape(module), src, re.S)
+      if not mm:
+          fails.append("module %s is not defined in the netlist. With SE case-analysed to "
+                       "a constant the register is unreachable and unobservable, so Genus "
+                       "deleting it is CORRECT constant propagation and the synthesis log "
+                       "is green - this is the silent failure this gate exists for" % module)
+          print("bsr mod  : ABSENT")
+          body, seq = "", 0
+      else:
+          body = mm.group(0)
+          # COUNT FLOPS INSIDE THE MODULE, NOT `bscan_cell_*` INSTANCE NAMES. Genus
+          # ungroups by default: after mapping the child instantiations are dissolved
+          # into the parent and those names no longer exist, so a name-based count
+          # reads 0 on a PERFECTLY INTACT netlist and condemns a good die. Sequential
+          # cells inside the register's own module survive ungrouping; module names
+          # do not. (scripts/bscan_syn_verdict.py carries the same note and the same
+          # regex; they must move together.)
+          seq = len(re.findall(r"^\s+(?:SDF|DF|EDF|QDF)[A-Z0-9]*\s+\S+\s*\(", body, re.M))
+          print("bsr mod  : present, %d lines, %d sequential cells" % (body.count("\n"), seq))
+
+      # An INSTANTIATION is indented and carries an instance name: "  MOD u_mod(".
+      # The DECLARATION is "module MOD(port,..." - name straight onto the paren, no
+      # instance name - so it does not match and must not be subtracted. Getting that
+      # wrong once made this check report "defined but never instantiated" about a
+      # correctly instantiated register.
+      n_inst = len(re.findall(r"^[ \t]+%s\s+\w+\s*\(" % re.escape(module), src, re.M))
+      print("bsr inst : %d (expected exactly 1)" % n_inst)
+      if n_inst != 1:
+          fails.append("%s is instantiated %d times, expected exactly 1. A module left "
+                       "defined but unreferenced is not in the chip" % (module, n_inst))
+
+      # ── 2. the shift register is at least as long as the table declares ─────────
+      if seq < want:
+          fails.append("only %d sequential cells inside %s, fewer than the %d boundary "
+                       "cells the pad table alone requires - shift stages were dropped"
+                       % (seq, module, want))
+      else:
+          print("bsr cells: %d >= %d (boundary_length from the table)" % (seq, want))
+
+      # Reported, NOT gated. The fuller budget is one shift stage per boundary cell,
+      # one update stage per control cell, plus IDCODE(32)+bypass(1)+TAP(4)+IR(8)+
+      # TDO(2). It is a good sanity number and a bad gate: nobody has validated that a
+      # legal optimisation cannot merge update stages, and a floor nobody has
+      # validated is a red waiting to be waived.
+      kinds = {}
+      for p in pads:
+          kinds[p["kind"]] = kinds.get(p["kind"], 0) + 1
+      ctl = kinds.get("output", 0) + 2 * kinds.get("bidir", 0) + kinds.get("opendrain", 0)
+      print("           (informational: full budget ~%d = %d shift + %d update + 47 fixed)"
+            % (want + ctl + 47, want, ctl))
+
+      # ── 3. every pad the table names is still in the netlist ────────────────────
+      # Counted from the table, never a literal: 34 supply pads were once silently
+      # deleted, and the register can be perfectly intact while the ring it observes
+      # is not.
+      missing = [p["inst"] for p in pads if not re.search(
+          r"[ \t]%s\s*\(" % re.escape(p["inst"]), src)]
+      print("pads     : %d/%d survived" % (len(pads) - len(missing), len(pads)))
+      if missing:
+          fails.append("%d of %d pad instance(s) named in %s are absent from the netlist: %s"
+                       % (len(missing), len(pads), TABLE, ", ".join(missing[:5])))
+
+      print()
+      if fails:
+          print("VERDICT: FAIL")
+          for f in fails:
+              print("  - %s" % f)
+          sys.exit(1)
+      print("VERDICT: PASS - %s is present, instantiated once, holds %d sequential cells "
+            "(>= %d), and all %d pads survived" % (module, seq, want, len(pads)))
+      sys.exit(0)
+      EOF
+    # ABSENT NETLIST => UNVERIFIED, NOT FAIL, and the driver does this before
+    # check: is ever reached. A build that was never run, or was cleaned away,
+    # indicts the RUN; a register that was optimised out indicts the DESIGN.
+    # Reporting the first as the second sends someone to debug a boundary-scan
+    # defect that nobody has measured. Same tag string as run: and check: on
+    # purpose - see the note at the top of check:.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/bscan-probe/outputs/nanosoc_eth_chiplet_pads_gate.v
+      - src/rtl/bscan/pad_table.json
+    # Eight cases; see ci/fixtures/boundary-scan/README.md for what each proves
+    # and which single change to the design it simulates. All eight are trimmed
+    # extracts of the REAL 2026-08-19 Genus netlist, not invented text.
+    check_proof:
+      must_pass: ci/fixtures/boundary-scan/pass
+      must_fail:
+        # The register optimised away entirely - the case the stage exists for.
+        - ci/fixtures/boundary-scan/fail-register-deleted
+        # The module survives; most of the shift path does not.
+        - ci/fixtures/boundary-scan/fail-count-short
+        # Defined but never wired in. "The module is present" is not enough.
+        - ci/fixtures/boundary-scan/fail-not-instantiated
+        # The register is intact; one pad it observes is gone.
+        - ci/fixtures/boundary-scan/fail-pad-deleted
+        # THE VACUITY ARM. 0 cells found, 0 expected, 0/0 pads survived. A gate
+        # that calls this a pass has measured nothing and reported it in green,
+        # which is this project's documented characteristic failure.
+        - ci/fixtures/boundary-scan/fail-vacuous-table
+        # No netlist at all: must not be a pass. `run` renders this UNVERIFIED
+        # from needs_implementation: above and never reaches check:; this case
+        # proves the check itself does not fall through to green either.
+        - ci/fixtures/boundary-scan/fail-no-netlist
+        # A netlist the writer was killed partway through - it opens, it greps,
+        # and every absence in it is the writer's, not the design's.
+        - ci/fixtures/boundary-scan/fail-truncated-netlist
+    artifacts:
+      - build/bscan/syn_verdict.txt
+    timeout_s: 300

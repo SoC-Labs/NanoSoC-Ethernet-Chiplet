@@ -94,10 +94,18 @@ def main() -> int:
         print("bsr module : ABSENT")
     else:
         body = mm.group(0)
-        seq = len(re.findall(r"^\s+(?:SDF|DF|EDF|QDF)[A-Z0-9]*\s+\S+\s*\(", body, re.M))
-        neg = len(re.findall(r"^\s+DF[A-Z]*N[A-Z0-9]*\s+\S+\s*\(", body, re.M))
-        print("bsr module : present, %d lines, %d sequential cells (%d negedge)"
-              % (body.count(chr(10)), seq, neg))
+        seq = len(re.findall(r"^\s+(?:S?DF|EDF|QDF)[A-Z0-9]*\s+\S+\s*\(", body, re.M))
+        # EDGE COMES FROM THE CLOCK PIN, NOT THE CELL NAME. In tcbn65lp a
+        # negative-edge flop takes .CPN and a positive-edge flop takes .CP;
+        # the letter N elsewhere in the name means an active-low SET or CLEAR.
+        # An earlier version matched `DF[A-Z]*N[A-Z0-9]*` and counted DFCNQD1
+        # -- a POSEDGE flop with active-low clear -- as negedge, reporting 93
+        # where the true figure is 49. That number was quoted in a status
+        # report before it was checked.
+        neg = len(re.findall(r"\.CPN\s*\(", body))
+        pos = len(re.findall(r"\.CP\s*\(", body))
+        print("bsr module : present, %d lines, %d sequential (%d posedge / %d negedge)"
+              % (body.count(chr(10)), seq, pos, neg))
         # Expected flop budget: one shift stage per boundary cell, one update
         # stage per control cell, plus IDCODE(32) + bypass(1) + TAP(4) + IR(8)
         # + TDO(2). Derived from the table, never a literal.
@@ -111,9 +119,17 @@ def main() -> int:
         if seq < want:
             fails.append("only %d sequential cells inside %s, fewer than the %d "
                          "boundary cells alone -- logic was dropped" % (seq, module, want))
+        # 43 update stages + 4 held-instruction bits + 2 TDO = derived, not a literal.
+        want_neg = ctl_cells + 4 + 2
+        print("             negedge expected %d (%d update + 4 IR + 2 TDO)"
+              % (want_neg, ctl_cells))
         if neg == 0:
             fails.append("no negedge flops inside %s -- the update stages are gone, "
                          "so EXTEST cannot hold a value" % module)
+        elif neg != want_neg:
+            fails.append("%d negedge flops inside %s, expected %d -- the update, "
+                         "instruction or TDO stages do not match the pad table"
+                         % (neg, module, want_neg))
 
     # --- 3. the instance is wired into the pad ring ---------------------------
     # An INSTANTIATION is indented and names an instance: "  MOD u_mod(...)".
@@ -129,7 +145,11 @@ def main() -> int:
                      % (design["module"], n_inst))
 
     # --- 4. pad survival -------------------------------------------------------
-    missing = [p["inst"] for p in tbl["pads"] if p["inst"] not in src]
+    # ANCHORED. `inst in src` is a bare substring test that any comment mentioning
+    # the pad name satisfies, so a deleted pad still reads as present. Require the
+    # name in instantiation position.
+    missing = [p["inst"] for p in tbl["pads"]
+               if not re.search(r"[ \t]%s\s*\(" % re.escape(p["inst"]), src)]
     print("pads       : %d/%d survived" % (len(tbl["pads"]) - len(missing), len(tbl["pads"])))
     if missing:
         fails.append("%d pad instance(s) missing from the netlist: %s"

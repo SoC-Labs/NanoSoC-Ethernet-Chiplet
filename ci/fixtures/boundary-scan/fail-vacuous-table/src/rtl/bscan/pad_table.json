@@ -1,0 +1,118 @@
+{
+ "design": {
+  "block": "nanosoc_eth_chiplet_pads",
+  "module": "nanosoc_eth_chiplet_bscan",
+  "padring": "ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v",
+  "io_file": "ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io",
+  "tap": {
+   "en": "uPAD_SE_I",
+   "tck": "uPAD_SWDCK_I",
+   "tms": "uPAD_SWDIO_IO",
+   "tdi": "uPAD_HOST_IO_0",
+   "tdo": "uPAD_HOST_IO_1"
+  },
+  "idcode": "0x100005A1",
+  "boundary_length": 0,
+  "signal_cells": [
+   "PDDW04DGZ_G",
+   "PDDW16DGZ_G",
+   "PDUW08DGZ_G",
+   "PDUW16DGZ_G"
+  ]
+ },
+ "ports": {
+  "SE": {
+   "dir": "input",
+   "width": 1
+  },
+  "CLK": {
+   "dir": "input",
+   "width": 1
+  },
+  "TEST": {
+   "dir": "input",
+   "width": 1
+  },
+  "NRST": {
+   "dir": "input",
+   "width": 1
+  },
+  "SWDIO": {
+   "dir": "inout",
+   "width": 1
+  },
+  "SWDCK": {
+   "dir": "input",
+   "width": 1
+  },
+  "QSPI_IO": {
+   "dir": "inout",
+   "width": 4
+  },
+  "QSPI_SCLK": {
+   "dir": "output",
+   "width": 1
+  },
+  "QSPI_nCS": {
+   "dir": "output",
+   "width": 1
+  },
+  "HOSTIO4_P1": {
+   "dir": "inout",
+   "width": 7
+  },
+  "RMII_REF_CLK": {
+   "dir": "input",
+   "width": 1
+  },
+  "RMII_TXD": {
+   "dir": "output",
+   "width": 2
+  },
+  "RMII_TX_EN": {
+   "dir": "output",
+   "width": 1
+  },
+  "RMII_RXD": {
+   "dir": "input",
+   "width": 2
+  },
+  "RMII_CRS_DV": {
+   "dir": "input",
+   "width": 1
+  },
+  "RMII_MDIO": {
+   "dir": "inout",
+   "width": 1
+  },
+  "RMII_MDC": {
+   "dir": "output",
+   "width": 1
+  },
+  "TL_CLK_TX": {
+   "dir": "output",
+   "width": 1
+  },
+  "TL_TX": {
+   "dir": "output",
+   "width": 8
+  },
+  "TL_CLK_RX": {
+   "dir": "input",
+   "width": 1
+  },
+  "TL_RX": {
+   "dir": "input",
+   "width": 8
+  },
+  "I2C_SCL": {
+   "dir": "inout",
+   "width": 1
+  },
+  "I2C_SDA": {
+   "dir": "inout",
+   "width": 1
+  }
+ },
+ "pads": []
+}
