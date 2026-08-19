@@ -93,7 +93,19 @@ INSTRUCTIONS = [
     ("PRELOAD", "0001"),
     ("IDCODE",  "0010"),
     ("CLAMP",   "0011"),
-    ("HIGHZ",   "0100"),
+    # HIGHZ IS DELIBERATELY NOT DECLARED. The opcode is still decoded by bscan_ir
+    # and the wrapper still drives every OE cell from it, but 15 of the 48 pads
+    # are pure outputs whose OEN is tied low in the pad ring: they have no control
+    # cell, so nothing can tri-state them. Declaring HIGHZ while 15 system outputs
+    # keep driving is a conformance claim the silicon does not honour, and a
+    # tester would trust it -- the exact shape of failure this project keeps
+    # recording. Better to not offer the instruction than to offer a broken one.
+    #
+    # TO MAKE IT REAL: give the 15 `output` pads an OE control cell each (chain
+    # 76 -> 91), have insert_bscan_padring.py route their OEN from the register
+    # instead of tielo, and put this line back. That also buys EXTEST the ability
+    # to tri-state this die's outputs while the other die in the package is
+    # tested, which is worth having -- it is scoped work, not a redesign.
 ]
 BYPASS_PRIMARY = "1111"
 
