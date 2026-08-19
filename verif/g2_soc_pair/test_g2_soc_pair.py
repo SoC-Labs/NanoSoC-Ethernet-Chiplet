@@ -330,7 +330,7 @@ class Pair:
                 pend = haddr
 
     # =======================================================================
-    # Silicon "peer-write data-phase drop" reproduction (Rank 2 regression).
+    # Silicon "peer-write data-phase drop" reproduction.
     #
     # On silicon a cross-die peer write dropped its DATA (die B read 0). Root
     # cause: die A's TideLink `ahb_sub` XHB500 bridge samples the AHB write data
@@ -342,8 +342,8 @@ class Pair:
     # captured. When the AXI W ingress backpressures (link CDC / credit /
     # outstanding writes), the W-data capture slips past the one cycle the SoC
     # held the payload; the fragile 1-cycle-delay fix aligned ONLY that one cycle,
-    # so it captured 0. The Rank 2 fix (src/rtl/nanosoc_eth_chiplet.sv ~281:
-    # peer_wr_dph_r + load-and-HOLD of d2d_ahb_m_hwdata_q) holds the payload on
+    # so it captured 0. The peer-write steering in src/rtl/nanosoc_eth_chiplet.sv
+    # (the hold on d2d_ahb_m_hwdata_q == ahb_sub_hwdata) keeps the payload on
     # ahb_sub_hwdata across any W backpressure depth.
     #
     # The idle sim link holds s_axi_wready high every cycle, so the W beat always
@@ -365,9 +365,9 @@ class Pair:
         wr.value = Force(0) if on else Release()
 
     def fragile_pin(self, on):
-        """Emulate the OLD fragile 1-cycle-delay fix BIT-EXACTLY, without editing
+        """Emulate a fragile 1-cycle-delay fix BIT-EXACTLY, without editing
         the committed RTL. The ONLY node that differs between the fragile and the
-        Rank 2 RTL is `d2d_ahb_m_hwdata_q` (== ahb_sub_hwdata). The fragile fix put
+        committed RTL is `d2d_ahb_m_hwdata_q` (== ahb_sub_hwdata). The fragile fix put
         the payload on it for exactly ONE cycle (the data phase) then reverted to 0
         (it was the raw SoC hwdata delayed one cycle, and the SoC releases hwdata
         after its single data-phase beat). Pinning this net to 0 after that one
@@ -394,7 +394,7 @@ class Pair:
                 return
 
     async def rich_trace(self, n=40):
-        """Cycle-by-cycle view of die A's outbound hwdata, the Rank 2 held value on
+        """Cycle-by-cycle view of die A's outbound hwdata, the held value on
         ahb_sub_hwdata (q), the AXI W beat, and the XHB500 slv bridge's own capture
         signals — so we can SEE the W beat slip and where the payload is sampled."""
         w = self.dut.u_dieA
@@ -574,7 +574,7 @@ async def test_peer_write_crosses_to_die_b(dut):
         "(CAM should have rewritten 0x2F->0x2D)"
     )
 
-    # KNOWN GAP (see docs/G2_SOC_PAIR_STATUS.md "Milestone 2 finding"). With two
+    # KNOWN GAP (see docs/verification/G2_SOC_PAIR_STATUS.md "Milestone 2 finding"). With two
     # real SoCs the ADDRESS crosses (asserted above: die B inbound sees 0x2D....,
     # CAM-translated) but the write DATA arrives as 0: the diagnostics above show
     # 0xC0FFEE01 leaving die A on d2d_ahb_m yet 0x0 at die B's inbound port. The
@@ -588,7 +588,7 @@ async def test_peer_write_crosses_to_die_b(dut):
         f"die B shared_sram_0[0x{LANDED_ADDR:08x}] = 0x{got:08x}, expected 0x{PAYLOAD:08x}. "
         "ADDRESS crossed (die B inbound = 0x2D...., CAM ok) but DATA did not: "
         "0xC0FFEE01 leaves die A on d2d_ahb_m, arrives 0x0 at die B inbound. "
-        "Peer-write data-phase drop — see docs/G2_SOC_PAIR_STATUS.md."
+        "Peer-write data-phase drop — see docs/verification/G2_SOC_PAIR_STATUS.md."
     )
     dut._log.info(f"STAGE 2 ok: die A 0x{PEER_ADDR:08x} -> die B shared_sram_0 0x{LANDED_ADDR:08x} "
                   f"= 0x{got:08x}")
@@ -636,18 +636,18 @@ async def test_peer_write_crosses_to_die_b(dut):
 
 
 # ===========================================================================
-# Rank 2 regression: a cross-die peer write survives AXI W-channel backpressure.
+# Regression: a cross-die peer write survives AXI W-channel backpressure.
 #
-# WHAT THIS SIM CAN AND CANNOT DO (all verified by RTRACE; see the agent report):
+# WHAT THIS SIM CAN AND CANNOT DO:
 #
 #   * The idle sim link holds s_axi_wready high, so the XHB500 W beat always lands
 #     one cycle after AW — the test was BLIND to any W-timing hazard.
 #   * The sim's skew from the SoC data phase (T+1) to the bridge's posted W-data
 #     capture (T+2) is EXACTLY one cycle. The ORIGINAL no-fix RTL sampled the
 #     released (0) hwdata and dropped the payload (die B read 0); both the fragile
-#     1-cycle-delay fix and the committed Rank 2 fix present the payload at T+2 and
-#     the W captures it there.
-#   * MEASURED (test_diag_q_hold, no force): the committed Rank 2 fix holds
+#     1-cycle-delay fix and the committed hold present the payload at T+2 and the
+#     W captures it there.
+#   * test_diag_q_hold (no force) measures that the committed hold keeps
 #     ahb_sub_hwdata (== d2d_ahb_m_hwdata_q) at the payload for EXACTLY ONE cycle
 #     (T+2), then it drops to 0 at T+3 — byte-identical to the fragile fix. So in
 #     THIS sim the two fixes are indistinguishable and a "catches a revert to
@@ -745,9 +745,9 @@ async def test_peer_write_survives_w_backpressure(dut):
 
 
 # ===========================================================================
-# DIAGNOSTIC: characterise the NATURAL behaviour of ahb_sub_hwdata (the Rank 2
-# held value) after a clean peer write, with NO force at all — to see exactly how
-# long the fix holds the payload and correlate with d2d_ahb_m_hready / peer_wr_dph.
+# DIAGNOSTIC: characterise the NATURAL behaviour of ahb_sub_hwdata (the held
+# value) after a clean peer write, with NO force at all — to see how long the
+# hold lasts and correlate it with d2d_ahb_m_hready and the peer data phase.
 # Run: make -C verif/g2_soc_pair sim TESTCASE=test_diag_q_hold
 # ===========================================================================
 @cocotb.test(timeout_time=60, timeout_unit="ms")
@@ -773,7 +773,7 @@ async def test_diag_q_hold(dut):
 
 # ===========================================================================
 # TideChart Tier-1, SYSTEM LEVEL — the first time TideChart is driven across two
-# REAL nanosoc_eth_chiplet dies. (Spec: docs/SYSVAL_TEST_BUILD_SPEC_2026-08-08.md
+# REAL nanosoc_eth_chiplet dies. (Spec: docs/verification/SYSVAL_TEST_BUILD_SPEC_2026-08-08.md
 # TIER-2 "TideChart Tier-1 sim"; the g2 TB already compiles TideChart and straps
 # die_a role=0 / die_b role=1, but no test drove it.)
 #

@@ -20,7 +20,7 @@
 # Port names MUST match nanosoc_eth_chiplet_haps_sx exactly.
 #
 ################################################################################
-# I/O VOLTAGE — MEASURED ON HARDWARE 2026-07-24
+# I/O VOLTAGE — MEASURED ON HARDWARE
 #
 # THE PMOD CONNECTORS RUN AT 3.3 V. The reference manual's PMOD pin table
 # (p65) gives a "Bank Voltage" column reading 1.8 V for banks 83/88/93. THAT
@@ -92,7 +92,7 @@ assignHAPSPinCob {p:led[7]}             HAPS_MAIN  DBG.LED.G.3
 ################################################################################
 # Serial Wire Debug — PMOD2 pins 9/10, bank 88, SLR1, 3.3 V.
 #
-# Moved off the Mictor (2026-07-24). The Mictor is the board's ARM-conventional
+# NOT on the Mictor. The Mictor is the board's ARM-conventional
 # debug connector, but it is 1.8 V (HP bank 21) and fine-pitch — needing a
 # 1.8 V-capable probe, a Mictor-38 adapter, and the M-SW VTref switch set. PMOD2
 # pins 9/10 are free (only IODATA lanes 6/7 were spare) and 3.3 V, so ANY

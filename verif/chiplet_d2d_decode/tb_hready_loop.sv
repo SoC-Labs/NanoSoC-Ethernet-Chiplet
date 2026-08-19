@@ -3,10 +3,10 @@
 //
 // Copyright 2026, SoC Labs (www.soclabs.org)
 //
-// `nanosoc_eth_chiplet.sv` used to feed `chiplet_d2d_decode`'s muxed `hready`
-// straight back into TideLink's `ahb_sub_hready`. TideLink's `ahb_sub_hreadyout`
-// reads that input combinationally, so the pair closed a cycle with no register
-// in it, and it oscillated on back-to-back peer transfers.
+// Feeding `chiplet_d2d_decode`'s muxed `hready` straight back into TideLink's
+// `ahb_sub_hready` closes a cycle with no register in it, because TideLink's
+// `ahb_sub_hreadyout` reads that input combinationally. It oscillates on
+// back-to-back peer transfers.
 //
 // `tl_sub_stub` below reproduces TideLink's dependence exactly
 // (tidelink_top.sv:1119, 1120, 1169). The testbench wires it the way the chiplet
@@ -14,7 +14,7 @@
 // them -- the memcpy pattern that activates the cycle.
 //
 //   default               -> uses `dph_peer` to break the cycle. Must PASS.
-//   +define+NO_HREADY_FIX -> wires hready straight back, as the chiplet once did.
+//   +define+NO_HREADY_FIX -> wires hready straight back — the broken wiring.
 //                            VCS SPINS WITH SIMULATION TIME FROZEN. It does not
 //                            error and it does not finish. Do not run in CI.
 //
@@ -22,7 +22,7 @@
 // means no timeout can fire, because no time passes. The guard is that the fixed
 // variant completes and gets the right answers, and that removing the fix hangs.
 //
-// See docs/D2D_HREADY_LOOP.md.
+// See docs/design/D2D_HREADY_LOOP.md.
 `timescale 1ns/1ps
 
 module tb_hready_loop;
@@ -139,7 +139,7 @@ module tb_hready_loop;
     // stall if someone changes the stub.
     initial begin
         #100000;
-        $display("FAIL: timed out (a plain stall). If instead simulation time is frozen, the HREADY cycle is back - see docs/D2D_HREADY_LOOP.md");
+        $display("FAIL: timed out (a plain stall). If instead simulation time is frozen, the HREADY cycle is back - see docs/design/D2D_HREADY_LOOP.md");
         $finish;
     end
 

@@ -10,7 +10,7 @@ make MODULE=test_peer_aperture WAVES=1
 
 Everything else in this repo proves the **port**. `soc_d2d_loopback` (in the SoC)
 drives `d2d_ahb_m` against a memory model. `verif/chiplet_d2d_decode` proves the
-sub-decode and its wedge gate. `docs/PEER_APERTURE_PROGRAMMING.md` §8.1 proves,
+sub-decode and its wedge gate. `docs/design/PEER_APERTURE_PROGRAMMING.md` §8.1 proves,
 by reading the Chisel and the generated Verilog, that Wlink carries `addr[31:24]`
 end to end.
 
@@ -48,7 +48,7 @@ touched; its pin is frozen.
 Unlike upstream, this env compiles the **resolved** TideLink filelist
 (`flist/resolve_tidelink_flist.py`), so exactly one definition of every module
 reaches the compiler and the netlist is a property of the filelist rather than of
-whichever tool reads it. See `docs/PIN_POLICY.md`.
+whichever tool reads it. See `docs/design/PIN_POLICY.md`.
 
 ## Traps encoded here (all cost real time to find)
 

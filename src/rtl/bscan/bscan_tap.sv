@@ -233,10 +233,10 @@ module bscan_tap (
                      (state_q == ST_UPDATE_IR);
 
   //---------------------------------------------------------------------------
-  // `tdo_enable` — implemented exactly as the interface contract specifies:
-  // high in Shift-IR or Shift-DR and nowhere else.
+  // `tdo_enable` — as the interface contract specifies: high in Shift-IR or
+  // Shift-DR and nowhere else.
   //
-  // FLAGGED DEVIATION FROM 1149.1, DELIBERATELY LEFT AS THE CONTRACT ASKS:
+  // KNOWN DEVIATION FROM 1149.1, left as the contract specifies:
   // Clause 4.4 wants the TDO driver enabled at the FALLING TCK edge after
   // entering a Shift state and disabled at the falling edge after leaving one.
   // This decode is a function of a rising-edge state register, so it turns TDO
@@ -249,7 +249,7 @@ module bscan_tap (
   //     always_ff @(negedge tck or negedge trst_n)
   //       if (!trst_n) tdo_oe_q <= 1'b0; else tdo_oe_q <= tdo_enable;
   // That reshapes this signal into the standard's window without changing this
-  // module's contract. Raised in the handover report; not silently altered here.
+  // module's contract.
   //---------------------------------------------------------------------------
   assign tdo_enable = (state_q == ST_SHIFT_DR) | (state_q == ST_SHIFT_IR);
 

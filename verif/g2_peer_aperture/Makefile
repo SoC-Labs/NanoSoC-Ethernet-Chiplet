@@ -14,11 +14,11 @@
 # TIES OFF `ahb_sub` and `ahb_mng`, which are the two ports the peer aperture
 # lives on. So the harness is copied, not reused, and the data plane is wired up.
 #
-# What it asserts (docs/G2_PAIR_SIM.md):
+# What it asserts (docs/verification/G2_PAIR_SIM.md):
 #   1. a write into die A's peer aperture (0x2F......) emerges on die B's
 #      `ahb_mng` at 0x2D...... — i.e. the CAM's replaced upper byte SURVIVES the
 #      packetiser. This is the simulation counterpart of the RTL reading in
-#      docs/PEER_APERTURE_PROGRAMMING.md §8.1.
+#      docs/design/PEER_APERTURE_PROGRAMMING.md §8.1.
 #   2. a doorbell rung on die A raises `doorbell_irq` on die B.
 #   3. with the far die held in reset, a TX-aperture write on die A FAULTS
 #      promptly instead of wedging the bus.

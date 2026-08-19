@@ -21,7 +21,7 @@
 //
 // That latch is the experiment. Die A writes `0x2F00_xxxx`; TideLink's CAM must
 // rewrite the upper byte to `0x2D`; the packetiser must carry it; die B's
-// manager must re-present `0x2D00_xxxx`. `docs/PEER_APERTURE_PROGRAMMING.md` §8.1
+// manager must re-present `0x2D00_xxxx`. `docs/design/PEER_APERTURE_PROGRAMMING.md` §8.1
 // establishes that by reading the Chisel and the generated Verilog. This
 // establishes it by simulating a transaction, which is not the same thing.
 //
@@ -156,9 +156,10 @@ module tb_pair #(
     // Tying hready high is what TideLink's own pair tb does, and it is safe HERE
     // because this master asserts hsel only during its address phase and holds
     // the address across wait states. It does mean this tb does not model the
-    // chiplet's own hready feedback path. That path USED to close this very loop
-    // on back-to-back peer transfers; it is fixed and guarded now — see
-    // docs/D2D_HREADY_LOOP.md.
+    // chiplet's own hready feedback path, which closes this same loop on
+    // back-to-back peer transfers unless broken. The chiplet breaks it with
+    // `dph_peer`; verif/chiplet_d2d_decode/tb_hready_loop.sv guards that. See
+    // docs/design/D2D_HREADY_LOOP.md.
     wire         m_sub_hready = 1'b1;
 
     // ---------------------------------------------------------------------

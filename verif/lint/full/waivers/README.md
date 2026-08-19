@@ -1,6 +1,6 @@
 # Lint waivers — the arguments, and the reader that holds them to the design
 
-`docs/LINT_WAIVER_INVENTORY.md` is the account of every finding. This directory
+`docs/verification/LINT_WAIVER_INVENTORY.md` is the account of every finding. This directory
 is the machine-checkable half of it.
 
 | file | what |
@@ -42,6 +42,6 @@ is the silent-orphan failure this directory exists to prevent.
 
 ## Not wired into the runner
 
-`run.sh` does not call this yet — see `docs/LINT_WAIVER_INVENTORY.md` §8 for the
+`run.sh` does not call this yet — see `docs/verification/LINT_WAIVER_INVENTORY.md` §8 for the
 three-line wiring request and why it was left to the runner's owner. Until then
 this is an auditor, not a gate.

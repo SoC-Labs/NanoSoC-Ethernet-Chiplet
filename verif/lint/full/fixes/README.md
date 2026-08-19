@@ -2,7 +2,7 @@
 
 A **change unit (CU)** is the smallest thing that can be proven and reverted on
 its own: one defect, one branch, one commit, one verdict. The manifests here are
-the executable form of `docs/LINT_REMEDIATION_PLAN.md`.
+the executable form of `docs/verification/LINT_REMEDIATION_PLAN.md`.
 
 The rule that makes this work: **a CU declares what it expects to happen before
 it is applied.** A fix that claims to be behaviour-preserving and then fails

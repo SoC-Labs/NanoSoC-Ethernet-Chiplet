@@ -41,9 +41,9 @@
 # per-net property is required rather than just `set_msg_config`.
 #
 # The genuinely dangerous cycle in this design — TideLink's ahb_sub_hreadyout
-# depending combinationally on its own ahb_sub_hready input — was FIXED in RTL
-# on 2026-07-10 and is guarded by a mutation-tested regression
-# (verif/chiplet_d2d_decode/tb_hready_loop.sv; see docs/D2D_HREADY_LOOP.md).
+# depending combinationally on its own ahb_sub_hready input — is broken in RTL
+# and guarded by a mutation-tested regression
+# (verif/chiplet_d2d_decode/tb_hready_loop.sv; see docs/design/D2D_HREADY_LOOP.md).
 # chiplet_d2d_decode exports a REGISTERED dph_peer, and nanosoc_eth_chiplet
 # drives ahb_sub_hready from `dph_peer ? 1'b1 : d2d_ahb_m_hready`, so the
 # architectural loop has a register in it. This waiver does not re-open that.

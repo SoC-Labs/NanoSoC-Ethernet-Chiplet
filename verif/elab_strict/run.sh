@@ -95,32 +95,22 @@ echo "== xrun -hal: strict structural elaboration over $TOP (~25 min) =="
 #   hal: *E,BLDSTP: Further processing stopped because of synthesizability errors.
 # and STOPS - before halstruct runs. MLTDRV is a halstruct rule, so it never
 # executes, the MLTDRV grep returns 0, and this script prints "elab-strict OK"
-# and exits 0. Observed 2026-08-06: 24 errors, HAL aborted at ~2 min (a complete
-# run is ~25 min) and the gate reported the design clean.
+# and exits 0 on a design it never checked.
 #
 # -BB_NONSYNTH blackboxes the unsynthesizable modules instead of failing on
 # them, so halsynth completes and halstruct - the engine this gate depends on -
 # actually runs. The affected modules are vendor/generated (Forencich I2C/AXIS,
 # Arm DMA-350 register packages), already triaged as non-blocking in
-# docs/ELAB_STRICT_FINDINGS.md and already excluded from the gate by VENDOR_RE.
+# docs/verification/ELAB_STRICT_FINDINGS.md and already excluded from the gate by VENDOR_RE.
 #
 # Rejected alternatives: -xmwarn downgrades xmelab/xmvlog message codes, not HAL
 # rule codes, and had no effect. -NOHALSYNTH would also clear the abort but
 # discards the synthesizability triage this script reports.
-# ELAB_STRICT_TIMEOUT, with headroom, NOT the measured runtime.
-#
-# History, because the number has been wrong twice in opposite directions.
-# Before -BB_NONSYNTH the run ABORTED at ~2 min and never reached the
-# structural rules; once halstruct genuinely ran, a full pass measured
-# 00:37:04 and the cap was set to 3600 on the strength of that - three
-# minutes of headroom on a number that was only ever going to grow.
-#
-# On 2026-08-17 it grew. A run took 3605.4s against the 3600 cap, was killed
-# by the wall clock, and REPORTED PASS: 109 MB / 284,834 halstruct lines
-# against 43 MB / 60,493 on the last known-complete run, ending mid-message
-# on a CLKDMN line. So set this from what the run may become, not what it
-# last was - the tidelink bump moved it once and TL-037 + N3 will move it
-# again.
+# ELAB_STRICT_TIMEOUT. SET THIS WITH HEADROOM, NOT TO THE MEASURED RUNTIME: the
+# run grows with every RTL addition, and a cap set just above the last full run
+# gets exceeded, the run gets killed by the wall clock, and the gate reports a
+# pass on a truncated log. A full pass has been as short as ~37 min; the cap is
+# deliberately several times that.
 ELAB_STRICT_TIMEOUT="${ELAB_STRICT_TIMEOUT:-10800}"
 
 set +e
@@ -131,12 +121,11 @@ set -e
 
 # THE KILL MUST BE CAUGHT HERE, BECAUSE NEITHER GREP BELOW CAN SEE IT.
 #
-# This is the same false-green class as the "Analysis complete" defect, one
-# layer down. A SIGTERM from `timeout` leaves NO '*E,BLDSTP' and NO
-# 'Analysis failed', so guard 1 passes; and by 60 minutes hundreds of
-# thousands of '^halstruct:' lines have already been written, so guard 2
-# passes too. The script then printed "none - no multiple-driver nets
-# anywhere in the elaborated design" from a run that never applied the rules.
+# A SIGTERM from `timeout` leaves NO '*E,BLDSTP' and NO 'Analysis failed', so
+# guard 1 passes; and by 60 minutes hundreds of thousands of '^halstruct:' lines
+# have already been written, so guard 2 passes too. Without this check the script
+# reports "none - no multiple-driver nets anywhere in the elaborated design" from
+# a run that never applied the rules.
 #
 # MLTDRV=0 from a killed run means NOT MEASURED. It does not mean clean, and
 # the difference is a tapeout claim. `timeout` exits 124 on TERM and 137 on
@@ -218,7 +207,7 @@ fi
 
 echo
 echo "== synthesizability findings (triage — reported, NOT gated) =="
-echo "   (CBPAHI is halstruct comb-path-across-hierarchy STYLE noise — see docs/CDC_FINDINGS.md — excluded)"
+echo "   (CBPAHI is halstruct comb-path-across-hierarchy STYLE noise — see docs/verification/CDC_FINDINGS.md — excluded)"
 grep -aoE '\*[EW],[A-Z0-9]+' "$LOG" 2>/dev/null \
     | grep -avE 'CBPAHI|MNPDEC' \
     | grep -aiE 'SIZMIS|RTLINI|GLTASR|LATINF|OUTRNG|UNRCHS|DFDRVS|UNCONN|NEFLOP|IOCOMB|NBCOMB|NODRIV|UNCONI' \

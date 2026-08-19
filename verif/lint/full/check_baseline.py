@@ -11,19 +11,17 @@ like progress.
 
 A RATCHET IS ONE-SIDED, SO IT BANKS A BROKEN MEASUREMENT AS PROGRESS
   This gate only ever asks "did any (zone, code) GROW?". Every other outcome is
-  an improvement, and an improvement is a pass. That makes the collapse of the
-  measurement itself indistinguishable from the design getting better, which was
-  measured on 2026-08-17 against the real 3024-finding report:
+  an improvement, and an improvement is a pass, so a COLLAPSE of the measurement
+  is indistinguishable from the design getting better:
 
-    * every authored finding re-tiered to third-party  ->  "improved
-      soc-generated CMPCONST 2 -> 0 / no authored regression", exit 0
+    * every authored finding re-tiered to third-party  ->  reads as "improved",
+      exit 0
     * a findings file with an empty findings list      ->  the same, exit 0
 
-  The first is not a contrived mutation. It is precisely the tiering flip
-  zones.py's own module docstring is written about: a source tree reached
-  through a symlink arrives spelled as something that carries a different prefix.
-  That docstring worries about the direction that reddens the gate (vendor files
-  tiering AUTHORED). The direction that greens it had no guard at all.
+  The first is not contrived: it is the tiering flip zones.py's module docstring
+  describes, where a source reached through a symlink arrives spelled with a
+  different prefix. That docstring guards the direction that REDDENS the gate;
+  this guards the direction that greens it.
 
   So: a run that produces no authored finding while the baseline records some is
   a NULL RESULT and exits 2 (untrustworthy), not 0. `--record` refuses to write
@@ -194,8 +192,7 @@ def main():
         # hal: {...}}.  A flat mapping is read as verilator-only, for
         # compatibility. This matters: UELCIT / ULRELE / POOBID are HAL codes and
         # do not appear in the Verilator findings at all, so a flat manifest that
-        # names one used to fail G1 by construction, however good the fix --
-        # measured on C1 (the highest-return change unit in the plan).
+        # names one would fail G1 by construction however good the fix.
         tool = a.tool
         if any(k in want for k in ("verilator", "hal")):
             want = want.get(tool) or {}

@@ -1,14 +1,9 @@
-"""ADVERSARIAL suite against the proposed cap_done_r beat-handshake re-arm.
+"""ADVERSARIAL suite against the peer-write hold's re-arm condition.
 
-The proposal (src/rtl/nanosoc_eth_chiplet.sv ~:323) changes
-
-    if (~dph_peer) cap_done_r <= 1'b0;
-to
-    if (~dph_peer | d2d_ahb_m_hready) cap_done_r <= 1'b0;
-
-test_peer_burst_corruption.py proves the INCR4 case and the isolated SINGLE.
-This file attacks the SAME change from the directions that killed the sister
-chiplet's rd_pipe_r fix -- i.e. the shapes a narrow test does NOT reach:
+test_peer_burst_corruption.py covers the INCR4 case and the isolated SINGLE.
+This file attacks the same logic from the shapes a narrow test does NOT reach --
+the ones that break a hold whose release is gated on anything other than the AXI
+W-beat handshake:
 
   A1 INCR16          -- 16 beats, 16 distinct payloads. A depth-sensitive fix
                         (pulse/counter) breaks past 4.

@@ -2,7 +2,7 @@
 
 Copyright 2026, SoC Labs (www.soclabs.org)
 
-`docs/PEER_APERTURE_PROGRAMMING.md` §8.1 answers that by reading the Chisel and
+`docs/design/PEER_APERTURE_PROGRAMMING.md` §8.1 answers that by reading the Chisel and
 the generated Verilog: the packetiser carries a 64-bit address field and the far
 die reconstructs it from the packet. Reading RTL is not simulating a transaction.
 This does the transaction.

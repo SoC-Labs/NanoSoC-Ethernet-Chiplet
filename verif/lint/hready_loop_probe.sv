@@ -1,6 +1,6 @@
 //-----------------------------------------------------------------------------
 // hready_loop_probe — synthesizable static-lint harness for the peer-aperture
-// HREADY combinational cycle (docs/D2D_HREADY_LOOP.md).
+// HREADY combinational cycle (docs/design/D2D_HREADY_LOOP.md).
 //
 // A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
 // license.
@@ -26,7 +26,7 @@
 //   +define+NO_HREADY_FIX -> the bug:      hready_to_peer = hready
 //   +define+STRUCT_TIE    -> structural:   hready_to_peer = 1'b1
 //
-// RESULT (documented in docs/LINT_FINDINGS.md):
+// RESULT (documented in docs/verification/LINT_FINDINGS.md):
 //   NO_HREADY_FIX -> UNOPTFLAT fires   (the class is detected)
 //   shipped fix   -> UNOPTFLAT fires   (the fix is a DYNAMIC/state-mux break;
 //                                       `hready` is still a static fan-in, and a

@@ -17,7 +17,7 @@
 # the full integration pulls in the SoC's and TideLink's own internal CDCs (most
 # findings are pre-existing in the components). Triage to the crossings AT THE
 # INTEGRATION BOUNDARY — sys_hclk ↔ {user_ref_clk, pad_clk_rx}. See
-# docs/CDC_FINDINGS.md.
+# docs/verification/CDC_FINDINGS.md.
 #
 #   source ../../set_env.sh && ./run.sh
 #-----------------------------------------------------------------------------
@@ -87,7 +87,7 @@ echo "== xrun -hal: elaborate (Xcelium parser) + HAL structural/CDC over $TOP ==
 # the netlist. Clocks are AUTO-INFERRED here (HAL takes no SDC input) — the async
 # clock relationships for a full CLKDMN unsynchronised-crossing signoff live in
 # constraints/nanosoc_eth_chiplet_cdc.sdc, consumed by a dedicated CDC tool
-# (SpyGlass, TideLink's flow) — see docs/CDC_FINDINGS.md.
+# (SpyGlass, TideLink's flow) — see docs/verification/CDC_FINDINGS.md.
 set +e
 timeout 2400 "$XRUN" -sv -hal -elaborate \
     -f "$BUILD/merged_dedup.f" -top "$TOP" -l "$BUILD/xrun_hal.log"
@@ -103,21 +103,19 @@ echo "  xrun -hal exit=$rc  (log: $LOG)"
 # ---------------------------------------------------------------------------
 # VERDICT — ASSERT ON THE ARTEFACT, NEVER ON EXIT STATUS.
 #
-# What this replaced: the script used to END on the reporting pipeline
-#     grep -aoE "(CLKDMN|...)" "$LOG" | sort | uniq -c | sort -rn | sed 's/^/  /'
-# so under `set -eo pipefail` (line 26) THE SCRIPT'S EXIT STATUS WAS THE `sed`'s
-# — 0 whatever the analysis found, and 0 even if the analysis never ran. Three
-# distinct defects travelled together:
+# Three traps this section exists to avoid. Do not collapse it back into a
+# reporting pipeline:
 #
-#   1. NO VERDICT AT ALL. `make cdc` was green by construction.
-#   2. THE REGEX MISSED THE FINDINGS. Seven of the eight rule codes it grepped
-#      for are exactly the codes this flow CANNOT produce (see SYNCHRONISER_
-#      RULES below), so the report printed one line and hid ~7300 clock/reset
-#      domain findings HAL *did* report. Measured on the 2026-07-11 log:
-#      FFASRT 4352, ASNRST 1307, DIFCLK 444, DIFRST 442, RSTDAT 376, FFWASR 144.
-#   3. IT COUNTED TOKENS, NOT FINDINGS. `grep -o` matches a rule name wherever
-#      it appears, including inside HAL's own end-of-run summary table
-#      ("MCKDMN (40)"), so it reported 41 MCKDMN where HAL itself counted 40.
+#   1. NO VERDICT AT ALL. Ending the script on a `grep | sort | sed` pipeline
+#      makes its exit status the `sed`'s under `set -eo pipefail`, so `make cdc`
+#      is green whatever the analysis found — and green even if it never ran.
+#   2. GREPPING FOR THE WRONG RULES. Most synchroniser rule codes CANNOT be
+#      produced by this flow at all (see SYNCHRONISER_RULES below), so a report
+#      built from them hides the ~7300 clock/reset domain findings HAL DOES
+#      report (FFASRT, ASNRST, DIFCLK, DIFRST, RSTDAT, FFWASR).
+#   3. COUNTING TOKENS, NOT FINDINGS. `grep -o` matches a rule name wherever it
+#      appears, including in HAL's own end-of-run summary table ("MCKDMN (40)"),
+#      inflating every count by one.
 # ---------------------------------------------------------------------------
 
 # --- (a) did the analysis actually RUN? ------------------------------------
@@ -145,12 +143,12 @@ fi
 # SYNCHRONISER need the ASYNC CLOCK RELATIONSHIPS, which only an SDC supplies.
 #   `xrun -hal` takes NO SDC input (see the note above the xrun call), so HAL
 #   cannot know that sys_hclk, user_ref_clk and pad_clk_rx are mutually
-#   asynchronous, and these rules report ZERO BY CONSTRUCTION. Measured
-#   2026-07-11: all nine are 0 while the structural set totals ~7300.
+#   asynchronous, and these rules report ZERO BY CONSTRUCTION — all nine read 0
+#   while the structural set totals ~7300.
 #   A ZERO HERE IS A NULL RESULT, NOT A CLEAN ONE. This script must never
 #   present it as a pass. The real unsynchronised-crossing signoff needs
 #   constraints/nanosoc_eth_chiplet_cdc.sdc driven into a dedicated CDC tool.
-#   See docs/CDC_FINDINGS.md.
+#   See docs/verification/CDC_FINDINGS.md.
 STRUCTURAL_RULES="MCKDMN MULMCK DIFCLK DIFRST FFASRT ASNRST RSTDAT FFWASR
                   RSTUCL CLKINF GTDCLK RSTINP NEFLOP FRSTDF CLKUCL RSTGNP
                   FFCKNP CLKGNP"
@@ -221,7 +219,7 @@ fi
 # OPTIONAL ratchet. Deliberately UNSET by default rather than pinned to today's
 # number: a budget set to whatever the current run happens to measure cannot
 # discriminate a regression from the status quo. Set CDC_MAX_MCKDMN explicitly
-# when the triage in docs/CDC_FINDINGS.md justifies a ceiling.
+# when the triage in docs/verification/CDC_FINDINGS.md justifies a ceiling.
 if [ -n "${CDC_MAX_MCKDMN:-}" ] && [ "$MCKDMN" -gt "$CDC_MAX_MCKDMN" ]; then
     echo
     echo "== cdc FAIL: MCKDMN $MCKDMN exceeds CDC_MAX_MCKDMN=$CDC_MAX_MCKDMN =="
@@ -233,5 +231,5 @@ echo
 echo "== cdc PARTIAL-OK: analysis ran; $structural_total netlist-inferred finding(s) reported =="
 echo "   NOT a CDC clean bill. The synchroniser rules above were NOT MEASURED"
 echo "   (no SDC in this flow), and the structural findings are triage input,"
-echo "   not a gate. See docs/CDC_FINDINGS.md."
+echo "   not a gate. See docs/verification/CDC_FINDINGS.md."
 echo "   log: $LOG"

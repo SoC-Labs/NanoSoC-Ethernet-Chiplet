@@ -41,7 +41,7 @@ create_clock -period 20.000 -name rmii_ref_clk [get_ports phy_rmii_ref_clk]
 # kr260_eth_chiplet_tidelink_timing.xdc, which is the only configuration this
 # PHY is proven in.
 #
-# A build without them (2026-07-24) produced WNS -4.451 ns / TNS -494.7 ns:
+# A build without them measured WNS -4.451 ns / TNS -494.7 ns:
 # with no create_generated_clock the divided PHY domains get timed against
 # their full-rate parent, which for the /16 word clock is a ~60x
 # over-constraint. `report_clocks` on that build listed only gclk0,

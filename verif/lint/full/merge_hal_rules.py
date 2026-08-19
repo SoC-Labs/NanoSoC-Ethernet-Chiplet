@@ -2,19 +2,15 @@
 """Regenerate hal_rules.tcl from the unit-level lint/hal.tcl files.
 
 WHY THIS IS A SCRIPT AND NOT A HAND-EDITED FILE
-    hal_rules.tcl started as a one-off hand merge. Two things went wrong that a
-    hand merge cannot prevent:
-      * it inherited `-nocheck MLTDRV` and `-nocheck CLKDMN` from the SoC's
-        ruleset -- the exact rules `make elab-strict` and `make cdc` exist to
-        catch (mutation-proven: MLTDRV 1->0, CLKDMN 1->0);
-      * when that was corrected by hand, three rules that are NOT sign-off rules
-        (FDTHRU, UCCONN, DFDRVS) were removed with them, leaving ~44 findings
-        nobody had decided to gate on.
-    Both are merge policy, so the merge is code. SIGNOFF_RULES is subtracted
-    mechanically, and hal_lint.sh preflights the result.
-
     A unit ruleset that is correct for one block is not automatically correct for
-    the integration. That is the whole reason this file exists.
+    the integration, and a hand merge cannot enforce that. Two failure modes it
+    lets through:
+      * inheriting `-nocheck MLTDRV` / `-nocheck CLKDMN` from the SoC ruleset --
+        the exact rules `make elab-strict` and `make cdc` exist to catch;
+      * dropping rules that are NOT sign-off rules (FDTHRU, UCCONN, DFDRVS) while
+        removing the ones that are, silently un-gating ~44 findings.
+    So the merge is code: SIGNOFF_RULES is subtracted mechanically and
+    hal_lint.sh preflights the result.
 
     merge_hal_rules.py [--check]      --check = fail if the committed file is stale
 """

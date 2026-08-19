@@ -36,7 +36,7 @@ waivers:
       Wires whose name ends `_nc` are the convention this integration and
       nanosoc_gen both use for a deliberately unread output: rather than leave
       `.port()` empty, the output drives a named wire carrying one line of
-      reason at its declaration (docs/LINT_FINDINGS.md 4.1). The suffix is
+      reason at its declaration (docs/verification/LINT_FINDINGS.md 4.1). The suffix is
       greppable, an empty `()` is not. Zero netlist consequence -- a
       driven-but-unread wire has no load and synthesis removes it.
       This is the ONLY population the recorded unit-level justification

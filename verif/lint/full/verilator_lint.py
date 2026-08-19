@@ -236,10 +236,9 @@ def main():
     a = ap.parse_args()
 
     # The emitted filelist names the generated black boxes by path, so a RELATIVE
-    # --out produced a filelist that only resolved from the directory the script
-    # happened to be run in. Measured: build/lint/full/verilator/verilator.f
-    # carries 200 relative entries for exactly this reason, which is why
-    # hal_lint.sh cannot safely cd before invoking xrun. Absolutise once, here.
+    # --out yields a filelist that resolves only from the directory the script
+    # was run in — which would stop hal_lint.sh cd'ing before it invokes xrun.
+    # Absolutise once, here.
     a.out = os.path.abspath(a.out)
     os.makedirs(a.out, exist_ok=True)
 
@@ -479,12 +478,9 @@ def main():
             print(f"          {why}")
 
     # ---------------- verdict ----------------
-    # ASSERT ON ARTEFACTS, NEVER ON EXIT STATUS. This function used to end on an
-    # unconditional `return 0`: it wrote findings.json and then reported success
-    # whatever was in it, so verif/lint/full/run.sh -- and every caller above it
-    # -- was green by construction. The ratchet that decides the real verdict
-    # (check_baseline.py) already existed, but was reachable only from
-    # prove_fix.sh and selftest_prove.sh, never from the runner.
+    # ASSERT ON ARTEFACTS, NEVER ON EXIT STATUS. Writing findings.json and
+    # returning 0 regardless of its contents makes every caller green by
+    # construction; the verdict must come from the ratchet (check_baseline.py).
     #
     # Exit codes are split by WHAT FAILED, because the two mean different things:
     #   2  the measurement is untrustworthy (flow defect / no baseline / null
@@ -492,11 +488,11 @@ def main():
     #   1  the measurement is sound and the design REGRESSED
     #   0  the measurement is sound and no authored (zone, code) grew
     #
-    # NOTE FOR prove_fix.sh's OWNER: G1 tests this script's exit status and
-    # attributes any non-zero to "verilator lint failed to run", then runs
-    # check_baseline itself with --cu. A regression now surfaces as rc=1 here, so
-    # G1 still FAILS (correctly) but labels the cause imprecisely. Pass
-    # --no-baseline there to restore the exact old split of responsibilities.
+    # prove_fix.sh's G1 tests this script's exit status and attributes any
+    # non-zero to "verilator lint failed to run", then runs check_baseline itself
+    # with --cu. A regression surfaces here as rc=1, so G1 still FAILS correctly
+    # but labels the cause imprecisely; pass --no-baseline there to split the two
+    # responsibilities cleanly.
     print("\n" + "=" * W)
     print("VERDICT")
     print("=" * W)
@@ -518,12 +514,11 @@ def main():
     #
     # This is not the usual "exit status is unreliable for a lint tool" case.
     # THIS command line carries -Wno-fatal, so findings alone do NOT make
-    # verilator exit non-zero -- the live 3024-finding full-chip run exits 0
-    # (measured 2026-08-17, and printed in every report this script has ever
-    # written). A non-zero status therefore means the front end gave up: a parse
-    # error, a missing file, a top module it could not find. The findings on
-    # disk are then a PREFIX of the real set, and a prefix compared against a
-    # baseline shows up as improvements -- which the ratchet passes.
+    # verilator exit non-zero; a healthy full-chip run exits 0 with thousands of
+    # findings. A non-zero status therefore means the front end gave up: a parse
+    # error, a missing file, a top module it could not find. The findings on disk
+    # are then a PREFIX of the real set, and a prefix compared against a baseline
+    # reads as improvements -- which the ratchet passes.
     #
     # (verif/lint/run.sh, the 3-file wrapper lint, must NOT copy this rule: it
     # passes no -Wno-fatal, so Verilator 4.028 exits 1 there on any warning.
@@ -538,8 +533,8 @@ def main():
             f"why this cannot be left unread. See {os.path.join(a.out, 'lint.log')}")
 
     # (a3) SCOPE-COLLAPSE GUARD. A COLLAPSE DETECTOR, NOT A BUDGET -- the ship
-    # flist has carried 590 +/- 1 files since 2026-08-08, so the default floor is
-    # roughly half of that and can only fire when the scope falls off a cliff
+    # flist carries ~590 files, so the default floor is roughly half of that and
+    # can only fire when the scope falls off a cliff
     # (an unrendered generated sub-flist, a resolver that returned nothing), not
     # when the design gains or loses a module. r.missing above catches a flist
     # that names files which are absent; it cannot catch a flist that names

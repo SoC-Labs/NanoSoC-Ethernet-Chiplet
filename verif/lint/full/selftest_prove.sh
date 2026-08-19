@@ -378,10 +378,9 @@ CU="$(mkcu G2-yamlonly equivalent '{}' "src/rtl/selftest_prove_cfg.yaml")"
 dirty "$SB/src/rtl/selftest_prove_cfg.yaml"
 run_case G2_no_rtl_file_declared fail "lists no .sv/.v file" -- "$CU" --from G2 --stop-after G2
 
-# FALSE-GREEN #3, reconstructed. The golden side cannot be extracted (here: the
-# declared file is not in HEAD, which is exactly what `git show HEAD:<path>`
-# does for a file inside a submodule). The loop used to `continue`, leaving
-# zero comparisons and a PASS.
+# FALSE-GREEN #3: the golden side cannot be extracted (here the declared file is
+# not in HEAD, which is what `git show HEAD:<path>` does for a file inside a
+# submodule). A `continue` in the compare loop leaves zero comparisons and a PASS.
 new_sandbox
 CU="$(mkcu G2-nogolden equivalent '{}' "src/rtl/selftest_prove_untracked.sv")"
 cp "$SB/src/rtl/$MOD.sv" "$SB/src/rtl/selftest_prove_untracked.sv"

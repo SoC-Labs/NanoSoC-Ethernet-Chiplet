@@ -1,7 +1,7 @@
 # Full-design lint — the whole chiplet, two tools, one scope
 
 `make lint` (`verif/lint/run.sh`) lints **three** modules against blackboxes of
-everything else. `docs/LINT_FINDINGS.md` §5 lists what a full-integration pass
+everything else. `docs/verification/LINT_FINDINGS.md` §5 lists what a full-integration pass
 would require and explicitly does not attempt it. **This is that pass.**
 
 ```sh

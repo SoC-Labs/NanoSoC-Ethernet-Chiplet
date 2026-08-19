@@ -182,11 +182,10 @@ if run_gate G2 && [ "$VERDICT" = PASS ]; then
             bad "manifest declares expect.lec='$CU_LEC' but lists no .sv/.v file — nothing to compare. Either the risk class or the file list is wrong." G2
         elif LECOUT="$("$CHIPLET_HOME/ASIC/genus-innovus/scripts/lec/run_lec.sh" 2>&1 || true)"
              ! printf '%s' "$LECOUT" | grep -qE '(^|[|[:space:]])rtl([|[:space:]]|$)'; then
-            # Probe for MODE SUPPORT, not for the executable bit. The previous
-            # guard tested -x: the script exists, so it passed, the compare then
-            # exited non-zero for "unknown mode 'rtl'", and line ~158 mapped ANY
-            # non-zero to "non-equivalent" -- reporting a PASS, as declared, from
-            # a tool that never ran. Measured in the 2026-08-08 dry run.
+            # Probe for MODE SUPPORT, not for the executable bit. A -x test
+            # passes on a script that has no 'rtl' mode; the compare then exits
+            # non-zero for "unknown mode", which the mapping below reads as
+            # "non-equivalent" -- a PASS, as declared, from a tool that never ran.
             bad "run_lec.sh has no 'rtl' mode — G2 CANNOT RUN. This is BLOCKED, not a verdict on the fix. Plan step 2 must land first." G2
         else
             # Prove the gate can still fail before believing a pass from it.

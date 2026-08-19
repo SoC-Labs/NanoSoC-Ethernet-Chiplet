@@ -1,23 +1,18 @@
 //-----------------------------------------------------------------------------
 // SoCLabs Vivado-friendly FPGA preloaded BRAM (word-format $readmemh).
 //
-// Despite the "rom" in the filename this is actually a writable BRAM whose
-// initial content is supplied by a word-format $readmemh hex file — i.e.
-// a "preload" SRAM, not a true ROM. Keeping the file name avoids churn
-// in the rest of the IP filelists; the module was previously strictly-
-// read-only, which made SWD-driven firmware hot-flash impossible:
-//   - The write port (WDATA / WREN) was tied off internally.
-//   - `mww` from OpenOCD appeared to succeed on readback but left the
-//     BRAM content unchanged (cmsdk_ahb_to_sram drove WEN correctly,
-//     but the BRAM ignored it).
-//   - Every SYSRESETREQ reverted IMEM to the baked image, and
-//     firmware iteration required a full Vivado rebuild.
+// Despite the "rom" in the filename this is a WRITABLE BRAM whose initial
+// content is supplied by a word-format $readmemh hex file — a "preload" SRAM,
+// not a true ROM. The name is kept to avoid churn in the IP filelists.
 //
-// Writable preload fixes all three: the $readmemh initial content
-// provides a bootable firmware out of the bitstream, and debugger
-// writes persist (BRAM cells on 7-series are NOT reset-clearable),
-// so an SWD-loaded image survives a SYSRESETREQ and is picked up on
-// the next Reset_Handler.
+// THE WRITE PORT IS LOAD-BEARING; do not tie WDATA/WREN off. It is what makes
+// SWD-driven firmware hot-flash work: the $readmemh content gives a bootable
+// image straight out of the bitstream, and debugger writes then persist,
+// because 7-series BRAM cells are NOT reset-clearable — so an SWD-loaded image
+// survives a SYSRESETREQ and is picked up by the next Reset_Handler. With the
+// write port tied off, `mww` from OpenOCD reads back as if it succeeded while
+// the BRAM content never changes, and every reset reverts IMEM to the baked
+// image.
 //
 // Replaces the ARM cmsdk_fpga_rom — its byte-shuffle for-loop in an
 // initial block triggered Vivado's "ignoring non-constant assignment
@@ -53,9 +48,8 @@ module sl_fpga_rom_word #(
     localparam DEPTH = 1 << (AW - 2);
 
     // Single-port inferred BRAM with $readmemh preload + per-byte writes.
-    // ram_style=block forces BRAM mapping (was previously pinned with
-    // rom_style="block" too; rom_style is dropped because we now have
-    // a live write port). 7-series BRAM cells retain state across
+    // ram_style=block forces BRAM mapping. Do NOT add rom_style="block": this
+    // memory has a live write port. 7-series BRAM cells retain state across
     // HRESETn, so SWD-written firmware survives a SYSRESETREQ.
     (* ram_style = "block" *)
     reg [31:0] mem [0:DEPTH-1];

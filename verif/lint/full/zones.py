@@ -20,20 +20,15 @@ SYMLINKS ARE PART OF THE PROBLEM, NOT AN EDGE CASE
   never black-boxed, is linted verbatim, and reddens the gate as if it were our
   RTL.
 
-  The case this was built for: {REPO}/tidelink/deps/xhb500/generated was a
-  symlink to a SECOND tidelink checkout (${TIDELINK_STANDALONE}, a
-  different commit), so 28 Arm XHB500 sources arrived spelled as
+  The case this was built for: {REPO}/tidelink/deps/xhb500/generated can be a
+  symlink to a SECOND tidelink checkout (${TIDELINK_STANDALONE}, a different
+  commit), so 28 Arm XHB500 sources arrive spelled as
   ${TIDELINK_STANDALONE}/deps/xhb500/... .
 
-  As of 2026-08-17 18:44 that path is a REAL directory again (2626 files,
-  identical content), so the scan below finds nothing to add and tiering is
-  decided by the literal prefix. Keep it anyway: the symlink is still the
-  TRACKED entry (mode 120000) at the submodule's HEAD and at the commit the
-  parent pins -- the real directory is .gitignore'd content over a
-  tracked-deleted link, one `git checkout` from reverting. Verified still
-  functional against a sandbox tree carrying the link (arm-ip with the scan,
-  authored without), and verified inert on the tree as it stands (tiering of
-  every path in a full lint run is identical with the scan on and off).
+  That symlink is the TRACKED entry (mode 120000) at the submodule's HEAD and at
+  the commit the parent pins, so even when the working tree currently holds a
+  real directory there, one `git checkout` restores it. Keep the scan: it is
+  inert when the path is a real directory and load-bearing when it is not.
 
   Note carefully why os.path.realpath on BOTH sides does not fix this. The
   symlink sits BELOW the prefix directory: realpath({REPO}/tidelink/deps/xhb500/)

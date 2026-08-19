@@ -83,7 +83,7 @@ class_dispositions:
       An UNUSED naming a net that is neither *_nc, nor a protocol-narrowing
       slice, nor an undecoded address bit. The integration zone is small enough
       (24 sites) to read individually and is listed in
-      docs/LINT_WAIVER_INVENTORY.md 4.1; the other zones are not, which is why
+      docs/verification/LINT_WAIVER_INVENTORY.md 4.1; the other zones are not, which is why
       HAL's URDWIR is deliberately left UNWAIVED in hal.yaml for exactly this
       class -- that is how the DMA-error hole (A1) surfaced.
   UNDRIVEN:

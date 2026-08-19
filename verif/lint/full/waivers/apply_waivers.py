@@ -13,7 +13,7 @@ carry an argument about a SITE:
     inheriting a unit-level ruleset's justification. Correct for a class,
     structurally unable to say "this instance, for this reason".
   * `baseline/verilator.json` -- a per-(zone, code) ratchet. A number, with no
-    argument attached to it. `docs/LINT_REMEDIATION_PLAN.md` §3 already records
+    argument attached to it. `docs/verification/LINT_REMEDIATION_PLAN.md` §3 already records
     why that is not a waiver: "Do not baseline a count of 1. A baseline of 1 is
     a bug you have agreed to keep."
 
@@ -46,7 +46,7 @@ EXIT CODES
 
 NOT WIRED INTO THE RUNNER. `verif/lint/full/run.sh` does not call this yet --
 verif/lint/full/*.py were all being edited by another session when this landed.
-Wiring is three lines and is requested in docs/LINT_WAIVER_INVENTORY.md §8.
+Wiring is three lines and is requested in docs/verification/LINT_WAIVER_INVENTORY.md §8.
 Until that lands this is an auditor, not a gate, and the inventory says so.
 
 Copyright 2026, SoC Labs (www.soclabs.org)
@@ -310,7 +310,7 @@ def main():
                 fail.append(
                     f"G5 open item {o['id']} no longer fires. If it was fixed "
                     f"that is good news -- close it in "
-                    f"docs/LINT_WAIVER_INVENTORY.md and drop the entry. The "
+                    f"docs/verification/LINT_WAIVER_INVENTORY.md and drop the entry. The "
                     f"record must not outlive the finding.")
             else:
                 fail.append(f"G5 open item {o['id']} declared {exp}, fires {n}")

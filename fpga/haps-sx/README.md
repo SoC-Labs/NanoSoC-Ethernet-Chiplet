@@ -451,7 +451,7 @@ transmitted.
 refuses to run. See `constraints/*_drc.xdc` for the full argument. Short
 version: KR260 waives the same class for the intentional AHB-Lite HREADY
 loopback; the genuinely dangerous cycle was fixed in RTL on 2026-07-10 with a
-mutation-tested guard (`docs/D2D_HREADY_LOOP.md`); and the reported cells span
+mutation-tested guard (`docs/design/D2D_HREADY_LOOP.md`); and the reported cells span
 functionally unrelated blocks sharing a `dflt_err2` term, which is the
 signature of LUT merging rather than an architectural cycle. **The waiver
 currently matches 490 nets** — broader than ideal, because it covers whole
@@ -485,5 +485,5 @@ first.
 - Board/tool runbook: `HAPS-work/README.md`.
 - Sibling FPGA targets: `nanosoc-multicore-system/pynq/` (Pynq-Z2, proven on
   silicon), `tidelink/fpga/targets/kr260-eth-chiplet/` (KR260),
-  `docs/KR260_BOARD_WIRING.md`.
+  `docs/bringup/KR260_BOARD_WIRING.md`.
 - OpenOCD/SWD: `nanosoc-multicore-system/pynq/scripts/openocd/`.

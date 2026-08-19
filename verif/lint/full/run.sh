@@ -8,7 +8,7 @@
 # WHAT THIS IS, AND HOW IT DIFFERS FROM `make lint`
 #   verif/lint/run.sh (`make lint`) lints THREE modules — our integration
 #   wrapper, the decoder and the shim — against blackboxes of everything else.
-#   docs/LINT_FINDINGS.md §5 records what a full-integration pass would need and
+#   docs/verification/LINT_FINDINGS.md §5 records what a full-integration pass would need and
 #   explicitly does not attempt it. This is that pass: the whole elaborated
 #   chiplet, 590 files, top `nanosoc_eth_chiplet_chip`, with only Arm IP
 #   black-boxed.
@@ -69,24 +69,15 @@ worst() { [ "$2" -gt "$1" ] && printf '%s' "$2" || printf '%s' "$1"; }
 # Its two generated sub-flists are rendered by `make asic-flist`.
 #
 # ALWAYS RE-RENDER. DO NOT TEST FOR EXISTENCE.
-#   This block's comment has always claimed it regenerates them "so a stale
-#   render cannot silently change what gets linted". The code tested `[ ! -f ]`
-#   — file EXISTS, not file CURRENT — and so did the exact opposite: once a
-#   sub-flist had been rendered, it was reused forever, and the older it got the
-#   more confidently it was reused.
+#   A `[ ! -f ]` guard here tests whether the sub-flist EXISTS, not whether it is
+#   CURRENT, so once rendered it is reused forever and lint silently diverges from
+#   the netlist. A single missing file (e.g. the link-clock divider) shows up as
+#   HAL E,UNCONI / UASWIR findings on PHY clocks that are phantoms of the stale
+#   flist, not real undriven nets.
 #
-#   MEASURED 2026-08-18. build/chip/flist/tidelink_asic.flist was rendered
-#   2026-08-14 12:29; tidelink/flists changed 2026-08-17 21:05. A fresh render
-#   differed by exactly one line — tidelink_link_clk_div.sv, the link-clock
-#   divider — ABSENT from the netlist both tools had been linting for four days.
-#   Its absence is what produced HAL's E,UNCONI on user_hsclk and its UASWIR on
-#   link_hsclk_w. Those are phantoms of the stale flist, not an undriven PHY
-#   clock, and they are the shape of finding that costs a day to chase.
-#
-#   Synthesis was never exposed to it: ASIC/eth-chiplet/design.mk makes
-#   asic-flist a real prerequisite of syn, so Genus re-renders on every run. The
-#   defect is lint-only — which is exactly why nothing else caught it, and why
-#   the lint and the netlist could drift apart unnoticed.
+#   Synthesis is not exposed to this: ASIC/eth-chiplet/design.mk makes asic-flist
+#   a real prerequisite of syn, so Genus re-renders every run. The hazard is
+#   lint-only, which is why nothing else catches it.
 #
 #   The re-render costs 0.592s measured. There was never a cost argument for the
 #   `[ ! -f ]`, only an assumption.
@@ -174,7 +165,7 @@ echo "reports under $OUT"
 echo "  verilator: $V_RC    HAL: $H_RC"
 # "both halves ran" is a claim, so only make it when both did. --verilator-only
 # and --hal-only each leave one status at the literal string `skipped`, and a
-# green from one half is not the green this line used to advertise.
+# green from one half is a narrower green than the summary implies.
 if [ "$V_RC" = skipped ] || [ "$H_RC" = skipped ]; then
     echo "  NOTE: this was a HALF RUN (verilator=$V_RC, HAL=$H_RC) — the skipped"
     echo "        half made no measurement, in either direction."

@@ -163,16 +163,11 @@ def main():
     # ROW CAPS ARE ORDERED SO A GATING ROW CAN NEVER BE THE ONE DROPPED, AND AN
     # OMISSION IS ALWAYS DECLARED.
     #
-    # This table was `sorted(..., key=(zone, -count))[:40]` — cut silently, and
-    # sorted by ZONE NAME first, so whether a NEVER_WAIVE row survived the cut
-    # depended on the alphabetical position of its zone. Measured on the
-    # completed run of 2026-08-17: 5 of the 45 third-party rows were dropped and
-    # the report said nothing at all about them. A reader has no way to tell a
-    # table that ended from a table that was cut off.
-    #
-    # Gating rules now sort first, so the cap can only ever eat non-gating rows,
-    # and the count of what was omitted is printed with the artefact that holds
-    # it all.
+    # Sorting by zone name and slicing [:cap] makes survival of a NEVER_WAIVE row
+    # depend on the alphabetical position of its zone, and a reader cannot tell a
+    # table that ended from one that was cut off. So: gating rules sort FIRST, the
+    # cap can only eat non-gating rows, and the number omitted is printed along
+    # with the artefact that holds them all.
     def _rows(tab, cap, label):
         rows = sorted(tab.items(),
                       key=lambda kv: (kv[0][-1].split(",", 1)[1] not in NEVER_WAIVE,
@@ -200,11 +195,9 @@ def main():
     print("\n" + "=" * W)
     print("RESET / CLOCK-DOMAIN STRUCTURE  (owned by `make cdc`, not by lint)")
     print("=" * W)
-    # WAS `[:12]`, AND THIS ONE WAS THE BAD ONE. Measured on the completed run
-    # of 2026-08-17: 35 rows exist, 12 were printed, 23 were dropped without a
-    # word — including 12 rows in AUTHORED RTL and one carrying N,RSTSCB, a rule
-    # in the never-waive set. The section is headed "RESET / CLOCK-DOMAIN
-    # STRUCTURE" and read as a survey of it; it was showing a third of one.
+    # Same cap discipline here. This section is headed "RESET / CLOCK-DOMAIN
+    # STRUCTURE" and is read as a survey of it, so a silent cut that drops
+    # authored rows — or a never-waive rule such as N,RSTSCB — misrepresents it.
     cdc_tab = collections.Counter(
         (f["tier"], f["sev"] + "," + f["rule"]) for f in cdc)
     for (t, c), n in _rows(cdc_tab, 40, "(tier, rule)"):

@@ -23,7 +23,7 @@ tx-gate:
 	./simv_tx_gate
 
 ## hready-loop: four back-to-back peer writes must complete and land.
-## Guards the combinational cycle in docs/D2D_HREADY_LOOP.md. Rebuild with
+## Guards the combinational cycle in docs/design/D2D_HREADY_LOOP.md. Rebuild with
 ## `+define+NO_HREADY_FIX` to get the wiring the chiplet top once had: VCS spins
 ## with simulation time frozen and never finishes, so that variant is
 ## deliberately not run here — a zero-delay loop cannot be timed out.

@@ -179,11 +179,11 @@ clock -name rtc_clk -domain rtc_domain -period 30.518
 #    ASIC/genus-innovus/inputs/qspi_constraints.sdc:2)
 # Period 20.0 = clk / 2, the divide the chip SDC declares.
 #
-# ---- B7-ROUND2 CORRECTION: sys_fclk_domain, NOT a separate qspi_domain ------
-# The first run declared this `-domain qspi_domain`, on the reasoning that "the
-# divider is programmable, so the phase relationship to the fabric is not
-# guaranteed". That reasoning is wrong, and it MANUFACTURED four crossings
-# (B7 baseline §6 group B, findings 31/37/47/48). The divider RTL is
+# ---- sys_fclk_domain, NOT a separate qspi_domain ----------------------------
+# Do NOT declare this `-domain qspi_domain` on the grounds that "the divider is
+# programmable, so the phase relationship to the fabric is not guaranteed". That
+# reasoning MANUFACTURES four crossings (baseline §6 group B, findings
+# 31/37/47/48). The divider RTL is
 # nanosoc-multicore-system/ahb_qspi/logical/qspi_controller/logical/qspi_clock_div.v:
 #
 #   :10  assign QSPI_SCLK_i = (QSPI_CLK_DIV==5'h00) ? HCLK : QSPI_SCLK_reg;
@@ -226,7 +226,7 @@ clock -name user_ref_clk -domain wlink_ref_domain -period 8.0
 
 # pad_clk_rx: the FAR die's forwarded transmit clock, recovered at our RX pads.
 # A real primary clock and asynchronous to EVERYTHING on this die — it only
-# toggles when the other die is powered and transmitting (docs/RESET_ORDERING.md
+# toggles when the other die is powered and transmitting (docs/design/RESET_ORDERING.md
 # §2; tidelink_top.sv:235). Period from the chip SDC's D2D_RX_CLK_0, which is
 # $EXTCLK_PERIOD by the mesochronous-shared-source argument at
 # ASIC/genus-innovus/inputs/tidelink_constraints.sdc:1-38.
@@ -249,7 +249,7 @@ clock -name idelay_ref_clk -domain idelay_domain -period 5.0
 # 2. RESET DEFINITIONS
 # =============================================================================
 # NAMING NOTE. The three reset regimes TideLink distinguishes (poresetn,
-# hresetn, and the role_locked bring-up gate — docs/RESET_ORDERING.md §1) do NOT
+# hresetn, and the role_locked bring-up gate — docs/design/RESET_ORDERING.md §1) do NOT
 # appear at this boundary under those names. At this level:
 #   tidelink_top.hresetn    <- sys_hresetn   (nanosoc_eth_chiplet.sv:763)
 #   tidelink_top.poresetn   <- sys_poresetn  (nanosoc_eth_chiplet.sv:764)
@@ -281,7 +281,7 @@ reset -name dap_npotrst -value 0
 #
 # It gates BOTH reset domains of the a2l (app-to-link) replay ACK-pointer CDC,
 # so that the app side and the link side release on the SAME bring-up event
-# instead of on their own resets (docs/RESET_ORDERING.md §1):
+# instead of on their own resets (docs/design/RESET_ORDERING.md §1):
 #     axi_chiplet_controller.sv:2681  wire wlink_por_reset = ~poresetn | ~role_locked;
 #     axi_chiplet_controller.sv:2686  assign app_clk_reset = ~hresetn  | ~role_locked;
 # Without the ~role_locked term the two sides leave reset at different times and
@@ -345,7 +345,7 @@ set_case_analysis -name sys_testmode       -value 0
 quasi_static -name "role_strap_i"
 
 # PUF seed + auto-negotiation priority. Sourced from OTP or a die UID; the
-# per-die tiebreak the auto-neg root election needs (docs/RESET_ORDERING.md §3.4).
+# per-die tiebreak the auto-neg root election needs (docs/design/RESET_ORDERING.md §3.4).
 quasi_static -name "puf_seed*"
 quasi_static -name "nego_priority_i*"
 
@@ -726,14 +726,12 @@ abstract_port -ports "role_locked_o"         -clock app_clk
 abstract_port -ports "i2c_nbsy_irq"          -clock app_clk
 abstract_port -ports "i2c_nrd_empty_irq"     -clock app_clk
 
-# --- B7-ROUND2 ADDITION: the four I2C drive/enable pins ----------------------
-# [+] The first run declared i2c_nbsy_irq above but NOT these four. With no
-#     abstract_port SpyGlass DEFAULTED them to user_ref_clk, while §5 declares
-#     the matching chiplet ports sys_hclk — so the tool reported a
-#     user_ref_clk -> sys_hclk crossing on four wires that carry no logic at all
-#     between the two ends. B7 baseline §6 group A, findings 2-5. This is the
-#     THIRD recurrence of the defect recorded at
-#     tidelink/cdc/axi_chiplet_controller.sgdc:60-81.
+# --- the four I2C drive/enable pins ------------------------------------------
+# [+] These MUST be declared. Without an abstract_port SpyGlass DEFAULTS them to
+#     user_ref_clk while §5 declares the matching chiplet ports sys_hclk, so the
+#     tool reports a user_ref_clk -> sys_hclk crossing on four wires that carry
+#     no logic at all between the two ends (baseline §6 group A, findings 2-5).
+#     Same defect class as tidelink/cdc/axi_chiplet_controller.sgdc:60-81.
 #
 # DOMAIN VERIFIED apb_clk (= app_clk = hclk), not guessed:
 #   axi_chiplet_controller.sv:3378  i2c_master_axil u_i2c_master ( .clk(apb_clk)
@@ -837,15 +835,14 @@ abstract_port -ports "obs_epoch_span_o[*]"  -clock link_rx_clk_o
 # witness word (tidelink_top.sv:1749,3112).
 abstract_port -ports "xhb_sub_obs_word_i[*]" -clock app_clk
 
-# --- B7-ROUND2 ADDITION: scan_out --------------------------------------------
-# [+] scan_out was in the "deliberately not declared" list below, on the grounds
-#     that DFT is case-analysed at the top level. That is true of the scan
-#     INPUTS (§3 pins scan_mode / scan_shift / scan_clk / scan_in to 0). It does
-#     NOT reach a black-box OUTPUT: SpyGlass has no model inside the stopped
-#     module through which to propagate the constant, so it defaulted the pin to
-#     user_ref_clk and reported a user_ref_clk -> sys_hclk crossing against the
-#     §5 declaration of the chiplet scan_out port. B7 baseline §6 group A,
-#     finding 1.
+# --- scan_out ----------------------------------------------------------------
+# [+] scan_out must be declared even though DFT is case-analysed at the top
+#     level. The case analysis reaches the scan INPUTS (§3 pins scan_mode /
+#     scan_shift / scan_clk / scan_in to 0) but NOT a black-box OUTPUT: SpyGlass
+#     has no model inside the stopped module through which to propagate the
+#     constant, so it defaults the pin to user_ref_clk and reports a
+#     user_ref_clk -> sys_hclk crossing against the §5 declaration of the chiplet
+#     scan_out port (baseline §6 group A, finding 1).
 #
 # WHAT IS AND IS NOT CLAIMED HERE. This does NOT claim to know which internal
 # flop terminates the controller's scan chain — the module is stopped, so that
@@ -877,7 +874,7 @@ abstract_port -ports "scan_out"              -clock app_clk
 #   poresetn, hresetn              resets, declared at the top level.
 #       READ THIS BEFORE "FIXING" IT. These two pins are ALSO silently defaulted
 #       to user_ref_clk, by exactly the mechanism group A above describes — and
-#       they are the source of TWO of the five findings the B7 baseline classed
+#       they are the source of TWO of the five findings the baseline classed
 #       REAL (findings 32/33, §5 rows 32-33):
 #         u_soc.u_chip_core.u_cpu_0.u_core_prmu.u_rstctrl.u_sys_hresetn_sync.rst_sync2_n
 #           [sys_fclk] -> u_tidelink.u_chiplet_controller(.../hresetn) [user_ref_clk]
@@ -948,9 +945,9 @@ abstract_port -ports "*" -clock clk
 # TODO(cdc): confirm on the first run; see cdc/README.md §7.
 
 # =============================================================================
-# 8. QUALIFIERS   [ADDED B7-ROUND2]
+# 8. QUALIFIERS
 # =============================================================================
-# The B7 baseline's single most diagnostic number: 125 of the 152 unsynchronised
+# The baseline's single most diagnostic number: 125 of the 152 unsynchronised
 # crossings (82%) carried a QUALIFIER-related reason — "Qualifier not found",
 # "Qualifier merges with another source with non-deterministic enable
 # condition", "Gating logic not accepted" — while the report's own summary line
@@ -973,7 +970,7 @@ current_design nanosoc_eth_chiplet
 # 8a. CoreSight SWJ-DP  DP->AP bus:  busreq/busack request-acknowledge handshake
 # -----------------------------------------------------------------------------
 # Retires the largest single block in the baseline: ALL 33 of the 33
-# dap_swclktck -> sys_fclk crossings (B7 baseline §4c and §6 group C; findings
+# dap_swclktck -> sys_fclk crossings (baseline §4c and §6 group C; findings
 # 9, 10 and 38 — ap_sel 25 crossings, ibuswdata 6, ap_bank_sel 2).
 #
 # THE CROSSING. Three registers are written in the SWD probe-clock domain
@@ -999,7 +996,7 @@ current_design nanosoc_eth_chiplet
 #   cxdapswjdp_dp_apb_sync.v:78-86  cx_en_sync u_sync_bus_req (.clk(dapclk),
 #                                     .sync_di(busreq_corrupt), .sync_do(busreq_d))
 #   cxdapswjdp_dapclk.v:89        u_cxdapswjdp_sw_dp_apb_if .busreq (busreq_d)
-# The B7 run already RECOGNISED that synchroniser — it is one of the 35 the DAP
+# The baseline run already RECOGNISED that synchroniser — it is one of the 35 the DAP
 # contributed to Ac_sync01/02. So the control path is synchronised and the data
 # path is not: the textbook qualified crossing.
 #
@@ -1049,33 +1046,31 @@ qualifier -name "u_soc/u_dap_ss_0/u_swjdp_gate/u_swjdp/u_cxdapswjdp_dapclk/busre
 
 # ---- MEASURED OUTCOME: THIS DECLARATION RETIRES 0 OF THE 33. READ BEFORE ----
 # ---- RE-LITIGATING IT.                                                    ----
-# The baseline predicted "one declaration retires 33 crossings". It does not,
-# and the honest number is zero. What actually happened, across two round-2
-# passes:
+# The baseline predicted "one declaration retires 33 crossings". The measured
+# number is ZERO. Two forms were tried:
 #
-#   pass 1  (-name form, as written above)
-#     The name RESOLVED and the qualifier was USED — two crossings changed their
+#   -name (the form above)
+#     The name RESOLVES and the qualifier is USED — two crossings change their
 #     reason from "Qualifier not found" to "USER-DEFINED qualifier merges with
 #     another source with non-deterministic enable condition before gating
-#     logic". So SpyGlass agrees this is a qualifier; it rejects it on those two
-#     because of the merge, under `-allow_merged_qualifier: strict`.
-#     The other 21 still read "Qualifier not found" — never reached.
+#     logic". SpyGlass agrees this is a qualifier; it rejects those two on the
+#     merge, under `-allow_merged_qualifier: strict`. The other 21 still read
+#     "Qualifier not found" — never reached.
 #
-#   pass 2  (additionally tried the -dest_qual form with -dest_qual_depth 5,
-#            on the theory that the default `cdc_qualifier_depth: 3` cannot span
-#            the TWO state machines in series here — the DP's apb_curr
-#            (sw_dp_apb_if.v:184-188) and then the AP's own cur_state inside
-#            u_cxdapahbap_slv — before reaching destinations like
-#            ahb_tr_in_prog / csw_reg_cdc_check.)
+#   -dest_qual with -dest_qual_depth 5, on the theory that the default
+#     `cdc_qualifier_depth: 3` cannot span the TWO state machines in series here
+#     — the DP's apb_curr (sw_dp_apb_if.v:184-188) and then the AP's own
+#     cur_state inside u_cxdapahbap_slv — before reaching destinations like
+#     ahb_tr_in_prog / csw_reg_cdc_check.
 #     Result: `QualifierSetup` Warning, "'qualifier' constraint 'dest_qual :
-#     ...busreq_d' is not used to synchronize any crossing". Depth was not the
-#     blocker. The -dest_qual line was REMOVED rather than left standing, since
-#     a constraint that provably does nothing but emit a warning is clutter.
+#     ...busreq_d' is not used to synchronize any crossing". Depth is not the
+#     blocker, so that line is not carried: a constraint that provably does
+#     nothing but emit a warning is clutter.
 #
-# The RTL evidence above is not weakened by this — ARM's own OVL assertions
-# still say the bus is held static across the handshake. What is established is
-# that SpyGlass 2022.06-SP2's STRUCTURAL qualifier engine will not carry
-# busreq_d through the DP-FSM -> AP-FSM chain at strict settings.
+# The RTL evidence above still stands — ARM's own OVL assertions say the bus is
+# held static across the handshake. What is established is that SpyGlass
+# 2022.06-SP2's STRUCTURAL qualifier engine will not carry busreq_d through the
+# DP-FSM -> AP-FSM chain at strict settings.
 #
 # WHAT WAS DELIBERATELY NOT DONE TO MAKE THE NUMBER MOVE. The global
 # `cdc_qualifier_depth` was left at 3 and `-allow_merged_qualifier` at `strict`.
@@ -1091,7 +1086,7 @@ qualifier -name "u_soc/u_dap_ss_0/u_swjdp_gate/u_swjdp/u_cxdapswjdp_dapclk/busre
 # -----------------------------------------------------------------------------
 # 8b. HA1588 RTC control registers: the synchronised LOAD STROBES
 # -----------------------------------------------------------------------------
-# THIS CORRECTS THE B7 BASELINE, and the correction matters more than the count.
+# THIS CORRECTS THE BASELINE, and the correction matters more than the count.
 # Baseline §6 group E filed reg_14 / reg_18 / reg_24 / reg_2c / reg_30
 # (findings 42-46) as "static configuration registers ... the textbook
 # quasi_static case", needing only a software contract. That is WRONG on both
@@ -1121,7 +1116,7 @@ qualifier -name "u_soc/u_dap_ss_0/u_swjdp_gate/u_swjdp/u_cxdapswjdp_dapclk/busre
 #         reg.v:266-276  time_ld_s1/s2/s3 ;  time_ld_out   = time_ld_s2 && !time_ld_s3
 #         reg.v:280-290  perd_ld_s1/s2/s3;  period_ld_out = perd_ld_s2 && !perd_ld_s3
 #         reg.v:294-304  adjt_ld_s1/s2/s3;  adj_ld_out    = adjt_ld_s2 && !adjt_ld_s3
-#      SpyGlass already RECOGNISED these chains in the B7 run.
+#      SpyGlass already RECOGNISED these chains in the baseline run.
 #   4. The rtc_clk side captures the data ONLY on that synchronised pulse
 #      (ha1588.v:156-174 wires them straight through):
 #         rtc.v:53-54    if (period_ld) period_fix <= period_in;    <- reg_20,reg_24
@@ -1194,7 +1189,7 @@ qualifier -name "u_soc/u_network_core/u_ethmac_0/u_inner/u_ha1588/u_rgs/adj_ld_o
 # window is a genuine software contract — see §9.
 
 # =============================================================================
-# 9. NOT YET CONSTRAINED — NEEDS AN OWNER DECISION   [ADDED B7-ROUND2]
+# 9. NOT YET CONSTRAINED — NEEDS AN OWNER DECISION
 # =============================================================================
 # Everything in this section is a crossing that is STILL IN THE REPORT and is
 # left there on purpose. Each entry says what the missing declaration would be,

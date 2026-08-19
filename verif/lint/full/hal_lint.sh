@@ -48,10 +48,10 @@ OUT="$(cd "$OUT" && pwd)"
 
 
 # ---------------------------------------------------------------------------
-# SIGN-OFF INVARIANT, enforced. hal_rules.tcl's header used to CLAIM this check
-# existed; it did not, so nothing stopped a ruleset merge silently re-adding
-# -nocheck MLTDRV -- which is exactly how MLTDRV and CLKDMN were switched off in
-# the first place. This is hal_report.py's NEVER_WAIVE list.
+# SIGN-OFF INVARIANT. Refuse to run if a merged ruleset waives one of these:
+# a unit ruleset that is correct for its own block can silently re-add
+# `-nocheck MLTDRV` to the integration merge. Same set as hal_report.py's
+# NEVER_WAIVE list.
 # ---------------------------------------------------------------------------
 SIGNOFF_RULES="MLTDRV CLKDMN INSYNC SIZMIS GLTASR LATINF NODRIV UNCONI RSTSCB CMBCDC"
 viol=""
@@ -76,14 +76,11 @@ fi
 # HAL flist: timescale preamble first, then files only (incdirs go on the
 # command line), and drop the Verilator .vlt config which HAL cannot read.
 #
-# EVERY PATH IS ABSOLUTISED against CHIPLET_HOME on the way through. WHY:
-# verilator_lint.py wrote the resolved filelist using its --out verbatim, so a
-# RELATIVE --out produced relative entries -- 200 of them in the filelist
-# measured 2026-08-10, all of them the generated black boxes. Those resolve only
-# from the repo root, which is exactly why this script could not cd anywhere and
-# therefore dropped xcelium.d/ and hal.design_facts wherever it was launched.
-# verilator_lint.py now absolutises --out at the source; this keeps a STALE
-# filelist working too, and makes the `cd "$OUT"` below safe either way.
+# EVERY PATH IS ABSOLUTISED against CHIPLET_HOME on the way through. A relative
+# entry in the resolved filelist resolves only from the repo root, which would
+# stop this script cd'ing anywhere and scatter xcelium.d/ and hal.design_facts
+# wherever it was launched. verilator_lint.py absolutises --out at the source;
+# this keeps a STALE filelist working too and makes the `cd "$OUT"` below safe.
 {
     echo "$CHIPLET_HOME/nanosoc-multicore-system/lint/timescale.v"
     grep -v -e '^+incdir+' -e '\.vlt$' "$RESOLVED" \
@@ -112,9 +109,8 @@ if [ -f "$DI" ]; then
     # Consequence when skipped: URDWIR is fully ON (its -nocheck was removed
     # deliberately, because the broad waiver hid a real finding). Noisier, but
     # nothing is hidden -- which is the correct direction to fail.
-    # Strip // comments first: an earlier version grepped the raw file and
-    # matched the word "{pattern" inside a comment EXPLAINING that the clause is
-    # unsupported -- so the prose describing the trap triggered the trap.
+    # Strip // comments first, or a comment that merely MENTIONS "{pattern"
+    # matches and skips -design_info for no reason.
     if sed 's,//.*,,' "$DI" | grep -q '{pattern'; then
         echo "WARNING: $DI uses the {pattern=...} clause, which HAL 22.03 rejects."
         echo "         Skipping -design_info. URDWIR will report unnarrowed."
@@ -144,37 +140,23 @@ set -e
 # ---------------------------------------------------------------------------
 # FOUR GUARDS ON "DID THIS RUN FINISH?", BEFORE ANY VERDICT IS DRAWN FROM $LOG.
 #
-# This script had two of the four. It captured `timeout`'s exit status into $rc
-# and then only ECHOED it, which is how a killed run reported a clean design.
-# MEASURED 2026-08-17, against this flow's own captured output rather than a
-# hand-written log: the real 34 MB completed run truncated at 4,432,000 bytes —
-# i.e. exactly what SIGTERM at that instant leaves on disk — replayed with
-# rc=124 gave
+# A truncated HAL log looks clean: every rule that had not run yet reports zero,
+# and a grep over the partial log then reports no findings. The same four guards
+# appear in verif/elab_strict/run.sh and ci/signoff.yaml, in this order:
 #
-#     xrun exit=124
-#     parsed          : 13577 finding(s), 3004 in authored RTL
-#     HAL LINT OK — no never-waive rule fires in authored RTL.
-#     rc=0
-#
-# That is the same defect verif/elab_strict/run.sh fixed for the elab-strict
-# gate and ci/signoff.yaml fixed for its post-condition, in the third place it
-# lives. All three now carry the same four guards, in the same order:
-#
-#   0  timeout rc 124/137     -> the wall clock KILLED it   (only $rc sees this)
+#   0  timeout rc 124/137          -> the wall clock KILLED it (only $rc sees it)
 #   1  '*E,BLDSTP|Analysis failed' -> HAL ABORTED gracefully
-#   2  '^halstruct:' absent   -> the structural rules NEVER STARTED
-#   3  rule tally absent      -> the rules started and were CUT OFF
+#   2  '^halstruct:' absent        -> the structural rules NEVER STARTED
+#   3  rule tally absent           -> the rules started and were CUT OFF
 #
-# NONE IS REDUNDANT, and the order matters. Guard 0 alone misses a kill that
-# `timeout` did not deliver (an OOM kill, a scheduler, a lost NFS mount); guard
-# 3 catches those from the artefact. Guard 3 alone misses a graceful abort,
-# because a REAL abort DOES emit the tally block — measured, 40 tally lines and
-# 0 halstruct lines on the aborted 26 MB run at verif/cdc/build/xrun_hal.log —
-# so guard 1 must be asked first. Guard 2 separates "never started" from "cut
-# off" so the message sends the reader to the right place.
+# NONE IS REDUNDANT and the order matters. Guard 0 alone misses a kill `timeout`
+# did not deliver (OOM, scheduler, lost NFS mount); guard 3 catches those from
+# the artefact. Guard 3 alone misses a graceful abort, because a real abort DOES
+# emit the tally block — so guard 1 must be asked first. Guard 2 separates
+# "never started" from "cut off" so the message points at the right cause.
 #
-# Reference numbers for this flow, from the completed run of 2026-08-17:
-# 34,347,490 bytes, 78,742 halstruct lines, 32 tally lines, 0 abort markers.
+# Shape of a healthy completed run, for scale: ~34 MB, ~79k halstruct lines,
+# ~32 tally lines, 0 abort markers.
 # ---------------------------------------------------------------------------
 if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     echo "FAIL: HAL was KILLED at ${TMO}s by the wall clock, not finished (rc=$rc)."
@@ -200,11 +182,10 @@ if ! grep -aq '^halstruct:' "$LOG" 2>/dev/null; then
     exit 1
 fi
 # GUARD 3 — started, then CUT OFF. A finished run closes with a rule-tally
-# summary block ("GLTASR (7)", "SIZMIS (10)", "ASNRST (1442)" ...): 32 such
-# lines on the completed run of 2026-08-17, and none at any earlier byte
-# offset of that same log. This is the only guard that catches a kill `timeout`
-# did not deliver — an OOM kill, a scheduler, a lost mount — because there is
-# then no exit status for guard 0 to read.
+# summary block ("GLTASR (7)", "SIZMIS (10)", "ASNRST (1442)" ...), which appears
+# nowhere earlier in the log. This is the only guard that catches a kill
+# `timeout` did not deliver — OOM, scheduler, lost mount — because there is then
+# no exit status for guard 0 to read.
 if ! grep -aqE '^ *[A-Z]{5,6} \([0-9]+\)' "$LOG" 2>/dev/null; then
     echo "FAIL: HAL started and was CUT OFF — no rule-tally summary in the log."
     echo "      The rules that had not run report zero, and that zero is NOT"
@@ -220,12 +201,10 @@ echo "  xrun exit=$rc   log: $LOG"
 # ---------------------------------------------------------------------------
 # VERDICT — ASSERT ON THE ARTEFACT, NEVER ON EXIT STATUS.
 #
-# This script used to END on hal_report.py plus an echo, so it exited 0 whatever
-# HAL found: the report was printed and then discarded as a verdict. The two
-# guards above only proved the ANALYSIS RAN; nothing read its result.
-#
-# hal_report.py writes the zoned findings next to the log, so gate on that
-# artefact rather than re-grepping the 30 MB text log.
+# The guards above only prove the ANALYSIS RAN; something must still read its
+# result, or the script exits 0 whatever HAL found. hal_report.py writes the
+# zoned findings next to the log, so gate on that artefact rather than
+# re-grepping the 30 MB text log.
 #
 # THE CRITERION: any never-waive rule that fires in AUTHORED RTL fails the run.
 # That set is hal_report.py's NEVER_WAIVE list and the same one SIGNOFF_RULES at

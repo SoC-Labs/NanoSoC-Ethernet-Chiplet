@@ -11,9 +11,9 @@
 #   loops, unintended latches, width truncation in expressions, undriven /
 #   multiply-driven nets. A live example — a combinational HREADY cycle at the
 #   peer aperture — passed elaboration and only surfaced when a transaction ran
-#   through it (docs/D2D_HREADY_LOOP.md). This is the structural-lint pass.
+#   through it (docs/design/D2D_HREADY_LOOP.md). This is the structural-lint pass.
 #
-# WHAT IT RUNS  (Verilator --lint-only -Wall; see docs/LINT_FINDINGS.md)
+# WHAT IT RUNS  (Verilator --lint-only -Wall; see docs/verification/LINT_FINDINGS.md)
 #   1. LEAF    chiplet_d2d_decode          standalone (self-contained)
 #   2. SHIM    tidechart_shim              + tidechart_controller blackbox
 #   3. WRAPPER nanosoc_eth_chiplet         + real decode/shim + 4 blackboxes
@@ -21,7 +21,7 @@
 #
 # The three integration modules are OURS; the SoC / TideLink / TideChart / CMSDK
 # submodules are blackboxed (verif/lint/gen_bbox.py) so this lints our wrapper
-# logic in isolation, not the vendor forest. See docs/LINT_FINDINGS.md for the
+# logic in isolation, not the vendor forest. See docs/verification/LINT_FINDINGS.md for the
 # triage and for what a FULL-integration lint would require.
 #
 #   usage:  verif/lint/run.sh          # or: scripts/lint.sh   (env overrides:)
@@ -30,33 +30,28 @@
 #-----------------------------------------------------------------------------
 # A SKIPPED PASS IS A FAILURE, AND A PASS THAT DID NOT RUN IS NOT A CLEAN PASS
 #
-#   Both of the following were MEASURED on this script on 2026-08-17, against a
-#   tree where PASS 3 legitimately reports a non-waived PINMISSING
-#   ('link_clk_div_ratio_i' at nanosoc_eth_chiplet.sv:760) and the run correctly
-#   exits 1:
+#   Two ways this gate can go green without measuring anything. Both are guarded
+#   against below; do not remove the guards.
 #
-#   1. SILENT SCOPE COLLAPSE.  `ARM_IP_LIBRARY_PATH=/nonexistent verif/lint/run.sh`
-#      -> "PASS 3 WRAPPER: SKIPPED" -> "LINT OK" -> exit 0.  One unresolved
-#      blackbox source turned the live defect green.  This is not hypothetical in
-#      CI either: ci/signoff.yaml runs `lint` BEFORE `elab`, and `elab`'s own
-#      pre-step `rm -rf`s nanosoc-multicore-system/build_soc — which is where
-#      PASS 3's SoC blackbox source comes from.  On a fresh runner the only pass
-#      that lints the integration top has never run at all.
+#   1. SILENT SCOPE COLLAPSE.  One unresolved blackbox source (e.g.
+#      ARM_IP_LIBRARY_PATH pointing nowhere) skips PASS 3 and the run still exits
+#      0 — the pass that lints the integration top never ran. This bites in CI:
+#      ci/signoff.yaml runs `lint` BEFORE `elab`, and `elab`'s pre-step `rm -rf`s
+#      nanosoc-multicore-system/build_soc, which is where PASS 3's SoC blackbox
+#      source comes from. Hence: a skipped pass FAILS the run.
 #
-#   2. A FAILED TOOL INVOCATION READ AS A CLEAN ONE.  The verdict was
-#      `grep %Warning|%Error | grep ${RTL}/`, i.e. findings were filtered to our
-#      RTL *before* anything asked whether Verilator had got as far as reading
-#      our RTL.  Verilator's setup failures name no src/rtl path —
-#      "%Error: Specified --top-module 'x' was not found in design.",
-#      "%Error: Cannot find file containing module: ..." — so they filtered out
-#      to nothing and printed "(no findings in src/rtl)" -> OK.  Injecting
-#      exactly that failure into PASS 3 alone took the run from exit 1 to exit 0.
+#   2. A FAILED TOOL INVOCATION READ AS A CLEAN ONE.  Verilator's setup failures
+#      name no src/rtl path — "%Error: Specified --top-module 'x' was not found
+#      in design.", "%Error: Cannot find file containing module: ..." — so a
+#      verdict that filters findings to src/rtl BEFORE asking whether Verilator
+#      reached our RTL prints "(no findings in src/rtl)" and passes. Hence: the
+#      "did this pass run?" guard is applied BEFORE the src/rtl filter.
 #
-#   Note why the exit status of Verilator cannot be the discriminator here: this
-#   flow does not pass -Wno-fatal, so Verilator 4.028 exits 1 on any -Wall
-#   warning ("%Error: Exiting due to 2 warning(s)") — a normal, healthy pass.
-#   The two tallies "Exiting due to N warning(s)/error(s)" are therefore
-#   discounted, and ANY OTHER %Error line is treated as "this pass did not run".
+#   Verilator's exit status cannot be the discriminator: this flow does not pass
+#   -Wno-fatal, so Verilator 4.028 exits 1 on any -Wall warning ("%Error: Exiting
+#   due to 2 warning(s)") — a normal, healthy pass. The "Exiting due to N
+#   warning(s)/error(s)" tallies are therefore discounted, and ANY OTHER %Error
+#   line means "this pass did not run".
 #-----------------------------------------------------------------------------
 set -u
 
@@ -64,12 +59,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "${HERE}/../.." && pwd)"
 RTL="${REPO}/src/rtl"
 BBOX="${REPO}/build/lint/bbox"          # under build/ -> gitignored
-# Per-pass Verilator output, KEPT. These used to be mktemp files that lint_pass
-# deleted on its way out, so the only trace of a verdict was the terminal: an
-# artefact-based gate had no artefact to assert on, and ci/signoff.yaml had to
-# work around it by tee-ing the whole of stdout into build/lint/lint_verdicts.log
-# ("Tee the verdicts or there is no evidence" — that stage's own comment).
-# Durable, under build/ so still gitignored, one file per pass.
+# Per-pass Verilator output, one durable file per pass (under build/, so
+# gitignored). KEEP them on disk: ci/signoff.yaml asserts on these artefacts, so
+# a temp file deleted at the end of the run leaves the gate nothing to check.
 LOGDIR="${REPO}/build/lint/passes"
 GEN="${HERE}/gen_bbox.py"
 PROBE="${HERE}/hready_loop_probe.sv"
@@ -108,17 +100,11 @@ mkdir -p "${BBOX}" "${LOGDIR}"
 # collects build/lint/** as its artefacts. So they cannot be made per-process,
 # and two concurrent runs truncate each other's stubs mid-write.
 #
-# MEASURED on this tree, which is worked by many sessions at once: 12 runs as
-# six concurrent pairs produced one failure — "SKIPPED PASS(ES): 3 WRAPPER",
-# because the SoC stub was zero-length at the instant the other run had just
-# opened it. A FALSE RED. That is the safe direction to fail, and it is only
-# visible at all because a skipped pass now fails the run; but a blocking gate
-# that reddens at random in a shared tree gets ignored, and an ignored red gate
-# fails in exactly the way a green one does.
-#
-# Worse for the stage than for the script: signoff's `check:` re-reads those
-# same fixed logs AFTER the run, so a concurrent run landing between the two
-# could hand the check a different run's evidence — including a clean one.
+# Two concurrent runs therefore truncate each other's stubs mid-write: a second
+# run reading a zero-length SoC stub skips PASS 3 and the run goes red for no
+# design reason. Worse, signoff's `check:` re-reads those same fixed logs AFTER
+# the run, so a concurrent run landing in between can hand the check a different
+# run's evidence — including a clean one.
 #
 # flock serialises rather than racing: the second run waits. Re-exec through
 # `env` so the lock is held for the whole run and released when it exits.
@@ -163,9 +149,9 @@ lint_pass() { # $1=label  $2=top  ; remaining args after -- are files/flags
     vrc=$?
 
     # ---- GUARD: did this pass actually run? --------------------------------
-    # Asked BEFORE the findings are filtered to src/rtl, because a Verilator
-    # that never reached our RTL reports nothing about our RTL, and "nothing"
-    # then reads identically to "clean". See the header for the measurement.
+    # Asked BEFORE the findings are filtered to src/rtl: a Verilator that never
+    # reached our RTL reports nothing about it, and "nothing" reads identically
+    # to "clean". See the header.
     if [ ! -f "${log}" ]; then
         red "  ^ NO LOG at ${log} — the pass produced no evidence at all. FAIL"
         fail=1
@@ -216,21 +202,19 @@ TC_SRC="${REPO}/tidechart/src/rtl/tidechart_controller.sv"
 ARM_IP="${ARM_IP_LIBRARY_PATH:-/research/AAA/ip_library}"
 CMSDK_SRC="${CMSDK_AHB_TO_APB:-${ARM_IP}/Corstone-101/BP210-r1p1-00rel0/BP210-BU-00000-r1p1-00rel0/logical/cmsdk_ahb_to_apb/verilog/cmsdk_ahb_to_apb.v}"
 if [ ! -f "${CMSDK_SRC}" ]; then
-    # The fallback search can come back EMPTY, and an empty CMSDK_SRC used to be
-    # reported as "source for 'cmsdk_ahb_to_apb' not found ()" — a diagnostic
-    # that names neither what was wanted nor where it was looked for. Keep the
-    # attempted path so the note is actionable.
+    # The fallback search can come back EMPTY. Keep the attempted path in the
+    # message, or the diagnostic names neither what was wanted nor where it
+    # looked.
     CMSDK_WANTED="${CMSDK_SRC}"
     CMSDK_SRC="$(find "${ARM_IP}" -name cmsdk_ahb_to_apb.v 2>/dev/null | head -1)"
     [ -n "${CMSDK_SRC}" ] || CMSDK_SRC="${CMSDK_WANTED} (and nothing named cmsdk_ahb_to_apb.v under ${ARM_IP})"
 fi
 
 # $1=module $2=src $3=out. Returns non-zero — and the caller then SKIPS, which
-# now FAILS the run — if the source is absent, if the generator errors, or if it
-# produced an empty stub. The generator's exit status used to be discarded
-# entirely: a failed gen_bbox.py left a truncated stub behind and returned 0, so
-# the dependent pass ran against an empty module and Verilator's resulting
-# "Cannot find module" error was filtered out by the src/rtl grep.
+# FAILS the run — if the source is absent, if the generator errors, or if it
+# produced an EMPTY stub. All three must be checked: a truncated stub returning 0
+# lets the dependent pass run against an empty module, and Verilator's resulting
+# "Cannot find module" error is filtered out by the src/rtl grep.
 gen() {
     if [ ! -f "$2" ]; then
         echo "  NOTE: source for '$1' not found ($2)"; return 1
@@ -295,8 +279,8 @@ fi
 bold "───────────────────────────────────────────────────────────────"
 bold "PASS: 4. SANITY  hready_loop_probe (UNOPTFLAT catches the cycle?)"
 sanity() { # $1=label $2=define  -> echoes 1 if UNOPTFLAT present
-    # Kept, like the lint_pass logs: this sub-verdict feeds the gate, so the
-    # evidence for it has to outlive the run too.
+    # Kept like the lint_pass logs: this sub-verdict feeds the gate, so its
+    # evidence has to outlive the run.
     local log="${LOGDIR}/4_SANITY_$1.log"
     "${VERILATOR}" --lint-only -Wall -Wno-UNUSED -Wno-SYNCASYNCNET ${2:+"$2"} \
         --top-module hready_loop_probe \

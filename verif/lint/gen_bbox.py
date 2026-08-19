@@ -39,10 +39,9 @@ def extract_header(name: str, text: str) -> str:
 
     Stopping there returns `module foo import my_pkg::*;`, and the caller then
     prints `endmodule` after it and exits 0 — A STUB WITH NO PORTS AT ALL,
-    generated silently from a module that has plenty. Latent rather than live
-    today (none of the three blackboxed sources imports a package, checked
-    2026-08-17), but it fails in the quiet direction and gen_bbox_any.py's
-    equivalent already handles the construct, so the two disagreed.
+    generated silently from a module that has plenty. None of the three
+    blackboxed sources currently imports a package, but the failure is silent,
+    so handle the construct here as gen_bbox_any.py does.
     """
     text = strip_comments(text)
     m = re.search(r"\bmodule\s+" + re.escape(name) + r"\b", text)

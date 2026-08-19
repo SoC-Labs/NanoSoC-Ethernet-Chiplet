@@ -782,7 +782,7 @@
 // (already waived by nanosoc-multicore-system/lint/hal.tcl): MEMSIZ
 // LARMEM -- large memory note.
 // HAL's LARMEM figure is bits x width, not words (see
-// docs/LINT_REMEDIATION_PLAN.md §0, where the same class was misread as a 1 Mib
+// docs/verification/LINT_REMEDIATION_PLAN.md §0, where the same class was misread as a 1 Mib
 // DMA context RAM and was actually 1 024 flops). root_port_subtree_r and
 // root_below_r are NUM_CHIPLETS_MAX x NUM_CHIPLETS_MAX bit masks. This is a
 // note (*N), not a warning, and the area is accounted for in the netlist.

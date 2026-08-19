@@ -1,17 +1,14 @@
-"""URGENT (possibly tapeout-blocking) probe — READ-ONLY investigation.
+"""Does a multi-beat peer-write BURST deliver its own payload on every beat?
 
-Does a multi-beat peer-write BURST (INCR4, DISTINCT per-beat payloads) into the
-eth-chiplet peer aperture deliver beat 0's payload on EVERY beat (silicon data
-corruption)?
+Drives a continuous INCR4 peer write with DISTINCT per-beat payloads into the
+eth-chiplet peer aperture and checks each beat lands with its own data.
 
-Alleged mechanism (statically confirmed; this file SIMULATES it):
-  nanosoc_eth_chiplet.sv:319-323 captures d2d_ahb_m_hwdata into
-  d2d_ahb_m_hwdata_q on the FIRST peer-write data-phase cycle (cap_done_r) and
-  then HOLDS it; it re-arms only when dph_peer drops (:323). d2d_ahb_m_hwdata_q
-  feeds tidelink's ahb_sub_hwdata (:775). chiplet_d2d_decode.sv:112 keeps the
-  peer selected across SEQ beats, so if dph_peer stays high across a burst,
-  cap_done_r never re-arms mid-burst and beats 1..N-1 present beat-0's held value
-  to TideLink/XHB500 -- and thus to the far die.
+THE HAZARD THIS GUARDS. The peer-write steering in nanosoc_eth_chiplet.sv holds
+d2d_ahb_m_hwdata_q across a beat whose AXI W beat has not yet landed, and
+d2d_ahb_m_hwdata_q feeds TideLink's ahb_sub_hwdata. chiplet_d2d_decode keeps the
+peer selected across SEQ beats, so dph_peer does NOT drop mid-burst; any hold
+that re-arms on ~dph_peer alone therefore never re-arms during a burst, and
+beats 1..N-1 present beat 0's held value to TideLink/XHB500 and to the far die.
 
 WHY g2_soc_pair AND NOT g2_peer_aperture
 ----------------------------------------

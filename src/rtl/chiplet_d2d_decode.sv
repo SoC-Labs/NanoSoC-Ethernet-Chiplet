@@ -33,10 +33,9 @@
 //      one non-negotiable correctness rule for an AHB decoder.
 //
 //   3. A stray pointer into an unmapped offset must fault, not vanish. The
-//      internal default responder reproduces the same two-cycle ERROR the SoC's
-//      top-level default slave used to raise for 0x2E/0x2F (see the sibling
-//      `nanosoc_d2d_idle_slave.v`). Returning OKAY+zeros here would silently
-//      swallow the access — the exact debugging trap this design rejects.
+//      internal default responder raises the same two-cycle ERROR the SoC's
+//      top-level default slave raises for 0x2E/0x2F (`nanosoc_d2d_idle_slave.v`).
+//      Returning OKAY+zeros here would silently swallow the access.
 //
 // Region map (decoded on HADDR; haddr[24] splits 0x2E from 0x2F):
 //
@@ -48,10 +47,9 @@
 //   haddr[24]==0 & haddr[19:16]==4'h4   -> tcapb  0x2E040000        (tidechart APB)
 //   anything else in the window         -> internal default: two-cycle ERROR
 //
-// ...AND the block is bigger than the subordinate behind it. The five 0x2E
-// regions are carved at 64 KB (haddr[19:16]) but NOT ONE of the subordinates
-// consumes a full 64 KB of address, so a block-only decode ALIASES. See the
-// "intra-block offset" section below — that is a correctness rule, not tidying.
+// Each block is BIGGER than the subordinate behind it: the five 0x2E regions are
+// carved at 64 KB (haddr[19:16]) but no subordinate consumes a full 64 KB, so a
+// block-only decode ALIASES. See the "intra-block offset" section below.
 //
 // CONSTRAINT: address/control/write-data fan out to the slaves DIRECTLY from the
 // top level. This module owns only the HSELs and the response mux; it never sees
@@ -94,7 +92,7 @@ module chiplet_d2d_decode (
     // subordinate as its `hready` input: TideLink's `ahb_sub_hreadyout` reads
     // `ahb_sub_hready` combinationally (tidelink_top.sv:1119,1169), so doing so
     // closes a cycle with no register in it and the simulator spins with time
-    // frozen. Use this to break it. See docs/D2D_HREADY_LOOP.md.
+    // frozen. Use this to break it. See docs/design/D2D_HREADY_LOOP.md.
     output wire        dph_peer,
     // Per-slave responses (data phase)
     input  wire [31:0] hrdata_tx,   input wire hreadyout_tx,   input wire hresp_tx,
@@ -124,11 +122,10 @@ module chiplet_d2d_decode (
     // `blk` carves 64 KB regions, but every 0x2E subordinate is handed a
     // TRUNCATED address at the top level, so none of them can tell a low offset
     // from the same offset with an upper bit set. Whatever bits the subordinate
-    // never receives are, by construction, decoded by NOBODY — and a block-only
-    // HSEL therefore hands an out-of-range access to a real register bank at the
-    // wrong offset. Silently. This is the classic decode alias, and it is a
-    // *correctness* defect, not an aesthetic one: it turns a stray pointer into
-    // a successful write to an unrelated register instead of a bus fault.
+    // never receives are, by construction, decoded by NOBODY — so a block-only
+    // HSEL silently hands an out-of-range access to a real register bank at the
+    // wrong offset, turning a stray pointer into a successful write to an
+    // unrelated register instead of a bus fault.
     //
     // The truncation is visible at the instantiations in nanosoc_eth_chiplet.sv,
     // which are the authority for the widths below:
@@ -144,20 +141,17 @@ module chiplet_d2d_decode (
     //           (cmsdk_ahb_to_apb #(.ADDRWIDTH(12)))
     //   peer    .ahb_sub_haddr  (d2d_ahb_m_haddr)            [31:0]  no alias
     //
-    // These sizes are exactly the ones the SoC firmware map already publishes
+    // These sizes are the ones the SoC firmware map publishes
     // (nanosoc-multicore-system/firmware/include/nanosoc_multicore_addrmap.h:
     // "16 KB TX aperture", "16 KB local RX FIFO", "PTP TX write port (16 B)",
     // "One 32 KB tidelink APB region (0x2E030000..0x2E037FFF)", TideChart
-    // "only the low 4 KB is the register file"). So this qualification does not
-    // narrow the documented map — it makes the RTL enforce it. Nothing outside
-    // these sub-windows was ever a legal address; it merely used to work by
-    // wrapping onto a lower one.
+    // "only the low 4 KB is the register file"), so qualifying here does not
+    // narrow the documented map — it makes the RTL enforce it.
     //
-    // WORKED EXAMPLE (the one that motivated this): tlapb sees haddr[14:0], so
-    // haddr[15] was dropped. 0x2E03_8000 landed on PADDR 0x0000 — the same
-    // register as 0x2E03_0000 — and 0x2E03_E000 landed on 0x6000, which is the
-    // reserved paddr[14:13]==2'b11 quadrant where new TideLink config registers
-    // are to be placed. An access to the alias must fault, not write a register.
+    // EXAMPLE: tlapb sees haddr[14:0], so haddr[15] is dropped. Without the
+    // qualifier 0x2E03_8000 lands on PADDR 0x0000 — the same register as
+    // 0x2E03_0000 — and 0x2E03_E000 lands on 0x6000, the reserved
+    // paddr[14:13]==2'b11 quadrant. Such an access must fault, not write.
     //
     // Anything that fails its offset qualifier falls through to `a_dflt` below
     // and takes the SAME two-cycle AHB ERROR as an unmapped block — the existing
@@ -177,11 +171,10 @@ module chiplet_d2d_decode (
     // time it leaves `d2d_ahb_m` — so the gate belongs here, in the only module
     // that owns the sub-decode and the default responder.
     //
-    // With the link down, a TX-aperture access is routed to the default
-    // responder and takes a clean two-cycle AHB ERROR. The core sees a bus fault
-    // it can attribute; it does not see a hang. That is a deliberate choice over
-    // stalling until link-up: a stall is indistinguishable from a dead SoC on a
-    // bench, and a fault is a fact you can act on.
+    // With the link down, a TX-aperture access is routed to the default responder
+    // and takes a clean two-cycle AHB ERROR, so the core sees an attributable bus
+    // fault rather than a hang. Faulting is preferred over stalling until link-up
+    // because a stall is indistinguishable from a dead SoC on a bench.
     //
     // Tie `link_active_i` high only if you have another guarantee the link is up.
     wire tx_open = link_active_i;
@@ -194,13 +187,9 @@ module chiplet_d2d_decode (
     wire a_peer  = haddr[24];                   // all of 0x2F is the peer window
 
     // The default responder claims EVERYTHING in 0x2E that no region claimed.
-    // Written as the complement of the region set rather than as an enumeration
-    // of holes: the previous form, `(blk > 4'h4) | ((blk==4'h0) & ~tx_open)`,
-    // had to restate every reason a transfer might miss, and the offset
-    // qualifiers above have just added five more. A complement cannot drift out
-    // of step with the regions it complements — add a region, and its hole
-    // disappears from here for free. (It is also exactly equivalent to the old
-    // expression for every address, given the old region terms.)
+    // Keep it written as the COMPLEMENT of the region set, not as an enumeration
+    // of holes: a complement cannot drift out of step with the regions it
+    // complements, so adding a region removes its hole from here automatically.
     wire a_dflt  = in_2e & ~(a_tx | a_fifo | a_ptp | a_tlapb | a_tcapb);
 
     assign hsel_tx    = xfer & a_tx;
@@ -218,9 +207,9 @@ module chiplet_d2d_decode (
     // cycle. Only ONE code can be set because the regions are mutually exclusive
     // by construction (a_peer on haddr[24], the rest on distinct blk values, and
     // a_dflt is the explicit complement of the five 0x2E regions).
-    // Updating solely when `hready` is high is what pipelines the select into the
-    // data phase — this is the register whose absence is the classic AHB decode
-    // bug the header warns about.
+    // Updating ONLY when `hready` is high is what pipelines the select into the
+    // data phase; without this register the response mux returns the wrong slave
+    // whenever two beats overlap (header point 2).
     //-------------------------------------------------------------------------
     localparam [2:0] DPH_NONE  = 3'd0,
                      DPH_TX    = 3'd1,

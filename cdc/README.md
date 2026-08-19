@@ -11,8 +11,8 @@ this directory existed, that boundary had never been analysed by a tool that
 understands asynchronous clock relationships.
 
 **Status: run twice.** The first (B7 baseline) run is recorded in
-`docs/CDC_B7_BASELINE.md`; the declaration-fix round that followed it is in
-`docs/CDC_B7_ROUND2.md`. Read §7 (what this does not cover) and §8 (what the two
+`docs/verification/CDC_B7_BASELINE.md`; the declaration-fix round that followed it is in
+`docs/verification/CDC_B7_ROUND2.md`. Read §7 (what this does not cover) and §8 (what the two
 runs changed) before quoting any result. It is still written to be *reviewed*
 before it is believed — the same posture as
 `constraints/nanosoc_eth_chiplet_cdc.sdc`.
@@ -90,8 +90,8 @@ consistent?" — and it must not be mistaken for boundary coverage.
 ## 2. How to run it
 
 SpyGlass **is** installed and licensed on this host, despite what
-`docs/LINT_FINDINGS.md` §1 ("SpyGlass / `sg_shell`: absent") and
-`docs/CDC_FINDINGS.md` say. Both are wrong; `docs/CDC_FINDINGS.md` already
+`docs/verification/LINT_FINDINGS.md` §1 ("SpyGlass / `sg_shell`: absent") and
+`docs/verification/CDC_FINDINGS.md` say. Both are wrong; `docs/verification/CDC_FINDINGS.md` already
 carries a correction to that effect at the top. The binary is:
 
 ```
@@ -368,8 +368,8 @@ integration. TideChart's clock is `sys_hclk` here (`nanosoc_eth_chiplet.sv:971`)
 
 ### 4.12 The docs claim SpyGlass is not installed
 
-`docs/LINT_FINDINGS.md` §1 lists *"SpyGlass / `sg_shell` — absent: no `which`
-hit; do not assume it exists"*. `docs/CDC_FINDINGS.md` defers the step to another
+`docs/verification/LINT_FINDINGS.md` §1 lists *"SpyGlass / `sg_shell` — absent: no `which`
+hit; do not assume it exists"*. `docs/verification/CDC_FINDINGS.md` defers the step to another
 machine. Both are wrong (the latter already carries a correction at the top); the
 binary is at the path in §2 and the licence checks out.
 

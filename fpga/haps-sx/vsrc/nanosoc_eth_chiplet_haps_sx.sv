@@ -159,10 +159,9 @@ module nanosoc_eth_chiplet_haps_sx #(
     // This divider is NOT optional and the rate is NOT arbitrary. The KR260
     // eth-chiplet target — the only configuration this PHY is proven in —
     // takes a 25 MHz clk_wiz output through exactly this /8 counter to give
-    // user_ref_clk = 3.125 MHz. An earlier revision of this file fed the PHY
-    // 100 MHz straight from the MMCM, i.e. 32x the proven rate, and place &
-    // route could not close (WNS -4.45 ns, TNS -495 ns concentrated in the
-    // link domain).
+    // user_ref_clk = 3.125 MHz. Feeding the PHY 100 MHz straight from the MMCM
+    // (32x the proven rate) does not close place & route: WNS -4.45 ns,
+    // TNS -495 ns, concentrated in the link domain.
     //
     // tidelink_phy_clk_div2 is REUSED from the KR260 target rather than
     // reimplemented, for two reasons: it keeps one definition of the divider,
