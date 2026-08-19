@@ -349,11 +349,40 @@ Full classification (all 157 individually coded, annotated inline in
   Seal-ring/corner/M1–M8+CO+VIA-stack construction (`CSR.*`, `SR.*`, `CO.*`, `VIAx.S.*`,
   `M1/M2.A.2+S.2*`, `M3/M5/M7.S.3/.4`). The geometric-attribution finding above extends
   directly to this whole family, not just the three originally-tracked rules.
-- **a-2, 10 rules — REAL, actionable, and the cheapest real fix in this whole set.** Dummy
-  OD/PO/metal fill colliding with periphery/seal-ring content that was invisible (black-boxed)
-  when the fill was generated (`DOD.*`, `DPO.*`, `USER_GUIDE.2`, `RM.WARN.2`, `DTCD.*`).
-  Coordinate-sampled as periodic, non-overlapping — fixable via a fill keepout margin, not a
-  broker question. **Highest-confidence, most actionable bucket.**
+- **a-2, 10 rules — REAL, but "fixable via a fill keepout margin, no broker question" was
+  WRONG as first stated, and it is worse than "relocate the fix," not just narrower. Corrected
+  2026-08-19.** Dummy OD/PO/metal fill colliding with periphery/seal-ring content that was
+  invisible (black-boxed) when the fill was generated (`DOD.*`, `DPO.*`, `USER_GUIDE.2`,
+  `RM.WARN.2`, `DTCD.*`). Coordinate-sampled as periodic, non-overlapping.
+
+  **We do not run a fill pass at all** — `ASIC/eth-chiplet/design.mk:1117` sets
+  `METAL_FILL_OWNER ?= foundry`, `ROUTE_METAL_FILL` stays `0` by design (`design.mk:1096`,
+  `4b_pnr_route_eval.tcl:134`, confirmed in `route_gate.txt`: "METAL_FILL is 0, so no dummy
+  metal was inserted"). So the dummy fill colliding with periphery content in the archive
+  isn't ours — it's inserted downstream, by whoever merged that archive. There is no fill-pass
+  knob in our flow to set.
+
+  **Checked whether the "ship blockage geometry instead" route is actually open, because it
+  looked promising: it isn't, today.** `floorplan.tcl:198-232` already has exactly the right
+  blockage — `CSR_CORNER_KEEPOUT`, `create_route_blockage -fills -layers {M1..M9 AP}`, the same
+  four 74×74µm corner squares, explicitly commented as serving both `CSR.R.1` *and* dummy fill
+  ("one keep-out serves both"), and *proven* to be honoured by a real fill pass (measured
+  2026-08-08, against Innovus's own `add_metal_fill`). But `create_route_blockage` is an
+  Innovus-session-internal construct — nothing in `gdsmap_derive.py` or anywhere else in this
+  flow translates it into real geometry on the layers a foundry dummy-fill utility would
+  actually read (`DMEXCL`/`ODBLK`/`POBLK` — confirmed by exhaustive grep: those three layer
+  names appear **nowhere** in any of our scripts). So this blockage is proven to work for a
+  fill pass we don't run, and never reaches the stream a foundry fill pass would read at all.
+  Making this route real would mean building a new step that draws literal geometry on
+  whichever exclusion layer TSMC's dummy-fill utility expects — and the archive's own
+  documentation hints this has to match a specific vendor format ("OD/PO/PP/NP/POBLK/ODBLK
+  layout in the TCDDMY must exactly same as them in tsmc's utility"), not just "a shape on a
+  layer named ODBLK." That is new engineering with an uncertain spec, not a margin tweak.
+
+  **So bucket a-2 collapses to the same place as a-1 and a-3: a broker message, not a local
+  fix.** The honest ask: request the die-corner dummy-fill exclusion explicitly, consistent
+  with the `CSR.R.1` chamfer requirement they already document — cheap to ASK, not cheap to
+  implement ourselves.
 - **a-3, 74 rules — REAL, but vendor-IP-internal.** ESD/IO-device and transistor geometry
   inside pad/ESD-guard/corner-cell interiors — same evidentiary class as the already-closed
   `PO.R.8`. Real content, likely not independently fixable without a broker/vendor waiver.
@@ -366,9 +395,12 @@ Full classification (all 157 individually coded, annotated inline in
 **43 of 157 are capped at exactly 1000** (true count unknown), spread across every bucket —
 including `ESD.23g` at `1000 (5368)`, a 5.4× underreport, the largest true-count gap in the set.
 
-**Priority, ranked:** (1) a-2's capped rules (8 of 10) — cheapest fix, unknown true severity;
-(2) a-1's capped rules (27 of 59) — same root as the already-open `CSR.R.1` family, the
-corner-rotation `.io` fix won't touch these; (3) `ESD.23g` specifically — needs a vendor read
+**Priority, ranked (revised now that a-2 is a broker item, not a local one):** (1) a-1's capped
+rules (27 of 59) — same root as the already-open `CSR.R.1` family, the corner-rotation `.io`
+fix won't touch these, and it's the one item here a local ESD-ruling decision can actually
+close; (2) fold a-2's ask into whatever goes to the broker alongside `CSR.R.1` and `CSR.R.2`/
+`EN.8` — same message, same corner-region rationale, marginal cost to add; (3) `ESD.23g`
+specifically — needs a vendor read
 on whether it's pre-qualified; (4) bucket (b) — needs a direct duplication test (rerun with the
 two merged libraries de-duplicated) before treating as noise or as real.
 
