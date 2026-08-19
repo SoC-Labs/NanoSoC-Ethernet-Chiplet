@@ -44,6 +44,25 @@ LAYERLESS = {0x0A, 0x0B}
 ENDLIB    = 0x04   # last record of a well-formed stream
 
 
+def block_padding(head, fh):
+    """The rest of the file if it is nothing but zero bytes, else None.
+
+    GDSII is a TAPE format and a stream is conventionally padded with zeros to a
+    2048-byte block. Those zeros parse as a record of declared length 0, which
+    the truncation guards refuse — and would refuse on a perfectly good file.
+    Measured on ASIC/romlibs/eth_rom/eth_rom_via.gds2, a memory-compiler output
+    this project ships: 7,170,048 bytes = 2048 x 3501, ENDLIB at offset
+    7,168,934, then 1,110 zeros. This filter called it corrupt and exited 1.
+
+    PADDING ONLY COUNTS AFTER ENDLIB, and the caller enforces that. Zeros before
+    the end of the library are a truncated stream however round the file size is,
+    which is the distinction that keeps this from re-opening the hole the guards
+    were added to close.
+    """
+    tail = head + fh.read()
+    return tail if not any(tail) else None
+
+
 def strip(src, dst, base, dry_run):
     """Copy `src` to `dst`, dropping every element on a layer at or above `base`."""
     kept = Counter()
@@ -69,6 +88,16 @@ def strip(src, dst, base, dry_run):
             head = fh.read(4)
             if not head:
                 break                       # clean end of file
+            # `saw_endlib and` first, deliberately: this runs per record on a
+            # stream with millions of them, and before ENDLIB there is nothing
+            # to test.
+            if saw_endlib and (len(head) < 4
+                               or struct.unpack(">H", head[:2])[0] < 4):
+                pad = block_padding(head, fh)
+                if pad is not None:
+                    if out is not None:
+                        out.write(pad)
+                    break
             if len(head) < 4:
                 # A stream that runs out mid-record is not a stream that ended.
                 # Breaking here would copy a truncated input and report a
