@@ -4,16 +4,66 @@
 #
 # Copyright 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
-# `make elab` structurally elaborates nanosoc_eth_chiplet under VCS — the proof
-# that the wrapper wires the three components together consistently.
+# WHAT THIS DRIVES
+#   nanosoc_eth_chiplet — the integration top that wires three submodules
+#   (nanosoc-multicore-system, tidelink, tidechart) into one die — plus every
+#   gate run over it and the ASIC flow that implements it.
 #
-# The three components each own their environment, and sourcing three set_env.sh
-# scripts by hand is exactly what the wrapper's own set_env.sh refuses to do.
-# So the ENVIRONMENT is assembled HERE, in the recipe, in dependency order:
-#   1. this repo's set_env.sh   — component roots + sys_desc lib dirs
-#   2. the SoC's set_env.sh      — ETHMAC/PHC/IPC/CMSDK/tech dirs the SoC flist needs
-#   3. TideLink's set_env.sh     — CMSDK_FPGA_SRAM_V + XHB500 (generated on first run)
-# Order matters: TideLink defaults CMSDK_DIR with `:=`, so the SoC's choice wins.
+#   `make help` lists every target, grouped. Bare `make` prints that help and
+#   starts nothing.
+#
+# WHERE THE BUILD LOGIC LIVES — six makefiles, one job each
+#   Makefile (this file)        gates, generated file lists, and pass-throughs
+#                               into the ASIC flows. The only tool it invokes
+#                               directly is `vcs`, for `elab`.
+#   ASIC/eth-chiplet/Makefile   three lines: design.mk, then the asic-toolkit's
+#                               mk/flow.mk. THE flow that builds the chip.
+#   ASIC/eth-chiplet/design.mk  this design's contract with the toolkit —
+#                               libraries, floorplan, MMMC, stage order, and the
+#                               project-only stages (DRC, LVS, LEC, ROM).
+#   ASIC/common.mk              environment and PDK/IP path resolution shared by
+#                               both ASIC flows; included by design.mk and by
+#                               ASIC/genus-innovus. Set a project constant here.
+#   ASIC/rom_gate.mk            boot-ROM content verification (included by
+#                               common.mk).
+#   ASIC/rom_build.mk           per-run boot-ROM compilation and its cache
+#                               (included by common.mk, after rom_gate.mk).
+#   ASIC/genus-innovus/         the frozen legacy implementation flow, and still
+#                               the only home of LVS and the padring GDS check.
+#   ci-pipeline.conf            the whole check ladder, run by the toolkit's
+#                               ci/pipeline.sh — see `asic-pipeline`.
+#
+# VARIABLES A USER SETS
+#   RUN_TAG=<name>  which ASIC build directory to work in,
+#                   ASIC/eth-chiplet/build/<name> (default: `default`).
+#                   Command-line variables propagate into sub-makes, so
+#                   `make asic-syn RUN_TAG=fp1505` reaches the flow.
+#   ARGS=--quick    passed through to scripts/regress.sh.
+#   GDS=<path>      the stream `asic-padring-gds` should check.
+#   HOOK_INSTALLER  path to the toolkit's git-hook installer, if the search
+#                   in `hooks` does not find it.
+#
+# TWO TRAPS
+#   1. Adding RTL to tidelink/flists/tidelink_top_full_asic.flist puts NOTHING
+#      in the chip. The ASIC build reads a GENERATED flist: `asic-flist` below
+#      resolves tidelink_top_full_asic_V2 into build/chip/flist/tidelink_asic.flist,
+#      and flist/nanosoc_eth_chiplet_asic.flist -f-includes only that generated
+#      file. V2 is the ship configuration; the V1 flist reaches nothing here.
+#      `syn` in design.mk depends on asic-flist, so the render is never skipped.
+#   2. `make -n` and `make -q` are NOT target-existence probes in this tree. GNU
+#      make runs recursive `$(MAKE)` lines even under -n/-t/-q, so the
+#      pass-throughs below really enter the ASIC flows and can take a licence
+#      seat. To ask what exists, read the makefile or run
+#      `make -pRrq < /dev/null`, which only parses and prints the database.
+#
+# THE ENVIRONMENT IS ASSEMBLED IN THE RECIPES, not by one set_env.sh. Each
+# component owns its own; `elab` and `asic-flist` source all three in dependency
+# order — this repo, then the SoC, then TideLink — because TideLink defaults
+# CMSDK_DIR with `:=` and the SoC's choice has to win.
+#
+# HELP TEXT LIVES NEXT TO ITS TARGET. A line `## <target>: <one line>` is picked
+# up by `help`; `##@<n> <title>` opens a group, printed in number order. Plain
+# `#` comments are never listed, so use `#` for anything that is not help text.
 #-----------------------------------------------------------------------------
 
 SHELL := /bin/bash
@@ -24,33 +74,34 @@ FLIST        := $(CHIPLET_HOME)/flist/nanosoc_eth_chiplet.flist
 TOP          := nanosoc_eth_chiplet
 SIMV         := simv_chiplet
 BUILD        := $(CHIPLET_HOME)/build/elab
-# VCS-readable, flattened copy of the SoC's generated flist (see the recipe).
+
+# Generated file lists. The *_VCS_* pair is flattened for VCS (`elab`); the
+# *_ASIC_* pair is what the ASIC flist -f-includes. Both are rendered by the
+# recipes below, never hand-edited.
 export CHIPLET_SOC_VCS_FLIST := $(BUILD)/soc_vcs.f
 export CHIPLET_SOC_ASIC_FLIST := $(CHIPLET_HOME)/build/chip/flist/soc.flist
-# TideLink's flist with the shadowed deps module removed, so exactly one
-# definition of every module reaches the compiler. See resolve_tidelink_flist.py:
-# relying on VCS "last declaration wins" would let a first-wins tool silently
-# bind an RTL copy that lacks the a2l reset-skew fix.
+# resolve_tidelink_flist.py drops TideLink's shadowed deps module so exactly
+# one definition of every module reaches the compiler: leaning on VCS's "last
+# declaration wins" would let a first-wins tool bind the copy that lacks the
+# a2l reset-skew fix.
 export CHIPLET_TL_VCS_FLIST := $(BUILD)/tidelink_vcs.f
 export CHIPLET_TL_ASIC_FLIST := $(CHIPLET_HOME)/build/chip/flist/tidelink_asic.flist
 
 VCS_FLAGS    := -full64 -sverilog -timescale=1ns/1ps
 
-# THE FLOW THAT BUILDS THIS CHIP. ASIC/eth-chiplet is the asic-toolkit entry
-# point - its Makefile is three lines: design.mk, then the toolkit's mk/flow.mk.
-# Every artefact under signoff came out of it: the shipping GDS is
-# ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds and
-# the shipping netlist carries the toolkit's own provenance block
-# (reports/syn_manifest.txt: toolkit_git_sha).
+# The flow that builds this chip: the asic-toolkit entry point. Everything
+# under signoff came out of it — the shipping GDS is
+# ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds,
+# and the shipping netlist carries the toolkit's provenance block in
+# reports/syn_manifest.txt.
 ASIC_DIR     := $(CHIPLET_HOME)/ASIC/eth-chiplet
 
-# THE LEGACY FLOW, kept runnable and deliberately NOT deleted - reachable as
-# `make asic-*-legacy` below. It last drove a tool on 2026-08-13 22:57
-# (work/innovus.log7) and its outputs/ holds no netlist and no GDS, so it did
-# not build anything now under signoff. The DIRECTORY still matters for reasons
-# that have nothing to do with its flow stages: design.mk reads its floorplan,
-# power plan, mmmc and io, and it hosts lec/rail/romlibs. Retiring the four
-# stage targets and retiring this directory are different changes.
+# The legacy flow. Frozen, still runnable, reachable as `make asic-*-legacy`;
+# no CI gate calls it and its outputs/ holds no netlist and no GDS. The
+# DIRECTORY is still live for reasons unrelated to its stages: design.mk reads
+# its floorplan, power plan, MMMC and .io files, and it hosts lec/rail/romlibs
+# and the LVS setup. Retiring the stage targets and retiring the directory are
+# different changes.
 LEGACY_ASIC_DIR := $(CHIPLET_HOME)/ASIC/genus-innovus
 
 TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
@@ -64,73 +115,36 @@ TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 .PHONY: asic-gds-legacy asic-lec-pnr-legacy asic-drc-legacy
 .PHONY: asic-lvs-legacy asic-lvs-pre-legacy
 
-# Bare `make` used to run `bootstrap` — a 42-submodule fetch — because it was
-# the first target in the file. Show what is available instead.
+# Bare `make` must not start a 42-submodule fetch, which is what happened when
+# `bootstrap` was simply the first target in the file.
 .DEFAULT_GOAL := help
 
-## help: the targets in this Makefile, grouped by what they are for.
+##@1 Setup
+
+## help: list every target in this Makefile, grouped by what it is for.
 help:
-	@echo "nanosoc_eth_chiplet — integration top"
-	@echo ""
-	@echo "  Setup:"
-	@echo "    make bootstrap     fetch all 42 submodules (see scripts/bootstrap.sh)"
-	@echo "    make hooks         install the pre-commit / pre-push vendor guards"
-	@echo ""
-	@echo "  Gates (what CI runs nightly — .github/workflows/nightly.yml):"
-	@echo "    make check         vendor-check + chip-boundary + Verilator lint. No EDA licence."
-	@echo "    make elab          VCS structural elaboration"
-	@echo "    make elab-strict   xrun -hal; fails on a synthesis-blocking multi-driver"
-	@echo "    make regress       every data-plane sim proof (ARGS=--quick to skip the long pole)"
-	@echo "    make cdc           structural CDC pass (Cadence HAL)"
-	@echo ""
-	@echo "  Individual checks:"
-	@echo "    make chip-boundary every RTL port classified exactly once"
-	@echo "    make chip-wrapper  ...and emit build/chip/rtl/nanosoc_eth_chiplet_chip.v"
-	@echo "    make lint          Verilator structural lint"
-	@echo "    make vendor-check  no TSMC collateral tracked in this PUBLIC repo."
-	@echo "                       Both scanners, the same two the PR gate runs."
-	@echo ""
-	@echo "  ASIC implementation — delegates to ASIC/eth-chiplet, the asic-toolkit"
-	@echo "  flow that built the shipping GDS and netlist:"
-	@echo "    make asic-status   which flow stages have run"
-	@echo "    make asic-syn      synthesis (Genus)"
-	@echo "    make asic-pnr      place + CTS + route -> GDSII (Innovus). Multi-hour."
-	@echo "    make asic-gds      syn + place + cts + route, unattended, end to end"
-	@echo "    make asic-lec-pnr  Conformal LEC: synthesis netlist vs post-P&R netlist"
-	@echo "    make asic-pipeline every check this design declares, in dependency"
-	@echo "                       order, CONTINUING PAST FAILURES, then collated."
-	@echo "                       A superset of asic-gds; no legacy equivalent."
-	@echo "                       asic-pipeline-resume re-runs only what has not passed."
-	@echo "    make asic-drc      Calibre DRC on the built GDS"
-	@echo "    make asic-padring-gds  padframe name/count/order check on the built GDS"
-	@echo "    make asic          the flow's own help, with every target"
-	@echo ""
-	@echo ""
-	@echo "  LVS still runs out of ASIC/genus-innovus: this design's LVS inputs are"
-	@echo "  declared in its lvs_project.mk and nowhere else."
-	@echo "    make asic-lvs      Calibre nmLVS (asic-lvs-pre for the preflight alone)"
-	@echo ""
-	@echo "  The legacy IMPLEMENTATION flow is kept runnable but is no longer what"
-	@echo "  ships — it last drove a tool on 2026-08-13 and its outputs/ has no"
-	@echo "  netlist and no GDS. Reach it with the same names plus -legacy:"
-	@echo "    asic-legacy asic-status-legacy asic-syn-legacy asic-pnr-legacy"
-	@echo "    asic-gds-legacy asic-lec-pnr-legacy asic-drc-legacy"
-	@echo ""
-	@echo "    make asic-flist    re-render the generated ASIC sub-flists"
-	@echo "    make clean         remove build/elab"
+	@echo "nanosoc_eth_chiplet — integration top.   usage: make <target> [VAR=value]"
+	awk '
+	  /^##@[0-9]/ { n = substr($$0, 4) + 0; t = substr($$0, 4);
+	                sub(/^[0-9]+[ \t]*/, "", t); title[n] = t; cur = n; next }
+	  /^## [a-z][a-zA-Z0-9_.-]*:/ { e = substr($$0, 4); c = index(e, ":");
+	                body[cur] = body[cur] sprintf("  %-22s %s\n",
+	                            substr(e, 1, c-1), substr(e, c+2)) }
+	  END { for (i = 1; i <= 9; i++)
+	          if (title[i] != "") printf "\n%s\n%s", title[i], body[i] }
+	' "$(CHIPLET_HOME)/Makefile"
+	echo
+	echo "  RUN_TAG=<name> selects the ASIC build dir; ARGS= is passed to regress.sh."
+	echo "  LVS and the padring GDS check still run out of ASIC/genus-innovus."
+	echo "  -n / -q do NOT probe for a target here: the ASIC pass-throughs run under them."
+	echo
 
 #-----------------------------------------------------------------------------
 # ASIC pass-throughs
 #-----------------------------------------------------------------------------
-# So the implementation flow is reachable from the repo root like every other
-# gate, instead of requiring a cd into a directory you have to know about.
-# $(ASIC_DIR)/Makefile is the authority; these only forward.
-#
-# THESE NAME THE TOOLKIT FLOW, AND THAT IS THE POINT OF THIS BLOCK. Until
-# 2026-08-18 every line here forwarded to ASIC/genus-innovus, so `make help`
-# pointed a newcomer at a flow that last produced an artefact on 08-13 while
-# the GDS, netlist, SDF and reports under signoff all came from the toolkit.
-# The stage names differ between the two flows and are mapped one-for-one:
+# The implementation flow reachable from the repo root like every other gate.
+# $(ASIC_DIR)/Makefile is the authority; these only forward, and the stage names
+# differ between the two flows, so the mapping is spelled out once:
 #
 #     root target       toolkit ($(ASIC_DIR))   legacy ($(LEGACY_ASIC_DIR))
 #     asic              help                    help
@@ -139,153 +153,129 @@ help:
 #     asic-pnr          place cts route         pnr_place pnr_cts pnr_route
 #     asic-gds          all                     pnr_all
 #     asic-lec-pnr      lec-pnr                 lec-pnr
-#     asic-pipeline     pipeline                - none; see below
-#     asic-drc          drc                     drc          <- asic-drc-legacy
-#     asic-lvs          lvs                     lvs          <- asic-lvs-legacy
-#     asic-lvs-pre      lvs-preflight           lvs-preflight<- asic-lvs-pre-legacy
+#     asic-pipeline     pipeline                — none
+#     asic-drc          drc                     drc            (asic-drc-legacy)
+#     asic-lvs          lvs                     lvs            (asic-lvs-legacy)
+#     asic-lvs-pre      lvs-preflight           lvs-preflight  (asic-lvs-pre-legacy)
 #
-# `pipeline` has NO legacy counterpart, so there is no asic-pipeline-legacy.
-# It is not `all` under another name: `all` is syn->place->cts->route, four
-# stages, stopping at the first failure; `pipeline` runs the whole declared
-# ladder and deliberately continues past failures.
+# `pipeline` is not `all` renamed: `all` is syn->place->cts->route and stops at
+# the first failure, while `pipeline` runs the whole declared ladder from
+# ci-pipeline.conf and deliberately continues past failures. There is no legacy
+# counterpart, hence no asic-pipeline-legacy.
+#
+# NONE of these pass a RUN_TAG, so a bare `make asic-<stage>` works in
+# build/default. ci/signoff.yaml spells its own tag out rather than calling
+# these. A command-line RUN_TAG= reaches the sub-make.
+
+##@6 ASIC implementation — ASIC/eth-chiplet, the asic-toolkit flow
+
+## asic: the ASIC flow's own help, listing every stage it offers.
 asic:        ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory help
+## asic-status: which flow stages have run in this build directory.
 asic-status: ; @$(MAKE) -C $(ASIC_DIR) --no-print-directory status
+## asic-syn: synthesis (Genus) -> gate netlist, SDC and reports.
 asic-syn:    ; $(MAKE) -C $(ASIC_DIR) syn
+## asic-pnr: place + CTS + route (Innovus) -> routed DB and GDSII. Multi-hour.
 asic-pnr:    ; $(MAKE) -C $(ASIC_DIR) place cts route
+## asic-gds: syn + place + cts + route, unattended, end to end.
 asic-gds:    ; $(MAKE) -C $(ASIC_DIR) all
+## asic-lec-pnr: Conformal LEC, synthesis netlist against the post-P&R netlist.
 asic-lec-pnr: ; $(MAKE) -C $(ASIC_DIR) lec-pnr
-
-## DRC MOVED 2026-08-18; LVS DID NOT, AND THE SPLIT IS THE POINT OF THIS BLOCK.
-## Until that date all three named $(LEGACY_ASIC_DIR), with a note here saying
-## they could only move once the drc stage's census path, artefact globs and
-## fixtures moved in the same commit. They now have: ci/signoff.yaml's `drc`
-## reads ASIC/eth-chiplet/build/$(RUN_TAG)/work/drc_run and declares the
-## toolkit's GDS, so this forwarder is no longer the odd one out.
-##
-## The deck did not change with it. The toolkit dispatches `drc` to drc-project,
-## whose runner is $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh (design.mk:434)
-## with DRC_DECK empty so it takes its assembling branch — the same script, the
-## same foundry deck, a different GDS.
-##
-## NOTE ON THE RUN TAG. Like every toolkit forwarder here, this one carries no
-## RUN_TAG, so it resolves to build/default. That is the right default for a
-## human typing `make asic-drc`, and it is why ci/signoff.yaml spells its own
-## invocation out with the tag rather than calling this target.
-asic-drc:        ; $(MAKE) -C $(ASIC_DIR) drc
-asic-drc-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) drc
-## asic-padring-gds: the local, license-free analog of the foundry's
-## CompareCells + Padringcheck -- checks the padframe cell names/counts/order
-## actually streamed into a GDS against the pad ring's own sources. See
-## scripts/check_padring_gds.py for what it can and cannot verify.
-##
-## LEGACY_ASIC_DIR, LIKE asic-drc-legacy ABOVE, NOT ASIC_DIR. The target this
-## forwards to (`padring-gds` in ASIC/genus-innovus/Makefile) was built and
-## validated there — where the bnd/logo/drc infrastructure it reuses already
-## lives, and where the exact GDS IMEC evaluated could be checked against —
-## and has not yet been ported into the current ASIC/eth-chiplet toolkit. A
-## fresh eth-chiplet build must be pointed at explicitly until it is:
-##   make asic-padring-gds GDS=ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
-asic-padring-gds: ; $(MAKE) -C $(LEGACY_ASIC_DIR) padring-gds
-
-## LVS MOVED 2026-08-18, and the reason it could not move before is gone.
-## The note that stood here said design.mk "sets none of them", so repointing
-## would swap a stage reporting a real blocker for one reporting a missing
-## assignment. That was true when written. 18bf68e ported LVS_DECK,
-## STDCELL_VLOG, IO_VLOG and MACRO_CDLS into design.mk, so it is not true now.
-##
-## WHY THIS HAD TO MOVE, measured 2026-08-18 before the change:
-##   make asic-lvs-pre  ->  rc=0, "OK — both layers clean"
-##     LVS_GDS = $(LEGACY_ASIC_DIR)/runs/20260810T065131Z_honest-full-pnr2/
-##               outputs/nanosoc_eth_chiplet_pads_lvs.gds
-##               2026-08-10, 312,031,404 bytes
-## An eight-day-old artefact of the flow this very block calls no-longer-
-## shipping, graded green by the command ci/signoff.yaml runs. A gate pointed at
-## a stream nobody is building is worse than no gate: it answers a question no
-## one asked and reports it as the answer to the one they did.
-##
-## After, on the shipping build:
-##   make -C $(ASIC_DIR) lvs-preflight RUN_TAG=full-20260814
-##     ->  rc=0, 14/14 inputs OK, all eight macro CDLs resolved
-##
-## THE RUN TAG, and why the default is safe here where it was not before.
-## Like every toolkit forwarder in this block this one carries no RUN_TAG, so a
-## human typing `make asic-lvs-pre` gets build/default. That resolves to a
-## directory with no GDS, no netlist and no romlibs, and the toolkit's layer-1
-## chk() names each one:
-##   MISS LVS_GDS / MISS LVS_SRC_V / MISS MACRO_CDLS ...   ->  rc=2
-## Loud and wrong-proof, which is the opposite of what the legacy default did.
-## ci/signoff.yaml spells the tag out itself rather than calling this target.
-##
-## asic-lvs IS REPOINTED TOO, DELIBERATELY, AND HAS NEVER BEEN RUN THERE.
-## Leaving the full run on legacy while preflight moved would mean the two
-## halves of one gate grading two different streams — the precise defect this
-## commit exists to remove, reintroduced one target along. So they name one
-## flow. But `lvs` takes a Calibre licence and a long run, and it has NOT been
-## executed on the toolkit path: preflight-clean is not run-clean. Treat the
-## first `make asic-lvs` as an experiment, not a regression.
-asic-lvs:         ; $(MAKE) -C $(ASIC_DIR) lvs
-asic-lvs-pre:     ; $(MAKE) -C $(ASIC_DIR) lvs-preflight
-asic-lvs-legacy:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs
-asic-lvs-pre-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs-preflight
+## asic-pipeline: run every declared check in order, past failures, then collate.
+## asic-pipeline-resume: re-run only the pipeline stages that have not passed.
+#  A superset of asic-gds. The ladder is declared in ci-pipeline.conf.
 asic-pipeline:        ; $(MAKE) -C $(ASIC_DIR) pipeline
 asic-pipeline-resume: ; $(MAKE) -C $(ASIC_DIR) pipeline-resume
 
-# The legacy flow, still reachable and still runnable. Renamed rather than
-# removed: doc 41 Step 3 is "freeze, do not delete", and these four stage
-# targets (syn, pnr_place, pnr_cts, pnr_route) are the ONLY entry points in the
-# repository that reach the ASIC/asic-flows submodule at all. No CI gate calls
-# any of them.
+##@7 Physical signoff gates
+
+# The toolkit dispatches `drc` to drc-project, whose runner is
+# $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh (design.mk:434) with DRC_DECK
+# empty so it takes its assembling branch — same script and same foundry deck
+# as the legacy stage, pointed at a different GDS.
+## asic-drc: Calibre DRC over the GDS this build produced.
+asic-drc:        ; $(MAKE) -C $(ASIC_DIR) drc
+## asic-drc-legacy: the same deck over the legacy flow's GDS.
+asic-drc-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) drc
+
+# The local, licence-free analogue of the foundry's CompareCells +
+# Padringcheck: pad cell names, counts and order in a streamed GDS against the
+# pad ring's own sources. scripts/check_padring_gds.py records what it can and
+# cannot see. It lives in the LEGACY directory with the bnd/logo/drc
+# infrastructure it reuses and has not been ported to the toolkit, so a
+# toolkit-built stream must be named explicitly:
+#   make asic-padring-gds GDS=ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+## asic-padring-gds: padframe name/count/order check on a built GDS.
+asic-padring-gds: ; $(MAKE) -C $(LEGACY_ASIC_DIR) padring-gds
+
+# LVS runs on the toolkit path but has NEVER been executed there — only its
+# preflight has. Preflight-clean is not run-clean; treat the first
+# `make asic-lvs` as an experiment. Both halves name one flow on purpose: when
+# preflight and the full run graded different streams, the gate answered a
+# question nobody had asked and reported it as the answer to the one they had.
+# With no RUN_TAG the toolkit's input check names each missing input and exits
+# 2, rather than silently grading a stale artefact.
+## asic-lvs: Calibre nmLVS on the built layout against the netlist.
+asic-lvs:         ; $(MAKE) -C $(ASIC_DIR) lvs
+## asic-lvs-pre: the LVS input preflight alone — no licence, no long run.
+asic-lvs-pre:     ; $(MAKE) -C $(ASIC_DIR) lvs-preflight
+## asic-lvs-legacy: nmLVS in the legacy flow.
+#  Its lvs_project.mk still holds this design's original LVS input declarations.
+asic-lvs-legacy:     ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs
+## asic-lvs-pre-legacy: that flow's preflight.
+asic-lvs-pre-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lvs-preflight
+
+##@8 Legacy implementation flow — ASIC/genus-innovus, frozen
+
+# Kept runnable, not deleted: these four stage targets are the only entry
+# points in the repository that reach the ASIC/asic-flows submodule at all.
+# No CI gate calls any of them.
+## asic-legacy: the legacy flow's own help.
 asic-legacy:        ; @$(MAKE) -C $(LEGACY_ASIC_DIR) --no-print-directory help
+## asic-status-legacy: which legacy stages have run.
 asic-status-legacy: ; @$(MAKE) -C $(LEGACY_ASIC_DIR) --no-print-directory status
+## asic-syn-legacy: synthesis in the legacy flow.
 asic-syn-legacy:    ; $(MAKE) -C $(LEGACY_ASIC_DIR) syn
+## asic-pnr-legacy: place + CTS + route in the legacy flow.
 asic-pnr-legacy:    ; $(MAKE) -C $(LEGACY_ASIC_DIR) pnr_place pnr_cts pnr_route
+## asic-gds-legacy: the legacy flow's full P&R to GDSII.
 asic-gds-legacy:    ; $(MAKE) -C $(LEGACY_ASIC_DIR) pnr_all
+## asic-lec-pnr-legacy: LEC over the legacy flow's netlists.
 asic-lec-pnr-legacy: ; $(MAKE) -C $(LEGACY_ASIC_DIR) lec-pnr
 
-## bootstrap: fetch all 42 submodules. Not `git clone --recursive` — see the script.
+##@1 Setup
+
+## bootstrap: fetch all 42 submodules (not `git clone --recursive`).
+#  Some remotes are SSH-only and are fetched separately; see scripts/bootstrap.sh.
 bootstrap:
 	"$(CHIPLET_HOME)/scripts/bootstrap.sh"
 
-## lint: structural lint (Verilator) over the wrapper RTL. Catches the class of
-## defect `elab` cannot see (combinational loops, latches, width/undriven). See
-## docs/LINT_FINDINGS.md.
+##@2 Fast checks — no EDA licence, runnable in a fresh clone
+
+## lint: Verilator structural lint over the wrapper RTL.
+#  Combinational loops, inferred latches, width and undriven-net faults that
+#  `elab` cannot see.
+#  Findings and waivers: docs/verification/LINT_FINDINGS.md.
 lint:
 	"$(CHIPLET_HOME)/scripts/lint.sh"
 
-## vendor-check: no TSMC foundry collateral is TRACKED. This repository is
-## PUBLIC and the PDK licence does not permit reproducing vendor files; the tree
-## carried a 414 kB copy of TSMC's IO-driver LEF for months. Costs nothing and
-## needs no tool, so it runs first in `check`. See the scripts for the full
-## argument and for the "ship the transform, not the result" pattern.
-##
-## TWO SCANNERS, THE SAME TWO THE PR GATE RUNS, IN THE SAME ORDER. That is the
-## whole reason this target changed shape:
-##
-##   check_no_vendor_collateral.sh    tracked *.lef by content SHA and by size,
-##   (scripts/ci/)                    plus — only where a PDK is readable — runs
-##                                    of VERBATIM vendor text in a file of any
-##                                    type. The verbatim half is the only control
-##                                    anywhere here that catches copying without
-##                                    somebody first guessing which values are
-##                                    the secret ones.
-##
-##   check-vendor-collateral.sh       extension (~20 collateral suffixes), size,
-##   (ASIC/asic-toolkit/ci/)          content SHA, and seven text rules for
-##                                    values, GDS layer/datatype pairs,
-##                                    revision-coded release names, absolute site
-##                                    paths and captured licence output. No PDK,
-##                                    no licence, no tool.
-##
-## Neither is a superset of the other. The first cannot see a tracked .tlef at
-## all — its corpus is the pathspec `*.lef`, which does not match .tlef and never
-## looks at .lib, .captable, .map or .gds. Measured on a scratch tree of three
-## ~244 kB invented vendor-shaped files under those suffixes: the first exits 0,
-## the second exits 1.
-##
-## AND THIS TARGET RUNS BOTH BECAUSE CI DOES. A local gate that is greener than
-## the PR check is worse than no local gate: it sends people to a red PR having
-## already been told they were clean, and the second time that happens they stop
-## running the local one. If the two ever need to differ, change CI first.
+## vendor-check: prove no TSMC foundry collateral is tracked in this PUBLIC repo.
+#  The PDK licence does not permit reproducing vendor files.
+#
+#  BOTH scanners run, in the order the PR gate runs them, and neither is a
+#  superset of the other:
+#    scripts/ci/check_no_vendor_collateral.sh   tracked *.lef by content SHA
+#      and size, plus — only where a PDK is readable — runs of verbatim vendor
+#      text in a file of any type. Its pathspec cannot match .tlef, .lib,
+#      .captable, .map or .gds.
+#    ASIC/asic-toolkit/ci/check-vendor-collateral.sh   ~20 collateral
+#      suffixes, size, content SHA, and seven text rules (values, GDS
+#      layer/datatype pairs, revision-coded release names, absolute site paths,
+#      captured licence output). Needs no PDK, licence or tool.
+#
+#  A local gate greener than the PR gate is worse than none: it sends people to
+#  a red PR having told them they were clean. If the two must differ, change CI
+#  first. A missing toolkit scanner is a FAILURE here, not a skip.
 vendor-check:
 	@set -uo pipefail
 	rc=0
@@ -324,14 +314,14 @@ vendor-check:
 	echo
 	echo "== vendor-check OK: both scanners clean =="
 
-## hooks: install the toolkit's pre-commit / pre-push guards into THIS clone.
-## CI catches vendor collateral after it is pushed; a hook catches it before it
-## leaves the machine, which for licensed foundry data is the difference that
-## matters. The hooks and their installer are the TOOLKIT's — ASIC/asic-toolkit
-## is a submodule, so they are reachable from here — and this target only calls
-## the installer. It deliberately does NOT reimplement it: two copies of an
-## install routine drift, and the one in this repo would be the stale one.
-## Override the path with `make hooks HOOK_INSTALLER=/path/to/installer`.
+##@1 Setup
+
+## hooks: install the toolkit's pre-commit / pre-push vendor guards in this clone.
+#  CI catches vendor collateral after a push; a hook catches it before
+#  it leaves the machine. The hooks and the installer belong to the toolkit
+#  submodule and this target only calls it — a second copy of the install
+#  routine here would be the one that goes stale. Point it at a specific
+#  installer with `make hooks HOOK_INSTALLER=/path/to/installer`.
 HOOK_INSTALLER ?=
 HOOK_ARGS      ?=
 hooks:
@@ -390,61 +380,66 @@ hooks:
 	    exit 1
 	fi
 
-## check: the fast, EDA-license-free gates a fresh clone can run — licence
-## hygiene, boundary coverage, structural lint. `make elab` and the verif/ envs
-## need VCS on top.
+##@2 Fast checks — no EDA licence, runnable in a fresh clone
+
+## check: the licence-free gate set - vendor-check + chip-boundary + lint.
+#  `elab` and the verif/ environments need a tool licence on top.
 check: vendor-check chip-boundary lint
 	@echo "== check OK: vendor-check + chip-boundary + lint clean =="
 
-## regress: the DYNAMIC gate — every simulation proof of the data plane, one
-## pass/fail table (decode tx-gate + hready-loop guards, g2_peer_aperture, and
-## the two-real-SoC g2_soc_pair write+read+burst). Needs VCS. `--quick` via
-## `make regress ARGS=--quick` skips the two-SoC long pole. See scripts/regress.sh.
+##@3 Simulation and structural gates — need a tool licence
+
+## regress: every data-plane simulation proof, as one pass/fail table. Needs VCS.
+#  Decode tx-gate and hready-loop guards, g2_peer_aperture, and the two-real-SoC
+#  g2_soc_pair write + read + burst. `ARGS=--quick` skips the two-SoC long pole.
+#  See scripts/regress.sh.
 regress:
 	"$(CHIPLET_HOME)/scripts/regress.sh" $(ARGS)
 
-## cdc: first structural CDC pass over the integrated top (Cadence HAL via
-## xrun -hal). ~25 min; needs an Xcelium/HAL license. See docs/CDC_FINDINGS.md.
+## cdc: structural clock-domain-crossing pass over the integrated top.
+#  Cadence HAL via xrun -hal; ~25 min, needs an Xcelium/HAL licence.
+#  Findings: docs/verification/CDC_FINDINGS.md.
 cdc:
 	"$(CHIPLET_HOME)/verif/cdc/run.sh"
 
-## elab-strict: STRICT ASIC-elaboration gate — catches the synthesis blockers a
-## simulator hides, above all a same-clock procedural MULTI-DRIVER (fc_shell/Genus
-## reject it; VCS + Verilator pass it). xrun -hal, gates on MLTDRV in authored RTL.
-## ~25 min; needs an Xcelium/HAL license. See docs/ELAB_STRICT_FINDINGS.md.
+## elab-strict: strict ASIC-elaboration gate for the blockers a simulator hides.
+#  Above all a same-clock procedural MULTI-DRIVER, which fc_shell and Genus
+#  reject but VCS and Verilator accept. xrun -hal, gates on MLTDRV in authored
+#  RTL; ~25 min. See docs/verification/ELAB_STRICT_FINDINGS.md.
 elab-strict:
 	"$(CHIPLET_HOME)/verif/elab_strict/run.sh"
 
 #-----------------------------------------------------------------------------
 # IEEE 1149.1 boundary scan
-#
-# THE PER-DESIGN CONFIGURATION IS THESE SEVEN LINES AND NOTHING ELSE. The three
-# scripts below are design-agnostic; everything specific to this chiplet is here,
-# and a second chiplet adopting the flow changes only this block.
-#
-# WHY THE TABLE IS PARSED FROM A PRISTINE RING. Once the register is spliced in,
-# the pad cells no longer touch the core nets, so re-parsing the live ring yields
-# a table wired to the register itself -- which still elaborates, still lints,
-# still counts 76 cells, and is wrong. gen_pad_table.py refuses to parse a
-# spliced ring for exactly this reason. `bscan-table` therefore recovers the
-# pre-splice ring out of git, parses THAT, and records the repo path.
 #-----------------------------------------------------------------------------
+# The per-design configuration is the seven variables below and nothing else;
+# the three scripts are design-agnostic, so a second chiplet adopting the flow
+# changes only this block.
+#
+# The table is parsed from a PRISTINE ring. Once the register is spliced in the
+# pad cells no longer touch the core nets, so re-parsing the live ring yields a
+# table wired to the register itself — which still elaborates, still lints, still
+# counts 76 cells, and is wrong. gen_pad_table.py refuses to parse a spliced
+# ring; `bscan-table` recovers the pre-splice ring out of git and parses that.
+
+##@4 Boundary scan (IEEE 1149.1)
+
 BSCAN_BLOCK    := nanosoc_eth_chiplet_pads
 BSCAN_MODULE   := nanosoc_eth_chiplet_bscan
 BSCAN_PADRING  := ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v
 BSCAN_IO       := ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io
 BSCAN_TABLE    := src/rtl/bscan/pad_table.json
-# TAP pins are muxed onto existing pads -- no new bonds. SE was bonded and
+# TAP pins are muxed onto existing pads — no new bonds. SE was bonded and
 # driving nothing, which is why it is the enable.
 BSCAN_TAP      := --tap-en uPAD_SE_I --tap-tck uPAD_SWDCK_I --tap-tms uPAD_SWDIO_IO \
                   --tap-tdi uPAD_HOST_IO_0 --tap-tdo uPAD_HOST_IO_1
-# PLACEHOLDER. SoC Labs holds no JEDEC manufacturer ID; until one is assigned a
+# PLACEHOLDER: SoC Labs holds no JEDEC manufacturer ID. Until one is assigned a
 # tester will bind the wrong BSDL to this die.
 BSCAN_IDCODE   := 0x100005A1
 # The commit whose pad ring predates the splice.
 BSCAN_PRISTINE := 458d108
 
-## bscan-table: re-derive the pad table from the PRE-SPLICE pad ring
+## bscan-table: re-derive the pad table from the PRE-SPLICE pad ring.
 bscan-table:
 	@git show $(BSCAN_PRISTINE):$(BSCAN_PADRING) > $(BUILD)/pristine_pads.v
 	python3 "$(CHIPLET_HOME)/scripts/gen_pad_table.py" \
@@ -452,70 +447,78 @@ bscan-table:
 	    --io $(BSCAN_IO) --block $(BSCAN_BLOCK) --module $(BSCAN_MODULE) \
 	    $(BSCAN_TAP) --idcode $(BSCAN_IDCODE) -o $(BSCAN_TABLE)
 
-## bscan-gen: regenerate the wrapper RTL and the BSDL from the table
+## bscan-gen: regenerate the wrapper RTL and the BSDL from the table.
 bscan-gen:
 	python3 "$(CHIPLET_HOME)/scripts/gen_bscan.py"
 
-## bscan-splice: wire the register into the pad ring (idempotent)
+## bscan-splice: wire the register into the pad ring (idempotent).
 bscan-splice:
 	python3 "$(CHIPLET_HOME)/scripts/insert_bscan_padring.py"
 
-## bscan-check: fail if the generated files have drifted from the table
+## bscan-check: fail if the generated files have drifted from the table.
 bscan-check:
 	python3 "$(CHIPLET_HOME)/scripts/gen_bscan.py" --check
 	python3 "$(CHIPLET_HOME)/scripts/insert_bscan_padring.py" --check
 	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py"
 
-## bscan-sim: run the self-checking boundary-scan bench under VCS
+## bscan-sim: run the self-checking boundary-scan bench under VCS.
 bscan-sim:
 	cd "$(CHIPLET_HOME)/verif/bscan" && ./run.sh
 
-## bscan: table -> generate -> splice -> check
+## bscan: table -> generate -> splice -> check.
 bscan: bscan-table bscan-gen bscan-splice bscan-check
 
-## chip-boundary: check the chip-boundary spec covers every RTL port, exactly once.
-## Fails on an unclassified port, a stale name, or a direction/width mismatch.
-## An unclassified port is silently dropped from the wrapper and its inputs float.
+##@2 Fast checks — no EDA licence, runnable in a fresh clone
+
+## chip-boundary: check the boundary spec covers every RTL port exactly once.
+#  Fails on an unclassified port, a stale name, or a direction/width mismatch.
+#  An unclassified port is dropped from the wrapper and its inputs then float.
 chip-boundary:
 	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py"
 
-## chip-wrapper: check, then emit build/chip/rtl/nanosoc_eth_chiplet_chip.v
+## chip-wrapper: chip-boundary, then emit build/chip/rtl/*_chip.v.
 chip-wrapper:
 	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py" --emit "$(CHIPLET_HOME)/build/chip/rtl"
 
-## elab: assemble the environment and run the VCS structural elaboration.
+##@3 Simulation and structural gates — need a tool licence
+
+## elab: structurally elaborate the integration top under VCS.
+#  The proof that the wrapper wires the three components together consistently.
+#  Output: build/elab/simv_chiplet and build/elab/elab.log.
 elab:
 	source "$(CHIPLET_HOME)/set_env.sh"
 	source "$(CHIPLET_HOME)/nanosoc-multicore-system/set_env.sh"
 	source "$(CHIPLET_HOME)/tidelink/set_env.sh"
 	mkdir -p "$(BUILD)"
-	# Flatten the SoC's in-sync generated flist into a VCS-readable one (the
-	# generator emits $()-syntax paths VCS cannot expand; regenerated each run
-	# so it tracks the current build_soc).
+	# Flatten the SoC's generated flist into a VCS-readable one: the generator
+	# emits $()-syntax paths VCS cannot expand. Re-rendered every run so it
+	# tracks the current build_soc.
 	python3 "$(CHIPLET_HOME)/flist/flatten_soc_flist.py" \
 	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore.flist" > "$(CHIPLET_SOC_VCS_FLIST)"
-	# Resolve TideLink's filelist to one definition per module (tool-independent).
-	# V2, to match `asic-flist` — V2 IS THE SHIP CONFIGURATION. This gate used to
-	# resolve the V1 tidelink_fpga.flist, so it structurally elaborated a PHY
-	# configuration the chip does not ship, and it BROKE outright once the shared
-	# local_overrides/Wlink.v began instantiating tidelink_fcemit_obs and
-	# tidelink_winscan_obs: both are listed only in the V2 flist, so V1 failed
-	# with `Error-[CFCILFBI] Cannot find cell in liblist`. No define change is
-	# needed — the V2 flist carries TIDELINK_PHY_V2 via per-file shims rather
-	# than a +define+.
+	# Resolve TideLink's flist to one definition per module (tool-independent).
+	# V2, matching `asic-flist`: V2 IS THE SHIP CONFIGURATION, and it is the only
+	# flist listing tidelink_fcemit_obs / tidelink_winscan_obs, which the shared
+	# local_overrides/Wlink.v instantiates. V1 fails outright with
+	# `Error-[CFCILFBI] Cannot find cell in liblist`. No +define+ is needed: the
+	# V2 flist carries TIDELINK_PHY_V2 through per-file shims.
 	python3 "$(CHIPLET_HOME)/flist/resolve_tidelink_flist.py" \
 	    "$${TIDELINK_HOME}/flists/tidelink_fpga_v2.flist" > "$(CHIPLET_TL_VCS_FLIST)"
 	cd "$(BUILD)"
 	echo "== vcs $(VCS_FLAGS) -f $(FLIST) -top $(TOP) -o $(SIMV) =="
 	vcs $(VCS_FLAGS) -f "$(FLIST)" -top $(TOP) -o "$(SIMV)" -l "$(BUILD)/elab.log"
 
-## asic-flist: render the two generated sub-flists the ASIC flist `-f`-includes.
-## TIDELINK V2 IS THE SHIP CONFIGURATION: we resolve tidelink_top_full_asic_v2
-## (the shared deps/tidelink-phy GPIO-PHY, +define+TIDELINK_PHY_V2), NOT the V1
-## tidelink_top_full_asic. The two carry same-named modules and can never
-## co-compile, so this line alone selects which PHY reaches synthesis.
-## V2 needs the deps/tidelink-phy submodule (SSH remote, not fetched by a plain
-## `git submodule update --init` over https) — `make bootstrap` covers it.
+##@5 Generated file lists
+
+## asic-flist: render build/chip/flist/{soc,tidelink_asic}.flist.
+#  These are the two generated sub-flists the ASIC flist -f-includes.
+#
+#  THIS TARGET SELECTS THE PHY THAT REACHES SYNTHESIS. It resolves
+#  tidelink_top_full_asic_V2 — the shared deps/tidelink-phy GPIO-PHY — not the
+#  V1 tidelink_top_full_asic. The two carry same-named modules and can never
+#  co-compile, so editing V1 changes nothing about this chip.
+#  V2 needs the deps/tidelink-phy submodule, whose remote is SSH-only and is
+#  therefore not fetched by a plain `git submodule update --init`; `make
+#  bootstrap` covers it, and the guard below names the fix if it is missing.
 asic-flist:
 	source "$(CHIPLET_HOME)/set_env.sh"
 	source "$(CHIPLET_HOME)/nanosoc-multicore-system/set_env.sh"
@@ -530,6 +533,8 @@ asic-flist:
 	python3 "$(CHIPLET_HOME)/flist/resolve_tidelink_flist.py" \
 	    "$${TIDELINK_HOME}/flists/tidelink_top_full_asic_v2.flist" > "$(CHIPLET_TL_ASIC_FLIST)"
 
-## clean: remove elaboration artifacts.
+##@9 Cleaning
+
+## clean: remove build/elab (the elaboration artefacts only).
 clean:
 	rm -rf "$(BUILD)"

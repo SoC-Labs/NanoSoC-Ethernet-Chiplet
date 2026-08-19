@@ -5,23 +5,9 @@
 #
 # Copyright (C) 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
-# Included by ASIC/common.mk, immediately before rom_gate.mk -- it BUILDS the
-# ROMs, rom_gate.mk JUDGES them, and the order matters because `rom-run` runs
-# the gate against what it just built.
-#
-# WHAT CHANGED, AND WHY
-# ---------------------
-# ASIC/romlibs/{eth_rom,cc_rom} was a gitignored binary drop, hand-copied out of
-# another user's tapeout tree by `romlibs-fetch` (genus-innovus/Makefile). There
-# was no dependency of any kind between the firmware and those macros: a
-# firmware change could reach the .bintxt and never reach the ROM, and nothing
-# in the flow would notice. It did not notice. Both macros shipped holding
-# something other than their firmware, seven weeks older than their own code
-# files, and they are MASK PROGRAMMED.
-#
-# rom_gate.mk now blocks synthesis on that. This file removes the opportunity:
-# the ROM a run synthesises against is BUILT BY THAT RUN and lives IN that run's
-# directory, beside the netlist and the GDS it produced.
+# Included by ASIC/common.mk immediately before rom_gate.mk: this file BUILDS the
+# ROMs, rom_gate.mk JUDGES them, and the order matters because `rom-run` runs the
+# gate against what it has just built.
 #
 #   make -f ASIC/common.mk rom-run ROM_RUN_DIR=<run>
 #
@@ -31,41 +17,27 @@
 #       against the run-local copy. Synthesis depends on this target, so a run
 #       cannot consume a ROM that was not built for it and checked.
 #
-# THE COST, MEASURED (srv03335, 2026-08-14)
-# -----------------------------------------
-#       liberty      136 s   <- 5 corners; 79% of the whole build
-#       postscript     5.0 s      gds2        5.0 s      lef-fp      4.0 s
-#       bitmap         4.0 s      lvs         3.5 s      apache_avm  3.5 s
-#       ascii          3.3 s      verilog     1.5 s      masis       1.1 s
-#       tmax           1.1 s      fastscan    1.1 s      memorybist  1.1 s
-#       ctl            0.9 s
-#       ------------------------------------------------------------------
-#       ~171 s per ROM, ~5.7 min for both, ~16 MB each.
+# THE ROM A RUN SYNTHESISES AGAINST IS BUILT BY THAT RUN and lives in that run's
+# directory, beside the netlist and the GDS it produced. A shared gitignored drop
+# has no dependency on the firmware at all: a firmware change can reach the
+# .bintxt and never reach the ROM, and nothing in the flow notices. ROMs are MASK
+# PROGRAMMED, so that error is not recoverable after tapeout.
 #
-# Against a synthesis run measured in licence-hours that is affordable per run,
-# which is why the cache is a convenience rather than the load-bearing part. It
-# earns its place anyway: the cache is what makes two runs with identical inputs
-# provably share one artefact, and it turns a re-run after a floorplan change
-# from six minutes into nothing.
+# COST: ~171 s per ROM (79% of it the 5-corner `liberty` generator), ~16 MB each.
+# Affordable per run against a synthesis measured in licence-hours, so the cache
+# is a convenience: what it buys is two runs with identical inputs provably
+# sharing one artefact.
 #
-# WHAT IS NOT CACHED, DELIBERATELY
-# --------------------------------
-# A cache entry older than its code file is treated as a MISS and rebuilt. See
-# scripts/ci/rom_cache.py's header: rom_verify.py proves a macro postdates its
-# firmware, partly from mtimes, and a hit that predates a rewritten (even
-# byte-identical) code file would fail that check on a correct macro. Rather
-# than weaken the check that caught a seven-week-stale ROM, the build is
-# repeated. `eth-bintxt`/`cc-bintxt` in common.mk keep .bintxt mtimes stable
-# when the program has not changed, so this is rare.
+# A CACHE ENTRY OLDER THAN ITS CODE FILE IS A MISS and is rebuilt. rom_verify.py
+# proves a macro postdates its firmware partly from mtimes, so a hit predating a
+# rewritten — even byte-identical — code file would fail that check on a correct
+# macro. `eth-bintxt`/`cc-bintxt` in common.mk keep .bintxt mtimes stable when
+# the program has not changed, so this is rare.
 #
-# WHERE THIS SPLITS FOR THE TOOLKIT
-# ---------------------------------
-# GENERIC (belongs in asic-toolkit, when it wants it): "compile a memory macro
-# into a content-addressed cache, materialise it into the run, pin the run to
-# it, refuse to re-pin". Nothing in rom_cache.py knows this design.
-# PROJECT (stays here): which ROMs exist, their specs, their code files, their
-# depth, and the entire contents of rom_gate.mk. ROM_RUN_DIR is the seam -- a
-# toolkit that publishes its run directory under that name gets this for free.
+# TOOLKIT SPLIT. GENERIC: "compile a memory macro into a content-addressed cache,
+# materialise it into the run, pin the run to it, refuse to re-pin" — nothing in
+# scripts/ci/rom_cache.py knows this design. PROJECT: which ROMs exist, their
+# specs, code files and depth, and all of rom_gate.mk. ROM_RUN_DIR is the seam.
 #-----------------------------------------------------------------------------
 
 ROM_CACHE       ?= $(NANOSOC_ETH_CHIPLET_HOME)/scripts/ci/rom_cache.py
@@ -119,14 +91,13 @@ ROM_IMPORT_FROM ?=
 _rom_import = $(if $(ROM_IMPORT_FROM),--import-from $(ROM_IMPORT_FROM)/$(ROM_LABEL_$(1)),)
 
 # ONLY THE AGGREGATES ARE .PHONY. `rom-stage-%` and `rom-status-%` are pattern
-# rules, and GNU make DOES NOT SEARCH IMPLICIT OR PATTERN RULES FOR A TARGET
-# DECLARED PHONY -- it is an explicit optimisation in the manual. Listing
-# $(addprefix rom-stage-,$(ROMS)) here therefore does not "declare them phony",
-# it makes them targets with no rule, and make answers
+# rules and GNU make does not search implicit or pattern rules for a target
+# declared phony. Listing $(addprefix rom-stage-,$(ROMS)) here would not make
+# them phony, it would make them targets with no rule:
 #     make: Nothing to be done for 'rom-stage-eth'.
-# and moves on. Both ROMs then fail the gate for being absent, which reads as a
-# build failure rather than as a makefile bug. rom_gate.mk's rom-static-% and
-# rom-verify-% are correct for the same reason: it lists only the aggregates.
+# Both ROMs would then fail the gate for being absent, reading as a build failure
+# rather than a makefile bug. rom_gate.mk lists only its aggregates for the same
+# reason.
 .PHONY: rom-run rom-run-stage rom-run-ensure rom-run-status rom-cache-clean
 
 ## make -f common.mk rom-run [ROM_RUN_DIR=<run>]
@@ -134,22 +105,19 @@ _rom_import = $(if $(ROM_IMPORT_FROM),--import-from $(ROM_IMPORT_FROM)/$(ROM_LAB
 ## them, then run the full ROM gate against the run-local copy.
 ##
 ## THE GATE RUNS AGAINST WHAT WAS JUST STAGED, not against ASIC/romlibs: the
-## ROMLIBS_DIR override below is what points rom_gate.mk's ROM_DIR_<r> at the
-## run. Verifying the shared drop while synthesising the run-local build would
-## be a gate that tests something other than the artefact in use, which is how
-## the original defect survived for months.
+## ROMLIBS_DIR override below points rom_gate.mk's ROM_DIR_<r> at the run.
+## Verifying the shared drop while synthesising the run-local build is a gate
+## that tests something other than the artefact in use.
 ##
-## ROM_VERIFY_DIR IS DELIBERATELY *NOT* REDIRECTED INTO THE RUN. The gate's
-## evidence stays at its established path ($(ROM_VERIFY_DIR), build/rom_verify),
-## because ci/signoff.yaml's `rom-content` row locates those JSONs through
-## `rom-vars` — which is invoked WITHOUT this run's ROM_RUN_DIR and so would
-## look at the default while the gate wrote somewhere else. The row would then
-## report "no result ... the gate did not run" on a run that had just passed,
-## which is the worst kind of CI failure: one that looks like a real defect.
+## ROM_VERIFY_DIR IS DELIBERATELY NOT REDIRECTED INTO THE RUN. The gate's
+## evidence stays at build/rom_verify because ci/signoff.yaml's `rom-content` row
+## locates those JSONs through `rom-vars`, which is invoked without this run's
+## ROM_RUN_DIR. Redirect it and the row reports "the gate did not run" on a run
+## that has just passed.
 ##
-## The run is still self-describing: it carries .rom_pin.json and a
-## .rom_build.json per ROM (key, origin, code-file sha256, build time, per-file
-## hashes), and the copy step below puts the gate's own artefacts beside them.
+## The run stays self-describing: it carries .rom_pin.json and a .rom_build.json
+## per ROM (key, origin, code-file sha256, build time, per-file hashes), and the
+## copy step below puts the gate's artefacts beside them.
 rom-run: rom-run-stage
 	@$(MAKE) -f $(COMMON_MK) --no-print-directory romlibs-verify \
 	    ROMLIBS_DIR=$(ROM_RUN_DIR)
@@ -192,25 +160,20 @@ rom-stage-%:
 
 ## make -f common.mk rom-run-ensure -- the cheap per-stage guard.
 ##
-## THIS IS WHAT P&R AND STREAM-OUT HANG OFF, and why they read the same build
-## synthesis did. `rom-run` is the heavyweight entry point: it regenerates the
-## code files, consults the cache and runs the full gate, and it needs the
-## firmware build tree to exist. Hanging that off every Innovus stage would make
-## `pnr_route` fail on a host with no firmware checkout, for a run whose ROMs
-## were settled hours earlier.
-##
-## So this target asks the one question a later stage actually needs answered:
-## are this run's pinned ROMs still here? If yes it is a no-op costing
-## milliseconds and touching no compiler. If the run has no ROMs at all —
-## a resumed run, a cleaned outputs/ — it falls through to the full build, which
+## THIS IS WHAT P&R AND STREAM-OUT HANG OFF, so they read the same build that
+## synthesis did. It asks only "are this run's pinned ROMs still here?": a no-op
+## costing milliseconds and touching no compiler if they are, falling through to
+## the full build if the run has none (a resumed run, a cleaned outputs/), which
 ## re-materialises the SAME cache entry rather than inventing a new one.
 ##
-## What it never does is quietly substitute a different ROM. That decision
-## belongs to the pin in rom_cache.py, which refuses a key change outright.
+## `rom-run` is the heavyweight entry point — it regenerates the code files,
+## consults the cache and runs the full gate, and it needs the firmware build
+## tree. Hanging that off every Innovus stage would fail `pnr_route` on a host
+## with no firmware checkout, for a run whose ROMs were settled hours earlier.
 ##
-## The file list is generated from the ROM table in rom_gate.mk rather than
-## restated. A second copy of "eth means eth_rom_via" is precisely the kind of
-## drift that left this flow grading a wrapper nothing compiles.
+## It never substitutes a different ROM: that decision belongs to the pin in
+## rom_cache.py, which refuses a key change outright. The file list is generated
+## from the ROM table in rom_gate.mk rather than restated.
 rom-run-ensure:
 	@missing=""; \
 	$(foreach r,$(ROMS),\

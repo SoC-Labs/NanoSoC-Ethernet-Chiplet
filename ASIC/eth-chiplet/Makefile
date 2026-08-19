@@ -1,17 +1,21 @@
 #-----------------------------------------------------------------------------
 # nanosoc-ethernet-chiplet / ASIC/eth-chiplet/Makefile
 #
-# The nanoSoC ASIC Toolkit entry point for this design. Three lines, exactly as
-# the toolkit's templates/Makefile.in specifies: everything about the design is
-# in design.mk, everything about the flow is in the toolkit.
+# The nanoSoC ASIC Toolkit entry point for this design, and the flow that builds
+# the shipping GDS and netlist. Three lines, exactly as the toolkit's
+# templates/Makefile.in specifies: everything about the DESIGN is in design.mk,
+# everything about the FLOW is in the toolkit.
 #
-#     make help     targets
-#     make check    validate the contract - costs no licence, run it first
+#     make help     every stage this design offers
+#     make check    validate the design contract - costs no licence, run it first
 #     make env      every variable the tools will see
 #
-# THIS IS ADDITIVE. It does not replace ../genus-innovus, which is still the
-# only thing in this repository that has ever produced a GDSII, and nothing
-# here is on that path. `make -C ASIC/genus-innovus pnr_all` is unchanged.
+# Stages write into build/$(RUN_TAG) (default `default`), so
+#     make syn RUN_TAG=<name>
+# keeps a run's netlist, reports, romlibs and GDS together in one directory.
+#
+# The root Makefile forwards here: `make asic-syn`, `make asic-pnr`, and so on.
+# ../genus-innovus is the frozen legacy flow and is not on this path.
 #
 # Copyright (C) 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------

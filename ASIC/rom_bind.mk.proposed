@@ -1,37 +1,32 @@
 #-----------------------------------------------------------------------------
 # ASIC/rom_bind.mk.proposed - PROJECT-SIDE WIRING FOR THE ROM BINDING GATE
 #
-# NOT INCLUDED BY ANYTHING. The `.proposed' suffix keeps make from picking it
-# up. It is here because the ROM table it extends lives in ASIC/rom_gate.mk,
-# which another agent owns right now, and editing that file would collide.
+# NOT INCLUDED BY ANYTHING; the `.proposed' suffix keeps make from picking it up.
 #
 # TO LAND IT, either:
-#   (a) append the ROM_BIND_* block below to ASIC/rom_gate.mk (where ROMS,
-#       ROM_INST_eth and ROM_INST_cc are already declared), and add the
-#       `include' line to ASIC/eth-chiplet/Makefile after mk/flow.mk; or
+#   (a) append the ROM_BIND_* block below to ASIC/rom_gate.mk, where ROMS,
+#       ROM_INST_eth and ROM_INST_cc are already declared, and add the `include'
+#       line to ASIC/eth-chiplet/Makefile after mk/flow.mk; or
 #   (b) rename this file to ASIC/rom_bind.mk and add one `include' line to
 #       ASIC/common.mk next to the existing `include .../rom_gate.mk'.
+# Nothing below depends on which.
 #
-# (b) keeps it out of the file under contention. (a) puts the table where the
-# other ROM values already are. Either is fine; nothing here depends on which.
-#
-# WHAT THIS GATES, AND WHY IT IS NEW
-# ----------------------------------
+# WHAT THIS GATES
+# ---------------
 # ASIC/rom_gate.mk proves what is IN the ROM: the compiler's content views, the
 # CDL, the streamed GDS and the firmware all agree. mk/gls.mk proves the macro
 # returns those words when its own pins are driven. Neither has any opinion
-# about whether the routed netlist INSTANTIATES the macro or what it wires to
-# the address pins -- and no other tool in the flow does either: P&R places a
-# black box, LEC compares a leaf against a leaf, DRC and LVS check the macro's
-# geometry against its own netlist.
+# about whether the routed netlist INSTANTIATES the macro or what it wires to the
+# address pins - and nothing else in the flow does either: P&R places a black
+# box, LEC compares a leaf against a leaf, DRC and LVS check the macro's geometry
+# against its own netlist.
 #
-# A netlist whose ROM address bus is REVERSED passes every one of those and
-# boots the right words in the wrong order.
+# A netlist whose ROM address bus is REVERSED passes every one of those and boots
+# the right words in the wrong order.
 #
-# MEASURED ON THIS DESIGN, 2026-08-18: both ROMs are correctly bound in both
-# ASIC/eth-chiplet/build/fp1505/ and build/full-20260814/. The values below are
-# the ones that were measured, so this gate starts from a known-good state and
-# any future change to it is a regression rather than a discovery.
+# The values below were measured on both current builds and both ROMs bind
+# correctly, so the gate starts from a known-good state: a future change to any
+# of them is a regression rather than a discovery.
 #-----------------------------------------------------------------------------
 
 # --- in ASIC/eth-chiplet/Makefile, after `include $(ASIC_FLOW_DIR)/mk/flow.mk':
@@ -73,15 +68,14 @@ ROM_BIND_DATA_NET_cc  := i_bootrom_0_hrdata$$
 ROM_BIND_COUNT_eth := 1
 ROM_BIND_COUNT_cc  := 1
 
-# EMA is the read-margin setting and is 3'b010 on both instances in both builds.
-# It is asserted here rather than merely printed because the value has now been
-# measured twice on two independently routed netlists; writing it down is what
-# turns "nobody looked" into "this changed".
+# EMA is the read-margin setting, 3'b010 on both instances in both builds. It is
+# ASSERTED rather than merely printed because the value has been measured on two
+# independently routed netlists.
 #
-# TEN/BEN/TCEN are printed and NOT asserted: they are test-mode pins whose
-# correct values are a DFT decision this session did not verify against the
-# macro datasheet. Printing them makes a change visible; asserting a value
-# nobody has confirmed would be inventing an expectation.
+# TEN/BEN/TCEN are printed and NOT asserted: their correct values are a DFT
+# decision nobody has verified against the macro datasheet, and asserting an
+# unconfirmed value would be inventing an expectation. Printing them still makes
+# a change visible.
 ROM_BIND_ARGS_eth := --report-port EMA --report-port TEN --report-port BEN \
                      --report-port TCEN --report-port PGEN --report-port KEN \
                      --expect-tie EMA=010

@@ -3,52 +3,35 @@
 #
 # The DESIGN half of the tool setup for nanosoc_eth_chiplet_pads. The tech pack
 # (tech/tsmc65) owns the standard cells, the IO library, the tech LEF, the cap
-# tables, every layer and cell name, and the stream-out map. What is left here
-# is the eight hard macros this design instantiates, its PG net names, and its
-# DFT setting.
+# tables, every layer and cell name, and the stream-out map. What is left here is
+# the eight hard macros this design instantiates, its PG net names, its DFT
+# setting, and two protections it needs from the tools.
 #
-# ── WHY THIS FILE EXISTS AT ALL, WHEN ../genus-innovus/scripts/config.tcl DOES ──
+# ── WHY THIS FILE EXISTS, WHEN ../genus-innovus/scripts/config.tcl DOES ─────
 #
-# It is the ONE Tcl file this directory owns, and it is owned reluctantly. Every
-# other file the manifest hands the tools is the live production file, pointed
-# at, not copied. This one could not be: the production config.tcl cannot be
-# sourced as DESIGN_CONFIG_TCL, for four reasons, each of them measured rather
-# than suspected.
+# It is the ONE Tcl file this directory owns, and reluctantly: every other file
+# the manifest hands the tools is the live production file, pointed at rather
+# than copied. The production config.tcl cannot be sourced as DESIGN_CONFIG_TCL
+# for four measured reasons:
 #
-#   1. IT SOURCES TWO SIBLINGS BY RELATIVE PATH.
-#      config.tcl:1-2 does `source ../scripts/procs.tcl` and
-#      `source ../scripts/flow_utils.tcl`. Those are the PRODUCTION flow's own
-#      helpers, and the toolkit has already loaded its own say/warn/die/opt/step
-#      by the time flow_boot sources this file. Loading a second, differently
-#      behaved set over the top of the engine's is not a path problem that a
-#      symlink fixes; it is two engines in one interpreter.
-#
-#   2. IT REDEFINES THE RUN'S OUTPUT TREE.
-#      config.tcl:129-131 sets LOG_DIR / REPORT_DIR / OUT_DIR to ../logs,
-#      ../reports, ../outputs. flow_boot has already set all three from
-#      ASIC_LOG_DIR / ASIC_REPORT_DIR / ASIC_OUT_DIR, and it sources this file
-#      AFTERWARDS - so a run would write its reports outside its own run
-#      directory, into whatever ../reports happens to be. Every artefact
-#      assertion in mk/flow.mk would then fail on a run that had worked.
-#
-#   3. `set ::design_home` TRIPS THE COLLATERAL TYPO GUARD.
-#      flow/common/flow_utils.tcl:675-689 treats ANY global matching `design_*`
-#      (case-insensitively) that is not one of the nine contract names as an
+#   1. IT SOURCES TWO SIBLINGS BY RELATIVE PATH - the production flow's own
+#      say/warn/die/opt/step helpers, over the top of the engine's, which the
+#      toolkit has already loaded. That is two engines in one interpreter, not a
+#      path problem a symlink fixes.
+#   2. IT REDEFINES THE RUN'S OUTPUT TREE to ../logs, ../reports, ../outputs,
+#      after flow_boot has already set all three from the run directory - so a
+#      run would write its reports outside itself and every artefact assertion in
+#      mk/flow.mk would fail on a run that had worked.
+#   3. `set ::design_home` TRIPS THE COLLATERAL TYPO GUARD. The engine treats any
+#      global matching design_* that is not one of the nine contract names as an
 #      error, because a misspelt collateral variable is silent and produces a
-#      wrong netlist with every check green. `design_home` matches. The engine
-#      would stop, correctly, on a variable that is not collateral at all.
-#
-#   4. IT DECLARES THE PROCESS, NOT JUST THE DESIGN.
-#      config.tcl:85-225 names the TSMC standard-cell and IO liberty, the tech
-#      LEF, the base LEF, the IO pad LEF and the DRC ruledeck. In the toolkit
-#      those are the tech pack's, and the pack now DERIVES several of them from
-#      the PDK at load time. Declaring them here would be a second, static copy
-#      of values the pack reads live - the exact failure mode the pack was
-#      rewritten to remove.
+#      wrong netlist with every check green.
+#   4. IT DECLARES THE PROCESS, NOT JUST THE DESIGN - the TSMC Liberty, tech LEF,
+#      base LEF, IO pad LEF and DRC ruledeck. In the toolkit those belong to the
+#      tech pack, which DERIVES several of them from the PDK at load time.
+#      Restating them here would be a static second copy of live values.
 #
 # So: the eight macros and the four PG nets are transcribed, and nothing else.
-# The values below are checked against config.tcl:89-222 and against
-# scripts/$(BLOCK).mmmc:5-69, which are the two places they exist today.
 #
 # Copyright (C) 2026, SoC Labs (www.soclabs.org)
 ################################################################################
@@ -258,28 +241,21 @@ set DFT 0
 
 # ── UNCAP THE MESSAGE LOG ──────────────────────────────────────────────────
 #
-# Innovus prints at most 20 instances of any message ID and then goes silent.
-# Cadence's own set_message doc: "The default limit is 20, so any specific
-# message will be written out 20 times and then further output of that message
-# will be disabled", and "If you do not specify a message ID, the change is
-# applied to ALL message IDs".
+# Innovus prints at most 20 instances of any message ID and then goes silent
+# ("The default limit is 20 ... further output of that message will be
+# disabled"); with no ID named, the change applies to ALL message IDs.
 #
-# WHY IT MATTERS ON THIS DESIGN. The 2026-08-06 run's session totals read
-# "57018 warning(s), 178 error(s)" for the place stage alone, while the whole log
-# contained 807 **WARN lines - under 1.5% of what the tool emitted was ever
-# visible, and NINETEEN message IDs hit the cap. Every triage done on this
-# design, including two findings that turned out to be tapeout-blocking, was
-# performed on a 20-instance sample. At least one class (TCLCMD-1005) is capped
-# in all six sessions of both runs with not one instance visible anywhere.
+# WHY IT MATTERS HERE. A place stage on this design reported "57018 warning(s),
+# 178 error(s)" in its session totals while the whole log carried 807 **WARN
+# lines - under 1.5% of what the tool emitted was ever visible, and nineteen
+# message IDs hit the cap. Triage on this design, including two findings that
+# turned out to be tapeout-blocking, was done on a 20-instance sample.
 #
-# Cost: a bigger log - tens of MB against 6.7. Against a five-hour run that is
-# nothing, and it is the difference between triaging the design and triaging a
-# sample of it.
+# Cost: tens of MB of log against 6.7. Against a five-hour run that is nothing.
 #
 # Guarded on `info commands`, because this file is sourced by BOTH tools and
-# set_message is Innovus-only. Sourcing an Innovus-only command unguarded has
+# set_message is Innovus-only; sourcing an Innovus-only command unguarded has
 # broken the Genus run on this project before.
-# Source: ../genus-innovus/scripts/config.tcl:57-59
 if {[llength [info commands set_message]]} {
     set_message -no_limit
 }
