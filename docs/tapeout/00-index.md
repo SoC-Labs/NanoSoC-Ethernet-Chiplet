@@ -106,6 +106,7 @@ measured and where the current number lives.
 | 50 | [BND and LOGO checks](50-bnd-and-logo-checks.md) | The bond-pad/seal-ring BEOL deck and the LOGO keep-out rules, both as real flows |
 | 51 | [Calibre ERC: PG labels](51-erc-pg-labels.md) | The ERC flow built after IMEC's "No labels found in topcell" |
 | 52 | [Padring GDS check](52-padring-gds-check.md) | The broker's CompareCells/Padringcheck surprise, and the local check for its class |
+| 62 | [`PVDD2POC` "multiple cells in digital domain" verdict](62-pvdd2poc-digital-domain-verdict.md) | Present/aware verdict on IMEC's Padringcheck power-domain finding — separate from doc 51, already known before this task, fix unconfirmed without vendor input |
 
 ### Power delivery, PG and IR drop
 
