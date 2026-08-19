@@ -1,5 +1,7 @@
 # 08 — Debugging
 
+> **Status — method page, durable; its worked examples are 2026-07/08 and some have since closed.** The "329 PG opens, cause unknown" example is root-caused in [42](42-stranded-cells-pg-islands.md) and fixed in [47](47-pg-island-feed-fragility.md).
+
 A way of working, illustrated entirely by real defects found in `nanosoc_eth_chiplet_pads`
 during 2026-07 and 2026-08. Every example below cost somebody hours, and every one of them
 would have been cheap under the discipline this page describes.
@@ -282,8 +284,10 @@ the threshold that would falsify you.
 
 ### The defect
 
-`check_connectivity` reports **329 PG opens** on the power nets. Cause unknown. Two
-hypotheses were proposed, and both were phrased as predictions:
+`check_connectivity` reports **329 PG opens** on the power nets. Two hypotheses were
+proposed, and both were phrased as predictions. (Neither was the answer: the cause was
+`split_row` PG anchoring, found later — [42](42-stranded-cells-pg-islands.md). The point of
+this section is the *shape* of the falsification, which is what eventually found it.)
 
 **Hypothesis A — the routing halos around the macros are blocking the PG stitching.**
 > *Prediction: remove the halos and the open count drops below 329.*
@@ -840,8 +844,10 @@ source, and they state they were measured):
   not applied), `IMPSP-9099` (scan chains undefined for 30.55% of flops), `IMPDB-1221`
   (a `VDDIO` global net connection not established). They are listed above as "worth
   chasing" on the strength of their message text, not on any analysis.
-- **The 329 PG opens remain unexplained.** Two hypotheses falsified; no third proposed.
-  See [11 — Known issues](11-known-issues.md).
+- **The 329 PG opens were unexplained when this page was written; they are not now.** Cause:
+  `split_row` PG anchoring leaving narrow row islands with no stripe
+  ([42](42-stranded-cells-pg-islands.md)); the feed fix is landed but ungated
+  ([47](47-pg-island-feed-fragility.md)).
 
 ---
 

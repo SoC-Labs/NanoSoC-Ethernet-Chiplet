@@ -1,5 +1,16 @@
 # Flow Script Reference
 
+> **Status — which of these scripts still build the chip.** These pages annotate
+> `ASIC/genus-innovus/scripts/`. Since 2026-08-13 the *stage drivers* (synthesis, place,
+> CTS, route) come from the `ASIC/asic-toolkit` submodule instead, driven from
+> `ASIC/eth-chiplet/`. The **design inputs are still these files**: `ASIC/eth-chiplet/design.mk`
+> points `FLOORPLAN_TCL`, `POWER_PLAN_TCL`, `BONDPADS_TCL`, `MMMC_FILE`, `IO_FILE`,
+> `POWER_INTENT`, `SDC_FILES` and `DRC_SCRIPT` at `ASIC/genus-innovus/` (see `LEGACY_ASIC_DIR`,
+> `design.mk:69`). So pages 04–07 here describe live inputs; the stage-driver material in
+> pages 01–03 describes the engine that has been superseded — read it for the *why*, and
+> check `design.mk` before assuming a variable still resolves here.
+> Background: [33](../33-toolkit-legacy-decoupling.md), [41](../41-retiring-asic-flows.md).
+
 Line-by-line annotation of every script in the Cadence Genus + Innovus flow under
 `ASIC/genus-innovus/`, with each command referred to the installed Cadence manual for
 the tool version actually in use.

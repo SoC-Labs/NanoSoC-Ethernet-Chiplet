@@ -1,5 +1,7 @@
 # 12 — Calibre DRC
 
+> **Status — the invocation is current** (verified 2026-08-06 and still the one `make drc` uses); **the result counts on this page are not** — see [43](43-drc-fp1505.md) for the current like-for-like run and [49](49-layer-map-coverage-check.md) for what the deck can and cannot see.
+
 [← 11 Known issues](11-known-issues.md) · [index](00-index.md)
 
 Calibre DRC had **never run to completion on this design**. This page is the working
@@ -221,7 +223,7 @@ Measured from the stream:
 | Standard cells | **no device geometry** |
 | IO drivers, bond pads | **no device geometry** |
 | Seal ring (layer 162), passivation `CB` (76), polyimide `PM` (5) | **absent — not in the GdsOutMap at all** |
-| Metal fill | **absent — `add_metal_fill` is nowhere in this flow** |
+| Metal fill | **absent by design** — `ROUTE_METAL_FILL=0`, `METAL_FILL_OWNER=foundry`; the broker fills after merge |
 
 `gds_merge_list` (`scripts/config.tcl:198`) merges only the 8 memory macros. Front-end
 layers are correspondingly sparse — 10,109 `OD` and 12,854 `PO` shapes across the whole

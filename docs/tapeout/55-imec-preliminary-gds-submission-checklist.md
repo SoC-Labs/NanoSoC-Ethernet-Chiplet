@@ -313,7 +313,7 @@ Nothing here blocks the send — a preliminary GDS need not be clean (§1.4(4)).
 - [ ] **Antenna: state that it has never been run against the foundry antenna deck.** The
       signoff deck contains no antenna rulechecks at all — its only `AN.*` check is a
       differential-pair matching rule — so the "0 across every rulecheck" figure in
-      `docs/DRC_WAIVER_INVENTORY.md` is a zero that measured nothing. R11 gives antenna no
+      `docs/asic/DRC_WAIVER_INVENTORY.md` is a zero that measured nothing. R11 gives antenna no
       waiver route, so do not let it look covered. (IMEC's own antenna pass is real, but it is
       against the retired stream.)
 - [ ] BND: quote the measured result **and the pad pitch our parts require** — see Q2/Q4.
@@ -379,7 +379,7 @@ The three replacement library **families** are `tcbn65lp` (standard cells),
 `tphn65lpgv2od3_sl` (IO drivers) and `tpbn65v` (bond pads). Their **revision codes** and the
 complete phantom-view paths R14 requires are in the untracked
 `docs/tapeout/27-broker-questions-SEND-NOW.md` — untracked deliberately, for the reason
-[27](27-broker-correspondence-NOT-TRACKED.md) gives: this repository is public, and an
+[58](58-broker-correspondence-untracked.md) gives: this repository is public, and an
 inventory of revisions is commercial information about the site. Fill them in from there; do
 not copy them back into a tracked file.
 

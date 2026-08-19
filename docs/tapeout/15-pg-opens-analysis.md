@@ -1,5 +1,7 @@
 # 15 — PG special-route opens: static analysis and ranked hypotheses
 
+> **Status — SUPERSEDED.** The root cause this page ranks as hypotheses was found: `split_row` PG anchoring strands cells on narrow row islands ([42](42-stranded-cells-pg-islands.md), mechanism in [36](36-split-row-pg-anchoring-hazard.md)), and the feed fix is landed and screened ([47](47-pg-island-feed-fragility.md)). Read this for the method and the ruled-out hypotheses, not for a live question.
+
 **Date:** 2026-08-06
 **Scope:** `check_connectivity` IMPVFC-200 ("Special Wires: Pieces of the net are not
 connected together") on nets VDD/VSS, design `nanosoc_eth_chiplet_pads`.

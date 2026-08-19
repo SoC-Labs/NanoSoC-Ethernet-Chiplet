@@ -11,7 +11,7 @@ is `31-power-delivery-measured.md`, and the paper design that preceded both is
 
 ## 0. What changed
 
-Before tonight this pipeline had **never computed a voltage.** The two things
+Before 2026-08-17 this pipeline had **never computed a voltage.** The two things
 nearest to a power-delivery check were:
 
 - `pg_capacity`, which rates the grid's **electromigration ceiling** in

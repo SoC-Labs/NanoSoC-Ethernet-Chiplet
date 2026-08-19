@@ -1,5 +1,7 @@
 # 16 — Open defects: static triage of the 2026-08-06 run
 
+> **Status — point-in-time, 2026-08-06 `ASIC/genus-innovus` run.** Items 1–2 (hold source latency, DRV) were closed by the OCV-ordering fix — see [23 note 1](23-pnr-flow-notes.md) and [40](40-signoff-sta-plan.md) for the signoff-tool re-measurement. Items 3–6 have not been re-measured on the current lineage.
+
 [index](00-index.md) · [11 Known issues](11-known-issues.md) · [14 DRC triage](14-drc-triage.md)
 
 Triage of six items carried out **entirely by static analysis** — no Innovus, Genus or

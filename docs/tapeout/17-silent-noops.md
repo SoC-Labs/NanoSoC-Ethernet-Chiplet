@@ -1,5 +1,7 @@
 # 17 — Silently ineffective commands
 
+> **Status — point-in-time.** Mined from the 2026-08-05/06 `ASIC/genus-innovus` logs. The *class* of finding is durable and worth re-running on any new log; the individual counts are not current.
+
 Sweep of the P&R logs for commands that ran, printed something, and had no
 effect. Method: `grep -v '^@file'` on every log below, tally by message ID,
 then for each ID find the script line that issued it and decide whether the
@@ -218,7 +220,7 @@ a script today. There is no Quantus/QRC technology file installed:~~
   `volcano`, `voltagestorm`, `lef` — no QRC directory.
 
 So this belongs with the `_BE` package request in
-`docs/TSMC_BACKEND_PACKAGE_REQUEST.md`: it is procurement, not engineering.
+`docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`: it is procurement, not engineering.
 Add `-qrc_tech_file` to the three `create_rc_corner` blocks the day the
 collateral lands. Until then, treat post-route timing margins as carrying an
 extraction-accuracy allowance.

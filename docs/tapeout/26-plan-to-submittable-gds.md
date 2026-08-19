@@ -21,7 +21,7 @@
 > |---|---|
 > | what signoff does **not** cover — *executable* | `ci/signoff.yaml` `unsupported:`. Run `python3 scripts/ci/signoff.py lint`: every gap carries a `refuted_by:` that must FAIL for the gap to still exist, so this one cannot rot silently. 9 gaps, all verified still real on 2026-08-18. |
 > | current Calibre DRC, like-for-like | [43 — Calibre DRC on `fp1505`](43-drc-fp1505.md) |
-> | every result assigned to fix or waive | [`docs/DRC_WAIVER_INVENTORY.md`](../DRC_WAIVER_INVENTORY.md) |
+> | every result assigned to fix or waive | [`docs/asic/DRC_WAIVER_INVENTORY.md`](../asic/DRC_WAIVER_INVENTORY.md) |
 > | the `PO.R.8` reversal | [39 — `PO.R.8` resolved](39-po-r8-resolved.md) |
 > | the PG-anchoring hazard behind the shorts | [36 — `split_row` PG anchoring](36-split-row-pg-anchoring-hazard.md) |
 
@@ -95,7 +95,7 @@ place+CTS: 81.5 min stage time, 87 min end-to-end
 
 ### 2.0 The route question [U] — settle this first
 
-Evidence points hard at Europractice/imec **mini@sic**: the manual is installed at `$TSMC_65_HOME/doc/TSMC_28nm_40nm_65nm_mini@sic_manual_ver_03_2026.pdf`, watermarked to the Southampton PDK admin, and `docs/TSMC_BACKEND_PACKAGE_REQUEST.md:7` names the Europractice licence. But the repo says "broker" in fourteen places, **never names one, and records no shuttle date**. [V]
+Evidence points hard at Europractice/imec **mini@sic**: the manual is installed at `$TSMC_65_HOME/doc/TSMC_28nm_40nm_65nm_mini@sic_manual_ver_03_2026.pdf`, watermarked to the Southampton PDK admin, and `docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md:7` names the Europractice licence. But the repo says "broker" in fourteen places, **never names one, and records no shuttle date**. [V]
 
 Load-bearing sentences from the manual:
 
@@ -443,7 +443,7 @@ Test: cocotb, back-to-back zero-wait-state APB accesses to the same accumulator.
 **R4 — DO NOT do the scan-pin tie.** Already done at `build/chip/rtl/nanosoc_eth_chiplet_chip.v:119,121`.
 
 ### (c) Procurement / licence holder
-2c (die-area quote), 2d (BE packages — the exact ask is written up in `docs/TSMC_BACKEND_PACKAGE_REQUEST.md`). The manual notes RC extraction decks are available on request from `IC-link.foundrysupport@imec.be` — a fallback if the local QRC deck proves unusable.
+2c (die-area quote), 2d (BE packages — the exact ask is written up in `docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`). The manual notes RC extraction decks are available on request from `IC-link.foundrysupport@imec.be` — a fallback if the local QRC deck proves unusable.
 
 ### (d) External / broker — §9.
 
@@ -559,7 +559,7 @@ Test: cocotb, back-to-back zero-wait-state APB accesses to the same accumulator.
 
 ## 10. WHERE THE CURRENT APPROACH IS WRONG
 
-1. **"Procurement is the blocker" is wrong under Branch A.** `docs/TSMC_BACKEND_PACKAGE_REQUEST.md` calls the BE packages *"the single blocker on delivering a manufacturable GDS"*. Under mini@sic they are not — the broker imports the cell layouts. They block *local LVS and local density signoff*, which matter, but they are not the path to submission. Meanwhile the actual rejection-grade defect — the corners — was recorded nowhere.
+1. **"Procurement is the blocker" is wrong under Branch A.** `docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md` calls the BE packages *"the single blocker on delivering a manufacturable GDS"*. Under mini@sic they are not — the broker imports the cell layouts. They block *local LVS and local density signoff*, which matter, but they are not the path to submission. Meanwhile the actual rejection-grade defect — the corners — was recorded nowhere.
 2. **Chasing DRC 64→63→50→31→1 through P&R runs is the wrong economics.** The 40-record class (c) is very likely a LEF-abstraction artefact that a single Calibre run settles for free. Run Calibre before spending another P&R cycle on it.
 3. **The 64→265 delta should be abandoned as an investigation.** Confounded five ways across a run that never executed `power_plan.tcl`. The one-knob probe now costs 4 minutes; re-derive from today's measured 280, do not archaeologise.
 4. **Optimising timing before wiring the extraction deck is backwards.** The deck exists on this machine and the cap tables are the wrong stack. Every FEP number quoted in the last week has an unquantified error bar, and the "fill cost us 5→103" story is partly a re-extraction artefact nobody can separate.

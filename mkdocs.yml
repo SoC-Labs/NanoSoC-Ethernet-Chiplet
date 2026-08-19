@@ -89,34 +89,156 @@ validation:
 nav:
   - Home: index.md
 
+  - Design:
+      - Implementation (start here): design/IMPLEMENTATION.md
+      - Physical handoff: design/PHYSICAL_HANDOFF.md
+      - Pin map: design/PIN_MAP.md
+      - Pin policy: design/PIN_POLICY.md
+      - Power domains: design/POWER_DOMAINS.md
+      - Reset ordering: design/RESET_ORDERING.md
+      - Status registers: design/STATUS_REGISTERS.md
+      - Peer-aperture programming: design/PEER_APERTURE_PROGRAMMING.md
+      - D2D HREADY loop: design/D2D_HREADY_LOOP.md
+      - D2D rate control architecture: design/D2D_RATE_CONTROL_ARCH.md
+      - Cross-die interrupts: design/CROSS_DIE_INTERRUPTS.md
+      - Cross-die debug plan: design/CROSS_DIE_DEBUG_PLAN.md
+      - "Cross-die debug: 0C gate spec": design/CROSS_DIE_DEBUG_0C_GATE_SPEC.md
+      - System app — transparent bridge: design/SYSTEM_APP_TRANSPARENT_BRIDGE.md
+      - Firmware CDC contract: design/FIRMWARE_CDC_CONTRACT.md
+      - Enabling on-die firmware: design/FIRMWARE_ENABLE_DESIGN_2026-08-08.md
+      - Chiplet alignment (eth ↔ compute): design/CHIPLET_ALIGNMENT.md
+      - Upstreaming the block YAMLs: design/UPSTREAMING_BLOCK_YAMLS.md
+      - TideLink freeze manifest: design/TIDELINK_FREEZE_MANIFEST_2026-08-19.md
+
+  - Verification:
+      - Lint findings: verification/LINT_FINDINGS.md
+      - Full-design lint findings: verification/FULL_LINT_FINDINGS.md
+      - Lint remediation plan: verification/LINT_REMEDIATION_PLAN.md
+      - Lint waiver inventory: verification/LINT_WAIVER_INVENTORY.md
+      - CDC findings: verification/CDC_FINDINGS.md
+      - CDC B7 baseline: verification/CDC_B7_BASELINE.md
+      - CDC B7 round 2: verification/CDC_B7_ROUND2.md
+      - CDC reset-domain analysis: verification/CDC_RESET_DOMAIN_ANALYSIS.md
+      - CDC waiver inventory: verification/CDC_WAIVER_INVENTORY.md
+      - CDC ↔ STA crossing register: verification/CDC_STA_CROSSING_REGISTER.md
+      - CDC and CRC assessment: verification/CDC_AND_CRC_ASSESSMENT_2026-08-17.md
+      - SGDC port drift: verification/SGDC_PORT_DRIFT.md
+      - B8 scoped run plan: verification/B8_SCOPED_RUN_PLAN.md
+      - Strict-elaboration findings: verification/ELAB_STRICT_FINDINGS.md
+      - G2 pair simulation: verification/G2_PAIR_SIM.md
+      - G2 SoC pair status: verification/G2_SOC_PAIR_STATUS.md
+      - G2 testbench architecture: verification/G2_TB_ARCHITECTURE.md
+      - TideChart test plan: verification/TIDECHART_TEST_PLAN.md
+      - System-validation holes: verification/SYSTEM_VALIDATION_HOLES_REPORT_2026-08-08.md
+      - System-validation build spec: verification/SYSVAL_TEST_BUILD_SPEC_2026-08-08.md
+      - Lanes — concurrent static checks: verification/LANE_DESIGN.md
+
+  - ASIC flow and signoff:
+      - genus-innovus audit: asic/ASIC_GENUS_INNOVUS_AUDIT.md
+      - Toolkit migration blockers: asic/ASIC_MIGRATION_BLOCKERS.md
+      - "C2: the D2D transmit clock group": asic/C2_TRANSMIT_GROUP_OPTIONS.md
+      - TideLink ASIC constraints audit: asic/TIDELINK_ASIC_CONSTRAINTS_AUDIT_2026-08-17.md
+      - DRC waiver inventory: asic/DRC_WAIVER_INVENTORY.md
+      - LVS findings: asic/LVS_FINDINGS.md
+      - TSMC back-end package request: asic/TSMC_BACKEND_PACKAGE_REQUEST.md
+      - Tapeout fold plan: asic/TAPEOUT_FOLD_PLAN_2026-08-09.md
+
+  - Bring-up:
+      - KR260 bench runbook: bringup/KR260_BENCH_RUNBOOK.md
+      - KR260 board wiring: bringup/KR260_BOARD_WIRING.md
+      - KR260 LAN8720 fpgahub plan: bringup/KR260_LAN8720_FPGAHUB_PLAN.md
+      - TideLink KR260 port plan: bringup/TIDELINK_KR260_PORT_PLAN.md
+      - Cross-die test backlog: bringup/CROSS_DIE_TEST_BACKLOG.md
+      - "HW validation plan: TL-042 v2": bringup/HW_VALIDATION_PLAN_TL042_V2.md
+      - Chiplet host tooling plan: bringup/CHIPLET_HOST_TOOLING_PLAN.md
+
+  - Debug — the D2D wedge:
+      - Overview and supersession chain: debug/index.md
+      - "Handback: hreadyout frozen at 0": debug/DIAGNOSE_AHB_SUB_HREADYOUT_FROZEN0_tidelink_die_a_u_xhb_sub.md
+      - "Bug report: ahb_sub_hreadyout hold": debug/BUGREPORT_AHB_SUB_HREADYOUT_HOLD_2026_08_19.md
+      - Wedge fix design: debug/WEDGE_FIX_DESIGN_2026-08-18.md
+      - Wedge regression bench: debug/WEDGE_REGRESSION_BENCH_2026-08-18.md
+      - XHB500 downstream assessment: debug/XHB500_DOWNSTREAM_ASSESSMENT_2026-08-18.md
+      - "Diagnosis: XHB500 raw hreadyout low": debug/DIAGNOSE_XHB500_RAW_HREADYOUT_LOW.md
+      - "Diagnosis: hreadyout low in u_xhb_sub": debug/DIAGNOSE_HREADYOUT_LOW_u_xhb_sub.md
+      - "Superseded: RX-word-clock root cause": debug/ROOT_CAUSE_D2D_DELIVERY_WEDGE_2026_08_10.md
+      - AXI data-node recovery gap: debug/AXI_DATANODE_RECOVERY_GAP_2026_07_31.md
+      - "Superseded: cross-die wedge root cause": debug/CROSS_DIE_WEDGE_ROOTCAUSE.md
+      - "Separate: TideChart ST_SETTLED RX wedge": debug/TC_SETTLED_RX_WEDGE.md
+
   - Tapeout guide:
       - Overview: tapeout/00-index.md
-      - Flow overview: tapeout/01-flow-overview.md
-      - Innovus basics: tapeout/02-innovus-basics.md
-      - Floorplan: tapeout/03-floorplan.md
-      - Power plan: tapeout/04-power-plan.md
-      - Place, CTS, route: tapeout/05-place-cts-route.md
-      - Fill, antenna, bond pads: tapeout/06-fill-antenna-bondpads.md
-      - Reading reports: tapeout/07-reading-reports.md
-      - Debugging: tapeout/08-debugging.md
-      - Signoff checklist: tapeout/09-signoff-checklist.md
-      - Tapeout submission: tapeout/10-tapeout-submission.md
-      - Known issues: tapeout/11-known-issues.md
-      - Calibre DRC: tapeout/12-calibre-drc.md
-      - LEC: tapeout/13-lec.md
-      - DRC triage: tapeout/14-drc-triage.md
-      - PG opens analysis: tapeout/15-pg-opens-analysis.md
-      - Open defects: tapeout/16-open-defects.md
-      - Silently ineffective commands: tapeout/17-silent-noops.md
-      - Message census: tapeout/18-message-census.md
-      - Timing audit: tapeout/19-timing-audit.md
-      - Synthesis audit: tapeout/20-synthesis-audit.md
-      - Physical audit: tapeout/21-physical-audit.md
-      - Synthesis flow notes: tapeout/22-synthesis-flow-notes.md
-      - P&R flow notes: tapeout/23-pnr-flow-notes.md
-      - D2D link physical handover: tapeout/24-d2d-link-physical-handover.md
-      - What remains, explained: tapeout/25-what-remains-explained.md
-
+      - The flow, stage by stage:
+          - Flow overview: tapeout/01-flow-overview.md
+          - Innovus basics: tapeout/02-innovus-basics.md
+          - Floorplan: tapeout/03-floorplan.md
+          - Power plan: tapeout/04-power-plan.md
+          - Place, CTS, route: tapeout/05-place-cts-route.md
+          - Fill, antenna, bond pads: tapeout/06-fill-antenna-bondpads.md
+          - Synthesis flow notes: tapeout/22-synthesis-flow-notes.md
+          - P&R flow notes: tapeout/23-pnr-flow-notes.md
+      - Reading, debugging, signing off:
+          - Reading reports: tapeout/07-reading-reports.md
+          - Debugging: tapeout/08-debugging.md
+          - Signoff checklist: tapeout/09-signoff-checklist.md
+          - Tapeout submission: tapeout/10-tapeout-submission.md
+          - Known issues: tapeout/11-known-issues.md
+          - Calibre DRC: tapeout/12-calibre-drc.md
+          - LEC: tapeout/13-lec.md
+      - Audits of the 2026-08 baseline runs:
+          - DRC triage: tapeout/14-drc-triage.md
+          - PG opens analysis: tapeout/15-pg-opens-analysis.md
+          - Open defects: tapeout/16-open-defects.md
+          - Silently ineffective commands: tapeout/17-silent-noops.md
+          - Message census: tapeout/18-message-census.md
+          - Timing audit: tapeout/19-timing-audit.md
+          - Synthesis audit: tapeout/20-synthesis-audit.md
+          - Physical audit: tapeout/21-physical-audit.md
+          - D2D link physical handover: tapeout/24-d2d-link-physical-handover.md
+          - What remains, explained: tapeout/25-what-remains-explained.md
+      - Where the project stands:
+          - Measured status (2026-08-18): tapeout/45-measured-status-2026-08-18.md
+          - Plan to a submittable GDS: tapeout/26-plan-to-submittable-gds.md
+          - Signoff stage/target audit: tapeout/37-signoff-stage-target-audit.md
+          - Why gate1 aborted: tapeout/46-why-gate1-aborted.md
+          - Gate-promotion plan: tapeout/53-gate-promotion-plan.md
+      - DRC, ERC and check coverage:
+          - DRC status and attribution: tapeout/28-drc-status-and-attribution.md
+          - Calibre DRC on fp1505: tapeout/43-drc-fp1505.md
+          - PO.R.8 resolved: tapeout/39-po-r8-resolved.md
+          - DRC layer-map blindness: tapeout/35-drc-layer-map-blindness.md
+          - Layer-map coverage check: tapeout/49-layer-map-coverage-check.md
+          - BND and LOGO checks: tapeout/50-bnd-and-logo-checks.md
+          - "Calibre ERC: power/ground labels": tapeout/51-erc-pg-labels.md
+          - Padring GDS check: tapeout/52-padring-gds-check.md
+      - Power delivery, PG and IR drop:
+          - IR-drop gate design: tapeout/30-ir-drop-gate-design.md
+          - Power delivery measured: tapeout/31-power-delivery-measured.md
+          - The IR-drop stage: tapeout/32-ir-drop-stage.md
+          - split_row PG anchoring hazard: tapeout/36-split-row-pg-anchoring-hazard.md
+          - The four M5 VDD-VSS shorts: tapeout/59-macro-placement-pg-short-window.md
+          - Stranded cells on PG islands: tapeout/42-stranded-cells-pg-islands.md
+          - PG island feed fragility: tapeout/47-pg-island-feed-fragility.md
+          - check_fp_pg vs the toolkit census: tapeout/54-fp-pg-vs-macro-stripe-census.md
+          - Core pin check, stdcell geometry (not tested): tapeout/56-core-pin-check-stdcell-geometry-not-tested.md
+          - pgfix-A run record: tapeout/60-pgfix-a-run-record.md
+          - Power intent never adapted: tapeout/61-power-intent-never-adapted.md
+          - "Evidence: island-feed predictions": tapeout/evidence/46-pg-island-feed-predictions.md
+      - Timing, equivalence and content:
+          - Signoff STA: tapeout/40-signoff-sta-plan.md
+          - Content gates runbook: tapeout/34-content-gates-gate1-runbook.md
+          - eth ROM sim/silicon divergence: tapeout/44-eth-rom-sim-divergence.md
+          - CPU0 boot on the routed netlist: tapeout/57-cpu0-boot-on-the-routed-netlist.md
+          - "Evidence: CPU0 boot verdicts": tapeout/evidence/57-cpu0-boot-verdicts.md
+      - Toolkit, submodules, infrastructure:
+          - Private TSMC tech repo: tapeout/29-private-tsmc-tech-repo.md
+          - Toolkit/legacy decoupling: tapeout/33-toolkit-legacy-decoupling.md
+          - Submodule pin-check trap: tapeout/38-submodule-pin-check-trap.md
+          - Retiring asic-flows: tapeout/41-retiring-asic-flows.md
+      - Broker and IMEC correspondence:
+          - IMEC signoff results analysis: tapeout/48-imec-signoff-results-analysis.md
+          - IMEC submission checklist: tapeout/55-imec-preliminary-gds-submission-checklist.md
+          - Broker correspondence (untracked): tapeout/58-broker-correspondence-untracked.md
   - Script reference:
       - Overview: tapeout/scripts/00-index.md
       - Stage scripts and Makefile: tapeout/scripts/01-stage-scripts-and-makefile.md
@@ -127,55 +249,36 @@ nav:
       - CTS and route: tapeout/scripts/06-cts-and-route.md
       - Filler and bond pads: tapeout/scripts/07-filler-and-bondpads.md
       - Portability refactor: tapeout/scripts/08-portability-refactor.md
+  - Templates:
+      - System bug report: templates/SYSTEM_BUG_REPORT_TEMPLATE.md
 
-  - Design:
-      - Implementation: IMPLEMENTATION.md
-      - Physical handoff: PHYSICAL_HANDOFF.md
-      - Pin map: PIN_MAP.md
-      - Pin policy: PIN_POLICY.md
-      - Power domains: POWER_DOMAINS.md
-      - Reset ordering: RESET_ORDERING.md
-      - Status registers: STATUS_REGISTERS.md
-      - Peer aperture programming: PEER_APERTURE_PROGRAMMING.md
-      - System app transparent bridge: SYSTEM_APP_TRANSPARENT_BRIDGE.md
+  - Plans:
+      - GDS run plan: plans/GDS_RUN_PLAN_2026-08-19.md
+      - Broker questions: plans/BROKER_QUESTIONS_2026-08-19.md
+      - Convergence plan: plans/CONVERGENCE_PLAN_2026-08-18.md
 
-  - Verification:
-      - CDC findings: CDC_FINDINGS.md
-      - Lint findings: LINT_FINDINGS.md
-      - Elaboration strict findings: ELAB_STRICT_FINDINGS.md
-      - Coverage gates run: COVERAGE_GATES_RUN_2026-08-06.md
-      - G2 testbench architecture: G2_TB_ARCHITECTURE.md
-      - G2 SoC pair status: G2_SOC_PAIR_STATUS.md
-      - G2 pair simulation: G2_PAIR_SIM.md
-      - TideChart test plan: TIDECHART_TEST_PLAN.md
+  - History (not current reference):
+      - Overview: history/index.md
+      - "Dev message: axirec reconcile": history/DEV_MESSAGE_AXIREC_RECONCILE_2026_08_04.md
+      - "Reply: axirec reconcile (3 Aug)": history/REPLY_AXIREC_RECONCILE_2026_08_03.md
+      - "Reply: axirec reconcile (4 Aug)": history/REPLY_AXIREC_RECONCILE_2026_08_04.md
+      - "Proposal: auto-anchor RTL": history/PROPOSAL_AUTO_ANCHOR_RTL_2026_08_04.md
+      - "Dev message: a2l self-latch on silicon": history/DEV_MESSAGE_A2L_SELFLATCH_SILICON_2026_08_09.md
+      - "Reply: TL-027 a2l on the eth chiplet": history/REPLY_TL027_A2L_ETHCHIPLET_2026_08_10.md
+      - "Dev message: D2D wedge root cause corrected": history/DEV_MESSAGE_D2D_WEDGE_ROOT_CAUSE_CORRECTED_2026_08_11.md
+      - "Dev message: D2D wedge ILA confirmed": history/DEV_MESSAGE_D2D_WEDGE_ILA_CONFIRMED_2026_08_13.md
+      - "Dev message: TideLink RX stall": history/DEV_MESSAGE_TIDELINK_RX_STALL_2026_08_10.md
+      - "Dev message: TideLink CI findings": history/DEV_MESSAGE_TIDELINK_CI_FINDINGS_2026_08_06.md
+      - TideLink silicon feedback: history/TIDELINK_SILICON_FEEDBACK.md
+      - TideLink D2D session handback: history/TIDELINK_D2D_SESSION_HANDBACK_2026-08-17.md
+      - "I1: FCSM bring-up regression": history/I1_FCSM_BRINGUP_REGRESSION.md
+      - "I1: resolved handover": history/I1_RESOLVED_HANDOVER_2026_07_31.md
+      - Overnight worklog: history/OVERNIGHT_WORKLOG.md
+      - Overnight HW campaign: history/OVERNIGHT_HW_CAMPAIGN_2026-08-05.md
+      - Coverage gates run (deferred): history/COVERAGE_GATES_RUN_2026-08-06.md
+      - Full HW loop results: history/HW_LOOP_RESULTS_2026-08-08.md
+      - System-validation run results: history/SYSVAL_RUN_RESULTS_2026-08-08.md
+      - Validation unblock plan: history/VALIDATION_UNBLOCK_PLAN_2026-08-08.md
+      - Three-unlock campaign: history/CAMPAIGN_THREE_UNLOCK_2026-08-09.md
 
-  - Cross-die and TideLink:
-      - Cross-die debug plan: CROSS_DIE_DEBUG_PLAN.md
-      - Cross-die debug 0C gate spec: CROSS_DIE_DEBUG_0C_GATE_SPEC.md
-      - Cross-die interrupts: CROSS_DIE_INTERRUPTS.md
-      - Cross-die test backlog: CROSS_DIE_TEST_BACKLOG.md
-      - Cross-die wedge root cause: CROSS_DIE_WEDGE_ROOTCAUSE.md
-      - AXI datanode recovery gap: AXI_DATANODE_RECOVERY_GAP_2026_07_31.md
-      - D2D HREADY loop: D2D_HREADY_LOOP.md
-      - TideLink silicon feedback: TIDELINK_SILICON_FEEDBACK.md
-      - TideLink KR260 port plan: TIDELINK_KR260_PORT_PLAN.md
-
-  - Bring-up:
-      - KR260 bench runbook: KR260_BENCH_RUNBOOK.md
-      - KR260 board wiring: KR260_BOARD_WIRING.md
-      - KR260 LAN8720 fpgahub plan: KR260_LAN8720_FPGAHUB_PLAN.md
-      - I1 FCSM bring-up regression: I1_FCSM_BRINGUP_REGRESSION.md
-      - I1 resolved handover: I1_RESOLVED_HANDOVER_2026_07_31.md
-      - Overnight HW campaign: OVERNIGHT_HW_CAMPAIGN_2026-08-05.md
-      - Overnight worklog: OVERNIGHT_WORKLOG.md
-      - Chiplet alignment: CHIPLET_ALIGNMENT.md
-      - Chiplet host tooling plan: CHIPLET_HOST_TOOLING_PLAN.md
-
-  - Correspondence:
-      - TSMC backend package request: TSMC_BACKEND_PACKAGE_REQUEST.md
-      - Upstreaming block YAMLs: UPSTREAMING_BLOCK_YAMLS.md
-      - "Proposal: auto-anchor RTL": PROPOSAL_AUTO_ANCHOR_RTL_2026_08_04.md
-      - "Dev message: axirec reconcile": DEV_MESSAGE_AXIREC_RECONCILE_2026_08_04.md
-      - "Reply: axirec reconcile (3 Aug)": REPLY_AXIREC_RECONCILE_2026_08_03.md
-      - "Reply: axirec reconcile (4 Aug)": REPLY_AXIREC_RECONCILE_2026_08_04.md
-      - "Dev message: TideLink CI findings": DEV_MESSAGE_TIDELINK_CI_FINDINGS_2026_08_06.md
+  # --- sections below are owned by the tapeout agent; reproduced unchanged ---

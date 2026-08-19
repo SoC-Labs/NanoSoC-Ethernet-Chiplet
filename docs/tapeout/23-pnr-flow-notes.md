@@ -373,11 +373,12 @@ So every DRC number this flow produces is a **routing and PG check, not signoff 
 front-end, density and seal-ring rules are meaningless against this stream. LVS cannot run
 here at all. Both unblock together, on procurement rather than engineering.
 
-Also absent from the whole flow and genuinely in scope: **metal density fill**.
-`add_metal_fill` appears nowhere in the production flow. The route stage now carries
-`EVR_METAL_FILL` / `EVR_VIA_FILL` knobs, defaulted **off**, because fill changes coupling
-capacitance and therefore timing, and the question of who does fill — us or the foundry —
-is still open with the broker. Note `add_via_fill` takes its parameters from
+Also absent from the stream, though no longer an open question: **metal density fill**.
+The route stage carries `EVR_METAL_FILL` / `EVR_VIA_FILL` knobs, defaulted **off**, and the
+shipping configuration keeps them off — `ROUTE_METAL_FILL=0` with `METAL_FILL_OWNER=foundry`,
+because the broker fills the frame after merging the standard-cell and IO layouts in. Fill
+also changes coupling capacitance and therefore timing, so inserting it here would cost a
+re-run for metal that is about to be replaced. Note `add_via_fill` takes its parameters from
 `set_metal_fill`, which this flow does not issue, so that knob is not yet known to do
 anything.
 

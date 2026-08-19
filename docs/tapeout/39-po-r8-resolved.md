@@ -2,7 +2,7 @@
 
 **Status: RESOLVED 2026-08-18.** Two of our own documents said opposite things about
 the same 691 results. They have been reconciled against the run data, not against
-each other. This page is the evidence; `docs/DRC_WAIVER_INVENTORY.md` § 2 is the
+each other. This page is the evidence; `docs/asic/DRC_WAIVER_INVENTORY.md` § 2 is the
 dossier entry; `ASIC/genus-innovus/scripts/calibre/drc_waivers.yaml` is the
 implementation.
 
@@ -12,7 +12,7 @@ implementation.
 
 | document | claim |
 |---|---|
-| `docs/DRC_WAIVER_INVENTORY.md` § 2 (compiled 2026-08-17) | "`PO.R.8` was previously treated as an abstraction artefact that an IO-layout import would resolve. **It is not.** Its results are real merged memory GDS … An IO import changes nothing about them." |
+| `docs/asic/DRC_WAIVER_INVENTORY.md` § 2 (compiled 2026-08-17) | "`PO.R.8` was previously treated as an abstraction artefact that an IO-layout import would resolve. **It is not.** Its results are real merged memory GDS … An IO import changes nothing about them." |
 | `docs/tapeout/28-drc-status-and-attribution.md` § 4 (corrected 2026-08-13) | the opposite — they *are* a black-boxing artefact, and the import is exactly what resolves them |
 | `docs/tapeout/27-broker-questions-SEND-NOW.md` Q4 | agrees with 28: "the same macros inside a previously taped-out chip with real cell layouts report zero" |
 | `scripts/ci/drc_census.py` docstring | agreed with the inventory — so it was **three against two**, and majority was not evidence |

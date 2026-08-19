@@ -26,7 +26,7 @@
 4. **There is still no end-to-end RTL→netlist equivalence proof**, and the blocking `lec` gate reports green
    over the wrong half of a truncated log. → §3.5
 5. **The stale-index trap is armed right now.** A bare `git commit` would revert six paths, including the
-   toolkit pin set by `17385f8` — the very commit I was asked to confirm had landed. → §1.3
+   toolkit pin set by `17385f8` — the very commit whose landing this page set out to confirm. → §1.3
 
 ### Where the chip actually stands
 
@@ -161,7 +161,7 @@ submodules and the identical `src/rtl` blob, so a clone of `origin/fix/tag-ram-g
 - [MEASURED] Elaboration also requires the lab-shared vendor IP trees via `ARM_IP_LIBRARY_PATH` / `CMSDK_DIR`,
   which are outside the repo. A clone on a host without them cannot elaborate at all.
 - [UNMEASURED] I did not run a full-hierarchy elaboration from the pristine tree; that needs the generator and
-  the vendor trees, and a synthesis/sim seat I was asked not to take.
+  the vendor trees, and a synthesis/sim seat that was not available to take.
 ## 2. Builds
 
 There are **three** build roots, not one. Searching the wrong one is a documented way to reach a confident wrong
@@ -1018,7 +1018,7 @@ done
 An unmeasured item recorded as unknown is worth more than an inherited one recorded as fact. These are unknown:
 
 - **[UNMEASURED] Full-hierarchy elaboration from a pristine clone.** §1.4 proves the wrapper-to-submodule port
-  contract only. A real one needs the SoC generator run and the vendor IP trees, plus a seat I was asked not to
+  contract only. A real one needs the SoC generator run and the vendor IP trees, plus a seat that was not available to
   take.
 - **[UNMEASURED] Whether the FCSM `deps`-vs-`local_overrides` divergence (§5.2) was intended.** The flists state
   it unambiguously; I found no decision record either way.

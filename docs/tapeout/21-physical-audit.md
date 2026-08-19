@@ -1,5 +1,7 @@
 # 21 — Physical implementation audit: floorplan, PG, vias, rows, fill, pad ring
 
+> **Status — point-in-time.** Measured on the `CORE_TO_IO 70` run in `baseline_2026-08-06/`. Floorplan, PG and pad-ring numbers have all moved since; current PG findings are [42](42-stranded-cells-pg-islands.md), [47](47-pg-island-feed-fragility.md) and [54](54-fp-pg-vs-macro-stripe-census.md).
+
 **Scope.** Everything physical that the DRC and connectivity *reports* do not capture but
 the *logs* do. Sources are the completed `CORE_TO_IO 70` run
 (`baseline_2026-08-06/logs/pnr_run_core70.log`, 119,859 lines), the previous floorplan

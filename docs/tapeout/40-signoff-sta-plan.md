@@ -25,7 +25,7 @@ parasitics; the hold number is not, and it is the one that decision **D2**
 
 ### (a) Autonomous — no human decision needed
 
-Done tonight, or mechanically doable from here.
+Done in the 2026-08-17 run set, or mechanically doable from here.
 
 | # | Item | State |
 |---|---|---|
@@ -51,7 +51,7 @@ cost attached, and I have deliberately not made any of them.
 | **D3** | **Which corners sign off?** | Today exactly two are analysed: SS/1.08 V/125 °C setup, FF/1.32 V/−40 °C hold. `ss_1p08v_m40c` and `ff_1p32v_125c` libraries exist on disk, unused. Adding corners can only find more violations. |
 | **D4** | **Is 0.350 ns clock uncertainty still right post-CTS?** | It is applied on every one of ~30 clocks, post-CTS, on top of propagated latency and CPPR. Some of it is pre-CTS skew allowance that the clock tree now models for real. Recovering 0.25 ns of it is worth ~0.25 ns of WNS across the board — but it is margin you are choosing to give up. |
 | **D5** | **Is flat 5 %/3 % OCV the right derate at 65 nm?** | On an 11.2 ns data path the 1.05 late data derate alone costs ≈0.53 ns. AOCV/LVF would recover much of that and is more defensible than flat OCV — but needs vendor data we do not have (§ (c)). |
-| **D6** | **Does signoff require SI (crosstalk)?** | Tonight's run has SI **off** — forced, see §5.2. P&R claims "SI On". Getting it back costs a restructured run (SMSC, one view per invocation). |
+| **D6** | **Does signoff require SI (crosstalk)?** | The 2026-08-17 run has SI **off** — forced, see §5.2. P&R claims "SI On". Getting it back costs a restructured run (SMSC, one view per invocation). |
 | **D7** | **The `-divide_by` constraint class — one decision, three instances** | See §4.7. **Pick whether the SDC describes the shipped configuration only, or every configuration the hardware can be put into.** Everything else follows mechanically, three times. |
 
 ### (c) Blocked on something absent
@@ -116,7 +116,7 @@ That matters: it can read the routed database directly.
 | **Corners / MMMC** | 3 library sets, 3 RC corners, 4 delay corners, 5 views defined | only **2 views active** at signoff (D3); 2 views defined but never activated anywhere — dead |
 | **Derates** | flat OCV 0.95/1.05 data, 0.97/1.03 clock | does **not** survive `read_db` (§4.4); no AOCV/LVF (B2) |
 | **CPPR** | `timing_analysis_cppr both`, confirmed active (`Cppr Adjust: +0.163` on the worst path) | none |
-| **I/O timing models** | 48 `set_input_delay`, 30 `set_output_delay`, 9 `set_driving_cell`, 39 `set_input_transition`, 62 `set_load` over 41 top-level port bits | coverage looks complete; **not yet independently confirmed** — `check_timing` in tonight's run is the check |
+| **I/O timing models** | 48 `set_input_delay`, 30 `set_output_delay`, 9 `set_driving_cell`, 39 `set_input_transition`, 62 `set_load` over 41 top-level port bits | coverage looks complete; **not yet independently confirmed** — `check_timing` in the 2026-08-17 run is the check |
 | **Modes** | exactly **one** `create_constraint_mode` (`default_constraint_mode`) | no separate test/scan or low-power mode. If scan is timed, it is timed in the functional mode. |
 | **SI / crosstalk** | Celtic `.cdb` present | off in Tempus (D6/B3) |
 
@@ -128,7 +128,7 @@ That matters: it can read the routed database directly.
 
 Not "an old one", not "one per corner": **zero**. In-flow extraction lived
 only in memory. Nothing downstream — no independent STA, no third-party
-check, no correlation — was possible. Tonight's run writes one SPEF per RC
+check, no correlation — was possible. The 2026-08-17 run writes one SPEF per RC
 corner.
 
 ### 4.2 The in-flow number and a signoff number are not the same measurement
@@ -173,7 +173,7 @@ Two consequences worth being blunt about:
 
 1. Rebuilding constraints for STA from `_syn.sdc` alone would silently drop
    the latency writeback entirely. Any STA must restore the DB or take the
-   per-view `latency.sdc`. Tonight's run set does the former.
+   per-view `latency.sdc`. The 2026-08-17 run set does the former.
 2. The right instrument already exists and has never been pointed at this
    design: Tempus `report_analysis_coverage` reports *untested* checks
    directly. The gate treats any non-zero untested count as a failure, and an
@@ -389,7 +389,7 @@ Tempus reports roughly **a third** of the setup failures — but **eleven times
 the hold failures** (79 against 7). Setup got better; hold got much worse.
 
 That asymmetry is not noise, and it is the single most decision-relevant
-number produced tonight:
+number produced by the 2026-08-17 run:
 
 - The setup improvement is *plausibly* an artefact — SI contributes nothing
   here and extraction is not signoff-grade, both of which bias optimistic.
@@ -541,7 +541,7 @@ endpoints, 1299 are `reg2reg` and 130 are `ClockGate`.
 
 1. **The ≈93 MHz figure is a first-order inference**, valid for single-cycle
    same-clock `reg2reg` paths, which dominate here (1299/1429). Inter-clock
-   and multicycle paths do not scale with the period identically. Tonight's
+   and multicycle paths do not scale with the period identically. The 2026-08-17 run's
    Tempus run is the instrument to confirm it properly.
 2. **Hold FEP 7–11 is now known to be wrong, not merely untrustworthy.**
    Tempus measures **79** on the same database (§5.4). With source latency

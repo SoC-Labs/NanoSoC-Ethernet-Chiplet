@@ -31,7 +31,7 @@ not a verdict on the chip the team is currently trying to finish.
 The "Aug 18 IP-merge" cutoff scenario below this line was raised as a live risk earlier today from an
 unresolved broker question (**Q0**, "IP merge" classification) circulating in a deleted draft still visible
 in git history; it is now moot. There is real time to do this properly — see
-`CONVERGENCE_PLAN_2026-08-18.md` §9 for what that changes about sequencing.
+`docs/plans/CONVERGENCE_PLAN_2026-08-18.md` §9 for what that changes about sequencing.
 
 ## 1. Per-category findings
 

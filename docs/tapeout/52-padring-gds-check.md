@@ -1,5 +1,7 @@
 # 52 — Padring GDS check
 
+> **Status — measured 2026-08-18 against the exact GDS IMEC evaluated (md5 `7f6214965501c911bd65069378ae911d`) and against `fp1505`.** The check is promoted to a blocking gate ([53 §1](53-gate-promotion-plan.md)); that gate is RED on `fp1505` by design until the stream is re-cut.
+
 [← 16 Open defects](16-open-defects.md) · [index](00-index.md)
 
 What IMEC signoff tools found that nothing local predicted, what a newcomer needs to know about "padframe" and "black-box submission" to make sense of it, the check this repo now has (scripts/check_padring_gds.py), and what it found when run against the exact GDS IMEC saw.
@@ -42,7 +44,7 @@ bond pads).
 We do not hold usable rights to this site's *Back End* views of those
 libraries — real transistor and metal geometry — only *Front End* (timing,
 power, LEF abstracts). See
-[`docs/TSMC_BACKEND_PACKAGE_REQUEST.md`](../TSMC_BACKEND_PACKAGE_REQUEST.md).
+[`docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`](../asic/TSMC_BACKEND_PACKAGE_REQUEST.md).
 So our own GDS deliverable references these cells **by name only**:
 [`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl)
 creates instances named `PAD70GU`/`PAD70NU`, and
@@ -105,7 +107,7 @@ exist in `pads.v`? does every `place_bondpads.tcl` name land on the side the
 `check_chip_boundary.py`'s `check_pad_ring()` already applies to the netlist.
 On this design that cross-check is clean: 0 inconsistencies, 12 distinct
 pad/corner cell families, counts exactly matching
-[`docs/TSMC_BACKEND_PACKAGE_REQUEST.md`](../TSMC_BACKEND_PACKAGE_REQUEST.md)'s
+[`docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`](../asic/TSMC_BACKEND_PACKAGE_REQUEST.md)'s
 independently-written table and
 [06](06-fill-antenna-bondpads.md)'s per-side breakdown (top 17, left 26,
 bottom 17, right 22 — each split outer/inner exactly as documented there).
@@ -183,7 +185,7 @@ each watched structure's own definition carries any real geometry
 
 Exactly what the check derives from source, reproduced here because it is
 useful to have in one place (also independently cross-checked against
-[`docs/TSMC_BACKEND_PACKAGE_REQUEST.md`](../TSMC_BACKEND_PACKAGE_REQUEST.md)
+[`docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`](../asic/TSMC_BACKEND_PACKAGE_REQUEST.md)
 and [06](06-fill-antenna-bondpads.md), which agree exactly):
 
 | Cell | Family | Expected count |
@@ -244,7 +246,7 @@ not explained by a local naming, counting, or ordering mistake on our side.**
 Two candidates remained open at the time (neither confirmable from this
 site — we hold no real `tpbn65v.gds`/`tphn65lpgv2od3` file to check
 against — see
-[`docs/TSMC_BACKEND_PACKAGE_REQUEST.md`](../TSMC_BACKEND_PACKAGE_REQUEST.md)):
+[`docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`](../asic/TSMC_BACKEND_PACKAGE_REQUEST.md)):
 
 1. **Library revision / naming-convention mismatch.** Our design pulls
    `tpbn65v_<rev>` (`config.tcl`'s `$IO_PAD_LEF`) and `tphn65lpgv2od3_sl_<rev>`
@@ -503,7 +505,7 @@ reasoning Section 7 summarises ·
 generates the Section 7 regression fixtures ·
 [`scripts/check_chip_boundary.py`](../../scripts/check_chip_boundary.py) —
 the netlist-side sibling check ·
-[`docs/TSMC_BACKEND_PACKAGE_REQUEST.md`](../TSMC_BACKEND_PACKAGE_REQUEST.md)
+[`docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`](../asic/TSMC_BACKEND_PACKAGE_REQUEST.md)
 
 ---
 

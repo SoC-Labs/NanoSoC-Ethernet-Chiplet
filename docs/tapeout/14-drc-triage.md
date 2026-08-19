@@ -1,5 +1,7 @@
 # 14 — DRC triage (2026-08-06 run) and the fill-stage ordering fix
 
+> **Status — SUPERSEDED for counts.** The 102 violations triaged here are the 2026-08-06 `ASIC/genus-innovus` run. The current like-for-like measurement is [43](43-drc-fp1505.md) (837 raw, 146 post-waiver, 140 design-owned on both `fp1505` and `full-20260814`); the attribution is [28](28-drc-status-and-attribution.md) and [39](39-po-r8-resolved.md). The fill-stage ordering analysis below still stands.
+
 [index](00-index.md) · [11 Known issues](11-known-issues.md) · [06 Fill, antenna, bond pads](06-fill-antenna-bondpads.md)
 
 Two things, in the order they matter:

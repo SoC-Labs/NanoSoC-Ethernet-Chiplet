@@ -936,7 +936,7 @@ minute, and must precede any other conclusion about the open count.
 
 ### 7.1 …you add a power domain
 
-[`docs/POWER_DOMAINS.md`](../../POWER_DOMAINS.md) analyses the candidate CORE / LINK / PHY split and
+[`docs/POWER_DOMAINS.md`](../../design/POWER_DOMAINS.md) analyses the candidate CORE / LINK / PHY split and
 recommends **one domain for v1**. If that recommendation is ever reversed, this file changes in nine
 places:
 
@@ -1052,4 +1052,4 @@ confidence.
 - [15-pg-opens-analysis](../15-pg-opens-analysis.md) — the 329 opens, their geometry, and the ranked
   experiments that would settle them
 - [16-open-defects](../16-open-defects.md) · [11-known-issues](../11-known-issues.md)
-- [`docs/POWER_DOMAINS.md`](../../POWER_DOMAINS.md) — the CORE/LINK/PHY domain analysis behind §7.1
+- [`docs/POWER_DOMAINS.md`](../../design/POWER_DOMAINS.md) — the CORE/LINK/PHY domain analysis behind §7.1

@@ -1,5 +1,7 @@
 # 11 — Known issues
 
+> **Status — point-in-time, 2026-08-05/06 `ASIC/genus-innovus` runs.** Items (a) PG opens and the hold-timing entry are closed elsewhere ([42](42-stranded-cells-pg-islands.md), [47](47-pg-island-feed-fragility.md), [23 note 1](23-pnr-flow-notes.md)); the live open-item list is [45](45-measured-status-2026-08-18.md) and `ci/signoff.yaml`.
+
 [← 10 Tapeout submission](10-tapeout-submission.md) · [index](00-index.md)
 
 The live open items on `nanosoc_eth_chiplet_pads`. Each entry says **what is known**,
@@ -11,7 +13,7 @@ Numbers come from the 2026-08-05 baseline unless stated otherwise:
 
 | | Issue | Severity | State |
 |---|---|---|---|
-| [a](#a-329-pg-opens-reported-by-check_connectivity) | 329 PG opens (`check_connectivity`) | **blocking** | root cause **unknown**; 2 hypotheses falsified |
+| [a](#a-329-pg-opens-reported-by-check_connectivity) | 329 PG opens (`check_connectivity`) | **closed as an open question** | root cause found — `split_row` row islands ([42](42-stranded-cells-pg-islands.md)); feed fix landed ([47](47-pg-island-feed-fragility.md)) |
 | [b](#b-bond-pad-obs-drc-318-pg-shorts) | Bond-pad OBS DRC, 318 PG shorts | **blocking** | root-caused; fix in flight |
 | [c](#c-qspi-flash-cache-tag-rams-have-an-undriven-gwen) | QSPI tag RAM `GWEN` undriven | medium | real RTL defect, present in the reference GDSII too |
 | [d](#d-power-intent-defines-no-power_modepower_state-impmsmv-3501) | No `power_mode`/`power_state` (`IMPMSMV-3501`) | low here | architectural; blocks always-on buffering |
@@ -24,6 +26,18 @@ Numbers come from the 2026-08-05 baseline unless stated otherwise:
 ---
 
 ## a) 329 PG opens reported by `check_connectivity`
+
+> **ROOT CAUSE FOUND — this entry is kept for its falsified hypotheses, not as a live
+> question.** `power_plan.tcl` calls `split_row -selected` over the placed macros;
+> `add_stripes` then re-anchors the M5 VDD/VSS ladder **per row region**, and the narrow row
+> islands cut around three SRAM macros get no stripe. The cells in them have no metal supply
+> path, which is what `check_connectivity` was reporting. On the `fp1505` Voltus solve, 330
+> instances have no path to VDD or VSS and **55 are functional** (30 clock/buffer cells, 4
+> flip-flops, 21 gates) — so the answer to the "real defect or `sroute` artefact" question
+> below is **real defect**. Mechanism: [36](36-split-row-pg-anchoring-hazard.md). Measurement
+> and its three controls: [42](42-stranded-cells-pg-islands.md). The island-feed fix is landed
+> and screened (functional stranded 55 → 0) but sits on 0.4 µm of margin and is **not gated**:
+> [47](47-pg-island-feed-fragility.md).
 
 ### What is known
 
@@ -50,10 +64,10 @@ there are none on signal nets.
 fragment at `(1058.3, 1594.035)–(1072.9, 1594.365)` sits adjacent to a macro edge. The
 connectivity report's nearest corresponding entry is
 `Net VSS: has special routes with opens at (1048.500, 1593.845) (1058.300, 1594.955)`, and
-there are dangling `VSS` wires at `(1058.300, 1594.400)` on both M1 and M2. **Whether that
-fragment is a missing via (a real power-delivery defect) or stray metal that `sroute`
-started and abandoned is UNRESOLVED.** The two have opposite consequences, so the
-distinction is the whole question.
+there are dangling `VSS` wires at `(1058.300, 1594.400)` on both M1 and M2. Whether that fragment is
+a missing via or stray metal `sroute` abandoned was the open question here; the
+supply-path measurement in [42](42-stranded-cells-pg-islands.md) answered the
+class — the opens are real missing supply, not a reporting artefact.
 
 Note the geometry: the M5 stripes are added `-over_power_domain 1` with
 `-extend_to_closest_target {ring stripe}` at 15 µm pitch
@@ -266,9 +280,9 @@ coverage, so it cannot decide which buffers must stay powered across a domain bo
 nothing to be always-on *relative to*. Everything in `PD_TOP` is powered together, so the
 unsupported feature is not currently needed.
 
-**Why it will not stay low severity:** [`docs/POWER_DOMAINS.md`](../POWER_DOMAINS.md)
+**Why it will not stay low severity:** [`docs/design/POWER_DOMAINS.md`](../design/POWER_DOMAINS.md)
 analyses splitting the D2D link into its own domain, and
-[`docs/PHYSICAL_HANDOFF.md` §5](../PHYSICAL_HANDOFF.md) records the gap plainly — *"the
+[`docs/design/PHYSICAL_HANDOFF.md` §5](../design/PHYSICAL_HANDOFF.md) records the gap plainly — *"the
 SoC's UPF has no D2D domain — the generator residual reads `domain ACCEL omitted`"*, gap
 **C3**. **The moment anyone acts on that recommendation, this error becomes blocking**:
 you cannot have an isolated, retainable link PHY without `power_state` definitions, and
@@ -294,7 +308,7 @@ without isolation an unpowered link can corrupt the SoC's fabric.
    and give `VDDIO`/`VDDACC` their own `supply_set` so they stop being folded into
    `PD_TOP`.
 3. **Do that before splitting the D2D domain**, not after. Read
-   [`docs/POWER_DOMAINS.md`](../POWER_DOMAINS.md) §"Decision checklist for the team" first
+   [`docs/design/POWER_DOMAINS.md`](../design/POWER_DOMAINS.md) §"Decision checklist for the team" first
    — the domain split is still an open architectural decision, and the power-intent work
    depends on which way it goes.
 

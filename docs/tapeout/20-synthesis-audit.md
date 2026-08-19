@@ -1,5 +1,7 @@
 # 20 — Genus synthesis audit (baseline 2026-08-05)
 
+> **Status — point-in-time.** Audits the 2026-08-05 Genus run, whose `baseline_2026-08-05/` directory is no longer in the tree. Synthesis has been re-run many times since; the structural findings stand, the numbers do not.
+
 [index](00-index.md) · [11 Known issues](11-known-issues.md) · [13 LEC](13-lec.md) · [16 Open defects](16-open-defects.md)
 
 Audit of the **Genus** stage only — elaboration through `write_hdl`. Motivated by the
@@ -12,9 +14,9 @@ run held the seats throughout. Nothing under `work/`, `outputs/`, `reports/`, `l
 
 | Source | Path |
 |---|---|
-| Synthesis logs (8 runs) | [`baseline_2026-08-05/logs/syn_logs.log{,1..7}`](../../ASIC/genus-innovus/baseline_2026-08-05/logs/) |
-| Low-power checks | [`syn_cpf_check.log`](../../ASIC/genus-innovus/baseline_2026-08-05/logs/syn_cpf_check.log), [`syn_pow_check.log`](../../ASIC/genus-innovus/baseline_2026-08-05/logs/syn_pow_check.log), [`syn_lib_check.log`](../../ASIC/genus-innovus/baseline_2026-08-05/logs/syn_lib_check.log) |
-| Reports | [`syn_{area,gates,power,timing}.rep`](../../ASIC/genus-innovus/baseline_2026-08-05/reports/) |
+| Synthesis logs (8 runs) | `baseline_2026-08-05/logs/syn_logs.log{,1..7}` |
+| Low-power checks | `syn_cpf_check.log`, `syn_pow_check.log`, `syn_lib_check.log` |
+| Reports | `syn_{area,gates,power,timing}.rep` |
 | Flow | [`ASIC/asic-flows/Cadence/1_synthesis.tcl`](../../ASIC/asic-flows/Cadence/1_synthesis.tcl), [`scripts/config.tcl`](../../ASIC/genus-innovus/scripts/config.tcl), [`ASIC/common.mk`](../../ASIC/common.mk) |
 | Netlists | `outputs/nanosoc_eth_chiplet_pads_gate.v` (38 MB), `_gate_power.v` (43 MB) |
 

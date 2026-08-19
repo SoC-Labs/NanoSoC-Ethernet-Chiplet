@@ -162,7 +162,7 @@ stable across twelve years of rule revisions.
 > rules out a *rule-revision* artefact and is silent on *context*). The 691 are
 > now waived, cell-scoped, in the census. See
 > [39-po-r8-resolved.md](39-po-r8-resolved.md) — and note that
-> `docs/DRC_WAIVER_INVENTORY.md`, which contradicted this section until
+> `docs/asic/DRC_WAIVER_INVENTORY.md`, which contradicted this section until
 > 2026-08-18, has been corrected to agree with it, not the other way round.
 >
 > This section used to end the paragraph below with *"The layout is already present, so no import

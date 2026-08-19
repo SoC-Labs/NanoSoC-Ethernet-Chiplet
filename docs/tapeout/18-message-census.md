@@ -1,5 +1,7 @@
 # 18 — Complete message census: every ERROR / WARN / INFO class in the TSMC65 flow
 
+> **Status — point-in-time.** Census of the 2026-08-05/06 `ASIC/genus-innovus` logs; the `baseline_2026-08-05/` directory it cites is no longer in the tree. Message IDs and their diagnoses remain the reference; the tallies are stale.
+
 Scope: every distinct Cadence message ID emitted by the Genus + Innovus tapeout flow,
 tallied, quoted, explained and triaged.
 
@@ -586,7 +588,7 @@ synchroniser on the Ethernet TX path.
    (`ptp-hardware-clock-ahb` / `ethernet-mac-ahb/src/rdl`) and are expected to be readable.
 3. For `ResetTxCIrq_sync1`: read `eth_registers` and confirm whether the second stage
    survives; check `report sequential -deleted` output if it was captured.
-4. Cross-check against the existing CDC results (`docs/CDC_FINDINGS.md`) — a deleted sync
+4. Cross-check against the existing CDC results (`docs/verification/CDC_FINDINGS.md`) — a deleted sync
    stage should show up there too, and if it does not, that is a gap in the CDC flow.
 
 ### 6.5 — The un-countable classes: `TCLCMD-1005`, `CDFG2G-616`, `IMPESI-3095`

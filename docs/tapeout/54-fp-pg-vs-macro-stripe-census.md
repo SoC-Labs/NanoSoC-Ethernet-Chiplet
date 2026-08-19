@@ -26,7 +26,7 @@ this task.**
    because "the toolkit does this now" would remove real coverage with nothing behind it.
 3. **A worked example on this design's own real defect shows the toolkit's *hard* gate
    would likely have missed it, even fixed.** The four historical VDD–VSS shorts
-   (`32-macro-placement-pg-short-window.md`) sit on a stripe that only *partially* overlaps
+   (`59-macro-placement-pg-short-window.md`) sit on a stripe that only *partially* overlaps
    the shorting macro's bounding box — it is not an edge-to-edge "crossing", which is the
    only thing `PLACE_MAX_MACRO_STRIPES` hard-gates by default. The metric that *would* show
    it — `min_gap` → 0 — is deliberately left ungated on this design
@@ -123,7 +123,7 @@ design (it is a macro-bbox test; rows are not macros).
 differ enough that it is not redundant even once the toolkit check is fixed
 
 Take this design's own historical defect — the four VDD–VSS shorts documented in
-`32-macro-placement-pg-short-window.md` (offset-8 case, since fixed by relocating one
+`59-macro-placement-pg-short-window.md` (offset-8 case, since fixed by relocating one
 memory macro; the fix is landed, but the underlying per-region re-anchoring mechanism is
 still open per that document and `design.mk` §11d, and four more macro pairs are recorded
 sitting within half a micron of the same phase window). The shorting geometry there is
@@ -163,7 +163,7 @@ this design's own defect history, and under this design's own current knob confi
 the toolkit's *hard* gate would most likely **not** have fired on the actual historical
 short — the shape of the defect (a partial-width rung, not a full-width crossing) sits
 outside what `crossings` tests, and the arm that would show it (`min_gap`) is left
-ungated. `32-macro-placement-pg-short-window.md` §6 states, untested, that the toolkit
+ungated. `59-macro-placement-pg-short-window.md` §6 states, untested, that the toolkit
 gate's near-miss arm "would catch this class where it lands inside a macro footprint" —
 that is true of `overlaps`/`min_gap` as *measurements*, but the sentence elides that
 `min_gap` does not fail the build today, and this page's arithmetic is the first check of
@@ -376,7 +376,7 @@ gate against a repeat of the four-VDD–VSS-short defect. If its `post_powerplan
 ever silently absent for any reason (§3 shows exactly how quietly that can happen), or if
 `FP_PG_SHORT_WAIVER` were ever set without an equivalent tightening on the toolkit side,
 this design's only remaining defence against that specific, previously-realised, dead-chip
-class of defect would be the manual habit `32-macro-placement-pg-short-window.md` §6
+class of defect would be the manual habit `59-macro-placement-pg-short-window.md` §6
 already names as a stopgap: grepping the routed DRC report for `Special Wire of Net VSS &
 Special Wire of Net VDD` by hand, after every floorplan change, hours into the run.
 
@@ -417,7 +417,7 @@ Special Wire of Net VDD` by hand, after every floorplan change, hours into the r
 | Toolkit gate wiring, defaults | `ASIC/asic-toolkit/flow/innovus/2_place.tcl:184-203, 858-872, 1068-1180` |
 | Knob defaults, documented | `ASIC/asic-toolkit/docs/source/reference/knobs.md:205-224` |
 | PG ratchet decisions for this design | `ASIC/eth-chiplet/design.mk` §11b–11d (around lines 973-1069) |
-| The four historical shorts, coordinates and mechanism | `docs/tapeout/32-macro-placement-pg-short-window.md` |
+| The four historical shorts, coordinates and mechanism | `docs/tapeout/59-macro-placement-pg-short-window.md` |
 | Stranded-cell defect FP-ISLAND targets | `docs/tapeout/42-stranded-cells-pg-islands.md` |
 | Split-row anchoring mechanism | `docs/tapeout/36-split-row-pg-anchoring-hazard.md` |
 | Island-feed fix status, shared blind spot (PG vs. macro blockage) | `docs/tapeout/47-pg-island-feed-fragility.md` |
@@ -430,5 +430,5 @@ Special Wire of Net VDD` by hand, after every floorplan change, hours into the r
 No vendor values, deck revisions or site paths are reproduced here. The boot-ROM macro
 size and placement are this project's own generated-macro data
 (`ASIC/romlibs/`, tracked in this repository), quoted for the same reason
-`32-macro-placement-pg-short-window.md` quotes this project's own placement coordinates —
+`59-macro-placement-pg-short-window.md` quotes this project's own placement coordinates —
 they are the evidence the argument in §2.2 rests on.

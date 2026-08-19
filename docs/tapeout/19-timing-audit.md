@@ -1,5 +1,7 @@
 # 19 — Timing and Constraint Integrity Audit
 
+> **Status — point-in-time, 2026-08-07, in-flow (Innovus) analysis.** Innovus in-flow numbers are an optimisation-side estimate, not a signoff measurement; the first independent signoff STA, and its disagreement with these figures, is [40](40-signoff-sta-plan.md).
+
 **Date:** 2026-08-07
 **Design:** `nanosoc_eth_chiplet_pads`, TSMC 65 nm LP, Innovus 21.11-s130_1 / Genus 21.15-s080_1
 **Scope:** constraint coverage, exceptions, clock definitions, uncertainty/derate, DRV.

@@ -1,5 +1,7 @@
 # 13 — Logical equivalence checking
 
+> **Status — the harness is current; the chain is closed only from `gate.v` downward.** §§1–5 are the run of 2026-08-06 17:45; §7's central negative finding (the two 2026-08-08 legs cited different `gate_power.v` files, so they did not compose) was resolved on 2026-08-17, when `lec-gate` passed for the first time on `full-20260814`. **The RTL→gate leg is still not proven** — see [45 §3.5](45-measured-status-2026-08-18.md) — so there is no end-to-end RTL→netlist equivalence result. Re-measurement runbook: [34](34-content-gates-gate1-runbook.md).
+
 [← 11 Known issues](11-known-issues.md) · [index](00-index.md)
 
 Conformal LEC on `nanosoc_eth_chiplet_pads`: what is compared against what, why that
@@ -32,7 +34,7 @@ Harness: `ASIC/genus-innovus/scripts/lec/`
 > `baseline_2026-08-0*` trees) turns up exactly **two** full-chip `gate` legs ever: the
 > 08-08 `FAIL` and this one. Everything else is a `selftest_*` or a per-block `rtl_*` leg.
 >
-> **2. The chain now genuinely composes.** All three of tonight's legs cite the *same*
+> **2. The chain now genuinely composes.** All three of the 2026-08-17 legs cite the *same*
 > middle file — `..._gate_power.v` `sha1=78bf7b97…` appears as the *revised* side of the
 > `gate` leg and the *golden* side of both `pnr` and `audit-control`. So
 > `gate.v ≡ gate_power.v ≡ pnr.v` holds over one consistent set of netlists. This is
@@ -50,7 +52,7 @@ Harness: `ASIC/genus-innovus/scripts/lec/`
 > tolerated", not as "the exceptions went away".
 >
 > **4. Two honest caveats.** Compare-point counts differ between generations (61,375 /
-> 61,534 on 08-08 vs **61,674** tonight), so this is a **different design revision** — it
+> 61,534 on 08-08 vs **61,674** on 08-17), so this is a **different design revision** — it
 > is not a re-verdict on the 08-08 netlists. And the **RTL→gate `lec-syn` leg was still
 > running** when this was written, so the chain is closed only from `gate.v` downward.
 > `syn_provenance` on all three legs records `ac1e1e9 (dirty=yes)`.

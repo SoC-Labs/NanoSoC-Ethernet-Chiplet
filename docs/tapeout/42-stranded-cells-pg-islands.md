@@ -205,7 +205,7 @@ not respect the library's rail-sharing geometry.
 
 ### 2c. Cross-reference to the four rail-to-rail shorts
 
-`32-macro-placement-pg-short-window.md` records the four VDD–VSS M5 shorts at
+`59-macro-placement-pg-short-window.md` records the four VDD–VSS M5 shorts at
 **x = 844.500 → 912.900, y = 1546.600 / 1561.600 / 1576.600 / 1591.600**, from the
 network bootrom `rom_via` at (883.535, 1538.600). **Site B occupies y 1544.2 –
 1592.8** — the same four-stripe band of the same `split_row` region, one macro to
@@ -217,7 +217,7 @@ close this.
 
 ## 3. IS IT REAL — three controls, and an independent tool
 
-This is the question the brief said decides everything, so it is answered by
+This is the question that decides everything, so it is answered by
 measurement in four independent ways, not by argument.
 
 ### 3a. A second tool, on the same database, agrees instance-for-instance
@@ -558,4 +558,4 @@ reproduced here — read them at the paths named in `15-pg-opens-analysis.md` §
 - `32-ir-drop-stage.md` §2b — where this defect was first localised (§1 correction above)
 - `15-pg-opens-analysis.md` — the riser mechanism, 2026-08-06, static analysis only
 - `36-split-row-pg-anchoring-hazard.md` — the `split_row` per-region anchoring cause, and fix 2
-- `32-macro-placement-pg-short-window.md` — the four VDD–VSS shorts in the same band as site B
+- `59-macro-placement-pg-short-window.md` — the four VDD–VSS shorts in the same band as site B

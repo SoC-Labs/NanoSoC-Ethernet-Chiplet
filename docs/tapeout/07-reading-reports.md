@@ -1,5 +1,7 @@
 # 07 — Reading the reports
 
+> **Status — point-in-time.** The report *inventory and formats* are current; every number quoted comes from the 2026-08-05 `ASIC/genus-innovus` run, and that run's `baseline_2026-08-05/` directory is no longer in the tree. Current DRC/PG/timing figures: [43](43-drc-fp1505.md), [42](42-stranded-cells-pg-islands.md), [40](40-signoff-sta-plan.md).
+
 Every report this flow writes, what command produced it, what "good" looks like, and what
 to grep for. All excerpts below are copied verbatim from
 `ASIC/genus-innovus/baseline_2026-08-05/reports/` — a complete real run of
@@ -540,7 +542,9 @@ Consequences, stated plainly:
   nothing about anything inside a standard cell, an IO driver, or a bond pad.
 - A clean run would mean "the wires I routed do not break rules against each other or
   against macro blockages". It would **not** mean the layout is manufacturable.
-- **LVS cannot run here at all** — no CDL means no source netlist for the cells.
+- **Only black-box LVS can run here** — no cell CDL means no transistor-level source netlist,
+  so `ASIC/lvs-flow/` boxes the leaf cells and checks top-level connectivity only
+  ([`docs/asic/LVS_FINDINGS.md`](../asic/LVS_FINDINGS.md)).
 - Cell-level GDS merge has to happen at the foundry or via the broker. See
   [10 — Tapeout submission](10-tapeout-submission.md).
 
@@ -621,9 +625,10 @@ Begin Summary
 End Summary
 ```
 
-**Good** = a summary with no `IMPVFC-200` line. The baseline has **329 PG opens**, cause
-unknown, two hypotheses already falsified — see
-[11 — Known issues](11-known-issues.md).
+**Good** = a summary with no `IMPVFC-200` line. The baseline has **329 PG opens**; the cause
+is `split_row` PG anchoring leaving narrow row islands with no stripe over them, so the cells
+in them have no supply path — [42](42-stranded-cells-pg-islands.md), mechanism in
+[36](36-split-row-pg-anchoring-hazard.md).
 
 ### The cap trap — read this before comparing two runs
 

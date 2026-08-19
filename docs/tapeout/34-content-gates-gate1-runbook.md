@@ -1,5 +1,7 @@
 # 34 — Content gates for `gate1`: ROM bits and LEC, ready to run
 
+> **Status — runbook, ready to run; the `gate1` run it was written for aborted in synthesis ([46](46-why-gate1-aborted.md)).** Commands were exercised on `full-20260814`; only `RUN` changes for a new build.
+
 [← 33 Toolkit/legacy decoupling](33-toolkit-legacy-decoupling.md) · [index](00-index.md)
 
 Two gates make a stream **verified** rather than merely produced: the boot ROMs

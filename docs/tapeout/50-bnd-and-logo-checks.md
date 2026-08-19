@@ -484,7 +484,7 @@ $ python3 scripts/ci/imec_rule_diff.py --rules PM.W.1,AP.W.1,AP.W.2,AP.S.1,AP.S.
 
 By cell, `CORNER_B`'s `PM.W.1` count is **byte-identical across both
 archives** (26/104 both times) — confirming
-`CONVERGENCE_PLAN_2026-08-18.md` §8's claim with a script instead of a
+`docs/plans/CONVERGENCE_PLAN_2026-08-18.md` §8's claim with a script instead of a
 by-hand read. One new cell appears only in archive2's by-cell breakdown:
 `UCSRN_NOVIA` (`PM.W.1` = 1/4) — real vendor seal-ring-adjacent geometry
 this design cannot see locally (no Back-End PDK), consistent with the
@@ -601,7 +601,7 @@ military application") fires 22 times in archive2, **absent entirely from
 archive1**. Mechanism: this can only fire once real transistor-level device
 geometry exists to pattern-match against, which archive2's `tcbn65lp` merge
 supplied for the first time — same structural class as items 1/7/9 in
-`CONVERGENCE_PLAN_2026-08-18.md` §9's retrospective table
+`docs/plans/CONVERGENCE_PLAN_2026-08-18.md` §9's retrospective table
 ("structurally undetectable locally"). WARN severity, informational, no
 action — recorded here per doc 53 §9's "mandatory triage-or-defer" discipline
 so it does not repeat item 2's mistake (a real finding sitting unwritten for

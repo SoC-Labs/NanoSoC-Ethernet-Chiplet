@@ -4,7 +4,7 @@ Turning `layer-map-check`, `bnd`, `erc` and `padring-gds` (all built 2026-08-18,
 `gate: report`) plus the corner-rotation finding into gates worth trusting. Companion to
 [48](48-imec-signoff-results-analysis.md), [49](49-layer-map-coverage-check.md),
 [50](50-bnd-and-logo-checks.md), [51](51-erc-pg-labels.md), [52](52-padring-gds-check.md), and
-`CONVERGENCE_PLAN_2026-08-18.md` §8-9.
+`docs/plans/CONVERGENCE_PLAN_2026-08-18.md` §8-9.
 
 ## 1. Promotion criteria and order
 
@@ -177,5 +177,5 @@ Back-End PDK we don't have anyway.
 
 ## 5. Where this plan lives
 
-This page holds the mechanics. `CONVERGENCE_PLAN_2026-08-18.md` §9 carries the retrospective
+This page holds the mechanics. `docs/plans/CONVERGENCE_PLAN_2026-08-18.md` §9 carries the retrospective
 (what should have been caught) and links here for the forward plan.

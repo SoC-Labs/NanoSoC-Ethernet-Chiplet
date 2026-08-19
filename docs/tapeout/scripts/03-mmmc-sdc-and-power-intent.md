@@ -18,7 +18,7 @@ say nothing, this page says so.
 
 **Read first, do not duplicate:** [04 — Power plan](../04-power-plan.md) (the `IMPSP-5110` /
 filler trap, the global-net connections and the IO LEF override) and
-[`docs/POWER_DOMAINS.md`](../../POWER_DOMAINS.md) (why this chip has exactly one power
+[`docs/POWER_DOMAINS.md`](../../design/POWER_DOMAINS.md) (why this chip has exactly one power
 domain). This page explains the *files*; those two explain the *decisions*.
 
 ---

@@ -11,7 +11,8 @@ The governing fact on this page:
 > **The GDSII this flow produces is not a complete chip.** It contains our routing, our
 > power grid, our 8 memory macros' polygons, and **empty cell references** where every
 > standard cell, IO driver and bond pad should be. It has no metal density fill, no seal
-> ring, no scribe, and has never been LVS'd. All of that is normal for an academic PDK —
+> ring, no scribe, and has only ever had **black-box** LVS run against it. All of that is
+> normal for an academic PDK —
 > and all of it has to be somebody's job, named in advance.
 
 ---
@@ -71,7 +72,7 @@ the build host, the Innovus version line lifted from the DRC report header, and 
 floorplan geometry (`CORE_TO_IO`, `create_floorplan -site`).
 
 The submodule list is not decoration. This design has 42 submodules and
-[`docs/PIN_POLICY.md`](../PIN_POLICY.md) documents that **chiplet pins are routinely
+[`docs/design/PIN_POLICY.md`](../design/PIN_POLICY.md) documents that **chiplet pins are routinely
 unpushed** — a recorded gitlink that is not reachable from any remote means the bundle
 cannot be rebuilt by anyone but the person who built it. Verify before sending:
 
@@ -126,7 +127,7 @@ Those are the only cells in this design that ship both `.gds2` **and** `.cdl` on
 So in our stream every instance of those libraries is an **empty cell reference**: correct
 name, correct placement and orientation, no polygons. **The recipient must merge the
 foundry cell libraries.** Everything downstream follows from this — it is why DRC here is
-not signoff DRC, and why LVS cannot run here at all.
+not signoff DRC, and why only black-box LVS can run here.
 
 **Stream-out settings** (from
 [`ASIC/asic-flows/Cadence/4_pnr_route.tcl`](https://github.com/SoC-Labs/ASIC-Flow/blob/b19e7845448e641ea8353b19a59a77257907cb13/Cadence/4_pnr_route.tcl)):
@@ -192,30 +193,34 @@ shipped regardless.)
 
 ### 4.2 Who adds metal density fill?
 
-**Why it matters:** **this is the single most likely thing to bite at submission.**
+**Why it matters:** the flow inserts no per-layer metal fill, and the project has *declared*
+that this is the foundry's job (`METAL_FILL_OWNER=foundry`, `ROUTE_METAL_FILL=0` in
+`ASIC/eth-chiplet/design.mk`). A declaration is not an agreement.
 
-**State plainly:** `add_metal_fill` appears **nowhere** in this flow —
+**State plainly:** we deliver an unfilled stream, deliberately, because the broker fills the
+frame after merging the standard-cell and IO layouts in. Standard-cell filler **and** antenna
+diodes *are* inserted (150,592 instances, of which 50,274 `ANTENNA` diodes) — base-layer fill,
+a different thing.
 
-```bash
-grep -rn 'add_metal_fill' ASIC/     # no hits
-```
-
-Standard-cell filler **and** antenna diodes *are* inserted (150,592 instances, of which
-50,274 `ANTENNA` diodes) — that is base-layer fill, a different thing. **Per-layer metal
-density is entirely unaddressed and will fail foundry density rules as-is.**
-
-**What to ask:** do they insert metal fill as part of acceptance, or must we deliver a
-density-clean stream? If it is ours: we need the density rules, the fill cell set and — the
-real cost — a re-run, since fill changes coupling capacitance and therefore timing.
+**What to ask — and this is the whole point of the item:** do they insert metal fill as part
+of acceptance? Nothing in this flow re-checks the handoff, so the only place the answer can
+live is this correspondence. If it turns out to be ours: we need the density rules, the fill
+cell set and — the real cost — a re-run, since fill changes coupling capacitance and
+therefore timing.
 
 ### 4.3 Who runs LVS?
 
-**Why it matters:** LVS has **never been run on this design**, in any form.
+**Why it matters:** we can run **black-box** LVS but not **transistor-level** LVS, and only the
+second is a signoff answer.
 
-**Why we cannot:** it needs a CDL netlist for every leaf cell; only the 8 memories have
-one. `ASIC/genus-innovus/scripts/calibre_lvs` is a zero-byte placeholder. The PDK ships
-`ICV_iLVS/` and `LVS.rsf` but no Calibre LVS deck usable against libraries we have no CDL
-for.
+**What runs here:** `ASIC/lvs-flow/` (`make lvs_batch`) runs Calibre nmLVS with every leaf cell
+declared `LVS BOX`, checking top-level connectivity between boxed cells. `fp1505` is clean by
+that check; the shipping stream cannot reach a verdict because `VDD`/`VSS` extract as one net.
+See [`docs/asic/LVS_FINDINGS.md`](../asic/LVS_FINDINGS.md).
+
+**Why we cannot go further:** transistor-level LVS needs a CDL netlist for every leaf cell and
+only the 8 memories have one. The PDK ships `ICV_iLVS/` and `LVS.rsf` but no Calibre LVS deck
+usable against libraries we have no CDL for.
 
 **What we supply:** `nanosoc_eth_chiplet_pads_pnr.v`. Ask what netlist format they want —
 Verilog is what we have; if they need CDL from us, that is a conversion we have not done
@@ -291,7 +296,8 @@ Do not rely on the recipient reading `MANIFEST.txt`. Put this in the email:
    cell references. The 8 memory macros are already merged.
 2. **No metal density fill.** Base-layer filler and antenna diodes are in; per-layer metal
    density is not addressed.
-3. **LVS has never been run.** `*_pnr.v` is enclosed for whoever holds the cell CDL.
+3. **Only black-box LVS has been run** (clean on `fp1505`, no verdict on the shipping stream —
+   [`docs/asic/LVS_FINDINGS.md`](../asic/LVS_FINDINGS.md)). `*_pnr.v` is enclosed for whoever holds the cell CDL.
 4. **The DRC numbers in `reports/` are Innovus `check_drc` over the incomplete stream**,
    not signoff DRC. Calibre was run against the same incomplete stream.
 5. **No seal ring, no scribe.** Die is 1600 × 2000 µm, pad ring from (0,0).
@@ -308,7 +314,7 @@ Do not rely on the recipient reading `MANIFEST.txt`. Put this in the email:
 
 - [ ] Working tree clean — bundle name has **no** `-dirty`
 - [ ] `git submodule status --recursive` — every gitlink reachable from a remote
-      ([`PIN_POLICY.md`](../PIN_POLICY.md))
+      ([`PIN_POLICY.md`](../design/PIN_POLICY.md))
 - [ ] `package_submission.sh` printed no `! MISSING` lines
 - [ ] `MANIFEST.txt` read end to end, and its LEC claim corrected by hand (§2)
 - [ ] All of [09 — Signoff checklist](09-signoff-checklist.md) tiers 0–5 done, numbers
@@ -330,10 +336,10 @@ Do not rely on the recipient reading `MANIFEST.txt`. Put this in the email:
 - [06 — Fill, antenna, bond pads](06-fill-antenna-bondpads.md) — what fill *is* inserted
 - [52 — Padring GDS check](52-padring-gds-check.md) — local, license-free padframe
   name/count/order check; run against the exact GDS IMEC evaluated (§5 there)
-- [`docs/PHYSICAL_HANDOFF.md`](../PHYSICAL_HANDOFF.md) — what has and has not been verified
+- [`docs/design/PHYSICAL_HANDOFF.md`](../design/PHYSICAL_HANDOFF.md) — what has and has not been verified
   at RTL level
-- [`docs/PIN_MAP.md`](../PIN_MAP.md) · [`docs/PIN_POLICY.md`](../PIN_POLICY.md) ·
-  [`docs/POWER_DOMAINS.md`](../POWER_DOMAINS.md)
+- [`docs/design/PIN_MAP.md`](../design/PIN_MAP.md) · [`docs/design/PIN_POLICY.md`](../design/PIN_POLICY.md) ·
+  [`docs/design/POWER_DOMAINS.md`](../design/POWER_DOMAINS.md)
 
 ---
 

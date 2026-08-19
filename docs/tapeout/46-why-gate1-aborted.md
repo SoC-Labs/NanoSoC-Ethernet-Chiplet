@@ -80,7 +80,7 @@ without deciding, on the record, that a missing C2 bound is acceptable.
 1. **Fix the `-from` objects.** Name the launching sequential elements rather than the
    hierarchical instances. Correct, and the bound finally does its job. This is a
    timing-intent question and needs the D2D timing owner. See
-   `docs/C2_TRANSMIT_GROUP_OPTIONS.md`, whose §"Not validated" flagged exactly the two
+   `docs/asic/C2_TRANSMIT_GROUP_OPTIONS.md`, whose §"Not validated" flagged exactly the two
    uncertainties this run has now answered.
 2. **Delete the two failing commands, deliberately and visibly.** Since the bound has
    never applied, removing them changes no timing result and unblocks synthesis today.

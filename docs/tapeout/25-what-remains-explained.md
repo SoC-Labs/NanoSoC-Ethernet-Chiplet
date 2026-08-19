@@ -17,7 +17,7 @@
 > |---|---|
 > | what signoff does **not** cover — *executable* | `ci/signoff.yaml` `unsupported:`. Run `python3 scripts/ci/signoff.py lint`: every gap carries a `refuted_by:` that must FAIL for the gap to still exist, so this one cannot rot silently. 9 gaps, all verified still real on 2026-08-18. |
 > | current Calibre DRC, like-for-like | [43 — Calibre DRC on `fp1505`](43-drc-fp1505.md) |
-> | every result assigned to fix or waive | [`docs/DRC_WAIVER_INVENTORY.md`](../DRC_WAIVER_INVENTORY.md) |
+> | every result assigned to fix or waive | [`docs/asic/DRC_WAIVER_INVENTORY.md`](../asic/DRC_WAIVER_INVENTORY.md) |
 > | the `PO.R.8` reversal | [39 — `PO.R.8` resolved](39-po-r8-resolved.md) |
 > | the PG-anchoring hazard behind the shorts | [36 — `split_row` PG anchoring](36-split-row-pg-anchoring-hazard.md) |
 

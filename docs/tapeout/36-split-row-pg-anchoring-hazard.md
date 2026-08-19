@@ -6,7 +6,7 @@ the current floorplan by luck, not by repair.**
 This document explains the *cause* behind several things that were being worked
 as separate problems. For the shorts themselves — coordinates, the phasing rule,
 and the `rf_32k` coordinate history — see
-[`32-macro-placement-pg-short-window.md`](32-macro-placement-pg-short-window.md).
+[`59-macro-placement-pg-short-window.md`](59-macro-placement-pg-short-window.md).
 This one is about why they exist at all, and what it means for the next person
 who moves a macro.
 

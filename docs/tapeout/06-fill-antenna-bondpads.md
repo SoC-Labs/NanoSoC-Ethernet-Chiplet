@@ -329,7 +329,7 @@ from the tool, not noise.
 Per side: top 9 outer / 8 inner, left 13 / 13, bottom 9 / 8, right 11 / 11. The
 pad name lists at the top of the file are in ring order and are the authoritative
 record of which signal lands on which row — cross-check against
-[`docs/PIN_MAP.md`](../PIN_MAP.md) and [10-tapeout-submission.md](10-tapeout-submission.md)
+[`docs/design/PIN_MAP.md`](../design/PIN_MAP.md) and [10-tapeout-submission.md](10-tapeout-submission.md)
 before release.
 
 ### How they are placed

@@ -29,14 +29,14 @@ the "not run" items below should be read as "probably fine".
 | 6 | **LEC — synth vs post-P&R netlist** | — | **DOES NOT EXIST anywhere in this repo** |
 | 7 | Filler & gap closure | local, free (read reports) | passes — 0 gaps, 150,592 fillers |
 | 8 | Antenna (router-level) | local, free | passes — "No Violations Found" |
-| 9 | PG connectivity | local, free | **FAILS — 329 opens** ([11a](11-known-issues.md)) |
+| 9 | PG connectivity | local, free | root-caused and fixed: `split_row` row islands ([42](42-stranded-cells-pg-islands.md)); feed fix landed, functional stranded 55 → 0 ([47](47-pg-island-feed-fragility.md)). Re-measure per build |
 | 10 | Innovus `check_drc` | local, free | **539 violations** ([11b](11-known-issues.md)); *not* signoff DRC |
 | 11 | Timing — setup/hold | local, free | setup WNS **+0.068 ns**, 0 FEP — but see 11a caveat below |
 | 12 | Timing — DRV (transition/cap) | local, free | **FAILS — 1,243 + 618 violations** ([11g](11-known-issues.md)) |
 | 13 | Calibre DRC | local, licensed, hours | run it, but it is **over an incomplete GDS** |
 | 14 | Antenna signoff (foundry deck) | not wired here | **never run** |
-| 15 | Metal density fill | **foundry / broker** | **never done — `add_metal_fill` is nowhere in this flow** |
-| 16 | LVS | **foundry / broker** | **never run, and cannot be run here** |
+| 15 | Metal density fill | **foundry** | contracted out by declaration: `METAL_FILL_OWNER=foundry`, `ROUTE_METAL_FILL=0`. A declaration is not a waiver — the foundry must confirm |
+| 16 | LVS | local, licensed | **black-box LVS runs here.** Clean on `fp1505`; the shipping stream cannot reach a verdict (VDD/VSS extract as one net). [`docs/asic/LVS_FINDINGS.md`](../asic/LVS_FINDINGS.md) |
 | 17 | Cell-level GDS merge | **foundry** | **not done — the GDS is not self-contained** |
 | 18 | Seal ring + scribe | **broker** | **not in the design data** |
 | 19 | IR drop / power signoff | not wired here | **never run** |
@@ -160,13 +160,13 @@ make cdc
 ```
 
 **Pass criterion: there isn't one yet.** This stage is deliberately `gate: report`.
-[`docs/CDC_FINDINGS.md`](../CDC_FINDINGS.md) says in its own words that it is
+[`docs/verification/CDC_FINDINGS.md`](../verification/CDC_FINDINGS.md) says in its own words that it is
 "a **starting point** for the physical team's CDC signoff, not a clean bill".
 
 **What is actually owed for signoff:** a real CDC pass on the *taped-out configuration*,
 run inside TideLink where the `pad_clk_rx → sys_hclk` crossing lives, with the shipped
 parameters rather than the defaults. See
-[`docs/PHYSICAL_HANDOFF.md` §6](../PHYSICAL_HANDOFF.md). Nobody has done this.
+[`docs/design/PHYSICAL_HANDOFF.md` §6](../design/PHYSICAL_HANDOFF.md). Nobody has done this.
 
 Related open constraint decision: `constraints.sdc` cuts `D2D_RX_CLK_0` with a blanket
 `set_clock_groups -asynchronous`, and the file itself flags it —
@@ -186,7 +186,7 @@ make regress
 simulated dies**. No transaction has ever crossed a die boundary on silicon, and the sim
 bring-up leans on bench straps rather than real auto-negotiation
 (`NEGO_CFG_RESET = 7'h00` parks the FSM in `ST_BYPASS`). See
-[`docs/PHYSICAL_HANDOFF.md` §6](../PHYSICAL_HANDOFF.md) and `docs/G2_SOC_PAIR_STATUS.md`.
+[`docs/design/PHYSICAL_HANDOFF.md` §6](../design/PHYSICAL_HANDOFF.md) and `docs/verification/G2_SOC_PAIR_STATUS.md`.
 
 ---
 
@@ -329,17 +329,21 @@ grep -A5 'Begin Summary' reports/nanosoc_eth_chiplet_pads_imp_connectivity.rep
 
 **Pass:** `0` opens (`IMPVFC-200`) on `VDD` and `VSS`.
 
-**Baseline: FAILS — 329 opens**, plus 671 dangling wires (`IMPVFC-94`).
+**2026-08-05/06 baseline: FAILS — 329 opens**, plus 671 dangling wires (`IMPVFC-94`).
 
-> **The report caps at 1,000 messages** (`1000 total info(s) created`), so **329 is a
-> lower bound** once the list saturates. Do not treat a number that stops moving as
-> evidence that nothing changed — see [11a](11-known-issues.md), where two hypotheses have
-> already been falsified by experiment.
+> **The report caps at 1,000 messages** (`1000 total info(s) created`), so any count that
+> stops moving may be saturation rather than a real plateau. Re-run uncapped before
+> comparing two builds.
 
-This is an **open, unresolved defect**. It must be understood before submission: PG opens
-either mean real missing vias (a functional power-delivery defect that silicon will show
-as brownout under load) or reporting artefacts from `sroute`. Nobody has established
-which.
+**The cause is now known and it was real, not an artefact.** `power_plan.tcl` calls
+`split_row -selected` over the placed macros, `add_stripes` re-anchors the M5 ladder per
+row region, and narrow row islands end up with no stripe over them — so the cells in them
+have no metal supply path. On the `fp1505` Voltus solve, 330 instances have no path to VDD
+or VSS and **55 of them are functional** (30 clock/buffer cells, 4 flip-flops, 21 gates).
+Mechanism: [36](36-split-row-pg-anchoring-hazard.md). Measurement and controls:
+[42](42-stranded-cells-pg-islands.md). The island-feed fix is landed and screened —
+functional stranded 55 → 0 — but it survives on 0.4 µm of margin and is not gated, so it
+must be re-measured whenever a macro moves: [47](47-pg-island-feed-fragility.md).
 
 ### 10. Innovus `check_drc`
 
@@ -488,28 +492,53 @@ it, and it would run over the incomplete GDS anyway. Item 8 is a router-level ch
 
 **Ask the broker:** do they run antenna as part of their acceptance flow, or is it ours?
 
-### 15. Metal density fill — **never done, and most likely to bite**
+### 15. Metal density fill — **contracted out to the foundry, by declaration**
+
+This design inserts no per-layer metal fill and that is now the intended setting, not a gap.
+The die goes out as a mini@sic shuttle submission, and the broker fills the frame *after* it
+merges the standard-cell and IO layouts in — filling first would hand over metal that is
+about to be filled again.
 
 ```bash
-grep -rn 'add_metal_fill' ASIC/    # returns nothing
+grep -n 'METAL_FILL_OWNER\|ROUTE_METAL_FILL' ASIC/eth-chiplet/design.mk
+# ROUTE_METAL_FILL = 0 ; METAL_FILL_OWNER ?= foundry   (design.mk ~1096, 1117)
 ```
 
-**`add_metal_fill` appears nowhere in any script in this flow.** Standard-cell filler and
-antenna diodes are inserted (item 7) — that is *base-layer* fill and it is a different
-thing. **Per-layer metal density is entirely unaddressed and will fail foundry density
-rules as-is.**
+`add_metal_fill` does exist in the flow — `scripts/4b_pnr_route_eval.tcl`, behind
+`EVR_METAL_FILL`, defaulted off. Standard-cell filler and antenna diodes are inserted
+(item 7); that is *base-layer* fill and a different thing.
+
+**Read `METAL_FILL_OWNER=foundry` as a declaration, not a waiver.** It changes what the run
+is allowed to *conclude*, not what it does: the density count still reaches the manifest as
+`density_windows` and the verdict lists it under DECLARED ELSEWHERE. On `full-20260814` the
+declaration cleared 13 route hard failures that were all density — and underneath them sat
+eight signoff budgets that **are** ours. **Nothing in this flow re-checks that the foundry
+accepted the obligation.** It lives in the submission correspondence; confirm it there.
 
 This is the item most likely to stop a submission. **Settle it before you send anything.**
 
-### 16. LVS — **never run, and cannot run here**
+### 16. LVS — **black-box LVS runs here; transistor-level LVS does not**
 
-LVS needs a CDL netlist for **every leaf cell**. On this site only the 8 memory macros
-ship `.cdl`, under `$MEM_BASE/`. There is no CDL for `tcbn65lp`,
-`tphn65lpgv2od3_sl` or `tpbn65v`. `ASIC/genus-innovus/scripts/calibre_lvs` is a
-**zero-byte file**.
+Transistor-level LVS needs a CDL netlist for **every leaf cell**, and on this site only the
+8 memory macros ship `.cdl` under `$MEM_BASE/` — there is none for `tcbn65lp`,
+`tphn65lpgv2od3_sl` or `tpbn65v`. That much is still true.
 
-**What we can supply:** `outputs/nanosoc_eth_chiplet_pads_pnr.v`, to whoever holds the
-foundry data. **They run LVS; we cannot.**
+**What is not true is that no LVS can run.** `ASIC/lvs-flow/` is the live flow (`make lvs_batch`
+via `ASIC/genus-innovus/lvs_project.mk`) and it runs Calibre nmLVS with the leaf cells declared
+as `LVS BOX`. That checks the thing our data actually owns: top-level connectivity between
+boxed cells. Measured state, from [`docs/asic/LVS_FINDINGS.md`](../asic/LVS_FINDINGS.md):
+
+- **`fp1505` reaches a clean verdict** — 325,189/325,189 instances, 62,479/62,479 nets, 50/50
+  ports, no shorts, residue is the 82 expected bond pads.
+- **The shipping stream cannot produce a verdict at all** — `VDD` and `VSS` extract as one net
+  and the flow's own guard refuses a result (exit 6). ERC attributes the merge to four real
+  M5 rail-to-rail shorts; see [59](59-macro-placement-pg-short-window.md).
+- **Only one of the two shipping configurations can fail.** A planted miswire is named when
+  LVS runs against `<top>_lvs_pintext.gds` and is invisible against `<top>_lvs.gds`, which is
+  what `LVS_PG=1` selects. Do not read a green from that configuration as evidence.
+
+**What we still supply to the broker:** `outputs/nanosoc_eth_chiplet_pads_pnr.v`, for whoever
+holds the cell CDL and can run the transistor-level check.
 
 ### 17. Cell-level GDS merge — **the recipient must do this**
 
