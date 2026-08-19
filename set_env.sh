@@ -7,14 +7,18 @@
 # Source this, do not execute it:   source set_env.sh
 #
 # Exports the roots the flists and sys_desc lib-dirs resolve against. Every path
-# below is a ${VAR} in the flists so VCS / Xcelium / Vivado expand them directly
-# (the same convention the SoC and tidelink use).
+# below appears as ${VAR} in the flists so VCS / Xcelium / Vivado expand them
+# directly - the same convention the SoC and TideLink use.
 #
-# This wrapper does NOT re-source its submodules' set_env.sh scripts. Each of
-# them mutates PATH and points vendor-IP vars at the shared lab tree, and
-# sourcing three of them in sequence produces an environment nobody can reason
-# about. Instead we export only the roots, and delegate to the submodule's own
-# Makefile when a submodule flow needs its own environment.
+# THIS WRAPPER DOES NOT RE-SOURCE ITS SUBMODULES' set_env.sh SCRIPTS. Each of
+# them mutates PATH and points vendor-IP variables at the shared lab tree, and
+# sourcing three in sequence produces an environment nobody can reason about. It
+# exports only the roots; a flow needing a submodule's own environment sources
+# the three in dependency order inside its recipe (see the root Makefile's
+# `elab` and `asic-flist`).
+#
+# The ASIC flows do NOT need this file: ASIC/common.mk defines the same roots
+# with `?=`, so a sourced set_env.sh wins and an unsourced shell still works.
 #-----------------------------------------------------------------------------
 
 # Resolve this file's directory whether sourced from bash or zsh.
@@ -48,8 +52,8 @@ ${NANOSOC_MULTICORE_HOME}/ahb_qspi/sys_desc \
 ${TIDELINK_HOME}/sys_desc"
 
 # --- Vendor IP (READ-ONLY shared lab trees; never write here) ----------------
-# Left to the submodules' own scripts to define if unset, so a wrong value here
-# cannot silently override a correct one there.
+# Set only if unset, so a value already in the environment - or one a submodule's
+# own script will supply - is never silently overridden by this file.
 : "${ARM_IP_LIBRARY_PATH:=/research/AAA/ip_library}"
 export ARM_IP_LIBRARY_PATH
 

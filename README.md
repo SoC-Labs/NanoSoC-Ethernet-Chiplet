@@ -1,11 +1,17 @@
 # nanoSoC Ethernet Chiplet
 
-The integration level for a nanoSoC ethernet chiplet: the multicore SoC, a
-die-to-die link, and the chiplet-ID protocol that runs over it, wired side by
-side.
+A TSMC 65 nm LP **chiplet**: an Arm Cortex-M0+ SoC with an Ethernet MAC and a PTP
+hardware clock, plus a **die-to-die link** that lets a CPU on this die read and
+write memory on a *different* die in the same package.
 
-> **Implementing this chiplet? Start at [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md)** —
-> what is proven, what is yours to decide, and the gotchas that cost a day.
+This repository is the **integration level**. It owns the wiring and nothing else:
+the three functional blocks are Git submodules, unforked, pinned to specific
+commits, and connected by three small SystemVerilog modules in `src/rtl/`.
+
+> **New here?** Read this page, then
+> [`docs/design/IMPLEMENTATION.md`](docs/design/IMPLEMENTATION.md) — what is proven,
+> what is still yours to decide, and the handful of facts that cost a day if you
+> learn them the hard way.
 
 ```
                     nanosoc_eth_chiplet
@@ -34,45 +40,116 @@ side.
                               ▼  to the far die
 ```
 
-**This repo owns the integration and nothing else.** It does not fork any of the
-three components. It submodules them and wires them together — which is exactly
-what TideChart's own README asks for:
+---
 
-> *"TideChart is a **peer** to TideLink — neither repo instantiates the other.
-> The system integrator wires them side by side."*
+## The three submodules
+
+| Submodule | What it is | What it does here |
+|---|---|---|
+| `nanosoc-multicore-system` | the SoC — two Cortex-M0+ cores, AHB matrix, Ethernet MAC, QSPI flash cache, PHC/PTP block, DMA | provides a **link-agnostic** die-to-die port (`d2d_ahb_m`, `d2d_ahb_s`, `d2d_irq`, `d2d_phc_*`). Nothing in the SoC names TideLink. |
+| `tidelink` | the die-to-die interconnect — AHB/AXI bridges, a credit-based flow-control layer, an address translator (CAM) and a serial PHY | carries transactions across the package. Exposes four AHB subordinates plus an APB register file, and one AHB manager pointing back into the SoC. |
+| `tidechart` | the chiplet-identity / role-election protocol | decides which die is master and hands out chiplet IDs. It is a **peer** to TideLink — neither instantiates the other; this repo wires them side by side. |
+
+Two further submodules carry the backend flow rather than design content:
+`ASIC/asic-toolkit` (the current Genus/Innovus flow engine, shared across the lab)
+and `ASIC/asic-flows` (its predecessor).
+
+### Why a wrapper and not a fork
+
+The SoC's D2D port is deliberately link-agnostic, so the PHY can be swapped
+(`tidelink` → `axi-chiplet-controller` → a vendor PHY) without forking the SoC.
+Forking would also inherit six submodules, a code generator, seventy cocotb
+environments and a traceability spine — and permanently cut you off from upstream
+fixes. See `nanosoc-multicore-system/docs/D2D_PORT.md` for the port's rationale.
 
 ---
 
-## Why a wrapper and not a fork
+## Getting a working tree
 
-`nanosoc-multicore-system` exposes a **link-agnostic** die-to-die port. Nothing
-in the SoC names TideLink. That is deliberate: it is what lets the PHY be
-swapped (`tidelink` → `axi-chiplet-controller` → a vendor PHY) without forking
-the SoC. Forking would also inherit six submodules, a code generator, seventy
-cocotb environments and a traceability spine — and permanently cut you off from
-upstream fixes.
+```sh
+git clone https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet.git
+cd NanoSoC-Ethernet-Chiplet
+./scripts/bootstrap.sh          # every submodule, recursively
+source set_env.sh               # source it; do not execute it
+```
 
-See `nanosoc-multicore-system/docs/D2D_PORT.md` for the port's full rationale.
+Use `scripts/bootstrap.sh`, **not** `git clone --recursive`. One submodule nested
+inside TideLink (`deps/tidelink-phy`) is declared over SSH at the commit we pin, so
+a plain recursive clone dies there unless you hold SoTON SSH keys. `bootstrap.sh`
+rewrites that one URL to HTTPS for the duration of the fetch, writes nothing to your
+git config, checks that no submodule was silently skipped, and repairs a
+half-finished clone. If you would rather plain recursive clones worked, set the
+rewrite globally, once:
 
-## What the SoC gives us
+```sh
+git config --global url."https://git.soton.ac.uk/".insteadOf "git@git.soton.ac.uk:"
+```
 
-| SoC boundary | What the wrapper does with it |
+`set_env.sh` exports only the component roots (`TIDELINK_HOME`, `TIDECHART_HOME`,
+`NANOSOC_MULTICORE_HOME`, …) that the flists resolve against. It deliberately does
+**not** source the submodules' own env scripts — each mutates `PATH` and points
+vendor-IP variables at the shared lab tree, and chaining three of them produces an
+environment nobody can reason about. Submodule flows are invoked through their own
+Makefiles instead.
+
+## Build and simulate
+
+`make help` lists every target, grouped. The ones you need first:
+
+| Command | What it does | Needs |
+|---|---|---|
+| `make check` | the licence-free gate: no vendor collateral tracked, boundary spec covers every RTL port exactly once, Verilator lint | nothing |
+| `make elab` | structurally elaborate `nanosoc_eth_chiplet` | VCS |
+| `make regress` | every data-plane simulation proof, as one pass/fail table | VCS |
+| `make lint` | Verilator structural lint over the wrapper RTL | nothing |
+| `make cdc` | structural clock-domain-crossing pass over the integrated top | Xcelium/HAL |
+| `make elab-strict` | strict ASIC-elaboration gate — catches synthesis blockers a simulator hides | Xcelium/HAL |
+| `make chip-boundary` | check the pad/boundary spec against the real RTL port list | nothing |
+| `make bscan` | regenerate the boundary-scan register and BSDL, splice into the pad ring | nothing (VCS for `bscan-sim`) |
+
+Start with `make check`. If that is red, nothing downstream is meaningful.
+
+## Where the ASIC flow lives
+
+Two flows sit side by side. **`ASIC/eth-chiplet/` is the current one** (driven by the
+`ASIC/asic-toolkit` submodule); `ASIC/genus-innovus/` is the legacy flow, kept
+because it still holds run history and some checks. Both are reached from the top
+Makefile, the legacy one through `-legacy` suffixes:
+
+```sh
+make asic            # the flow's own help, listing every stage it offers
+make asic-status     # which stages have run in this build directory
+make asic-syn        # synthesis (Genus) -> gate netlist, SDC, reports
+make asic-pnr        # place + CTS + route (Innovus). Multi-hour.
+make asic-gds        # syn + place + cts + route, end to end, unattended
+make asic-drc        # Calibre DRC over the GDS this build produced
+make asic-lvs-pre    # LVS input preflight — no licence, no long run
+```
+
+Never run a backend flow before? Read [`docs/tapeout/`](docs/tapeout/00-index.md)
+first: it is a from-scratch guide to this project's Genus/Innovus flow, its scripts
+line by line, and how to read the reports it produces.
+
+## What this repo owns
+
+| Path | |
 |---|---|
-| `d2d_ahb_m_*` | one AHB manager carrying the 32 MB window `0x2E000000..0x2FFFFFFF`; the wrapper sub-decodes it into TideLink's four AHB subordinates plus an AHB→APB bridge |
-| `d2d_ahb_s_*` | TideLink's `ahb_mng_*` masters in here; it becomes the SoC's 6th matrix initiator, reaching **only** shared SRAM and the IPC mailbox |
-| `d2d_irq[15:0]` | `[7:0]` → CPU0's NVIC (data plane), `[15:8]` → CPU1's (link management) |
-| `d2d_phc_*` | PHC hardware servo source 0 — the cross-die timebase |
-| `phc_pps_out` | drives TideLink's `phc_pps` (no separate `d2d_phc_pps` port exists) |
+| `src/rtl/nanosoc_eth_chiplet.sv` | the structural top |
+| `src/rtl/chiplet_d2d_decode.sv` | the D2D window sub-decode; self-checking and mutation-verified |
+| `src/rtl/tidechart_shim.sv` | flattens TideChart's unpacked-array ports |
+| `src/rtl/bscan/` | generated boundary-scan register, TAP and instruction register |
+| `sys_desc/` | chip boundary spec, plus block descriptions for `tidelink_top` and `tidechart_controller` |
+| `flist/` | the simulation and ASIC file lists |
+| `verif/` | this repo's own testbenches and gates |
+| `cdc/` | chiplet-level SpyGlass CDC setup |
+| `ASIC/` | backend flows, tech wrappers and signoff decks |
+| `scripts/` | bootstrap, boundary and pad-ring checks, CI gates, rig tooling |
 
-## The window sub-map
+## The D2D address window
 
-Offsets are deliberately identical to TideLink's reference map (its local base
-`0x44000000` → ours `0x2E000000`), so every address in TideLink's
-`REGISTER_MAP.md`, its bring-up runbooks and its `python/tidelink` driver stays
-valid after a single base substitution.
-
-`chiplet_d2d_decode` resolves regions at **`haddr[19:16]`** granularity within
-`0x2E`, and `haddr[24]` separates `0x2E` from `0x2F`:
+The SoC hands the wrapper one 32 MB window, `0x2E00_0000..0x2FFF_FFFF`.
+`chiplet_d2d_decode` resolves it at `haddr[19:16]` within `0x2E`, with `haddr[24]`
+separating `0x2E` from `0x2F`:
 
 | Address | Size | Decoded to |
 |---|---|---|
@@ -82,103 +159,67 @@ valid after a single base substitution.
 | `0x2E03_0000` | 32 KB | `tidelink_top.apb_*`, via `cmsdk_ahb_to_apb #(.ADDRWIDTH(15))` |
 | `0x2E04_0000` | 4 KB | `tidechart_controller.apb_*`, via `cmsdk_ahb_to_apb #(.ADDRWIDTH(12))` |
 | `0x2F00_0000` | 16 MB | `tidelink_top.ahb_sub_*` — peer aperture, address-translated to the far die |
-| anything else in the window | — | two-cycle AHB **ERROR** (never OKAY-with-zeros) |
+| anything else in the window | — | two-cycle AHB **ERROR**, never OKAY-with-zeros |
 
-TideLink's own three register banks live **inside** that single 32 KB APB region,
-selected by `apb_paddr[14:13]` in its RTL — not by this decoder:
+Offsets are deliberately identical to TideLink's reference map (its local base
+`0x4400_0000` → ours `0x2E00_0000`), so every address in TideLink's own register
+map, runbooks and Python driver stays valid after one base substitution.
 
-| APB address | Bank |
-|---|---|
-| `0x2E03_0000` | Wlink chiplet-controller registers |
-| `0x2E03_2000` | TideLink config + PTP registers |
-| `0x2E03_4000` | address-translator config |
-
+TideLink's three register banks live *inside* that single 32 KB APB region, selected
+by `apb_paddr[14:13]` in TideLink's RTL rather than by this decoder — `0x2E03_0000`
+chiplet controller, `0x2E03_2000` config + PTP, `0x2E03_4000` address translator.
 That is why `tidelink_top.apb_paddr` is 15-bit even though its `APB_ADDR_W`
-parameter is 12 — a discrepancy that looks like a bug until you see the bank
-decode.
+parameter is 12: it looks like a bug until you see the bank decode.
 
-Two signature mismatches the wrapper must absorb, both trivial:
-
-- `tidelink_top.ahb_mng_hprot` is `[6:0]` (AHB5); `d2d_ahb_s_hprot` is `[3:0]`.
-- `tidelink_top.ahb_mng_*` has no `hmastlock`; tie `d2d_ahb_s_hmastlock` low.
-
-## Pinned components
-
-| Submodule | Upstream | Pinned to |
-|---|---|---|
-| `nanosoc-multicore-system` | `soclabs/nanosoc-multicore-system` | `master` |
-| `tidelink` | `soclabs/tidelink` | `integ/tidelink-soc` |
-| `tidechart` | `soclabs/tidechart` | `main` |
-
-> ⚠️ **One of the three pins is still a feature branch.** TideLink's integration
-> line `integ/tidelink-soc` is 135 commits ahead of its `main`, and that pin is
-> deliberately frozen at the commit this integration was built against. Submodule
-> gitlinks name commits rather than branches, so a clone works today — but a
-> rebase or branch deletion upstream will strand this repo.
->
-> The SoC pin moved to `master` on 2026-07-10, once the D2D port was
-> hardware-validated. Counting the two nested pins, **four of the five commits
-> this repo depends on are now on default branches.** See `docs/PIN_POLICY.md`.
+Two signature mismatches the wrapper absorbs, both trivial:
+`tidelink_top.ahb_mng_hprot` is `[6:0]` (AHB5) while `d2d_ahb_s_hprot` is `[3:0]`;
+and `ahb_mng_*` has no `hmastlock`, so `d2d_ahb_s_hmastlock` is tied low.
 
 ## Status
 
-**It elaborates.** `make elab` builds `nanosoc_eth_chiplet` from a clean tree
-with zero VCS errors, and every one of the six instances has all of its RTL ports
-connected exactly once (114/114, 31/31, 25/25, 25/25, 165/165, 28/28).
+- **It elaborates.** `make elab` builds the top from a clean tree with zero VCS
+  errors, and every instance has all of its RTL ports connected exactly once.
+- **Hardware-validated on FPGA.** The design runs as a two-board KR260 pair. The
+  die-to-die link comes up bilaterally (FCSM = 4) and carries cross-die memory
+  transfers in both directions. See
+  [`docs/bringup/KR260_BENCH_RUNBOOK.md`](docs/bringup/KR260_BENCH_RUNBOOK.md).
+- **Not yet fabricated.** The ASIC is in backend implementation for a GDS
+  submission. Backend state lives in [`docs/tapeout/`](docs/tapeout/00-index.md)
+  and [`docs/asic/`](docs/asic/).
+- **Two-die simulation exists.** `verif/g2_soc_pair/` runs two real SoC dies across
+  one TideLink; `verif/g2_peer_aperture/` is the smaller link-only pair bench.
 
-```sh
-git clone https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet.git
-cd NanoSoC-Ethernet-Chiplet
-./scripts/bootstrap.sh          # 42 submodules, 8 levels deep
-source set_env.sh
-make elab
-```
+### Known open items
 
-Use `scripts/bootstrap.sh` rather than `git clone --recursive`. This repo's three
-submodules are HTTPS, but one submodule *inside* TideLink — `deps/tidelink-phy`,
-at the commit we pin — is still declared over SSH, so a plain recursive clone
-dies there unless you hold SoTON SSH keys. `bootstrap.sh` rewrites that one URL
-to HTTPS for the duration of the fetch, writes nothing to your git config, and
-then checks that no submodule was silently skipped. It is idempotent, and it
-repairs a half-finished clone.
-
-If you would rather plain `git clone --recursive` simply worked, set the rewrite
-once, globally:
-
-```sh
-git config --global url."https://git.soton.ac.uk/".insteadOf "git@git.soton.ac.uk:"
-```
-
-The real fix is one line in TideLink's own `.gitmodules`; this repo's TideLink
-pointer is deliberately frozen, so it is worked around here instead.
-
-What is here:
-
-| | |
-|---|---|
-| `src/rtl/nanosoc_eth_chiplet.sv` | structural top, 93 boundary ports |
-| `src/rtl/chiplet_d2d_decode.sv` | the window sub-decode, 28/28 self-checks, mutation-verified |
-| `src/rtl/tidechart_shim.sv` | flattens TideChart's unpacked-array ports; bit-ordering proven, not asserted |
-| `sys_desc/tidelink_top.yaml` | 165-port block description — TideLink ships one only for its *inner* module |
-| `sys_desc/tidechart.yaml` | 28-port block description — TideChart had no `sys_desc/` at all |
-| `docs/PIN_POLICY.md` | why four of five pins are feature branches, and what must change |
-| `docs/G2_PAIR_SIM.md` | the nanoSoC↔nanoSoC gate, and a note that **two** wrapper repos exist |
-
-Upstreaming the two YAMLs to `tidelink` and `tidechart` is the right long-term home.
-
-### What is not done
-
-- **No G2 pair sim.** The link has never carried a transaction between two dies.
-  `soc_d2d_loopback` in the SoC drives the port against a memory model; that is
-  not the same thing. See `docs/G2_PAIR_SIM.md`.
-- **No silicon.** The SoC bitstream for the pinned commit builds clean
-  (WNS +0.400 ns) but was never deployed — the board was in use by another
-  project. `docs/PIN_POLICY.md` records this.
+- **A cross-die write can wedge the bus.** Under injected error or sustained
+  traffic, `ahb_sub_hreadyout` can latch low with no timeout. Root-caused,
+  partially fixed, still open — the investigation chain is in
+  [`docs/debug/`](docs/debug/).
+- **Pins drift.** Submodule gitlinks name commits, not branches, and this
+  checkout's submodules are not all on their default branches. Check a pin against
+  the live remote before trusting it — see
+  [`docs/design/PIN_POLICY.md`](docs/design/PIN_POLICY.md).
+- **`s_i2c_axi_*` is tied off**, so the CPUs cannot master TideLink's I2C sideband.
+  Bridging it to a SoC initiator is unstarted.
 - **Two upstream flist bugs are worked around, not fixed**: `tidelink_fpga.flist`
-  compiles a dep and an override that disagree on a port list (7× `UPIMI-E`), and
-  the SoC's generated flists emit `$(VAR)` where VCS needs `${VAR}`.
-- **`s_i2c_axi_*` is tied off**, so the CPUs cannot master TideLink's I2C
-  sideband. If that is wanted it needs bridging to a SoC initiator.
+  compiles a dep and an override that disagree on a port list, and the SoC's
+  generated flists emit `$(VAR)` where VCS needs `${VAR}`.
+
+---
+
+## Where to go next
+
+| If you are… | Read |
+|---|---|
+| implementing this chiplet physically | [`docs/design/IMPLEMENTATION.md`](docs/design/IMPLEMENTATION.md), then [`docs/design/PHYSICAL_HANDOFF.md`](docs/design/PHYSICAL_HANDOFF.md) |
+| new to backend ASIC flow | [`docs/tapeout/00-index.md`](docs/tapeout/00-index.md) — a from-scratch guide to this project's flow |
+| bringing up the boards | [`docs/bringup/`](docs/bringup/) — KR260 runbook, board wiring, host tooling |
+| writing or fixing RTL here | [`CONTRIBUTING.md`](CONTRIBUTING.md), then [`docs/verification/`](docs/verification/) |
+| chasing the die-to-die wedge | [`docs/debug/`](docs/debug/) — start at its index for the supersession chain |
+| looking up what an old session concluded | [`docs/history/`](docs/history/) — dated records and correspondence, **not** current reference |
+
+The full documentation set is published from `docs/` with MkDocs
+(`pip install -r docs/requirements.txt && mkdocs serve`).
 
 ---
 
