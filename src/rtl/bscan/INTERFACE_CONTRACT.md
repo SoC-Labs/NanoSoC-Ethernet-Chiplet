@@ -184,10 +184,22 @@ Instruction encoding (IR_WIDTH = 4):
 
 32-bit, `{version[3:0], part[15:0], manuf[10:0], 1'b1}`.
 
-Use `32'h0000_05A1` as a **placeholder base** and parameterise it:
-`parameter logic [31:0] IDCODE_VALUE = 32'h1_0000_05A1;` — version 1, part `0x0000`,
-manufacturer `0x2D0>>1`. **Flag in your report that SoC Labs has no JEDEC manufacturer ID
-and this must be assigned before tapeout.** LSB must be 1.
+`parameter logic [31:0] IDCODE_VALUE = 32'h1000_1001;` — version `0x1`, part `0x0001`
+(this die; `0x0002` is reserved for the compute chiplet), manufacturer `0x000`, LSB 1.
+Write the literal with **eight** hex digits. `32'h1_0000_05A1` is nine digits, i.e. 36
+bits, and SystemVerilog truncates it to `32'h0000_05A1`, silently losing the version
+nibble — a trap this contract used to contain and `verif/bscan/tb_bscan.sv` (mutation M9)
+exists to catch.
+
+**The manufacturer field is deliberately `0x000` and must stay that way until SoC Labs
+holds a JEDEC allocation.** IDCODE[11:1] is a packed JEP106 identity —
+`(continuation_count << 7) | code7` — so any value whose 7-bit code is in 1..126 names a
+real company. An earlier revision used `0x2D0`, which decodes to JEP106 bank 6 code
+`0x50`: **assigned to Neterion Inc.** Code 0 is the only value JEP106 can never issue, so
+it is the only honest placeholder. `scripts/gen_bscan.py` now refuses to emit a non-zero
+manufacturer field unless the pad table's `design.jedec` block records a real bank and
+code, so this cannot be reintroduced by editing a constant. See
+`docs/bscan/JEDEC_ID_REQUEST.md`.
 
 ---
 

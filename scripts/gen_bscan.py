@@ -89,7 +89,10 @@ IR_WIDTH = 4
 # count the parser independently derived from the ring.
 EXPECTED_BOUNDARY_LENGTH = None
 EXPECTED_PAD_COUNT = None
-IDCODE_VALUE = None                # PLACEHOLDER until a JEDEC ID is assigned.
+IDCODE_VALUE = None                # bound from the pad table by load_design()
+JEDEC_ALLOC = None                 # {"bank": n, "code": n} once JEDEC assigns one; see
+                                   # check_idcode_manufacturer(). None => the manufacturer
+                                   # field must be 0, the one value JEP106 can never issue.
 TCK_MAX_HZ = 10.0e6                # not yet characterised; declared so the BSDL parses
 
 # Instruction encoding -- INTERFACE_CONTRACT.md section 4. SAMPLE and PRELOAD are
@@ -138,6 +141,13 @@ TAP_EN_PAD = None
 
 BSDL_DIR = {"input": "in", "output": "out", "inout": "inout"}
 
+# The BSDL port clause and the pad -> port-reference map it implies. Both are
+# built once by bsdl_port_model() and bound here by load_design(); nothing else
+# may decide what a port is called in the BSDL. See bsdl_port_model() for why
+# the two TAP data pins are not simply bits of their bus.
+BSDL_PORT_DECLS = []
+BSDL_PORT_REFS = {}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -149,8 +159,115 @@ def short(inst):
 
 
 def portref(pad):
-    """BSDL port reference as the chip sees it: QSPI_IO(0), or NRST for a scalar."""
+    """BSDL port reference for one pad: QSPI_IO(0), NRST, or -- for a TAP data pin
+    peeled out of its bus by bsdl_port_model() -- the scalar HOSTIO4_P1_0.
+
+    The map is consulted rather than recomputed so that the port CLAUSE and every
+    reference to it come from one derivation. The fallback is the plain chip-port
+    form, used only before load_design() has run.
+    """
+    ref = BSDL_PORT_REFS.get((pad["port"], pad["idx"]))
+    if ref is not None:
+        return ref
     return pad["port"] if pad["idx"] is None else "%s(%d)" % (pad["port"], pad["idx"])
+
+
+def pin_token(port, idx):
+    """Placeholder physical-pin token for one pad.
+
+    Keyed on the CHIP's port and bit, NEVER on the BSDL port name. That is the
+    whole point: bsdl_port_model() may rename a pin's port in the description, and
+    when it does, the physical pin it maps to must not move.
+    """
+    return "TBD_%s" % port if idx is None else "TBD_%s_%d" % (port, idx)
+
+
+def bsdl_port_model(table):
+    """Derive the BSDL port clause from the chip's port map. Returns (decls, refs).
+
+    WHY THIS EXISTS -- THE MUXED-TAP PROBLEM
+    ----------------------------------------
+    This die has no dedicated JTAG pads: TDI and TDO are bits 0 and 1 of the 7-bit
+    functional port HOSTIO4_P1 (INTERFACE_CONTRACT.md section 7). BSDL is a subset
+    of VHDL, and a VHDL attribute specification names a whole signal -- there is no
+    legal way to write
+
+        attribute TAP_SCAN_IN of HOSTIO4_P1(0) : signal is true;
+
+    An earlier revision therefore attached TAP_SCAN_IN *and* TAP_SCAN_OUT to the
+    whole bus, which does not merely lose the index: it asserts that all seven pins
+    are TDI and all seven are simultaneously TDO. A parser that accepts it is told
+    something false about the die.
+
+    THE FIX: the two TAP bits are declared as SCALAR ports named <PORT>_<bit>, and
+    the bus keeps the rest. Bits are NOT renumbered -- HOSTIO4_P1 becomes
+    (6 downto 2), not (4 downto 0) -- so a BSDL index still means the same physical
+    bit it means in the chip's Verilog, and PIN_MAP still binds every one of them
+    to the pin token it had before, because pin_token() is keyed on the chip port.
+    The divergence is confined to a port NAME appearing in this description; the
+    binding a board tester actually uses (PIN_MAP -> physical pin) is unchanged.
+
+    decls : ordered [{name, dir, msb, lsb, pins}]  -- msb None means a scalar port,
+            pins are the physical-pin tokens leftmost-first for PIN_MAP_STRING.
+    refs  : {(chip_port, idx): "<reference used everywhere in the BSDL>"}
+    """
+    ports = table["ports"]
+    by_inst = {p["inst"]: p for p in table["pads"]}
+
+    # Only the two TAP DATA pins need peeling. TCK/TMS are attributed the same way
+    # and would need the same treatment, so they are collected here too rather than
+    # assumed scalar -- on this die they are, on the next one they may not be.
+    peel = {}
+    for inst in (TAP_TCK_PAD, TAP_TMS_PAD, TAP_TDI_PAD, TAP_TDO_PAD):
+        pad = by_inst[inst]
+        if pad["idx"] is not None:
+            peel.setdefault(pad["port"], set()).add(pad["idx"])
+
+    decls, refs = [], {}
+
+    def scalar(name, direction, port, idx):
+        assert name not in ports, \
+            ("peeling %s(%d) out of its bus wants the scalar port name %r, which is "
+             "already a port of this chip. Rename one of them." % (port, idx, name))
+        decls.append({"name": name, "dir": direction, "msb": None, "lsb": None,
+                      "pins": [pin_token(port, idx)]})
+        refs[(port, idx)] = name
+
+    for nm, spec in ports.items():
+        direction, width = BSDL_DIR[spec["dir"]], spec["width"]
+        if width == 1:
+            decls.append({"name": nm, "dir": direction, "msb": None, "lsb": None,
+                          "pins": [pin_token(nm, None)]})
+            refs[(nm, None)] = nm
+            continue
+
+        cut = peel.get(nm, set())
+        rest = [b for b in range(width - 1, -1, -1) if b not in cut]
+        if rest:
+            # A single `msb downto lsb` port can only describe a contiguous run. A
+            # TAP pin in the MIDDLE of a bus would need several sub-vectors and a
+            # naming rule for them; refuse rather than emit a description whose bit
+            # numbering silently stops matching the chip's.
+            assert rest[0] - rest[-1] == len(rest) - 1, \
+                ("TAP pins %s of %s leave a non-contiguous remainder %s. This "
+                 "generator only splits a bus at its ends; splitting it in the "
+                 "middle needs a naming rule that does not exist yet."
+                 % (sorted(cut), nm, rest))
+        if len(rest) > 1:
+            decls.append({"name": nm, "dir": direction, "msb": rest[0], "lsb": rest[-1],
+                          "pins": [pin_token(nm, b) for b in rest]})
+            for b in rest:
+                refs[(nm, b)] = "%s(%d)" % (nm, b)
+        elif len(rest) == 1:
+            scalar("%s_%d" % (nm, rest[0]), direction, nm, rest[0])
+        for b in sorted(cut, reverse=True):
+            scalar("%s_%d" % (nm, b), direction, nm, b)
+
+    assert len(refs) == sum(s["width"] for s in ports.values()), \
+        "the BSDL port model lost or duplicated a pin"
+    assert sum(len(d["pins"]) for d in decls) == len(refs), \
+        "the BSDL port model lost or duplicated a physical pin token"
+    return decls, refs
 
 
 def disable_level(pad):
@@ -170,6 +287,102 @@ def disable_level(pad):
     return 0 if pad["oe_inv"] else 1
 
 
+def check_idcode_manufacturer(idcode, jedec):
+    """Refuse an IDCODE whose manufacturer field impersonates somebody.
+
+    WHY THIS IS A HARD GATE AND NOT A COMMENT
+    -----------------------------------------
+    IDCODE[11:1] is not a free 11-bit number. It is a JEDEC JEP106 identity, packed
+    as (continuation_count << 7) | code7, with JEP106's odd-parity bit stripped. Any
+    value with code7 in 1..126 therefore NAMES A REAL COMPANY -- if not today's
+    assignee then tomorrow's, because JEDEC keeps issuing into these banks.
+
+    This design learned that the expensive way. Its first placeholder, 0x2D0, was
+    picked to be meaningless; it decodes to continuation count 5, code 0x50, which
+    JEP106 has assigned to Neterion Inc. Silicon carrying it does not announce
+    "no vendor" -- scan-chain tools print that company's name, and a tool that keys
+    a device description off IDCODE can load the wrong one with no error at all.
+
+    So there are exactly two acceptable states, and this function enforces them:
+
+      * NO ALLOCATION HELD -> the manufacturer field must be 0x000. JEP106 identity
+        codes run 1..126, so code 0 is not assigned today and CANNOT be assigned
+        later. It is invalid rather than reserved, which is the point: tools render
+        it "<invalid>"/unknown and stop, instead of impersonating anyone. This is
+        also what OpenTitan and rocket-chip ship while unallocated.
+      * AN ALLOCATION HELD -> the pad table's `design.jedec` block records the bank
+        and code JEDEC issued, and the manufacturer field is DERIVED from them here.
+        Recording the allocation is then the only way to get a non-zero field, so a
+        second invented number cannot be typed in by accident.
+
+    Note the failure mode this deliberately does NOT try to prevent: an unallocated
+    slot in a populated bank is not a safe placeholder either. Bank index 5 is
+    126/126 assigned, and every bank fills over time -- "unused today" is not a
+    property you can rely on for the life of a die.
+    """
+    manuf = (idcode >> 1) & 0x7FF
+    if jedec is None:
+        assert manuf == 0, (
+            "IDCODE manufacturer field is 0x%03X, but this design records no JEDEC "
+            "allocation. 0x%03X decodes to JEP106 continuation count %d, code 0x%02X "
+            "-- a slot JEDEC either has assigned or may assign, i.e. another company's "
+            "identity. Either set the manufacturer field to 0 (the value JEP106 can "
+            "never issue) or add a `jedec` block to the pad table's `design` section "
+            "recording the bank and code actually assigned to you. "
+            "See docs/bscan/JEDEC_ID_REQUEST.md."
+            % (manuf, manuf, (manuf >> 7) & 0xF, manuf & 0x7F))
+        return None
+
+    bank, code = jedec["bank"], jedec["code"]
+    assert 1 <= bank <= 16, \
+        "JEP106 bank %r is outside 1..16; the IDCODE carries the count in 4 bits" % bank
+    assert 1 <= code <= 126, \
+        ("JEP106 identity code 0x%02X is outside 1..126. Code 0 is never issued and "
+         "0x7F is the continuation escape -- if JEDEC gave you a byte with its parity "
+         "bit set, strip the parity bit before recording it here." % code)
+    want = ((bank - 1) << 7) | code
+    assert manuf == want, \
+        ("IDCODE manufacturer field is 0x%03X but the recorded JEDEC allocation "
+         "(bank %d, code 0x%02X) packs to 0x%03X. The packing is "
+         "((bank - 1) << 7) | code, with JEP106's odd-parity bit stripped."
+         % (manuf, bank, code, want))
+    return jedec
+
+
+def idcode_notes():
+    """The sentences that must travel with this IDCODE, wherever it is written down.
+
+    One derivation, two renderers: the wrapper RTL prints these as `//` comments and
+    the BSDL as `--` comments, so the die and its description can never disagree
+    about whether the number is real.
+    """
+    manuf = (IDCODE_VALUE >> 1) & 0x7FF
+    part = (IDCODE_VALUE >> 12) & 0xFFFF
+    if JEDEC_ALLOC is None:
+        out = [
+            "MANUFACTURER FIELD IS A DECLARED PLACEHOLDER, NOT AN ALLOCATION. SoC Labs "
+            "holds no JEDEC JEP106 manufacturer ID. The field is set to 0x%03X, which "
+            "JEP106 can never assign to anyone: its identity codes run 1..126, so code "
+            "0 is permanently unissuable." % manuf,
+            "That is deliberate. It makes this device ANNOUNCE that it is unidentified "
+            "rather than impersonate a company. A tester will see the manufacturer "
+            "render as \"<invalid>\" or unknown, and IDCODE-keyed lookup will find "
+            "nothing and stop -- which is the correct outcome. An invented-but-valid "
+            "field would instead resolve to whoever owns it and could silently select "
+            "another part's description.",
+        ]
+    else:
+        out = ["Manufacturer field 0x%03X is JEDEC JEP106 bank %d, code 0x%02X, assigned "
+               "to this organisation." % (manuf, JEDEC_ALLOC["bank"], JEDEC_ALLOC["code"])]
+    if part == 0:
+        out.append(
+            "THE PART NUMBER FIELD IS ALSO A PLACEHOLDER (0x%04X). It does not "
+            "distinguish this die from any other, including the compute chiplet sharing "
+            "its package. Assign a real part number before release." % part)
+    out.append("See docs/bscan/JEDEC_ID_REQUEST.md for what to change once an ID is held.")
+    return out
+
+
 def sha256_of(path):
     """SHA-256 of a file, stamped into the generated RTL and BSDL."""
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
@@ -186,6 +399,7 @@ def load_design(table):
     """
     global MODULE, ENTITY, IDCODE_VALUE, EXPECTED_BOUNDARY_LENGTH, EXPECTED_PAD_COUNT
     global TAP_TCK_PAD, TAP_TMS_PAD, TAP_TDI_PAD, TAP_TDO_PAD, TAP_EN_PAD
+    global BSDL_PORT_DECLS, BSDL_PORT_REFS, JEDEC_ALLOC
     d = table.get("design")
     if not d:
         sys.exit("ERROR: pad table has no `design` block -- regenerate it with "
@@ -199,6 +413,14 @@ def load_design(table):
     TAP_TDI_PAD, TAP_TDO_PAD = t["tdi"], t["tdo"]
     TAP_EN_PAD = t["en"]
     assert IDCODE_VALUE & 1, "IEEE 1149.1 requires IDCODE bit 0 == 1"
+    # `jedec` is OPTIONAL and absent until an ID is bought. Absent means the guard
+    # demands a zero manufacturer field; present means it derives one. Either way the
+    # number cannot be invented.
+    JEDEC_ALLOC = check_idcode_manufacturer(IDCODE_VALUE, d.get("jedec"))
+    # Must follow the TAP binding above: the port clause depends on which pads the
+    # TAP is muxed onto. Affects the BSDL only -- the wrapper RTL names its ports
+    # after the pad INSTANCE and never consults this.
+    BSDL_PORT_DECLS, BSDL_PORT_REFS = bsdl_port_model(table)
     return d
 
 
@@ -432,9 +654,10 @@ def render_rtl(table, pads, cells, table_sha):
     L.append("module %s #(" % MODULE)
     L.append("  // IEEE 1149.1 device identification register, contract section 5:")
     L.append("  //   {version[3:0], part[15:0], manufacturer[10:0], 1'b1}")
-    L.append("  // PLACEHOLDER. SoC Labs holds no JEDEC manufacturer ID; 0x%03X is invented"
-             % ((IDCODE_VALUE >> 1) & 0x7FF))
-    L.append("  // and MUST be replaced with an assigned ID before tapeout.")
+    # Same sentences as the BSDL emits, from one derivation. The die and its
+    # description must not disagree about whether this number identifies anyone.
+    for note in idcode_notes():
+        L += wrap_comment(note, "  // ", "  // ", width=78)
     L.append("  parameter logic [31:0] IDCODE_VALUE = 32'h%04X_%04X"
              % (IDCODE_VALUE >> 16, IDCODE_VALUE & 0xFFFF))
     L.append(") (")
@@ -748,23 +971,72 @@ BSDL_BANNER = """\
 --  2. NO POWER, GROUND OR ANALOG PINS ARE DECLARED. The pad table covers the {npads}
 --     SIGNAL pads only. A released BSDL must also declare the supply pads as
 --     `linkage bit`.
---  3. IDCODE IS A PLACEHOLDER. SoC Labs holds no JEDEC manufacturer ID.
+--  3. {idcode_headline}
 --  4. HIGHZ CANNOT TRI-STATE THE {nout} PURE-OUTPUT PADS. Their OEN is tied low in
 --     the pad ring and they have no control cell, so they are declared `output2`.
 --     1149.1 expects HIGHZ to place ALL system outputs in an inactive drive
 --     state; on this die it can only disable the {nbi} bidir and {nod} open-drain
 --     pads, which are the ones that have an output enable at all. Declared here
 --     rather than discovered on a tester.
---  5. THE TAP IS MUXED ONTO FUNCTIONAL PINS, not dedicated ones. See the
---     COMPLIANCE_PATTERNS attribute and the note above TAP_SCAN_IN.
+--  5. THE TAP IS MUXED ONTO FUNCTIONAL PINS, not dedicated ones, and two of
+--     them are bits of a bus that this description splits into scalars so the
+--     TAP attributes can name them. See COMPLIANCE_PATTERNS, the note above
+--     TAP_SCAN_IN, and the DESIGN_WARNING at the end of the file.
 --------------------------------------------------------------------------------
 """
 
 
+def wrap_comment(text, first, cont, width=79):
+    """Wrap prose into comment lines, `first` prefixing the first line.
+
+    Used for both outputs -- `--  ` for the BSDL, `  // ` for the wrapper RTL -- so
+    that shared prose (the IDCODE notes) is laid out once and cannot drift.
+
+    Generated prose names ports, and port names change per die, so a hand-laid-out
+    comment block goes ragged the moment a name gets longer. Wrap it instead.
+    Whitespace is collapsed -- never use this for a line whose layout is the point
+    (the TAP table, an example of BSDL syntax); those are emitted literally.
+    """
+    lines, cur, pre = [], "", first
+    for word in text.split():
+        if cur and len(pre) + len(cur) + 1 + len(word) > width:
+            lines.append(pre + cur)
+            cur, pre = word, cont
+        else:
+            cur = word if not cur else cur + " " + word
+    lines.append(pre + cur)
+    return lines
+
+
+def bsdl_text(text, indent, width=84):
+    """Emit prose as concatenated BSDL string literals, `indent` spaces deep.
+
+    BSDL only ever sees the concatenation, so the split point is free -- but the
+    trailing space has to stay ON the chunk or the joined string runs words
+    together. Lines stay inside the 132-column convention older readers assume.
+    """
+    chunks, cur = [], ""
+    for tok in text.split(" "):
+        if cur and len(cur) + 1 + len(tok) > width:
+            chunks.append(cur + " ")
+            cur = tok
+        else:
+            cur = tok if not cur else cur + " " + tok
+    chunks.append(cur)
+    return ["%s\"%s\"%s" % (" " * indent, ch, ";" if j == len(chunks) - 1 else " &")
+            for j, ch in enumerate(chunks)]
+
+
 def render_bsdl(table, pads, cells, table_sha):
     """Render the BSDL description of the same register as one string."""
-    ports = table["ports"]
+    decls = BSDL_PORT_DECLS
     by_inst = {p["inst"]: p for p in pads}
+    tck_p, tms_p = by_inst[TAP_TCK_PAD], by_inst[TAP_TMS_PAD]
+    tdi_p, tdo_p = by_inst[TAP_TDI_PAD], by_inst[TAP_TDO_PAD]
+    en_p = by_inst[TAP_EN_PAD]
+    # The TAP pads that are bits of a bus, and so had to be peeled into scalar
+    # ports by bsdl_port_model(). Empty on a die with dedicated TAP pads.
+    split = [q for q in (tck_p, tms_p, tdi_p, tdo_p) if q["idx"] is not None]
     n = len(cells)
     n_out = sum(1 for p in pads if p["kind"] == "output")
 
@@ -772,19 +1044,29 @@ def render_bsdl(table, pads, cells, table_sha):
     L.append(BSDL_BANNER.format(
         entity=ENTITY, gen=GENERATOR, table=TABLE.relative_to(ROOT), sha=table_sha,
         module=MODULE, npads=len(pads), nout=n_out,
+        idcode_headline=(
+            "IDCODE IDENTIFIES NO MANUFACTURER. SoC Labs holds no JEDEC\n"
+            "--     JEP106 allocation, so the manufacturer field carries 0x%03X -- the one\n"
+            "--     code JEP106 can never issue. See the note above IDCODE_REGISTER."
+            % ((IDCODE_VALUE >> 1) & 0x7FF)
+            if JEDEC_ALLOC is None else
+            "IDCODE manufacturer field is JEP106 bank %d code 0x%02X, assigned.\n"
+            "--     See the note above IDCODE_REGISTER."
+            % (JEDEC_ALLOC["bank"], JEDEC_ALLOC["code"])),
         nbi=sum(1 for p in pads if p["kind"] == "bidir"),
         nod=sum(1 for p in pads if p["kind"] == "opendrain")))
     L.append("entity %s is" % ENTITY)
     L.append("  generic (PHYSICAL_PIN_MAP : string := \"WIREBOND\");")
     L.append("")
     L.append("  port (")
-    pnames = list(ports.keys())
-    w = max(len(x) for x in pnames)
-    for i, nm in enumerate(pnames):
-        d = BSDL_DIR[ports[nm]["dir"]]
-        width = ports[nm]["width"]
-        typ = "bit" if width == 1 else "bit_vector(%d downto 0)" % (width - 1)
-        L.append("    %-*s : %-5s %s%s" % (w, nm, d, typ, "" if i == len(pnames) - 1 else ";"))
+    # bsdl_port_model() decided this list, including the split that peels the TAP
+    # data pins out of their bus. Nothing is recomputed here.
+    w = max(len(d["name"]) for d in decls)
+    for i, d in enumerate(decls):
+        typ = "bit" if d["msb"] is None else \
+              "bit_vector(%d downto %d)" % (d["msb"], d["lsb"])
+        L.append("    %-*s : %-5s %s%s"
+                 % (w, d["name"], d["dir"], typ, "" if i == len(decls) - 1 else ";"))
     L.append("  );")
     L.append("")
     L.append("  use STD_1149_1_2001.all;")
@@ -796,18 +1078,19 @@ def render_bsdl(table, pads, cells, table_sha):
     # ---- pin map ----------------------------------------------------------
     L.append("  --  PLACEHOLDER PIN MAP. No bond map exists yet, so every pin is a TBD_*")
     L.append("  --  token rather than a number. Bus entries are listed leftmost-first, i.e.")
-    L.append("  --  MSB down to LSB, matching the port's `N downto 0` range.")
+    L.append("  --  MSB down to LSB, matching each port's declared range.")
+    if split:
+        L.append("  --  The TBD_ tokens are keyed on the CHIP's port and bit, so a TAP pin")
+        L.append("  --  split out of its bus below still maps to the pin it always did.")
     L.append("  attribute PIN_MAP of %s : entity is PHYSICAL_PIN_MAP;" % ENTITY)
     L.append("")
     L.append("  constant WIREBOND : PIN_MAP_STRING :=")
     entries = []
-    for nm in pnames:
-        width = ports[nm]["width"]
-        if width == 1:
-            entries.append("%s : TBD_%s" % (nm, nm))
+    for d in decls:
+        if d["msb"] is None:
+            entries.append("%s : %s" % (d["name"], d["pins"][0]))
         else:
-            entries.append("%s : (%s)" % (nm, ", ".join(
-                "TBD_%s_%d" % (nm, bit) for bit in range(width - 1, -1, -1))))
+            entries.append("%s : (%s)" % (d["name"], ", ".join(d["pins"])))
     for i, e in enumerate(entries):
         last = (i == len(entries) - 1)
         text = e if last else e + ","
@@ -827,52 +1110,156 @@ def render_bsdl(table, pads, cells, table_sha):
     L.append("")
 
     # ---- TAP pins ---------------------------------------------------------
-    tck_p, tms_p = by_inst[TAP_TCK_PAD], by_inst[TAP_TMS_PAD]
-    tdi_p, tdo_p = by_inst[TAP_TDI_PAD], by_inst[TAP_TDO_PAD]
-    en_p = by_inst[TAP_EN_PAD]
+    def chip_pin(pad):
+        """How the chip's own Verilog port list names this pad: HOSTIO4_P1[0]."""
+        return pad["port"] if pad["idx"] is None else "%s[%d]" % (pad["port"], pad["idx"])
+
+    # THE GUARD THAT MAKES THE OLD BUG UNREPEATABLE. A BSDL TAP attribute names a
+    # whole signal. If any of these four resolved to a bus element, the file would
+    # be claiming that EVERY bit of that bus is that TAP pin -- which is exactly
+    # what this description used to say about TDI and TDO. bsdl_port_model() peels
+    # them into scalars so that this holds; assert it rather than trust it.
+    for attr, pad in (("TAP_SCAN_CLOCK", tck_p), ("TAP_SCAN_MODE", tms_p),
+                      ("TAP_SCAN_IN", tdi_p), ("TAP_SCAN_OUT", tdo_p)):
+        assert "(" not in portref(pad), \
+            ("%s would be attributed to %s, which is a bus ELEMENT. A VHDL attribute "
+             "specification cannot name one, and naming the whole bus instead declares "
+             "every pin of it to be %s." % (attr, portref(pad), attr))
+    assert portref(tdi_p) != portref(tdo_p), \
+        "TDI and TDO resolve to the same BSDL port; one pin cannot be both"
+
     L += [
         "  --  TAP PIN ASSIGNMENT -- READ THIS BEFORE USING THE FILE.",
         "  --",
-        "  --  This die has NO dedicated TAP pads. The TAP is muxed onto four existing",
-        "  --  functional pads, gated by the %s pad (contract section 7):" % en_p["port"],
-        "  --      TCK   <- %-12s (%s)" % (portref(tck_p), tck_p["inst"]),
-        "  --      TMS   <- %-12s (%s)" % (portref(tms_p), tms_p["inst"]),
-        "  --      TDI   <- %-12s (%s)" % (portref(tdi_p), tdi_p["inst"]),
-        "  --      TDO   -> %-12s (%s)" % (portref(tdo_p), tdo_p["inst"]),
+    ]
+    L += wrap_comment(
+        "This die has NO dedicated TAP pads. The TAP is muxed onto four existing "
+        "functional pads, gated by the %s pad (contract section 7):" % en_p["port"],
+        "  --  ", "  --  ")
+    rw = max(len(portref(q)) for q in (tck_p, tms_p, tdi_p, tdo_p))
+    iw = max(len(q["inst"]) for q in (tck_p, tms_p, tdi_p, tdo_p))
+    for role, arrow, pad in (("TCK", "<-", tck_p), ("TMS", "<-", tms_p),
+                             ("TDI", "<-", tdi_p), ("TDO", "->", tdo_p)):
+        L.append("  --      %-5s %s %-*s  %-*s  chip pin %s"
+                 % (role, arrow, rw, portref(pad), iw + 2,
+                    "(%s)" % pad["inst"], chip_pin(pad)))
+    L += [
         "  --      TRST* <- derived from %s internally; there is no TRST pin, so no" % en_p["port"],
         "  --               TAP_SCAN_RESET attribute is emitted.",
         "  --",
-        "  --  Two consequences a tester must know:",
-        "  --",
-        "  --   a) TDI and TDO are ELEMENTS OF A BUS PORT (%s). VHDL attribute" % tdi_p["port"],
-        "  --      specifications name whole signals, not bus elements, so the two",
-        "  --      attributes below are attached to the bus port and the element is given",
-        "  --      in this comment. A strict BSDL parser will read them as naming the",
-        "  --      whole 7-bit port. THIS MUST BE RESOLVED BEFORE RELEASE, either by",
-        "  --      dedicating scalar TAP pads or by splitting %s(0) and %s(1)" % (tdi_p["port"], tdi_p["port"]),
-        "  --      out as scalar ports in this description.",
-        "  --   b) All four of those pads still HAVE boundary cells in the chain below",
-        "  --      (the length stays %d). But while %s = 1 the pad ring overrides them:" % (n, en_p["port"]),
-        "  --      %s is forced to the TAP's TDO and %s / %s are forced" % (portref(tdo_p), portref(tms_p), portref(tdi_p)),
-        "  --      input-only. EXTEST therefore CANNOT independently drive %s." % portref(tdo_p),
-        "  --      Interconnect tests must treat that net as untestable from this die.",
-        "  --   c) TMS rides on %s, an INOUT in functional mode. 1149.1 expects TMS on a"
-        % tms_p["port"],
-        "  --      dedicated input pin.",
-        "  --",
-        "  --  TAP_SCAN_IN and TAP_SCAN_OUT below both name %s. That is not a" % tdi_p["port"],
-        "  --  copy-paste error -- it is consequence (a) above made visible: TDI is element",
-        "  --  (%d) of that bus and TDO is element (%d), and VHDL cannot say so."
-        % (tdi_p["idx"], tdo_p["idx"]),
-        "  attribute TAP_SCAN_IN    of %-12s : signal is true;   -- element (%d) only"
-        % (tdi_p["port"], tdi_p["idx"]),
-        "  attribute TAP_SCAN_OUT   of %-12s : signal is true;   -- element (%d) only"
-        % (tdo_p["port"], tdo_p["idx"]),
-        "  attribute TAP_SCAN_MODE  of %-12s : signal is true;" % tms_p["port"],
+    ]
+
+    if split:
+        buses = sorted({q["port"] for q in split})
+        resid = [d for d in decls if d["name"] in buses]
+        names = " and ".join(sorted(portref(q) for q in split))
+        L.append("  --  WHY THE PORT CLAUSE SPLITS %s" % ", ".join(buses))
+        L.append("  --")
+        L += wrap_comment(
+            "%s are bits of the chip's %s port, not pins of their own. BSDL is a subset "
+            "of VHDL, and a VHDL attribute specification names a WHOLE signal, so"
+            % (names, ", ".join(buses)), "  --  ", "  --  ")
+        L.append("  --      attribute TAP_SCAN_IN of %s(%d) : signal is true;"
+                 % (tdi_p["port"], tdi_p["idx"]))
+        L += wrap_comment(
+            "cannot be written at all. Attributing the whole bus instead -- which an "
+            "earlier revision of this file did, for TAP_SCAN_IN and TAP_SCAN_OUT both "
+            "-- does not merely lose the index. It declares every pin of that bus to be "
+            "TDI, and every pin of it to be TDO, at the same time. That is false, and a "
+            "tool that believes it will shift scan data at innocent pins.",
+            "  --  ", "  --  ")
+        L.append("  --")
+        L += wrap_comment(
+            "So those bits are declared in the port clause above as SCALAR ports named "
+            "<PORT>_<bit>, and the bus keeps the remainder. NOTHING ABOUT THE DIE MOVES:",
+            "  --  ", "  --  ")
+        L += wrap_comment(
+            "PIN_MAP binds each split-out scalar to the same physical pin the bus entry "
+            "used to carry, and a board tester binds nets through PIN_MAP, not through "
+            "port names -- so its netlist binding is bit-for-bit unchanged.",
+            "  --    * ", "  --      ")
+        for d in resid:
+            L += wrap_comment(
+                "%s keeps its bit numbering, (%d downto %d) -- deliberately NOT "
+                "renumbered to (%d downto 0) -- so a BSDL index still means the bit the "
+                "chip's Verilog means by it."
+                % (d["name"], d["msb"], d["lsb"], d["msb"] - d["lsb"]),
+                "  --    * ", "  --      ")
+        L += wrap_comment(
+            "the boundary register below names those pins by the same new names. The "
+            "chain, its length and its order are untouched.",
+            "  --    * ", "  --      ")
+        L.append("  --")
+        L += wrap_comment(
+            "The one thing that DOES diverge is the port NAME: the chip's Verilog port "
+            "list still declares %s. That divergence is recorded here and in the "
+            "DESIGN_WARNING at the end of this file."
+            % ", ".join("%s[%d:0]" % (d["name"], d["msb"]) for d in resid),
+            "  --  ", "  --  ")
+        L.append("  --")
+
+    L.append("  --  DEVIATIONS FROM IEEE 1149.1 A TESTER MUST KNOW")
+    L.append("  --")
+    L += wrap_comment(
+        "THIS DEVICE IS NOT 1149.1-COMPLIANT WITH %s = 0. There is no TAP at all until "
+        "%s is driven high. COMPLIANCE_PATTERNS below is the standard mechanism for "
+        "saying so, and it is the only reason this description may claim conformance "
+        "at all." % (en_p["port"], en_p["port"]), "  --   a) ", "  --      ")
+    L += wrap_comment(
+        "THE TAP PINS CARRY BOUNDARY CELLS. All four muxed pads still have their cells "
+        "in the chain below (the length stays %d). 1149.1 does not permit that for a "
+        "dedicated TAP pin, and a BSDL rule checker will say so -- but the cells ARE in "
+        "the silicon, and a description that hid them would be the worse lie. While "
+        "%s = 1 the pad ring overrides those pads: %s is forced to the TAP's TDO, and "
+        "%s / %s are forced input-only, so EXTEST CANNOT independently drive any of the "
+        "four. Treat their nets as untestable from this die."
+        % (n, en_p["port"], portref(tdo_p), portref(tms_p), portref(tdi_p)),
+        "  --   b) ", "  --      ")
+
+    # 1149.1 wants TCK/TMS/TDI on inputs and TDO on an output. These pads are
+    # functional I/O, so some of them are declared inout -- derive WHICH rather
+    # than asserting a die-specific list in prose.
+    dirs = {d["name"]: d["dir"] for d in decls}
+    offdir = [(portref(q), dirs[portref(q)])
+              for q, want in ((tck_p, "in"), (tms_p, "in"), (tdi_p, "in"), (tdo_p, "out"))
+              if dirs[portref(q)] != want]
+    if offdir:
+        L += wrap_comment(
+            "%s ARE DECLARED %s. 1149.1 expects dedicated, unidirectional TAP pins; "
+            "these are bidirectional functional pads. Declaring them `in`/`out` here "
+            "would contradict the output3 cells they carry in the boundary register "
+            "below." % (", ".join(nm for nm, _ in offdir),
+                        ", ".join(sorted({d for _, d in offdir}))),
+            "  --   c) ", "  --      ")
+
+    # A compliance-enable pin is not a system pin, so BSDL expects it to carry no
+    # boundary cell. Ours does, because SE is a real bonded pad in the ring and the
+    # register was built over every pad uniformly. Derive whether that is the case
+    # rather than asserting it -- on a die whose enable pin is not a scanned pad,
+    # this deviation simply does not exist and should not be printed.
+    en_cells = [c["bsdl_num"] for c in cells if c["pad"]["inst"] == TAP_EN_PAD]
+    if en_cells:
+        L += wrap_comment(
+            "THE COMPLIANCE-ENABLE PIN CARRIES A BOUNDARY CELL. %s is named by "
+            "COMPLIANCE_PATTERNS and is also cell %s of the boundary register below. "
+            "BSDL treats a compliance-enable pin as a non-system pin and expects it to "
+            "have no cell, so a rule checker will flag this. It is reported, not "
+            "hidden: the cell is in the silicon. Observing %s is in fact useful -- it "
+            "lets a tester confirm the pin it is holding high is the pin the die sees "
+            "-- but %s must be held at its compliance value throughout, so the cell "
+            "must never be used to drive it."
+            % (en_p["port"], ", ".join(str(x) for x in en_cells),
+               en_p["port"], en_p["port"]),
+            "  --   d) ", "  --      ")
+
+    L += [
+        "  attribute TAP_SCAN_IN    of %-12s : signal is true;" % portref(tdi_p),
+        "  attribute TAP_SCAN_OUT   of %-12s : signal is true;" % portref(tdo_p),
+        "  attribute TAP_SCAN_MODE  of %-12s : signal is true;" % portref(tms_p),
         "  --  TCK frequency is NOT yet characterised; %.1f MHz below is a placeholder."
         % (TCK_MAX_HZ / 1.0e6),
         "  attribute TAP_SCAN_CLOCK of %-12s : signal is (%.1fe6, BOTH);"
-        % (tck_p["port"], TCK_MAX_HZ / 1.0e6),
+        % (portref(tck_p), TCK_MAX_HZ / 1.0e6),
         "",
         "  --  %s is the compliance-enable pin: the test logic only exists while it is" % en_p["port"],
         "  --  high. With %s low the TAP is held in Test-Logic-Reset and the chip is" % en_p["port"],
@@ -910,14 +1297,18 @@ def render_bsdl(table, pads, cells, table_sha):
     assert IDCODE_VALUE & 1, "1149.1 requires IDCODE bit 0 to be 1"
     L += [
         "  --  Matches the IDCODE_VALUE parameter of %s (32'h%08X)." % (MODULE, IDCODE_VALUE),
-        "  --  PLACEHOLDER: SoC Labs holds no JEDEC manufacturer ID. 0x%03X below is"
-        % ((IDCODE_VALUE >> 1) & 0x7FF),
-        "  --  invented and MUST be replaced with an assigned ID before tapeout.",
+        "  --",
+    ]
+    for note in idcode_notes():
+        L += wrap_comment(note, "  --  ", "  --  ")
+    L += [
         "  attribute IDCODE_REGISTER of %s : entity is" % ENTITY,
         "    %-22s -- version 0x%X" % ("\"%s\" &" % ver, (IDCODE_VALUE >> 28) & 0xF),
         "    %-22s -- part number 0x%04X" % ("\"%s\" &" % part, (IDCODE_VALUE >> 12) & 0xFFFF),
-        "    %-22s -- manufacturer 0x%03X (PLACEHOLDER)"
-        % ("\"%s\" &" % manuf, (IDCODE_VALUE >> 1) & 0x7FF),
+        "    %-22s -- manufacturer 0x%03X %s"
+        % ("\"%s\" &" % manuf, (IDCODE_VALUE >> 1) & 0x7FF,
+           "(JEP106 bank %d code 0x%02X)" % (JEDEC_ALLOC["bank"], JEDEC_ALLOC["code"])
+           if JEDEC_ALLOC else "(UNALLOCATED PLACEHOLDER -- see above)"),
         "    %-22s -- required by IEEE 1149.1" % "\"1\";",
         "",
     ]
@@ -969,6 +1360,59 @@ def render_bsdl(table, pads, cells, table_sha):
             L.append("    \"%s\";  -- %s" % (e, tag))
         else:
             L.append("    %-*s &  -- %s" % (ew + 3, "\"%s,\"" % e, tag))
+    L.append("")
+
+    # ---- design warning ---------------------------------------------------
+    # THE LAST FIELD IN THE FILE AND THE ONLY ONE A HUMAN IS SHOWN. Comments above
+    # are for whoever opens the file; DESIGN_WARNING survives parsing and test tools
+    # put it in front of the operator, so every way this description can hurt a
+    # bring-up engineer is repeated here in the shortest words that will carry it.
+    # BSDL puts design_warning last, immediately before `end`.
+    warn = [
+        "NOT A COMPLIANT 1149.1 DEVICE UNLESS %s = 1. There are no dedicated TAP "
+        "pads on this die: the TAP is muxed onto functional pads and does not "
+        "exist while %s = 0 (see COMPLIANCE_PATTERNS)." % (en_p["port"], en_p["port"]),
+    ]
+    if split:
+        warn.append(
+            "%s are declared here as scalar ports but are bits %s of the chip's %s "
+            "port -- a VHDL attribute cannot name a bus element, so the TAP pins are "
+            "split out. PIN_MAP binds them to the same physical pins either way, and "
+            "the remaining bits are NOT renumbered."
+            % (" and ".join(sorted(portref(q) for q in split)),
+               " and ".join(str(q["idx"]) for q in sorted(split, key=lambda q: q["idx"])),
+               ", ".join(sorted({q["port"] for q in split}))))
+    warn.append(
+        "The four TAP pins (%s) still carry boundary-scan cells, and while %s = 1 "
+        "the pad ring overrides those pads. EXTEST cannot independently drive them; "
+        "treat their nets as untestable from this die."
+        % (", ".join(portref(q) for q in (tck_p, tms_p, tdi_p, tdo_p)), en_p["port"]))
+    if [c for c in cells if c["pad"]["inst"] == TAP_EN_PAD]:
+        warn.append(
+            "%s is the compliance-enable pin AND has a boundary-scan cell, which BSDL "
+            "does not expect. Hold %s at its compliance value throughout; never drive "
+            "that cell." % (en_p["port"], en_p["port"]))
+    warn.append(
+        "HIGHZ IS NOT IMPLEMENTED. %d output pads have no output-enable cell and no "
+        "instruction can tri-state them." % n_out)
+    if JEDEC_ALLOC is None:
+        warn.append(
+            "IDCODE DOES NOT IDENTIFY A MANUFACTURER. SoC Labs holds no JEDEC JEP106 "
+            "allocation, so the manufacturer field is set to 0x%03X -- a code JEP106 "
+            "can never issue -- and the part number field is 0x%04X. Your tools will "
+            "report the manufacturer as invalid or unknown; that is correct and "
+            "intended, not a fault. Do not identify this device by its IDCODE."
+            % ((IDCODE_VALUE >> 1) & 0x7FF, (IDCODE_VALUE >> 12) & 0xFFFF))
+    else:
+        warn.append(
+            "IDCODE manufacturer field 0x%03X is JEP106 bank %d code 0x%02X."
+            % ((IDCODE_VALUE >> 1) & 0x7FF, JEDEC_ALLOC["bank"], JEDEC_ALLOC["code"]))
+    warn.append(
+        "PIN NUMBERS ARE PLACEHOLDERS (TBD_*) and no power, ground or analog pins "
+        "are declared. This file is not yet fit for production board test.")
+
+    L.append("  attribute DESIGN_WARNING of %s : entity is" % ENTITY)
+    L += bsdl_text(" ".join(warn), indent=4)
     L.append("")
     L.append("end %s;" % ENTITY)
     L.append("")

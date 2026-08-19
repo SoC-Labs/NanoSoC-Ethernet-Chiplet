@@ -62,12 +62,12 @@ module tb_bscan;
 
   // Contract section 5 spells the value two ways and they disagree. The prose is
   // "version 1, part 0x0000, manufacturer 0x2D0>>1" over placeholder base
-  // 32'h0000_05A1, which is IDCODE = 32'h1000_05A1. The literal it prints,
+  // 32'h0000_05A1, which is IDCODE = 32'h1000_1001. The literal it prints,
   // 32'h1_0000_05A1, is a 36-bit constant: SystemVerilog truncates it to
   // 32'h0000_05A1 and the version nibble is silently LOST. This bench expects
   // the intended value and, on mismatch, says which of the two it saw. See
   // README.md "Contract ambiguities" #1. Override with +idcode=<8 hex digits>.
-  localparam logic [31:0] IDCODE_INTENDED  = 32'h1000_05A1;
+  localparam logic [31:0] IDCODE_INTENDED  = 32'h1000_1001;
   localparam logic [31:0] IDCODE_TRUNCATED = 32'h0000_05A1;
   logic [31:0] IDCODE_EXP = IDCODE_INTENDED;
 

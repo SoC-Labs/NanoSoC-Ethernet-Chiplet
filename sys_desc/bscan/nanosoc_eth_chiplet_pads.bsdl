@@ -14,7 +14,7 @@
 -- AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY.
 -- Generator : scripts/gen_bscan.py
 -- Input     : src/rtl/bscan/pad_table.json
---             sha256 44b85b3ce5f26b15875c76ba0a1063a40774a7a31f435b758397170eb7d35577
+--             sha256 4775e29e996ccca58c027d29409b7d888874eb51e803eba84086770dd938da48
 -- Regenerate: python3 scripts/gen_bscan.py
 -- Verify    : python3 scripts/gen_bscan.py --check
 --
@@ -35,15 +35,19 @@
 --  2. NO POWER, GROUND OR ANALOG PINS ARE DECLARED. The pad table covers the 48
 --     SIGNAL pads only. A released BSDL must also declare the supply pads as
 --     `linkage bit`.
---  3. IDCODE IS A PLACEHOLDER. SoC Labs holds no JEDEC manufacturer ID.
+--  3. IDCODE IDENTIFIES NO MANUFACTURER. SoC Labs holds no JEDEC
+--     JEP106 allocation, so the manufacturer field carries 0x000 -- the one
+--     code JEP106 can never issue. See the note above IDCODE_REGISTER.
 --  4. HIGHZ CANNOT TRI-STATE THE 15 PURE-OUTPUT PADS. Their OEN is tied low in
 --     the pad ring and they have no control cell, so they are declared `output2`.
 --     1149.1 expects HIGHZ to place ALL system outputs in an inactive drive
 --     state; on this die it can only disable the 13 bidir and 2 open-drain
 --     pads, which are the ones that have an output enable at all. Declared here
 --     rather than discovered on a tester.
---  5. THE TAP IS MUXED ONTO FUNCTIONAL PINS, not dedicated ones. See the
---     COMPLIANCE_PATTERNS attribute and the note above TAP_SCAN_IN.
+--  5. THE TAP IS MUXED ONTO FUNCTIONAL PINS, not dedicated ones, and two of
+--     them are bits of a bus that this description splits into scalars so the
+--     TAP attributes can name them. See COMPLIANCE_PATTERNS, the note above
+--     TAP_SCAN_IN, and the DESIGN_WARNING at the end of the file.
 --------------------------------------------------------------------------------
 
 entity nanosoc_eth_chiplet_pads is
@@ -59,7 +63,9 @@ entity nanosoc_eth_chiplet_pads is
     QSPI_IO      : inout bit_vector(3 downto 0);
     QSPI_SCLK    : out   bit;
     QSPI_nCS     : out   bit;
-    HOSTIO4_P1   : inout bit_vector(6 downto 0);
+    HOSTIO4_P1   : inout bit_vector(6 downto 2);
+    HOSTIO4_P1_1 : inout bit;
+    HOSTIO4_P1_0 : inout bit;
     RMII_REF_CLK : in    bit;
     RMII_TXD     : out   bit_vector(1 downto 0);
     RMII_TX_EN   : out   bit;
@@ -82,7 +88,9 @@ entity nanosoc_eth_chiplet_pads is
 
   --  PLACEHOLDER PIN MAP. No bond map exists yet, so every pin is a TBD_*
   --  token rather than a number. Bus entries are listed leftmost-first, i.e.
-  --  MSB down to LSB, matching the port's `N downto 0` range.
+  --  MSB down to LSB, matching each port's declared range.
+  --  The TBD_ tokens are keyed on the CHIP's port and bit, so a TAP pin
+  --  split out of its bus below still maps to the pin it always did.
   attribute PIN_MAP of nanosoc_eth_chiplet_pads : entity is PHYSICAL_PIN_MAP;
 
   constant WIREBOND : PIN_MAP_STRING :=
@@ -96,7 +104,9 @@ entity nanosoc_eth_chiplet_pads is
     "QSPI_SCLK : TBD_QSPI_SCLK," &
     "QSPI_nCS : TBD_QSPI_nCS," &
     "HOSTIO4_P1 : (TBD_HOSTIO4_P1_6, TBD_HOSTIO4_P1_5, TBD_HOSTIO4_P1_4, " &
-    "TBD_HOSTIO4_P1_3, TBD_HOSTIO4_P1_2, TBD_HOSTIO4_P1_1, TBD_HOSTIO4_P1_0)," &
+    "TBD_HOSTIO4_P1_3, TBD_HOSTIO4_P1_2)," &
+    "HOSTIO4_P1_1 : TBD_HOSTIO4_P1_1," &
+    "HOSTIO4_P1_0 : TBD_HOSTIO4_P1_0," &
     "RMII_REF_CLK : TBD_RMII_REF_CLK," &
     "RMII_TXD : (TBD_RMII_TXD_1, TBD_RMII_TXD_0)," &
     "RMII_TX_EN : TBD_RMII_TX_EN," &
@@ -117,35 +127,70 @@ entity nanosoc_eth_chiplet_pads is
   --
   --  This die has NO dedicated TAP pads. The TAP is muxed onto four existing
   --  functional pads, gated by the SE pad (contract section 7):
-  --      TCK   <- SWDCK        (uPAD_SWDCK_I)
-  --      TMS   <- SWDIO        (uPAD_SWDIO_IO)
-  --      TDI   <- HOSTIO4_P1(0) (uPAD_HOST_IO_0)
-  --      TDO   -> HOSTIO4_P1(1) (uPAD_HOST_IO_1)
+  --      TCK   <- SWDCK         (uPAD_SWDCK_I)    chip pin SWDCK
+  --      TMS   <- SWDIO         (uPAD_SWDIO_IO)   chip pin SWDIO
+  --      TDI   <- HOSTIO4_P1_0  (uPAD_HOST_IO_0)  chip pin HOSTIO4_P1[0]
+  --      TDO   -> HOSTIO4_P1_1  (uPAD_HOST_IO_1)  chip pin HOSTIO4_P1[1]
   --      TRST* <- derived from SE internally; there is no TRST pin, so no
   --               TAP_SCAN_RESET attribute is emitted.
   --
-  --  Two consequences a tester must know:
+  --  WHY THE PORT CLAUSE SPLITS HOSTIO4_P1
   --
-  --   a) TDI and TDO are ELEMENTS OF A BUS PORT (HOSTIO4_P1). VHDL attribute
-  --      specifications name whole signals, not bus elements, so the two
-  --      attributes below are attached to the bus port and the element is given
-  --      in this comment. A strict BSDL parser will read them as naming the
-  --      whole 7-bit port. THIS MUST BE RESOLVED BEFORE RELEASE, either by
-  --      dedicating scalar TAP pads or by splitting HOSTIO4_P1(0) and HOSTIO4_P1(1)
-  --      out as scalar ports in this description.
-  --   b) All four of those pads still HAVE boundary cells in the chain below
-  --      (the length stays 76). But while SE = 1 the pad ring overrides them:
-  --      HOSTIO4_P1(1) is forced to the TAP's TDO and SWDIO / HOSTIO4_P1(0) are forced
-  --      input-only. EXTEST therefore CANNOT independently drive HOSTIO4_P1(1).
-  --      Interconnect tests must treat that net as untestable from this die.
-  --   c) TMS rides on SWDIO, an INOUT in functional mode. 1149.1 expects TMS on a
-  --      dedicated input pin.
+  --  HOSTIO4_P1_0 and HOSTIO4_P1_1 are bits of the chip's HOSTIO4_P1 port, not
+  --  pins of their own. BSDL is a subset of VHDL, and a VHDL attribute
+  --  specification names a WHOLE signal, so
+  --      attribute TAP_SCAN_IN of HOSTIO4_P1(0) : signal is true;
+  --  cannot be written at all. Attributing the whole bus instead -- which an
+  --  earlier revision of this file did, for TAP_SCAN_IN and TAP_SCAN_OUT both
+  --  -- does not merely lose the index. It declares every pin of that bus to
+  --  be TDI, and every pin of it to be TDO, at the same time. That is false,
+  --  and a tool that believes it will shift scan data at innocent pins.
   --
-  --  TAP_SCAN_IN and TAP_SCAN_OUT below both name HOSTIO4_P1. That is not a
-  --  copy-paste error -- it is consequence (a) above made visible: TDI is element
-  --  (0) of that bus and TDO is element (1), and VHDL cannot say so.
-  attribute TAP_SCAN_IN    of HOSTIO4_P1   : signal is true;   -- element (0) only
-  attribute TAP_SCAN_OUT   of HOSTIO4_P1   : signal is true;   -- element (1) only
+  --  So those bits are declared in the port clause above as SCALAR ports named
+  --  <PORT>_<bit>, and the bus keeps the remainder. NOTHING ABOUT THE DIE
+  --  MOVES:
+  --    * PIN_MAP binds each split-out scalar to the same physical pin the bus
+  --      entry used to carry, and a board tester binds nets through PIN_MAP,
+  --      not through port names -- so its netlist binding is bit-for-bit
+  --      unchanged.
+  --    * HOSTIO4_P1 keeps its bit numbering, (6 downto 2) -- deliberately NOT
+  --      renumbered to (4 downto 0) -- so a BSDL index still means the bit the
+  --      chip's Verilog means by it.
+  --    * the boundary register below names those pins by the same new names.
+  --      The chain, its length and its order are untouched.
+  --
+  --  The one thing that DOES diverge is the port NAME: the chip's Verilog port
+  --  list still declares HOSTIO4_P1[6:0]. That divergence is recorded here and
+  --  in the DESIGN_WARNING at the end of this file.
+  --
+  --  DEVIATIONS FROM IEEE 1149.1 A TESTER MUST KNOW
+  --
+  --   a) THIS DEVICE IS NOT 1149.1-COMPLIANT WITH SE = 0. There is no TAP at
+  --      all until SE is driven high. COMPLIANCE_PATTERNS below is the
+  --      standard mechanism for saying so, and it is the only reason this
+  --      description may claim conformance at all.
+  --   b) THE TAP PINS CARRY BOUNDARY CELLS. All four muxed pads still have
+  --      their cells in the chain below (the length stays 76). 1149.1 does not
+  --      permit that for a dedicated TAP pin, and a BSDL rule checker will say
+  --      so -- but the cells ARE in the silicon, and a description that hid
+  --      them would be the worse lie. While SE = 1 the pad ring overrides
+  --      those pads: HOSTIO4_P1_1 is forced to the TAP's TDO, and SWDIO /
+  --      HOSTIO4_P1_0 are forced input-only, so EXTEST CANNOT independently
+  --      drive any of the four. Treat their nets as untestable from this die.
+  --   c) SWDIO, HOSTIO4_P1_0, HOSTIO4_P1_1 ARE DECLARED inout. 1149.1 expects
+  --      dedicated, unidirectional TAP pins; these are bidirectional
+  --      functional pads. Declaring them `in`/`out` here would contradict the
+  --      output3 cells they carry in the boundary register below.
+  --   d) THE COMPLIANCE-ENABLE PIN CARRIES A BOUNDARY CELL. SE is named by
+  --      COMPLIANCE_PATTERNS and is also cell 71 of the boundary register
+  --      below. BSDL treats a compliance-enable pin as a non-system pin and
+  --      expects it to have no cell, so a rule checker will flag this. It is
+  --      reported, not hidden: the cell is in the silicon. Observing SE is in
+  --      fact useful -- it lets a tester confirm the pin it is holding high is
+  --      the pin the die sees -- but SE must be held at its compliance value
+  --      throughout, so the cell must never be used to drive it.
+  attribute TAP_SCAN_IN    of HOSTIO4_P1_0 : signal is true;
+  attribute TAP_SCAN_OUT   of HOSTIO4_P1_1 : signal is true;
   attribute TAP_SCAN_MODE  of SWDIO        : signal is true;
   --  TCK frequency is NOT yet characterised; 10.0 MHz below is a placeholder.
   attribute TAP_SCAN_CLOCK of SWDCK        : signal is (10.0e6, BOTH);
@@ -172,13 +217,23 @@ entity nanosoc_eth_chiplet_pads is
   attribute INSTRUCTION_CAPTURE of nanosoc_eth_chiplet_pads : entity is
     "0001";
 
-  --  Matches the IDCODE_VALUE parameter of nanosoc_eth_chiplet_bscan (32'h100005A1).
-  --  PLACEHOLDER: SoC Labs holds no JEDEC manufacturer ID. 0x2D0 below is
-  --  invented and MUST be replaced with an assigned ID before tapeout.
+  --  Matches the IDCODE_VALUE parameter of nanosoc_eth_chiplet_bscan (32'h10001001).
+  --
+  --  MANUFACTURER FIELD IS A DECLARED PLACEHOLDER, NOT AN ALLOCATION. SoC Labs
+  --  holds no JEDEC JEP106 manufacturer ID. The field is set to 0x000, which
+  --  JEP106 can never assign to anyone: its identity codes run 1..126, so code
+  --  0 is permanently unissuable.
+  --  That is deliberate. It makes this device ANNOUNCE that it is unidentified
+  --  rather than impersonate a company. A tester will see the manufacturer
+  --  render as "<invalid>" or unknown, and IDCODE-keyed lookup will find
+  --  nothing and stop -- which is the correct outcome. An invented-but-valid
+  --  field would instead resolve to whoever owns it and could silently select
+  --  another part's description.
+  --  See docs/bscan/JEDEC_ID_REQUEST.md for what to change once an ID is held.
   attribute IDCODE_REGISTER of nanosoc_eth_chiplet_pads : entity is
     "0001" &               -- version 0x1
-    "0000000000000000" &   -- part number 0x0000
-    "01011010000" &        -- manufacturer 0x2D0 (PLACEHOLDER)
+    "0000000000000001" &   -- part number 0x0001
+    "00000000000" &        -- manufacturer 0x000 (UNALLOCATED PLACEHOLDER -- see above)
     "1";                   -- required by IEEE 1149.1
 
   attribute BOUNDARY_LENGTH of nanosoc_eth_chiplet_pads : entity is 76;
@@ -261,11 +316,11 @@ entity nanosoc_eth_chiplet_pads is
     "44 (BC_1, RMII_MDIO, output3, X, 45, 0, Z),"     &  -- uPAD_RMII_MDIO data
     "45 (BC_1, *, control, 0),"                       &  -- uPAD_RMII_MDIO oe
     "46 (BC_4, RMII_CRS_DV, input, X),"               &  -- uPAD_RMII_CRS_DV obs
-    "47 (BC_4, HOSTIO4_P1(0), input, X),"             &  -- uPAD_HOST_IO_0 obs
-    "48 (BC_1, HOSTIO4_P1(0), output3, X, 49, 0, Z)," &  -- uPAD_HOST_IO_0 data
+    "47 (BC_4, HOSTIO4_P1_0, input, X),"              &  -- uPAD_HOST_IO_0 obs
+    "48 (BC_1, HOSTIO4_P1_0, output3, X, 49, 0, Z),"  &  -- uPAD_HOST_IO_0 data
     "49 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_0 oe
-    "50 (BC_4, HOSTIO4_P1(1), input, X),"             &  -- uPAD_HOST_IO_1 obs
-    "51 (BC_1, HOSTIO4_P1(1), output3, X, 52, 0, Z)," &  -- uPAD_HOST_IO_1 data
+    "50 (BC_4, HOSTIO4_P1_1, input, X),"              &  -- uPAD_HOST_IO_1 obs
+    "51 (BC_1, HOSTIO4_P1_1, output3, X, 52, 0, Z),"  &  -- uPAD_HOST_IO_1 data
     "52 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_1 oe
     "53 (BC_4, HOSTIO4_P1(2), input, X),"             &  -- uPAD_HOST_IO_2 obs
     "54 (BC_1, HOSTIO4_P1(2), output3, X, 55, 0, Z)," &  -- uPAD_HOST_IO_2 data
@@ -290,5 +345,25 @@ entity nanosoc_eth_chiplet_pads is
     "73 (BC_4, CLK, input, X),"                       &  -- uPAD_CLK_I obs
     "74 (BC_4, SWDCK, input, X),"                     &  -- uPAD_SWDCK_I obs
     "75 (BC_4, NRST, input, X)";  -- uPAD_NRST_I obs
+
+  attribute DESIGN_WARNING of nanosoc_eth_chiplet_pads : entity is
+    "NOT A COMPLIANT 1149.1 DEVICE UNLESS SE = 1. There are no dedicated TAP pads on this " &
+    "die: the TAP is muxed onto functional pads and does not exist while SE = 0 (see " &
+    "COMPLIANCE_PATTERNS). HOSTIO4_P1_0 and HOSTIO4_P1_1 are declared here as scalar " &
+    "ports but are bits 0 and 1 of the chip's HOSTIO4_P1 port -- a VHDL attribute cannot " &
+    "name a bus element, so the TAP pins are split out. PIN_MAP binds them to the same " &
+    "physical pins either way, and the remaining bits are NOT renumbered. The four TAP " &
+    "pins (SWDCK, SWDIO, HOSTIO4_P1_0, HOSTIO4_P1_1) still carry boundary-scan cells, and " &
+    "while SE = 1 the pad ring overrides those pads. EXTEST cannot independently drive " &
+    "them; treat their nets as untestable from this die. SE is the compliance-enable pin " &
+    "AND has a boundary-scan cell, which BSDL does not expect. Hold SE at its compliance " &
+    "value throughout; never drive that cell. HIGHZ IS NOT IMPLEMENTED. 15 output pads " &
+    "have no output-enable cell and no instruction can tri-state them. IDCODE DOES NOT " &
+    "IDENTIFY A MANUFACTURER. SoC Labs holds no JEDEC JEP106 allocation, so the " &
+    "manufacturer field is set to 0x000 -- a code JEP106 can never issue -- and the part " &
+    "number field is 0x0001. Your tools will report the manufacturer as invalid or " &
+    "unknown; that is correct and intended, not a fault. Do not identify this device by " &
+    "its IDCODE. PIN NUMBERS ARE PLACEHOLDERS (TBD_*) and no power, ground or analog pins " &
+    "are declared. This file is not yet fit for production board test.";
 
 end nanosoc_eth_chiplet_pads;

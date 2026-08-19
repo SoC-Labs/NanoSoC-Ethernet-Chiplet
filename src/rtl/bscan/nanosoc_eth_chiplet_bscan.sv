@@ -14,7 +14,7 @@
 // AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY.
 // Generator : scripts/gen_bscan.py
 // Input     : src/rtl/bscan/pad_table.json
-//             sha256 44b85b3ce5f26b15875c76ba0a1063a40774a7a31f435b758397170eb7d35577
+//             sha256 4775e29e996ccca58c027d29409b7d888874eb51e803eba84086770dd938da48
 // Regenerate: python3 scripts/gen_bscan.py
 // Verify    : python3 scripts/gen_bscan.py --check      (CI gate; non-zero on drift)
 //
@@ -96,9 +96,18 @@
 module nanosoc_eth_chiplet_bscan #(
   // IEEE 1149.1 device identification register, contract section 5:
   //   {version[3:0], part[15:0], manufacturer[10:0], 1'b1}
-  // PLACEHOLDER. SoC Labs holds no JEDEC manufacturer ID; 0x2D0 is invented
-  // and MUST be replaced with an assigned ID before tapeout.
-  parameter logic [31:0] IDCODE_VALUE = 32'h1000_05A1
+  // MANUFACTURER FIELD IS A DECLARED PLACEHOLDER, NOT AN ALLOCATION. SoC Labs
+  // holds no JEDEC JEP106 manufacturer ID. The field is set to 0x000, which
+  // JEP106 can never assign to anyone: its identity codes run 1..126, so code
+  // 0 is permanently unissuable.
+  // That is deliberate. It makes this device ANNOUNCE that it is unidentified
+  // rather than impersonate a company. A tester will see the manufacturer
+  // render as "<invalid>" or unknown, and IDCODE-keyed lookup will find
+  // nothing and stop -- which is the correct outcome. An invented-but-valid
+  // field would instead resolve to whoever owns it and could silently select
+  // another part's description.
+  // See docs/bscan/JEDEC_ID_REQUEST.md for what to change once an ID is held.
+  parameter logic [31:0] IDCODE_VALUE = 32'h1000_1001
 ) (
   // --- test access (contract section 7: muxed onto existing pads by SE) ---
   input  wire tck,
