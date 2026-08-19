@@ -18,7 +18,7 @@
 // sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml, 1:1. That spec is the source
 // of truth for WHAT is bonded; this file is the source of truth for WHICH PAD
 // CELL each bond uses — a technology choice the YAML deliberately does not hold
-// (docs/PIN_MAP.md 1).
+// (docs/design/PIN_MAP.md 1).
 //
 // `make chip-boundary` cross-checks the two and fails on any divergence. Do not
 // add, remove or rename a pad here without changing the YAML first.

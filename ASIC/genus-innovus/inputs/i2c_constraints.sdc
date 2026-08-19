@@ -62,7 +62,7 @@
 # TideLink sideband: the autoneg FSM claims its peer by driving a START and
 # writing a claim byte over this bus (pads .v:76-78), and the G2 testbench
 # models it as a "wired-AND pull-up bus across both dies"
-# (docs/G2_TB_ARCHITECTURE.md:357). The far end is the compute chiplet, built
+# (docs/verification/G2_TB_ARCHITECTURE.md:357). The far end is the compute chiplet, built
 # from the SAME TSMC pad library:
 #   ~/SoCLabs/NanoSoC-Compute-Chiplet/ASIC/chiplet-pads/tech_wrappers/tsmc65/
 #   nanosoc_compute_chiplet_pads.v:327-330
@@ -349,7 +349,7 @@ set_false_path -to   [get_ports I2C_SDA]
 #
 #    Nor could it: the entire tphn65lpgv2od3_sl library contains no open-drain
 #    digital pad. Every PDDW*/PDUW* cell is a DGZ tristate variant. The
-#    requirement was recorded — docs/PIN_MAP.md:113-114 and :288-290 say the
+#    requirement was recorded — docs/design/PIN_MAP.md:113-114 and :288-290 say the
 #    cell "must be a true open-drain / open-collector cell (drive low or Hi-Z,
 #    never drive high)" and left the choice as [TEAM DECISION] — and the
 #    library then had nothing to satisfy it with.
@@ -410,8 +410,8 @@ set_false_path -to   [get_ports I2C_SDA]
 #    paths, so the set_load and set_max_transition above still bind.
 #
 # 4. NO PULL-UP RESISTOR IS SPECIFIED ANYWHERE, BY ANYONE. Searched docs/ and
-#    the board notes: docs/KR260_BOARD_WIRING.md does not mention I2C at all,
-#    and docs/PIN_MAP.md:297 still carries this as an open checklist item
+#    the board notes: docs/bringup/KR260_BOARD_WIRING.md does not mention I2C at all,
+#    and docs/design/PIN_MAP.md:297 still carries this as an open checklist item
 #    ("consider pull-ups for mdio, I2C"). The pads assume external pull-ups;
 #    nobody has sized them. THE BUS WILL NOT WORK WITHOUT THEM. The window,
 #    derived here so the board team has a starting point rather than nothing:

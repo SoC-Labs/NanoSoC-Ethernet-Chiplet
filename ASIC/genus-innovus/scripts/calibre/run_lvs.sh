@@ -18,7 +18,7 @@
 #   92-byte file. The memory macros and ROMs DO have both.
 #
 #   So `--check` below fails with the precise missing list and a pointer to
-#   docs/TSMC_BACKEND_PACKAGE_REQUEST.md. The day the `_BE` packages are
+#   docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md. The day the `_BE` packages are
 #   installed and the *_CDL vars below point at them, this turns green on its
 #   own and LVS is one command — rather than a day of scripting at the moment
 #   it finally becomes possible.
@@ -149,7 +149,7 @@ preflight() {
         # appear -- printed to a human on a terminal so they can order them.
         # Printing beats committing.
         echo "   Request: $(pkg_of "$STDCELL_CDL"), $(pkg_of "$IODRV_CDL"), $(pkg_of "$PAD_CDL")"
-        echo "   See docs/TSMC_BACKEND_PACKAGE_REQUEST.md"
+        echo "   See docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md"
         echo
         echo "   NOTE the GDS is affected by the same gap: 424 cell masters are"
         echo "   streamed as LEF shells with no transistors, so a DRC result over it"

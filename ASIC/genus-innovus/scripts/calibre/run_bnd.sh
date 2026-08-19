@@ -5,7 +5,7 @@
 #   ASIC/genus-innovus/scripts/calibre/run_bnd.sh [gds]
 #
 # NORMALLY DRIVEN BY `make bnd`. Same shape as run_drc.sh (see 12-calibre-drc.md
-# and docs/tapeout/49-bnd-and-logo-checks.md): this script holds no copy of the
+# and docs/tapeout/50-bnd-and-logo-checks.md): this script holds no copy of the
 # design's identity. BLOCK and BND_FOUNDRY_DECK come from the environment, which
 # the Makefile fills in from ASIC/genus-innovus/drc_project.mk.
 #
@@ -16,7 +16,7 @@
 #   after-passivation redistribution metal, CB/CB2 = the bond-pad cut/opening
 #   layers). None of those rules are exercised by the core-logic DRC deck, and
 #   the reverse is also true -- BND does not repeat the M1-M9/VIA1-8 checks.
-#   See docs/tapeout/49-bnd-and-logo-checks.md for why the two decks are kept
+#   See docs/tapeout/50-bnd-and-logo-checks.md for why the two decks are kept
 #   apart rather than merged into one run.
 #
 # THE WRAPPER DECK, nanosoc_eth_chiplet_pads.bnd.rules, IS SIMPLER THAN THE DRC

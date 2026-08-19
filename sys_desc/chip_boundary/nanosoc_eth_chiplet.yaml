@@ -40,11 +40,11 @@
 # 5. The four link-status ports were UNBONDED on 2026-07-16 (50 -> 46 pad cells).
 #    All four are already readable over the TideLink config APB at 0x2E03xxxx,
 #    which the SWJ-DP reaches independently of CPU state — so the pads bought no
-#    visibility the debug port does not already have. See docs/STATUS_REGISTERS.md
+#    visibility the debug port does not already have. See docs/design/STATUS_REGISTERS.md
 #    for the address table and the per-signal rationale in the `opens` list.
 #
 #    Two bits below are DEAD in the pinned tidelink (3f3de09). Recorded so nobody
-#    trusts them. Full detail in docs/STATUS_REGISTERS.md §4 and §5:
+#    trusts them. Full detail in docs/design/STATUS_REGISTERS.md §4 and §5:
 #
 #    (a) `d2d_reset_o` is TIED LOW BY CONSTRUCTION, and is not a reset — it is
 #        Wlink's RX `in_error_state`, one half of a cross-die "my receiver is in
@@ -88,7 +88,7 @@ chip_boundary:
 
     # ---- die-to-die PHY: the wire to the far die ------------------------
     # Source-synchronous. pad_clk_rx is the far die's forwarded clock and is
-    # asynchronous to everything on this die. See docs/PHYSICAL_HANDOFF.md 1.
+    # asynchronous to everything on this die. See docs/design/PHYSICAL_HANDOFF.md 1.
     d2d_phy:
       - { chip_port: d2d_clk_tx, pad_kind: output, width: 1, out: pad_clk_tx }
       - { chip_port: d2d_tx,     pad_kind: output, width: 8, out: pad_tx }
@@ -111,7 +111,7 @@ chip_boundary:
     # ---- link status / bring-up observability ---------------------------
     # NONE. All four former status pads are OPEN — every one is already
     # readable over the TideLink config APB at 0x2E03xxxx, which the SWJ-DP can
-    # reach independently of CPU state. See docs/STATUS_REGISTERS.md and note 5
+    # reach independently of CPU state. See docs/design/STATUS_REGISTERS.md and note 5
     # in the header above.
 
     # ---- CoreSight SWJ-DP -----------------------------------------------
@@ -137,7 +137,7 @@ chip_boundary:
     # ---- UARTs -----------------------------------------------------------
     # NONE. Both cores' UARTs are tied/open — see the UART block in ties.
     # There is no console on this chip; bring-up is over SWD + the TideLink
-    # config APB (docs/STATUS_REGISTERS.md).
+    # config APB (docs/design/STATUS_REGISTERS.md).
 
     # ---- ethernet RMII + MDIO -------------------------------------------
     eth:
@@ -185,7 +185,7 @@ chip_boundary:
     # there is no alias kind. Recorded here rather than hand-wired in the pad
     # ring, so it stays reviewable and `make chip-boundary` still counts it.
     #
-    # WHAT IT COSTS — both are board-sourced in docs/PHYSICAL_HANDOFF.md:22,24:
+    # WHAT IT COSTS — both are board-sourced in docs/design/PHYSICAL_HANDOFF.md:22,24:
     #   rtc_clk      : the RTC/PHC now counts off sys_fclk, not a 32.768 MHz
     #                  reference. PTP resolution and drift follow the system
     #                  clock; the PHC increment must be programmed to match.
@@ -355,17 +355,17 @@ chip_boundary:
     # --- servo lock status ---
     # ha1588_servo_locked is the ETHERNET servo. servo_locked_o is TIDELINK's.
     # The PHC reports only one of them regardless of SERVO_CTRL.SRC_SEL — see
-    # docs/PHYSICAL_HANDOFF.md 4.4. Neither is trustworthy enough to bond yet.
+    # docs/design/PHYSICAL_HANDOFF.md 4.4. Neither is trustworthy enough to bond yet.
     - ha1588_servo_locked
     - servo_locked_o
 
     # --- congestion telemetry: 13 bits, wants a debug bus not pads ---
-    # Also PERMANENTLY ZERO today — see note 5 below and docs/STATUS_REGISTERS.md.
+    # Also PERMANENTLY ZERO today — see note 5 below and docs/design/STATUS_REGISTERS.md.
     - tl_ewma_credit_o
 
     # --- link status / observability: all four are register-readable ---
     # Unbonded 2026-07-16. Every one of these is already a bit in the TideLink
-    # config APB at 0x2E03xxxx (docs/STATUS_REGISTERS.md), a window the SWJ-DP
+    # config APB at 0x2E03xxxx (docs/design/STATUS_REGISTERS.md), a window the SWJ-DP
     # reaches on free-running SYS_HCLK regardless of CPU state, and which is NOT
     # gated by link_active (only the TX aperture is). Per-signal rationale:
     #

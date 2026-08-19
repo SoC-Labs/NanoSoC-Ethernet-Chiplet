@@ -768,7 +768,7 @@ if {[try_step "read extraction effort" {
     }]} {
     warn "post-route extraction on a 65nm design is at effort 'low' unless a"
     warn "  QRC tech file is supplied (IMPEXT-3518). None exists on this site -"
-    warn "  see docs/TSMC_BACKEND_PACKAGE_REQUEST.md. Treat post-route timing"
+    warn "  see docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md. Treat post-route timing"
     warn "  margins as carrying an unquantified extraction-accuracy allowance."
 }
 

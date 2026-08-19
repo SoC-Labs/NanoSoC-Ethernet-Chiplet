@@ -42,7 +42,7 @@ index 10a389b..0c52180 100644
 +    // (hwrite=1). This masks only the MASTER-facing hreadyout, not xhb_sub_hready
 +    // into the bridge, so the bridge advances normally — no desync. Found by the
 +    // two-real-SoC g2_soc_pair read round-trip (a zero-latency far-side memory,
-+    // as in g2_peer_aperture, hides it). See docs/G2_SOC_PAIR_STATUS.md.
++    // as in g2_peer_aperture, hides it). See docs/verification/G2_SOC_PAIR_STATUS.md.
 +    reg rd_pipe_r;
 +    always @(posedge hclk or negedge hresetn) begin
 +        if (!hresetn)

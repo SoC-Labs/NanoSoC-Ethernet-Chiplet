@@ -48,7 +48,7 @@ READ BEFORE JUDGING THE FIRST RUN
     structural fan-in over the synthesised Wlink). The exceptions below cover
     the synchronisers and the FIFO/address-sync payload; roughly 200 further
     endpoints are neither and are genuinely timed. See PART 3 OF 3 in the patch
-    body for the acceptance gate, and docs/C2_TRANSMIT_GROUP_OPTIONS.md for the
+    body for the acceptance gate, and docs/asic/C2_TRANSMIT_GROUP_OPTIONS.md for the
     side-by-side comparison with Option B.
 
 --- a/ASIC/genus-innovus/inputs/constraints.sdc

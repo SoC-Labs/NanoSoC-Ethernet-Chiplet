@@ -50,7 +50,7 @@ write_db ${block_name}_cts
 #
 # Single-cut vias on wide metal is precisely what multi-cut via effort governs:
 # `high` makes NanoRoute work harder to place the second cut where the rule
-# demands one. See docs/DRC_WAIVER_INVENTORY.md § 5 item 2.
+# demands one. See docs/asic/DRC_WAIVER_INVENTORY.md § 5 item 2.
 #
 # THE DEFAULT IS DELIBERATELY UNCHANGED. Raising it is a QoR change — more cuts
 # means more area pressure and a different detail-route result — and no route

@@ -165,7 +165,7 @@ fi
 # anywhere in the transcript — while an independent klayout scan of the SAME
 # GDS shows VDDIO and VSSIO have NO text anywhere in the entire hierarchy, not
 # just the top cell. Calibre-only would have called this stream fully fixed.
-# It is not. See docs/tapeout/49-erc-pg-labels.md for the full comparison.
+# It is not. See docs/tapeout/51-erc-pg-labels.md for the full comparison.
 #
 # So: every name in ERC_POWER/ERC_GROUND gets checked BOTH ways, always.
 #-----------------------------------------------------------------------------
@@ -482,7 +482,7 @@ if [ "$pg_state" -ne 0 ] || { [ "$struct_rc" -eq 1 ] && [ -n "$struct_missing" ]
     echo "  special-route (power) grid went out unnamed. See"
     echo "  ASIC/asic-toolkit/tech/tsmc65/derive.tcl (gdsmap_derive),"
     echo "  docs/tapeout/48-imec-signoff-results-analysis.md §1.2 and"
-    echo "  docs/tapeout/49-erc-pg-labels.md."
+    echo "  docs/tapeout/51-erc-pg-labels.md."
     exit "$RC_NOPG"
 elif [ -n "$struct_missing" ] && [ "$struct_missing" != "__NO_KLAYOUT__" ] \
      && [ "$struct_missing" != "__NO_GDS__" ] && [ "$struct_missing" != "__KLAYOUT_FAILED__" ]; then

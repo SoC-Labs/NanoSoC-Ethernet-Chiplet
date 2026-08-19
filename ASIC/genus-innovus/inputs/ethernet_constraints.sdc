@@ -88,7 +88,7 @@ set_output_delay -max  8.0 -clock [get_clocks rmii_ref_clk] [get_ports {RMII_TXD
 #   [DS]    Microchip LAN8720A/LAN8720Ai datasheet, DS00002165B (2016)
 #   [RMII]  RMII Consortium, "RMII Specification" Rev 1.2, 20-Mar-1998
 #   [LIB]   tphn65lpgv2od3_slwc.lib (TSMC 65LP staggered IO, worst-case corner)
-#   [BOARD] docs/KR260_BOARD_WIRING.md sec 3 "LAN8720 RMII PHY (milestone M2)"
+#   [BOARD] docs/bringup/KR260_BOARD_WIRING.md sec 3 "LAN8720 RMII PHY (milestone M2)"
 # CONFIDENCE CLASS is marked on every value: (a) published datasheet/standard
 # number, (b) engineering estimate DERIVED from datasheet facts, (c) labelled
 # placeholder. Nothing below is class (b) or (c) presented as class (a).
@@ -101,7 +101,7 @@ set_output_delay -max  8.0 -clock [get_clocks rmii_ref_clk] [get_ports {RMII_TXD
 #     crystal drives an internal PLL and the nINT/REFCLKO pin outputs 50 MHz."
 #   * [BOARD] sec 3 pin map: PMOD1 pin 10 = "nINT/REF_CLK (50 MHz out)"; the
 #     signal-budget table lists rmii_ref_clk direction "in".
-#   * docs/PIN_MAP.md sec 5d and ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v
+#   * docs/design/PIN_MAP.md sec 5d and ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v
 #     agree: RMII_REF_CLK is `input wire`, pad PDDW04DGZ_G, tied to .PAD.
 # => nINTSEL pulled LOW, REF_CLK OUT mode, so [DS] Table 5-9 "RMII TIMING VALUES
 #    (REF_CLK OUT MODE)" is the governing table — NOT Table 5-10 (REF_CLK In
@@ -220,7 +220,7 @@ set_load -min  5.0 [get_ports {RMII_TXD[*] RMII_TX_EN RMII_MDC RMII_MDIO}] ; # (
 # must not be quoted as one. It is stated only because it is strictly less wrong
 # than the 0.0 (infinitely sharp) it replaces. The correct treatment is to
 # declare the SMI boundary asynchronous; this file does not currently do that.
-# (docs/PIN_MAP.md sec 5d already notes mdio "Typically needs external pull-up" —
+# (docs/design/PIN_MAP.md sec 5d already notes mdio "Typically needs external pull-up" —
 # no pull-up value is fixed anywhere in this repo, hence the range above.)
 set_input_transition -max 5.0 [get_ports RMII_MDIO] ; # (c) PLACEHOLDER clamped at the library max-transition ceiling; true rising edge is RC, ~82-550ns
 set_input_transition -min 1.0 [get_ports RMII_MDIO] ; # (b) the FALLING edge really is buffer-driven (VOD8 sinks 8mA); pessimistic-for-hold

@@ -337,7 +337,7 @@ VALIDATED
 +#   * A SECOND CLOCK TREE. $USRCLK now drives the Wlink reference and, through
 +#     it, the whole transmit domain -- CTS builds and balances it separately.
 +#   * THE PAD WRAPPER, THE BOUNDARY SPEC, THE IO FILE AND THE BOARD all change.
-+#     None of that is expressible in SDC. See docs/C2_TRANSMIT_GROUP_OPTIONS.md
++#     None of that is expressible in SDC. See docs/asic/C2_TRANSMIT_GROUP_OPTIONS.md
 +#     for the itemised change-list; this file is only the constraint half.
 +#
 +# A DISTINCT PAD IS NECESSARY BUT NOT SUFFICIENT. If the board feeds the new pad

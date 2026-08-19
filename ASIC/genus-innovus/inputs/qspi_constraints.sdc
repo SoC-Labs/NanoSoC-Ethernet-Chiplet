@@ -188,7 +188,7 @@ set_max_transition 2.5 [get_ports {QSPI_IO[*]}]
 #    that rule is applied globally after this file is sourced.
 #
 # 4. NO BOARD EXISTS YET, AND SST26VF064B IS NOT A RECORDED BOARD DECISION —
-#    it's inferred from the verif models and bench Pmod. docs/PIN_MAP.md still
+#    it's inferred from the verif models and bench Pmod. docs/design/PIN_MAP.md still
 #    marks the QSPI pad cell "[TEAM DECISION]". If the part changes, the
 #    loads, edge budget and WARNING 1 all need rework. Pin this down before
 #    tapeout.
