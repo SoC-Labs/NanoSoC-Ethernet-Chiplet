@@ -7,8 +7,8 @@ Copyright 2026, SoC Labs (www.soclabs.org)
 
 WHAT THIS DOES
 
-`nanosoc_eth_chiplet_pads.v` is hand-written and is the source of truth for WHICH
-PAD CELL each bond uses. This script does not take that role away: it performs one
+The pad ring is hand-written and is the source of truth for WHICH PAD CELL each
+bond uses. This script does not take that role away: it performs one
 mechanical, reviewable transform and writes the result back, so the .v stays the
 committed artefact that everything downstream reads.
 
@@ -18,8 +18,8 @@ The transform, per signal pad:
     AFTER    core <--- soc_x ---> u_bscan <--- bsp_x ---> uPAD_FOO(.C/.I/.OEN(bsp_x))
 
 Only the PAD instance's nets are renamed. The core instance is not touched at all,
-which is what keeps the blast radius small: `nanosoc_eth_chiplet_chip` and every
-`soc_*` name it binds to are bit-identical before and after.
+which is what keeps the blast radius small: the core instance and every `soc_*`
+name it binds to are bit-identical before and after.
 
 OE POLARITY IS PRESERVED BY CONSTRUCTION. The padring currently writes `.OEN(~soc_x_e)`
 for active-high enables and `.OEN(soc_x_o)` for the open-drain I2C pads. We feed the
@@ -143,7 +143,7 @@ def main():
     en = netname(TAP_EN, "in")
     tck, tms, tdi = (netname(x, "in") for x in (TAP_TCK, TAP_TMS, TAP_TDI))
 
-    # TDO drives the HOSTIO4[1] pad when boundary scan is enabled.
+    # TDO drives the chosen TDO pad when boundary scan is enabled.
     tdo_pad_i = netname(TAP_TDO, "out")
     tdo_pad_oe = netname(TAP_TDO, "oe")
     src = src.replace("wire %s;" % tdo_pad_i, "")  # re-declared below as a mux output
@@ -151,7 +151,7 @@ def main():
     extra = []
     extra.append("wire bscan_tdo;")
     extra.append("wire bscan_tdo_oe;")
-    extra.append("wire bscan_en = %s;   // SE pad, pad-side: works with the core dead" % en)
+    extra.append("wire bscan_en = %s;   // enable pad, pad-side: works with the core dead" % en)
     extra.append("wire %s_muxed = bscan_en ? bscan_tdo    : %s;" % (tdo_pad_i, tdo_pad_i))
     extra.append("wire %s_muxed = bscan_en ? bscan_tdo_oe : %s;" % (tdo_pad_oe, tdo_pad_oe))
 
@@ -186,7 +186,7 @@ def main():
             seen.add(d)
     blk += extra
     blk.append("")
-    blk.append("nanosoc_eth_chiplet_bscan %s (" % MARK)
+    blk.append("%s %s (" % (design["module"], MARK))
     blk.append("  .tck     (%s)," % tck)
     blk.append("  .tms     (%s)," % tms)
     blk.append("  .tdi     (%s)," % tdi)
