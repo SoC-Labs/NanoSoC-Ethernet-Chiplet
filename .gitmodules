@@ -14,8 +14,4 @@
 [submodule "ASIC/asic-toolkit"]
 	path = ASIC/asic-toolkit
 	url = git@github.com:SoC-Labs/nanoSoC-ASIC-Toolkit.git
-	# The pin lives on this branch, NOT on main: main lacks flow/power/ entirely
-	# and 21 further engine commits. Declaring main here made
-	# `git submodule update --remote` a silent 21-commit downgrade of the flow
-	# engine. Change this back to main only when the branch is merged.
-	branch = fix/tcl-parse-gate-both-directions
+	branch = main
