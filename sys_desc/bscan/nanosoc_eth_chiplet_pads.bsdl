@@ -1,0 +1,295 @@
+--------------------------------------------------------------------------------
+-- nanosoc_eth_chiplet_pads.bsdl -- IEEE 1149.1-2001 boundary-scan description
+-- for the nanoSoC ethernet chiplet pad ring (TSMC 65LP, wirebond).
+--
+-- A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+-- license.
+--
+-- Contributors
+--
+-- David Mapstone (d.a.mapstone@soton.ac.uk)
+--
+-- Copyright 2026, SoC Labs (www.soclabs.org)
+--------------------------------------------------------------------------------
+-- AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY.
+-- Generator : scripts/gen_bscan.py
+-- Input     : src/rtl/bscan/pad_table.json
+--             sha256 440b714a821ca214dc9d3d9c36552c3b0e2abb010ec6d225ab6085373c9e7ea7
+-- Regenerate: python3 scripts/gen_bscan.py
+-- Verify    : python3 scripts/gen_bscan.py --check
+--
+-- This file and src/rtl/bscan/nanosoc_eth_chiplet_bscan.sv are rendered from ONE cell
+-- ordering. The RTL chains cell 0 at TDI; BSDL numbers cell 0 at TDO, so the
+-- numbering here is the reverse of the RTL's -- by construction, not by hand.
+--
+-- PORT NAMES: this file names the chip's PINS (QSPI_IO(0)). The RTL wrapper names
+-- its ports after the PAD INSTANCE (QSPI_IO_0_pin_in) because the top-level port
+-- base name is not unique per pad. Both are correct; they are different
+-- namespaces, and neither is a bug.
+--------------------------------------------------------------------------------
+-- OPEN ITEMS -- this file is NOT yet fit to hand to a board-test house
+--
+--  1. PIN NUMBERS ARE PLACEHOLDERS. The bond map does not exist yet, so the
+--     WIREBOND constant below maps every port to a TBD_* token. Replace all of
+--     them with real pin/pad numbers before release.
+--  2. NO POWER, GROUND OR ANALOG PINS ARE DECLARED. The pad table covers the 48
+--     SIGNAL pads only. A released BSDL must also declare the supply pads as
+--     `linkage bit`.
+--  3. IDCODE IS A PLACEHOLDER. SoC Labs holds no JEDEC manufacturer ID.
+--  4. HIGHZ CANNOT TRI-STATE THE 15 PURE-OUTPUT PADS. Their OEN is tied low in
+--     the pad ring and they have no control cell, so they are declared `output2`.
+--     1149.1 expects HIGHZ to place ALL system outputs in an inactive drive
+--     state; on this die it can only disable the 13 bidir and 2 open-drain
+--     pads, which are the ones that have an output enable at all. Declared here
+--     rather than discovered on a tester.
+--  5. THE TAP IS MUXED ONTO FUNCTIONAL PINS, not dedicated ones. See the
+--     COMPLIANCE_PATTERNS attribute and the note above TAP_SCAN_IN.
+--------------------------------------------------------------------------------
+
+entity nanosoc_eth_chiplet_pads is
+  generic (PHYSICAL_PIN_MAP : string := "WIREBOND");
+
+  port (
+    SE           : in    bit;
+    CLK          : in    bit;
+    TEST         : in    bit;
+    NRST         : in    bit;
+    SWDIO        : inout bit;
+    SWDCK        : in    bit;
+    QSPI_IO      : inout bit_vector(3 downto 0);
+    QSPI_SCLK    : out   bit;
+    QSPI_nCS     : out   bit;
+    HOSTIO4_P1   : inout bit_vector(6 downto 0);
+    RMII_REF_CLK : in    bit;
+    RMII_TXD     : out   bit_vector(1 downto 0);
+    RMII_TX_EN   : out   bit;
+    RMII_RXD     : in    bit_vector(1 downto 0);
+    RMII_CRS_DV  : in    bit;
+    RMII_MDIO    : inout bit;
+    RMII_MDC     : out   bit;
+    TL_CLK_TX    : out   bit;
+    TL_TX        : out   bit_vector(7 downto 0);
+    TL_CLK_RX    : in    bit;
+    TL_RX        : in    bit_vector(7 downto 0);
+    I2C_SCL      : inout bit;
+    I2C_SDA      : inout bit
+  );
+
+  use STD_1149_1_2001.all;
+
+  attribute COMPONENT_CONFORMANCE of nanosoc_eth_chiplet_pads : entity is
+    "STD_1149_1_2001";
+
+  --  PLACEHOLDER PIN MAP. No bond map exists yet, so every pin is a TBD_*
+  --  token rather than a number. Bus entries are listed leftmost-first, i.e.
+  --  MSB down to LSB, matching the port's `N downto 0` range.
+  attribute PIN_MAP of nanosoc_eth_chiplet_pads : entity is PHYSICAL_PIN_MAP;
+
+  constant WIREBOND : PIN_MAP_STRING :=
+    "SE : TBD_SE," &
+    "CLK : TBD_CLK," &
+    "TEST : TBD_TEST," &
+    "NRST : TBD_NRST," &
+    "SWDIO : TBD_SWDIO," &
+    "SWDCK : TBD_SWDCK," &
+    "QSPI_IO : (TBD_QSPI_IO_3, TBD_QSPI_IO_2, TBD_QSPI_IO_1, TBD_QSPI_IO_0)," &
+    "QSPI_SCLK : TBD_QSPI_SCLK," &
+    "QSPI_nCS : TBD_QSPI_nCS," &
+    "HOSTIO4_P1 : (TBD_HOSTIO4_P1_6, TBD_HOSTIO4_P1_5, TBD_HOSTIO4_P1_4, " &
+    "TBD_HOSTIO4_P1_3, TBD_HOSTIO4_P1_2, TBD_HOSTIO4_P1_1, TBD_HOSTIO4_P1_0)," &
+    "RMII_REF_CLK : TBD_RMII_REF_CLK," &
+    "RMII_TXD : (TBD_RMII_TXD_1, TBD_RMII_TXD_0)," &
+    "RMII_TX_EN : TBD_RMII_TX_EN," &
+    "RMII_RXD : (TBD_RMII_RXD_1, TBD_RMII_RXD_0)," &
+    "RMII_CRS_DV : TBD_RMII_CRS_DV," &
+    "RMII_MDIO : TBD_RMII_MDIO," &
+    "RMII_MDC : TBD_RMII_MDC," &
+    "TL_CLK_TX : TBD_TL_CLK_TX," &
+    "TL_TX : (TBD_TL_TX_7, TBD_TL_TX_6, TBD_TL_TX_5, TBD_TL_TX_4, TBD_TL_TX_3, " &
+    "TBD_TL_TX_2, TBD_TL_TX_1, TBD_TL_TX_0)," &
+    "TL_CLK_RX : TBD_TL_CLK_RX," &
+    "TL_RX : (TBD_TL_RX_7, TBD_TL_RX_6, TBD_TL_RX_5, TBD_TL_RX_4, TBD_TL_RX_3, " &
+    "TBD_TL_RX_2, TBD_TL_RX_1, TBD_TL_RX_0)," &
+    "I2C_SCL : TBD_I2C_SCL," &
+    "I2C_SDA : TBD_I2C_SDA";
+
+  --  TAP PIN ASSIGNMENT -- READ THIS BEFORE USING THE FILE.
+  --
+  --  This die has NO dedicated TAP pads. The TAP is muxed onto four existing
+  --  functional pads, gated by the SE pad (contract section 7):
+  --      TCK   <- SWDCK        (uPAD_SWDCK_I)
+  --      TMS   <- SWDIO        (uPAD_SWDIO_IO)
+  --      TDI   <- HOSTIO4_P1(0) (uPAD_HOST_IO_0)
+  --      TDO   -> HOSTIO4_P1(1) (uPAD_HOST_IO_1)
+  --      TRST* <- derived from SE internally; there is no TRST pin, so no
+  --               TAP_SCAN_RESET attribute is emitted.
+  --
+  --  Two consequences a tester must know:
+  --
+  --   a) TDI and TDO are ELEMENTS OF A BUS PORT (HOSTIO4_P1). VHDL attribute
+  --      specifications name whole signals, not bus elements, so the two
+  --      attributes below are attached to the bus port and the element is given
+  --      in this comment. A strict BSDL parser will read them as naming the
+  --      whole 7-bit port. THIS MUST BE RESOLVED BEFORE RELEASE, either by
+  --      dedicating scalar TAP pads or by splitting HOSTIO4_P1(0) and HOSTIO4_P1(1)
+  --      out as scalar ports in this description.
+  --   b) All four of those pads still HAVE boundary cells in the chain below
+  --      (the length stays 76). But while SE = 1 the pad ring overrides them:
+  --      HOSTIO4_P1(1) is forced to the TAP's TDO and SWDIO / HOSTIO4_P1(0) are forced
+  --      input-only. EXTEST therefore CANNOT independently drive HOSTIO4_P1(1).
+  --      Interconnect tests must treat that net as untestable from this die.
+  --   c) TMS rides on SWDIO, an INOUT in functional mode. 1149.1 expects TMS on a
+  --      dedicated input pin.
+  --
+  --  TAP_SCAN_IN and TAP_SCAN_OUT below both name HOSTIO4_P1. That is not a
+  --  copy-paste error -- it is consequence (a) above made visible: TDI is element
+  --  (0) of that bus and TDO is element (1), and VHDL cannot say so.
+  attribute TAP_SCAN_IN    of HOSTIO4_P1   : signal is true;   -- element (0) only
+  attribute TAP_SCAN_OUT   of HOSTIO4_P1   : signal is true;   -- element (1) only
+  attribute TAP_SCAN_MODE  of SWDIO        : signal is true;
+  --  TCK frequency is NOT yet characterised; 10.0 MHz below is a placeholder.
+  attribute TAP_SCAN_CLOCK of SWDCK        : signal is (10.0e6, BOTH);
+
+  --  SE is the compliance-enable pin: the test logic only exists while it is
+  --  high. With SE low the TAP is held in Test-Logic-Reset and the chip is
+  --  bit-for-bit its functional self.
+  attribute COMPLIANCE_PATTERNS of nanosoc_eth_chiplet_pads : entity is
+    "(SE) (1)";
+
+  attribute INSTRUCTION_LENGTH of nanosoc_eth_chiplet_pads : entity is 4;
+
+  --  SAMPLE and PRELOAD share one opcode: the design implements the merged
+  --  SAMPLE_PRELOAD instruction. Every unassigned opcode decodes to BYPASS,
+  --  which is why they are all listed against it.
+  attribute INSTRUCTION_OPCODE of nanosoc_eth_chiplet_pads : entity is
+    "EXTEST  (0000)," &
+    "SAMPLE  (0001)," &
+    "PRELOAD (0001)," &
+    "IDCODE  (0010)," &
+    "CLAMP   (0011)," &
+    "HIGHZ   (0100)," &
+    "BYPASS  (1111, 0101, 0110, 0111, 1000, 1001, 1010, 1011, 1100, 1101, 1110)";
+
+  attribute INSTRUCTION_CAPTURE of nanosoc_eth_chiplet_pads : entity is
+    "0001";
+
+  --  Matches the IDCODE_VALUE parameter of nanosoc_eth_chiplet_bscan (32'h100005A1).
+  --  PLACEHOLDER: SoC Labs holds no JEDEC manufacturer ID. 0x2D0 below is
+  --  invented and MUST be replaced with an assigned ID before tapeout.
+  attribute IDCODE_REGISTER of nanosoc_eth_chiplet_pads : entity is
+    "0001" &               -- version 0x1
+    "0000000000000000" &   -- part number 0x0000
+    "01011010000" &        -- manufacturer 0x2D0 (PLACEHOLDER)
+    "1";                   -- required by IEEE 1149.1
+
+  attribute BOUNDARY_LENGTH of nanosoc_eth_chiplet_pads : entity is 76;
+
+  --  Cell 0 is the cell CLOSEST TO TDO, per BSDL. The RTL chains cell 0 at TDI,
+  --  so this list is the reverse of the RTL's instantiation order; both come
+  --  from one ordering in scripts/gen_bscan.py.
+  --
+  --  Cell types and functions:
+  --    BC_4 / input    -- bscan_cell_obs: capture and shift only, no update
+  --                       flop and no functional path. Observe-only.
+  --    BC_1 / control  -- bscan_cell_ctl on a pad's output enable. `disval` is
+  --                       the value in this cell that turns the driver OFF, and
+  --                       is derived per pad from oe_inv in the pad table, not
+  --                       assumed: the pad ring inverts the enable for the
+  --                       bidirs and does not for the open-drain pads.
+  --    BC_1 / output3  -- bscan_cell_ctl driving a pad. `ccell` names the
+  --                       control cell that can disable it.
+  --    BC_1 / output2  -- a driver with NO control cell. The 15 pure-output pads
+  --                       have OEN tied low in the pad ring, so nothing can
+  --                       disable them and `output3` would be a lie.
+  --
+  --  OPEN-DRAIN (I2C_SCL, I2C_SDA): one ctl cell, ccell pointing at
+  --  ITSELF. On these pads .I is a hard tie-low and the DATA is folded onto
+  --  OEN, so the cell that carries the data IS the cell that disables the
+  --  driver: cell = 1 releases the wired-AND bus (Z, pulled up externally),
+  --  cell = 0 drives it low. There is no separate data cell to reference.
+  --
+  --  BRING-UP WARNING -- EXTEST PARKS I2C LOW. bscan_cell_ctl resets its update
+  --  flop to 0, and on these two pads 0 on the OEN cell means DRIVER ENABLED.
+  --  So entering EXTEST without first running PRELOAD holds SCL and SDA low and
+  --  wedges the bus for every other device on it. 1149.1 requires PRELOAD before
+  --  EXTEST, and a wired-AND bus takes no damage from it, but it surprises
+  --  people. Load safe values first.
+  attribute BOUNDARY_REGISTER of nanosoc_eth_chiplet_pads : entity is
+    "0 (BC_1, TL_TX(7), output2, X),"                 &  -- uPAD_TL_TX_7 data
+    "1 (BC_1, TL_TX(6), output2, X),"                 &  -- uPAD_TL_TX_6 data
+    "2 (BC_1, TL_TX(5), output2, X),"                 &  -- uPAD_TL_TX_5 data
+    "3 (BC_1, TL_TX(4), output2, X),"                 &  -- uPAD_TL_TX_4 data
+    "4 (BC_1, TL_CLK_TX, output2, X),"                &  -- uPAD_TL_CLK_TX data
+    "5 (BC_1, TL_TX(3), output2, X),"                 &  -- uPAD_TL_TX_3 data
+    "6 (BC_1, TL_TX(2), output2, X),"                 &  -- uPAD_TL_TX_2 data
+    "7 (BC_1, TL_TX(1), output2, X),"                 &  -- uPAD_TL_TX_1 data
+    "8 (BC_1, TL_TX(0), output2, X),"                 &  -- uPAD_TL_TX_0 data
+    "9 (BC_4, I2C_SDA, input, X),"                    &  -- uPAD_I2C_SDA obs
+    "10 (BC_1, I2C_SDA, output3, 1, 10, 1, Z),"       &  -- uPAD_I2C_SDA oe
+    "11 (BC_4, I2C_SCL, input, X),"                   &  -- uPAD_I2C_SCL obs
+    "12 (BC_1, I2C_SCL, output3, 1, 12, 1, Z),"       &  -- uPAD_I2C_SCL oe
+    "13 (BC_4, TL_RX(7), input, X),"                  &  -- uPAD_TL_RX_7 obs
+    "14 (BC_4, TL_RX(6), input, X),"                  &  -- uPAD_TL_RX_6 obs
+    "15 (BC_4, TL_RX(5), input, X),"                  &  -- uPAD_TL_RX_5 obs
+    "16 (BC_4, TL_RX(4), input, X),"                  &  -- uPAD_TL_RX_4 obs
+    "17 (BC_4, TL_CLK_RX, input, X),"                 &  -- uPAD_TL_CLK_RX obs
+    "18 (BC_4, TL_RX(3), input, X),"                  &  -- uPAD_TL_RX_3 obs
+    "19 (BC_4, TL_RX(2), input, X),"                  &  -- uPAD_TL_RX_2 obs
+    "20 (BC_4, TL_RX(1), input, X),"                  &  -- uPAD_TL_RX_1 obs
+    "21 (BC_4, TL_RX(0), input, X),"                  &  -- uPAD_TL_RX_0 obs
+    "22 (BC_4, QSPI_IO(0), input, X),"                &  -- uPAD_QSPI_IO_0 obs
+    "23 (BC_1, QSPI_IO(0), output3, X, 24, 0, Z),"    &  -- uPAD_QSPI_IO_0 data
+    "24 (BC_1, *, control, 0),"                       &  -- uPAD_QSPI_IO_0 oe
+    "25 (BC_4, QSPI_IO(1), input, X),"                &  -- uPAD_QSPI_IO_1 obs
+    "26 (BC_1, QSPI_IO(1), output3, X, 27, 0, Z),"    &  -- uPAD_QSPI_IO_1 data
+    "27 (BC_1, *, control, 0),"                       &  -- uPAD_QSPI_IO_1 oe
+    "28 (BC_4, QSPI_IO(2), input, X),"                &  -- uPAD_QSPI_IO_2 obs
+    "29 (BC_1, QSPI_IO(2), output3, X, 30, 0, Z),"    &  -- uPAD_QSPI_IO_2 data
+    "30 (BC_1, *, control, 0),"                       &  -- uPAD_QSPI_IO_2 oe
+    "31 (BC_4, QSPI_IO(3), input, X),"                &  -- uPAD_QSPI_IO_3 obs
+    "32 (BC_1, QSPI_IO(3), output3, X, 33, 0, Z),"    &  -- uPAD_QSPI_IO_3 data
+    "33 (BC_1, *, control, 0),"                       &  -- uPAD_QSPI_IO_3 oe
+    "34 (BC_1, QSPI_SCLK, output2, X),"               &  -- uPAD_QSPI_SCLK data
+    "35 (BC_1, QSPI_nCS, output2, X),"                &  -- uPAD_QSPI_nCS data
+    "36 (BC_1, RMII_MDC, output2, X),"                &  -- uPAD_RMII_MDC data
+    "37 (BC_4, RMII_REF_CLK, input, X),"              &  -- uPAD_RMII_REF_CLK obs
+    "38 (BC_4, RMII_RXD(0), input, X),"               &  -- uPAD_RMII_RXD0 obs
+    "39 (BC_4, RMII_RXD(1), input, X),"               &  -- uPAD_RMII_RXD1 obs
+    "40 (BC_1, RMII_TXD(0), output2, X),"             &  -- uPAD_RMII_TXD0 data
+    "41 (BC_1, RMII_TXD(1), output2, X),"             &  -- uPAD_RMII_TXD1 data
+    "42 (BC_1, RMII_TX_EN, output2, X),"              &  -- uPAD_RMII_TX_EN data
+    "43 (BC_4, RMII_MDIO, input, X),"                 &  -- uPAD_RMII_MDIO obs
+    "44 (BC_1, RMII_MDIO, output3, X, 45, 0, Z),"     &  -- uPAD_RMII_MDIO data
+    "45 (BC_1, *, control, 0),"                       &  -- uPAD_RMII_MDIO oe
+    "46 (BC_4, RMII_CRS_DV, input, X),"               &  -- uPAD_RMII_CRS_DV obs
+    "47 (BC_4, HOSTIO4_P1(0), input, X),"             &  -- uPAD_HOST_IO_0 obs
+    "48 (BC_1, HOSTIO4_P1(0), output3, X, 49, 0, Z)," &  -- uPAD_HOST_IO_0 data
+    "49 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_0 oe
+    "50 (BC_4, HOSTIO4_P1(1), input, X),"             &  -- uPAD_HOST_IO_1 obs
+    "51 (BC_1, HOSTIO4_P1(1), output3, X, 52, 0, Z)," &  -- uPAD_HOST_IO_1 data
+    "52 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_1 oe
+    "53 (BC_4, HOSTIO4_P1(2), input, X),"             &  -- uPAD_HOST_IO_2 obs
+    "54 (BC_1, HOSTIO4_P1(2), output3, X, 55, 0, Z)," &  -- uPAD_HOST_IO_2 data
+    "55 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_2 oe
+    "56 (BC_4, HOSTIO4_P1(3), input, X),"             &  -- uPAD_HOST_IO_3 obs
+    "57 (BC_1, HOSTIO4_P1(3), output3, X, 58, 0, Z)," &  -- uPAD_HOST_IO_3 data
+    "58 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_3 oe
+    "59 (BC_4, HOSTIO4_P1(4), input, X),"             &  -- uPAD_HOST_IO_4 obs
+    "60 (BC_1, HOSTIO4_P1(4), output3, X, 61, 0, Z)," &  -- uPAD_HOST_IO_4 data
+    "61 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_4 oe
+    "62 (BC_4, HOSTIO4_P1(5), input, X),"             &  -- uPAD_HOST_IO_5 obs
+    "63 (BC_1, HOSTIO4_P1(5), output3, X, 64, 0, Z)," &  -- uPAD_HOST_IO_5 data
+    "64 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_5 oe
+    "65 (BC_4, HOSTIO4_P1(6), input, X),"             &  -- uPAD_HOST_IO_6 obs
+    "66 (BC_1, HOSTIO4_P1(6), output3, X, 67, 0, Z)," &  -- uPAD_HOST_IO_6 data
+    "67 (BC_1, *, control, 0),"                       &  -- uPAD_HOST_IO_6 oe
+    "68 (BC_4, SWDIO, input, X),"                     &  -- uPAD_SWDIO_IO obs
+    "69 (BC_1, SWDIO, output3, X, 70, 0, Z),"         &  -- uPAD_SWDIO_IO data
+    "70 (BC_1, *, control, 0),"                       &  -- uPAD_SWDIO_IO oe
+    "71 (BC_4, SE, input, X),"                        &  -- uPAD_SE_I obs
+    "72 (BC_4, TEST, input, X),"                      &  -- uPAD_TEST_I obs
+    "73 (BC_4, CLK, input, X),"                       &  -- uPAD_CLK_I obs
+    "74 (BC_4, SWDCK, input, X),"                     &  -- uPAD_SWDCK_I obs
+    "75 (BC_4, NRST, input, X)";  -- uPAD_NRST_I obs
+
+end nanosoc_eth_chiplet_pads;

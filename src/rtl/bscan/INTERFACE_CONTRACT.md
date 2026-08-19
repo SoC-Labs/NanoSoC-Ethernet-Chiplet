@@ -157,7 +157,7 @@ module bscan_ir #(
   output wire so,
   output wire sel_bypass,
   output wire sel_idcode,
-  output wire sel_boundary,  // EXTEST | SAMPLE_PRELOAD | CLAMP-with-boundary
+  output wire sel_boundary,  // EXTEST | SAMPLE_PRELOAD. NOT clamp -- see the table.
   output wire mode,          // drive the boundary register onto the pads
   output wire highz          // tri-state all outputs
 );
@@ -236,7 +236,7 @@ drives nothing at all (its core-side net is `UNCONNECTED2828` in the shipping ne
 | `TMS`  | `SWDIO` pad (input side) | |
 | `TDI`  | `HOSTIO4_P1[0]` (input side) | |
 | `TDO`  | `HOSTIO4_P1[1]` (output side, enabled by `tdo_oe`) | |
-| `TRST_n` | `~SE` | TAP held in Test-Logic-Reset whenever boundary scan is disabled |
+| `TRST_n` | `SE` (**not** `~SE`) | `trst_n` is active-low, so `SE=0` holds the TAP in Test-Logic-Reset and `SE=1` releases it. An earlier revision of this table said `~SE`, which would have held the TAP in reset exactly when boundary scan was wanted. |
 
 `SE = 0` is the functional default: `trst_n = 0` holds the TAP in TLR, the instruction resets
 to IDCODE, `mode = 0`, and every ctl cell is transparent. **Normal operation must be

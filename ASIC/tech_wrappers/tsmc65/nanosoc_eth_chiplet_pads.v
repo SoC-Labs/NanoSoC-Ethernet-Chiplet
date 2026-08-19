@@ -253,10 +253,262 @@ PVSS2DGZ_G uPAD_VSSIO_R_0 (.VSSPST (VSSIO));
 PVSS2DGZ_G uPAD_VSSIO_R_1 (.VSSPST (VSSIO));
 PVSS2DGZ_G uPAD_VSSIO_R_2 (.VSSPST (VSSIO));
 
+//---------------------------------------------------------------------------
+// BOUNDARY-SCAN REGISTER (IEEE 1149.1). Generated wiring, see
+// src/rtl/bscan/INTERFACE_CONTRACT.md and scripts/insert_bscan_padring.py.
+//
+// Sits between the core instance and the pad cells. With the SE pad low --
+// the functional default -- the TAP is held in Test-Logic-Reset, every cell
+// is transparent, and this chip behaves exactly as it did before.
+//---------------------------------------------------------------------------
+wire bsp_nrst_i_in;
+wire bsp_swdck_i_in;
+wire bsp_clk_i_in;
+wire bsp_test_i_in;
+wire bsp_se_i_in;
+wire bsp_swdio_io_in;
+wire bsp_swdio_io_out;
+wire bsp_swdio_io_oe;
+wire bsp_host_io_6_in;
+wire bsp_host_io_6_out;
+wire bsp_host_io_6_oe;
+wire bsp_host_io_5_in;
+wire bsp_host_io_5_out;
+wire bsp_host_io_5_oe;
+wire bsp_host_io_4_in;
+wire bsp_host_io_4_out;
+wire bsp_host_io_4_oe;
+wire bsp_host_io_3_in;
+wire bsp_host_io_3_out;
+wire bsp_host_io_3_oe;
+wire bsp_host_io_2_in;
+wire bsp_host_io_2_out;
+wire bsp_host_io_2_oe;
+wire bsp_host_io_1_in;
+wire bsp_host_io_1_out;
+wire bsp_host_io_1_oe;
+wire bsp_host_io_0_in;
+wire bsp_host_io_0_out;
+wire bsp_host_io_0_oe;
+wire bsp_rmii_crs_dv_in;
+wire bsp_rmii_mdio_in;
+wire bsp_rmii_mdio_out;
+wire bsp_rmii_mdio_oe;
+wire bsp_rmii_tx_en_out;
+wire bsp_rmii_txd1_out;
+wire bsp_rmii_txd0_out;
+wire bsp_rmii_rxd1_in;
+wire bsp_rmii_rxd0_in;
+wire bsp_rmii_ref_clk_in;
+wire bsp_rmii_mdc_out;
+wire bsp_qspi_ncs_out;
+wire bsp_qspi_sclk_out;
+wire bsp_qspi_io_3_in;
+wire bsp_qspi_io_3_out;
+wire bsp_qspi_io_3_oe;
+wire bsp_qspi_io_2_in;
+wire bsp_qspi_io_2_out;
+wire bsp_qspi_io_2_oe;
+wire bsp_qspi_io_1_in;
+wire bsp_qspi_io_1_out;
+wire bsp_qspi_io_1_oe;
+wire bsp_qspi_io_0_in;
+wire bsp_qspi_io_0_out;
+wire bsp_qspi_io_0_oe;
+wire bsp_tl_rx_0_in;
+wire bsp_tl_rx_1_in;
+wire bsp_tl_rx_2_in;
+wire bsp_tl_rx_3_in;
+wire bsp_tl_clk_rx_in;
+wire bsp_tl_rx_4_in;
+wire bsp_tl_rx_5_in;
+wire bsp_tl_rx_6_in;
+wire bsp_tl_rx_7_in;
+wire bsp_i2c_scl_in;
+wire bsp_i2c_scl_oe;
+wire bsp_i2c_sda_in;
+wire bsp_i2c_sda_oe;
+wire bsp_tl_tx_0_out;
+wire bsp_tl_tx_1_out;
+wire bsp_tl_tx_2_out;
+wire bsp_tl_tx_3_out;
+wire bsp_tl_clk_tx_out;
+wire bsp_tl_tx_4_out;
+wire bsp_tl_tx_5_out;
+wire bsp_tl_tx_6_out;
+wire bsp_tl_tx_7_out;
+wire bscan_tdo;
+wire bscan_tdo_oe;
+wire bscan_en = bsp_se_i_in;   // SE pad, pad-side: works with the core dead
+wire bsp_host_io_1_out_muxed = bscan_en ? bscan_tdo    : bsp_host_io_1_out;
+wire bsp_host_io_1_oe_muxed = bscan_en ? bscan_tdo_oe : bsp_host_io_1_oe;
+
+nanosoc_eth_chiplet_bscan u_nanosoc_eth_chiplet_bscan (
+  .tck     (bsp_swdck_i_in),
+  .tms     (bsp_swdio_io_in),
+  .tdi     (bsp_host_io_0_in),
+  .trst_n  (bscan_en),   // SE low => TAP held in reset
+  .tdo     (bscan_tdo),
+  .tdo_oe  (bscan_tdo_oe),
+  .NRST_I_pin_in (bsp_nrst_i_in),
+  .NRST_I_core_in (soc_sys_sysresetn),
+  .SWDCK_I_pin_in (bsp_swdck_i_in),
+  .SWDCK_I_core_in (soc_dap_swclktck),
+  .CLK_I_pin_in (bsp_clk_i_in),
+  .CLK_I_core_in (soc_sys_fclk),
+  .TEST_I_pin_in (bsp_test_i_in),
+  .TEST_I_core_in (soc_sys_testmode),
+  .SE_I_pin_in (bsp_se_i_in),
+  .SE_I_core_in (soc_sys_scanenable),
+  .SWDIO_IO_pin_in (bsp_swdio_io_in),
+  .SWDIO_IO_core_in (soc_dap_swditms),
+  .SWDIO_IO_core_out (soc_dap_swdo),
+  .SWDIO_IO_pad_out (bsp_swdio_io_out),
+  .SWDIO_IO_core_oe (soc_dap_swdoen),
+  .SWDIO_IO_pad_oe (bsp_swdio_io_oe),
+  .HOST_IO_6_pin_in (bsp_host_io_6_in),
+  .HOST_IO_6_core_in (soc_hostio4_p1_in[6]),
+  .HOST_IO_6_core_out (soc_hostio4_p1_out[6]),
+  .HOST_IO_6_pad_out (bsp_host_io_6_out),
+  .HOST_IO_6_core_oe (soc_hostio4_p1_outen[6]),
+  .HOST_IO_6_pad_oe (bsp_host_io_6_oe),
+  .HOST_IO_5_pin_in (bsp_host_io_5_in),
+  .HOST_IO_5_core_in (soc_hostio4_p1_in[5]),
+  .HOST_IO_5_core_out (soc_hostio4_p1_out[5]),
+  .HOST_IO_5_pad_out (bsp_host_io_5_out),
+  .HOST_IO_5_core_oe (soc_hostio4_p1_outen[5]),
+  .HOST_IO_5_pad_oe (bsp_host_io_5_oe),
+  .HOST_IO_4_pin_in (bsp_host_io_4_in),
+  .HOST_IO_4_core_in (soc_hostio4_p1_in[4]),
+  .HOST_IO_4_core_out (soc_hostio4_p1_out[4]),
+  .HOST_IO_4_pad_out (bsp_host_io_4_out),
+  .HOST_IO_4_core_oe (soc_hostio4_p1_outen[4]),
+  .HOST_IO_4_pad_oe (bsp_host_io_4_oe),
+  .HOST_IO_3_pin_in (bsp_host_io_3_in),
+  .HOST_IO_3_core_in (soc_hostio4_p1_in[3]),
+  .HOST_IO_3_core_out (soc_hostio4_p1_out[3]),
+  .HOST_IO_3_pad_out (bsp_host_io_3_out),
+  .HOST_IO_3_core_oe (soc_hostio4_p1_outen[3]),
+  .HOST_IO_3_pad_oe (bsp_host_io_3_oe),
+  .HOST_IO_2_pin_in (bsp_host_io_2_in),
+  .HOST_IO_2_core_in (soc_hostio4_p1_in[2]),
+  .HOST_IO_2_core_out (soc_hostio4_p1_out[2]),
+  .HOST_IO_2_pad_out (bsp_host_io_2_out),
+  .HOST_IO_2_core_oe (soc_hostio4_p1_outen[2]),
+  .HOST_IO_2_pad_oe (bsp_host_io_2_oe),
+  .HOST_IO_1_pin_in (bsp_host_io_1_in),
+  .HOST_IO_1_core_in (soc_hostio4_p1_in[1]),
+  .HOST_IO_1_core_out (soc_hostio4_p1_out[1]),
+  .HOST_IO_1_pad_out (bsp_host_io_1_out),
+  .HOST_IO_1_core_oe (soc_hostio4_p1_outen[1]),
+  .HOST_IO_1_pad_oe (bsp_host_io_1_oe),
+  .HOST_IO_0_pin_in (bsp_host_io_0_in),
+  .HOST_IO_0_core_in (soc_hostio4_p1_in[0]),
+  .HOST_IO_0_core_out (soc_hostio4_p1_out[0]),
+  .HOST_IO_0_pad_out (bsp_host_io_0_out),
+  .HOST_IO_0_core_oe (soc_hostio4_p1_outen[0]),
+  .HOST_IO_0_pad_oe (bsp_host_io_0_oe),
+  .RMII_CRS_DV_pin_in (bsp_rmii_crs_dv_in),
+  .RMII_CRS_DV_core_in (soc_rmii_crs_dv),
+  .RMII_MDIO_pin_in (bsp_rmii_mdio_in),
+  .RMII_MDIO_core_in (soc_md_pad_i),
+  .RMII_MDIO_core_out (soc_md_pad_o),
+  .RMII_MDIO_pad_out (bsp_rmii_mdio_out),
+  .RMII_MDIO_core_oe (soc_md_padoe_o),
+  .RMII_MDIO_pad_oe (bsp_rmii_mdio_oe),
+  .RMII_TX_EN_core_out (soc_rmii_tx_en),
+  .RMII_TX_EN_pad_out (bsp_rmii_tx_en_out),
+  .RMII_TXD1_core_out (soc_rmii_txd[1]),
+  .RMII_TXD1_pad_out (bsp_rmii_txd1_out),
+  .RMII_TXD0_core_out (soc_rmii_txd[0]),
+  .RMII_TXD0_pad_out (bsp_rmii_txd0_out),
+  .RMII_RXD1_pin_in (bsp_rmii_rxd1_in),
+  .RMII_RXD1_core_in (soc_rmii_rxd[1]),
+  .RMII_RXD0_pin_in (bsp_rmii_rxd0_in),
+  .RMII_RXD0_core_in (soc_rmii_rxd[0]),
+  .RMII_REF_CLK_pin_in (bsp_rmii_ref_clk_in),
+  .RMII_REF_CLK_core_in (soc_rmii_ref_clk),
+  .RMII_MDC_core_out (soc_mdc_pad_o),
+  .RMII_MDC_pad_out (bsp_rmii_mdc_out),
+  .QSPI_nCS_core_out (soc_qspi_csn),
+  .QSPI_nCS_pad_out (bsp_qspi_ncs_out),
+  .QSPI_SCLK_core_out (soc_qspi_sclk),
+  .QSPI_SCLK_pad_out (bsp_qspi_sclk_out),
+  .QSPI_IO_3_pin_in (bsp_qspi_io_3_in),
+  .QSPI_IO_3_core_in (soc_qspi_io_i[3]),
+  .QSPI_IO_3_core_out (soc_qspi_io_o[3]),
+  .QSPI_IO_3_pad_out (bsp_qspi_io_3_out),
+  .QSPI_IO_3_core_oe (soc_qspi_io_e[3]),
+  .QSPI_IO_3_pad_oe (bsp_qspi_io_3_oe),
+  .QSPI_IO_2_pin_in (bsp_qspi_io_2_in),
+  .QSPI_IO_2_core_in (soc_qspi_io_i[2]),
+  .QSPI_IO_2_core_out (soc_qspi_io_o[2]),
+  .QSPI_IO_2_pad_out (bsp_qspi_io_2_out),
+  .QSPI_IO_2_core_oe (soc_qspi_io_e[2]),
+  .QSPI_IO_2_pad_oe (bsp_qspi_io_2_oe),
+  .QSPI_IO_1_pin_in (bsp_qspi_io_1_in),
+  .QSPI_IO_1_core_in (soc_qspi_io_i[1]),
+  .QSPI_IO_1_core_out (soc_qspi_io_o[1]),
+  .QSPI_IO_1_pad_out (bsp_qspi_io_1_out),
+  .QSPI_IO_1_core_oe (soc_qspi_io_e[1]),
+  .QSPI_IO_1_pad_oe (bsp_qspi_io_1_oe),
+  .QSPI_IO_0_pin_in (bsp_qspi_io_0_in),
+  .QSPI_IO_0_core_in (soc_qspi_io_i[0]),
+  .QSPI_IO_0_core_out (soc_qspi_io_o[0]),
+  .QSPI_IO_0_pad_out (bsp_qspi_io_0_out),
+  .QSPI_IO_0_core_oe (soc_qspi_io_e[0]),
+  .QSPI_IO_0_pad_oe (bsp_qspi_io_0_oe),
+  .TL_RX_0_pin_in (bsp_tl_rx_0_in),
+  .TL_RX_0_core_in (soc_pad_rx[0]),
+  .TL_RX_1_pin_in (bsp_tl_rx_1_in),
+  .TL_RX_1_core_in (soc_pad_rx[1]),
+  .TL_RX_2_pin_in (bsp_tl_rx_2_in),
+  .TL_RX_2_core_in (soc_pad_rx[2]),
+  .TL_RX_3_pin_in (bsp_tl_rx_3_in),
+  .TL_RX_3_core_in (soc_pad_rx[3]),
+  .TL_CLK_RX_pin_in (bsp_tl_clk_rx_in),
+  .TL_CLK_RX_core_in (soc_pad_clk_rx),
+  .TL_RX_4_pin_in (bsp_tl_rx_4_in),
+  .TL_RX_4_core_in (soc_pad_rx[4]),
+  .TL_RX_5_pin_in (bsp_tl_rx_5_in),
+  .TL_RX_5_core_in (soc_pad_rx[5]),
+  .TL_RX_6_pin_in (bsp_tl_rx_6_in),
+  .TL_RX_6_core_in (soc_pad_rx[6]),
+  .TL_RX_7_pin_in (bsp_tl_rx_7_in),
+  .TL_RX_7_core_in (soc_pad_rx[7]),
+  .I2C_SCL_pin_in (bsp_i2c_scl_in),
+  .I2C_SCL_core_in (soc_i2c_scl_i),
+  .I2C_SCL_core_oe (soc_i2c_scl_o),
+  .I2C_SCL_pad_oe (bsp_i2c_scl_oe),
+  .I2C_SDA_pin_in (bsp_i2c_sda_in),
+  .I2C_SDA_core_in (soc_i2c_sda_i),
+  .I2C_SDA_core_oe (soc_i2c_sda_o),
+  .I2C_SDA_pad_oe (bsp_i2c_sda_oe),
+  .TL_TX_0_core_out (soc_pad_tx[0]),
+  .TL_TX_0_pad_out (bsp_tl_tx_0_out),
+  .TL_TX_1_core_out (soc_pad_tx[1]),
+  .TL_TX_1_pad_out (bsp_tl_tx_1_out),
+  .TL_TX_2_core_out (soc_pad_tx[2]),
+  .TL_TX_2_pad_out (bsp_tl_tx_2_out),
+  .TL_TX_3_core_out (soc_pad_tx[3]),
+  .TL_TX_3_pad_out (bsp_tl_tx_3_out),
+  .TL_CLK_TX_core_out (soc_pad_clk_tx),
+  .TL_CLK_TX_pad_out (bsp_tl_clk_tx_out),
+  .TL_TX_4_core_out (soc_pad_tx[4]),
+  .TL_TX_4_pad_out (bsp_tl_tx_4_out),
+  .TL_TX_5_core_out (soc_pad_tx[5]),
+  .TL_TX_5_pad_out (bsp_tl_tx_5_out),
+  .TL_TX_6_core_out (soc_pad_tx[6]),
+  .TL_TX_6_pad_out (bsp_tl_tx_6_out),
+  .TL_TX_7_core_out (soc_pad_tx[7]),
+  .TL_TX_7_pad_out (bsp_tl_tx_7_out)
+);
+
+
 
 // Clock, Reset and Serial Wire Debug ports
 PDDW04DGZ_G uPAD_SE_I (
-  .C   (soc_sys_scanenable),
+  .C   (bsp_se_i_in),
   .REN (tielo),
   .I   (tielo),
   .OEN (tiehi),
@@ -265,7 +517,7 @@ PDDW04DGZ_G uPAD_SE_I (
 
 // Also feeds the wrapper's rtc_clk and user_ref_clk (aliased in the spec).
 PDDW04DGZ_G uPAD_CLK_I (
-  .C   (soc_sys_fclk),
+  .C   (bsp_clk_i_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -273,7 +525,7 @@ PDDW04DGZ_G uPAD_CLK_I (
 );
 
 PDDW04DGZ_G uPAD_TEST_I (
-  .C   (soc_sys_testmode),
+  .C   (bsp_test_i_in),
   .REN (tielo),
   .I   (tielo),
   .OEN (tiehi),
@@ -281,7 +533,7 @@ PDDW04DGZ_G uPAD_TEST_I (
 );
 
 PDDW04DGZ_G uPAD_NRST_I (
-  .C   (soc_sys_sysresetn),
+  .C   (bsp_nrst_i_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -290,15 +542,15 @@ PDDW04DGZ_G uPAD_NRST_I (
 
 // dap_swdoen is oe_polarity: active_high -> OEN = ~oe
 PDUW08DGZ_G uPAD_SWDIO_IO (
-  .C   (soc_dap_swditms),
+  .C   (bsp_swdio_io_in),
   .REN (tielo),
-  .I   (soc_dap_swdo),
-  .OEN (~soc_dap_swdoen),
+  .I   (bsp_swdio_io_out),
+  .OEN ((bscan_en ? tiehi : ~bsp_swdio_io_oe)),
   .PAD (SWDIO)
 );
 
 PDDW04DGZ_G uPAD_SWDCK_I (
-  .C   (soc_dap_swclktck),
+  .C   (bsp_swdck_i_in),
   .REN (tielo),
   .I   (tielo),
   .OEN (tiehi),
@@ -309,7 +561,7 @@ PDDW04DGZ_G uPAD_SWDCK_I (
 PDDW16DGZ_G uPAD_QSPI_SCLK (
   .C   (),
   .REN (tiehi),
-  .I   (soc_qspi_sclk),
+  .I   (bsp_qspi_sclk_out),
   .OEN (tielo),
   .PAD (QSPI_SCLK)
 );
@@ -317,104 +569,104 @@ PDDW16DGZ_G uPAD_QSPI_SCLK (
 PDDW16DGZ_G uPAD_QSPI_nCS (
   .C   (),
   .REN (tiehi),
-  .I   (soc_qspi_csn),
+  .I   (bsp_qspi_ncs_out),
   .OEN (tielo),
   .PAD (QSPI_nCS)
 );
 
 // qspi_io_e is oe_polarity: active_high -> OEN = ~oe
 PDDW16DGZ_G uPAD_QSPI_IO_0 (
-  .C   (soc_qspi_io_i[0]),
+  .C   (bsp_qspi_io_0_in),
   .REN (tiehi),
-  .I   (soc_qspi_io_o[0]),
-  .OEN (~soc_qspi_io_e[0]),
+  .I   (bsp_qspi_io_0_out),
+  .OEN (~bsp_qspi_io_0_oe),
   .PAD (QSPI_IO[0])
 );
 
 PDDW16DGZ_G uPAD_QSPI_IO_1 (
-  .C   (soc_qspi_io_i[1]),
+  .C   (bsp_qspi_io_1_in),
   .REN (tiehi),
-  .I   (soc_qspi_io_o[1]),
-  .OEN (~soc_qspi_io_e[1]),
+  .I   (bsp_qspi_io_1_out),
+  .OEN (~bsp_qspi_io_1_oe),
   .PAD (QSPI_IO[1])
 );
 
 PDDW16DGZ_G uPAD_QSPI_IO_2 (
-  .C   (soc_qspi_io_i[2]),
+  .C   (bsp_qspi_io_2_in),
   .REN (tiehi),
-  .I   (soc_qspi_io_o[2]),
-  .OEN (~soc_qspi_io_e[2]),
+  .I   (bsp_qspi_io_2_out),
+  .OEN (~bsp_qspi_io_2_oe),
   .PAD (QSPI_IO[2])
 );
 
 PDDW16DGZ_G uPAD_QSPI_IO_3 (
-  .C   (soc_qspi_io_i[3]),
+  .C   (bsp_qspi_io_3_in),
   .REN (tiehi),
-  .I   (soc_qspi_io_o[3]),
-  .OEN (~soc_qspi_io_e[3]),
+  .I   (bsp_qspi_io_3_out),
+  .OEN (~bsp_qspi_io_3_oe),
   .PAD (QSPI_IO[3])
 );
 
 // Host IO Pads (hostio4_p1_outen is oe_polarity: active_high -> OEN = ~oe)
 PDDW16DGZ_G uPAD_HOST_IO_0 (
-  .C   (soc_hostio4_p1_in[0]),
+  .C   (bsp_host_io_0_in),
   .REN (tiehi),
-  .I   (soc_hostio4_p1_out[0]),
-  .OEN (~soc_hostio4_p1_outen[0]),
+  .I   (bsp_host_io_0_out),
+  .OEN ((bscan_en ? tiehi : ~bsp_host_io_0_oe)),
   .PAD (HOSTIO4_P1[0])
 );
 
 PDDW16DGZ_G uPAD_HOST_IO_1 (
-  .C   (soc_hostio4_p1_in[1]),
+  .C   (bsp_host_io_1_in),
   .REN (tiehi),
-  .I   (soc_hostio4_p1_out[1]),
-  .OEN (~soc_hostio4_p1_outen[1]),
+  .I   (bsp_host_io_1_out_muxed),
+  .OEN (~bsp_host_io_1_oe_muxed),
   .PAD (HOSTIO4_P1[1])
 );
 
 PDDW16DGZ_G uPAD_HOST_IO_2 (
-  .C   (soc_hostio4_p1_in[2]),
+  .C   (bsp_host_io_2_in),
   .REN (tiehi),
-  .I   (soc_hostio4_p1_out[2]),
-  .OEN (~soc_hostio4_p1_outen[2]),
+  .I   (bsp_host_io_2_out),
+  .OEN (~bsp_host_io_2_oe),
   .PAD (HOSTIO4_P1[2])
 );
 
 PDDW16DGZ_G uPAD_HOST_IO_3 (
-  .C   (soc_hostio4_p1_in[3]),
+  .C   (bsp_host_io_3_in),
   .REN (tiehi),
-  .I   (soc_hostio4_p1_out[3]),
-  .OEN (~soc_hostio4_p1_outen[3]),
+  .I   (bsp_host_io_3_out),
+  .OEN (~bsp_host_io_3_oe),
   .PAD (HOSTIO4_P1[3])
 );
 
 PDDW16DGZ_G uPAD_HOST_IO_4 (
-  .C   (soc_hostio4_p1_in[4]),
+  .C   (bsp_host_io_4_in),
   .REN (tiehi),
-  .I   (soc_hostio4_p1_out[4]),
-  .OEN (~soc_hostio4_p1_outen[4]),
+  .I   (bsp_host_io_4_out),
+  .OEN (~bsp_host_io_4_oe),
   .PAD (HOSTIO4_P1[4])
 );
 
 PDDW16DGZ_G uPAD_HOST_IO_5 (
-  .C   (soc_hostio4_p1_in[5]),
+  .C   (bsp_host_io_5_in),
   .REN (tiehi),
-  .I   (soc_hostio4_p1_out[5]),
-  .OEN (~soc_hostio4_p1_outen[5]),
+  .I   (bsp_host_io_5_out),
+  .OEN (~bsp_host_io_5_oe),
   .PAD (HOSTIO4_P1[5])
 );
 
 PDDW16DGZ_G uPAD_HOST_IO_6 (
-  .C   (soc_hostio4_p1_in[6]),
+  .C   (bsp_host_io_6_in),
   .REN (tiehi),
-  .I   (soc_hostio4_p1_out[6]),
-  .OEN (~soc_hostio4_p1_outen[6]),
+  .I   (bsp_host_io_6_out),
+  .OEN (~bsp_host_io_6_oe),
   .PAD (HOSTIO4_P1[6])
 );
 
 // RMII Pads
 PDDW04DGZ_G uPAD_RMII_REF_CLK (
-  .C   (soc_rmii_ref_clk),
+  .C   (bsp_rmii_ref_clk_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -424,7 +676,7 @@ PDDW04DGZ_G uPAD_RMII_REF_CLK (
 PDDW16DGZ_G uPAD_RMII_TXD0 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_rmii_txd[0]),
+  .I   (bsp_rmii_txd0_out),
   .OEN (tielo),
   .PAD (RMII_TXD[0])
 );
@@ -432,7 +684,7 @@ PDDW16DGZ_G uPAD_RMII_TXD0 (
 PDDW16DGZ_G uPAD_RMII_TXD1 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_rmii_txd[1]),
+  .I   (bsp_rmii_txd1_out),
   .OEN (tielo),
   .PAD (RMII_TXD[1])
 );
@@ -440,13 +692,13 @@ PDDW16DGZ_G uPAD_RMII_TXD1 (
 PDDW16DGZ_G uPAD_RMII_TX_EN (
   .C   (),
   .REN (tiehi),
-  .I   (soc_rmii_tx_en),
+  .I   (bsp_rmii_tx_en_out),
   .OEN (tielo),
   .PAD (RMII_TX_EN)
 );
 
 PDDW04DGZ_G uPAD_RMII_RXD0 (
-  .C   (soc_rmii_rxd[0]),
+  .C   (bsp_rmii_rxd0_in),
   .REN (tielo),
   .I   (tielo),
   .OEN (tiehi),
@@ -454,7 +706,7 @@ PDDW04DGZ_G uPAD_RMII_RXD0 (
 );
 
 PDDW04DGZ_G uPAD_RMII_RXD1 (
-  .C   (soc_rmii_rxd[1]),
+  .C   (bsp_rmii_rxd1_in),
   .REN (tielo),
   .I   (tielo),
   .OEN (tiehi),
@@ -462,7 +714,7 @@ PDDW04DGZ_G uPAD_RMII_RXD1 (
 );
 
 PDDW04DGZ_G uPAD_RMII_CRS_DV (
-  .C   (soc_rmii_crs_dv),
+  .C   (bsp_rmii_crs_dv_in),
   .REN (tielo),
   .I   (tielo),
   .OEN (tiehi),
@@ -471,17 +723,17 @@ PDDW04DGZ_G uPAD_RMII_CRS_DV (
 
 // md_padoe_o is oe_polarity: active_high -> OEN = ~oe
 PDDW16DGZ_G uPAD_RMII_MDIO (
-  .C   (soc_md_pad_i),
+  .C   (bsp_rmii_mdio_in),
   .REN (tiehi),
-  .I   (soc_md_pad_o),
-  .OEN (~soc_md_padoe_o),
+  .I   (bsp_rmii_mdio_out),
+  .OEN (~bsp_rmii_mdio_oe),
   .PAD (RMII_MDIO)
 );
 
 PDDW16DGZ_G uPAD_RMII_MDC (
   .C   (),
   .REN (tiehi),
-  .I   (soc_mdc_pad_o),
+  .I   (bsp_rmii_mdc_out),
   .OEN (tielo),
   .PAD (RMII_MDC)
 );
@@ -490,7 +742,7 @@ PDDW16DGZ_G uPAD_RMII_MDC (
 PDDW16DGZ_G uPAD_TL_CLK_TX (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_clk_tx),
+  .I   (bsp_tl_clk_tx_out),
   .OEN (tielo),
   .PAD (TL_CLK_TX)
 );
@@ -498,7 +750,7 @@ PDDW16DGZ_G uPAD_TL_CLK_TX (
 PDDW16DGZ_G uPAD_TL_TX_0 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[0]),
+  .I   (bsp_tl_tx_0_out),
   .OEN (tielo),
   .PAD (TL_TX[0])
 );
@@ -506,7 +758,7 @@ PDDW16DGZ_G uPAD_TL_TX_0 (
 PDDW16DGZ_G uPAD_TL_TX_1 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[1]),
+  .I   (bsp_tl_tx_1_out),
   .OEN (tielo),
   .PAD (TL_TX[1])
 );
@@ -514,7 +766,7 @@ PDDW16DGZ_G uPAD_TL_TX_1 (
 PDDW16DGZ_G uPAD_TL_TX_2 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[2]),
+  .I   (bsp_tl_tx_2_out),
   .OEN (tielo),
   .PAD (TL_TX[2])
 );
@@ -522,7 +774,7 @@ PDDW16DGZ_G uPAD_TL_TX_2 (
 PDDW16DGZ_G uPAD_TL_TX_3 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[3]),
+  .I   (bsp_tl_tx_3_out),
   .OEN (tielo),
   .PAD (TL_TX[3])
 );
@@ -530,7 +782,7 @@ PDDW16DGZ_G uPAD_TL_TX_3 (
 PDDW16DGZ_G uPAD_TL_TX_4 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[4]),
+  .I   (bsp_tl_tx_4_out),
   .OEN (tielo),
   .PAD (TL_TX[4])
 );
@@ -538,7 +790,7 @@ PDDW16DGZ_G uPAD_TL_TX_4 (
 PDDW16DGZ_G uPAD_TL_TX_5 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[5]),
+  .I   (bsp_tl_tx_5_out),
   .OEN (tielo),
   .PAD (TL_TX[5])
 );
@@ -546,7 +798,7 @@ PDDW16DGZ_G uPAD_TL_TX_5 (
 PDDW16DGZ_G uPAD_TL_TX_6 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[6]),
+  .I   (bsp_tl_tx_6_out),
   .OEN (tielo),
   .PAD (TL_TX[6])
 );
@@ -554,13 +806,13 @@ PDDW16DGZ_G uPAD_TL_TX_6 (
 PDDW16DGZ_G uPAD_TL_TX_7 (
   .C   (),
   .REN (tiehi),
-  .I   (soc_pad_tx[7]),
+  .I   (bsp_tl_tx_7_out),
   .OEN (tielo),
   .PAD (TL_TX[7])
 );
 
 PDDW16DGZ_G uPAD_TL_CLK_RX (
-  .C   (soc_pad_clk_rx),
+  .C   (bsp_tl_clk_rx_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -568,7 +820,7 @@ PDDW16DGZ_G uPAD_TL_CLK_RX (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_0 (
-  .C   (soc_pad_rx[0]),
+  .C   (bsp_tl_rx_0_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -576,7 +828,7 @@ PDDW16DGZ_G uPAD_TL_RX_0 (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_1 (
-  .C   (soc_pad_rx[1]),
+  .C   (bsp_tl_rx_1_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -584,7 +836,7 @@ PDDW16DGZ_G uPAD_TL_RX_1 (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_2 (
-  .C   (soc_pad_rx[2]),
+  .C   (bsp_tl_rx_2_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -592,7 +844,7 @@ PDDW16DGZ_G uPAD_TL_RX_2 (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_3 (
-  .C   (soc_pad_rx[3]),
+  .C   (bsp_tl_rx_3_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -600,7 +852,7 @@ PDDW16DGZ_G uPAD_TL_RX_3 (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_4 (
-  .C   (soc_pad_rx[4]),
+  .C   (bsp_tl_rx_4_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -608,7 +860,7 @@ PDDW16DGZ_G uPAD_TL_RX_4 (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_5 (
-  .C   (soc_pad_rx[5]),
+  .C   (bsp_tl_rx_5_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -616,7 +868,7 @@ PDDW16DGZ_G uPAD_TL_RX_5 (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_6 (
-  .C   (soc_pad_rx[6]),
+  .C   (bsp_tl_rx_6_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -624,7 +876,7 @@ PDDW16DGZ_G uPAD_TL_RX_6 (
 );
 
 PDDW16DGZ_G uPAD_TL_RX_7 (
-  .C   (soc_pad_rx[7]),
+  .C   (bsp_tl_rx_7_in),
   .REN (tiehi),
   .I   (tielo),
   .OEN (tiehi),
@@ -647,18 +899,18 @@ PDDW16DGZ_G uPAD_TL_RX_7 (
 //     weak pull-up keeper. Keep it as a bus-keeper only -- the real ~2.2k
 //     pull-ups belong on the PCB, do not "tidy" REN to tiehi.
 PDUW16DGZ_G uPAD_I2C_SCL (
-  .C   (soc_i2c_scl_i),
+  .C   (bsp_i2c_scl_in),
   .REN (tielo),
   .I   (tielo),
-  .OEN (soc_i2c_scl_o),
+  .OEN (bsp_i2c_scl_oe),
   .PAD (I2C_SCL)
 );
 
 PDUW16DGZ_G uPAD_I2C_SDA (
-  .C   (soc_i2c_sda_i),
+  .C   (bsp_i2c_sda_in),
   .REN (tielo),
   .I   (tielo),
-  .OEN (soc_i2c_sda_o),
+  .OEN (bsp_i2c_sda_oe),
   .PAD (I2C_SDA)
 );
 

@@ -153,6 +153,25 @@ def check_pad_ring(boundary, be) -> list[str]:
     #
     # Absent the register (the pre-splice tree, or any other design) this block
     # finds no instance and changes nothing.
+    # Every identifier mentioned anywhere inside a pad cell's .C/.I/.OEN argument,
+    # with balanced parens so a ternary counts. The TAP pin overrides look like
+    #   .OEN ((bscan_en ? tiehi : ~bsp_swdio_io_oe))
+    # and a regex that stops at the first ')' or takes only the leading identifier
+    # sees `bscan_en` and reports the real net as unconnected. That is a checker
+    # bug that reads exactly like a wiring bug, so extract properly.
+    def _pad_arg_idents(text: str) -> set[str]:
+        out: set[str] = set()
+        for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(", text):
+            i, depth = mm.end(), 1
+            while i < len(text) and depth:
+                depth += (text[i] == "(") - (text[i] == ")")
+                i += 1
+            out |= set(re.findall(r"[A-Za-z_]\w*", text[mm.end():i - 1]))
+        return out
+
+    pad_nets = _pad_arg_idents(src)
+
+    bsr_core2pad: dict[str, str] = {}
     bm = re.search(r"nanosoc_eth_chiplet_bscan\s+(\w+)\s*\((.*?)\n\s*\)\s*;", src, re.S)
     if bm:
         bconn = {p.group(1): re.sub(r"\[.*", "", p.group(2).strip())
@@ -161,15 +180,21 @@ def check_pad_ring(boundary, be) -> list[str]:
         pad_side = {n for p, n in bconn.items() if p.endswith(("_pin_in", "_pad_out", "_pad_oe"))}
         reached |= core_side
 
-        # Every net the register presents to the ring must actually reach a pad.
-        # `_muxed` nets are the TAP pin overrides in the pad ring: the register
-        # drives them, the ring re-muxes them onto the pad, so accept a pad cell
-        # net that is this net with that suffix.
-        pad_nets = {re.sub(r"\[.*", "", mm.group(1))
-                    for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(\s*~?\s*\(?\s*[^)]*?([A-Za-z_]\w*)",
-                                          src)}
-        pad_nets |= {re.sub(r"\[.*", "", mm.group(1))
-                     for mm in re.finditer(r"\.(?:C|I|OEN)\s*\(\s*~?\s*([A-Za-z_]\w*)", src)}
+        # Pair a pad's core-side net with the pad-side net the register drives for
+        # it, so downstream checks that were written against the direct core->pad
+        # wiring can follow the extra hop. Keyed on the port prefix, which is the
+        # pad instance name.
+        for p, n in bconn.items():
+            for core_sfx, pad_sfx in (("_core_out", "_pad_out"), ("_core_oe", "_pad_oe"),
+                                      ("_core_in", "_pin_in")):
+                if p.endswith(core_sfx):
+                    mate = bconn.get(p[: -len(core_sfx)] + pad_sfx)
+                    if mate:
+                        bsr_core2pad[n] = mate
+
+        # Every net the register presents to the ring must land on a pad cell.
+        # `_muxed` nets are the TAP pin overrides: the register drives the base
+        # net, the ring re-muxes it onto the pad through one rename.
         for n in sorted(pad_side):
             if n in pad_nets or (n + "_muxed") in pad_nets:
                 continue
@@ -218,6 +243,14 @@ def check_pad_ring(boundary, be) -> list[str]:
         if not out_name or not oe_name:
             continue
         out_net = re.sub(r"\[.*", "", conn.get(out_name, "")).strip()
+        # Follow the boundary register if one is spliced in: the open-drain pads
+        # are detected by their PAD-side net, but `conn` holds the CORE-side net,
+        # and without this hop the two I2C pads stop being recognised as
+        # open-drain and their deliberately-unrouted `_t` nets are reported as
+        # dropped signals. That is a pre-existing exemption breaking on the new
+        # indirection, not a new defect in the pad ring.
+        if out_net and out_net not in od_oen:
+            out_net = bsr_core2pad.get(out_net, out_net)
         if out_net and out_net in od_oen:
             exempt_oe.add(oe_name)
 
