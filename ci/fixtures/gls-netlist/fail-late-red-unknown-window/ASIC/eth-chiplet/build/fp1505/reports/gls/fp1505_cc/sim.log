@@ -1,0 +1,11 @@
+Command: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/fp1505_cc/./simv +vcs+initreg+0 -l sim.log
+Chronologic VCS simulator copyright 1991-2022
+Compiler version T-2022.06-SP2_Full64; Runtime version T-2022.06-SP2_Full64;  Aug 19 12:45 2026
+GLSN-FORCES: 0 no testbench override was applied in this run
+GLSN-EVENT: 0 simulation start
+GLSN-FLASH: BENCH-SUPPLIED DEVICE sst26vf064b on QSPI_SCLK,QSPI_nCS,QSPI_IO
+GLSN-FLASH:   the boot image below came from the bench, not the design.
+GLSN-FLASH: loaded 'flash_image.hex' into sst26vf064b.I0.memory (0x100000 bytes pre-erased to FF)
+GLSN-FLASH: offset 0x0 = 54 4f 4f 42 (magic, LE; expect 54 4f 4f 42)
+GLSN-EVENT: 1270000 reset NRST released
+$finish at simulation time ?

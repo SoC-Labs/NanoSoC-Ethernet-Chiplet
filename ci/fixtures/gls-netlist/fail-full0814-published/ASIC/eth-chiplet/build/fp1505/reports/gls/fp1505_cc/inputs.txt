@@ -1,0 +1,15 @@
+item          : fp1505_cc
+netlist       : /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads_pnr.v
+netlist sha256: ac04899a03353a3c592a29fef9bdbfdeca800db893044788cf1d414271505197
+simulated file: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/fp1505_cc/nanosoc_eth_chiplet_pads_pnr_pgc.v
+  sha256      : 1019108ef0fb1d23f3eca3d869596b5ba13d124424c0e1b9f0ba75c6d1abc15d
+  pg pairs    : VDD:VSS VDDE:VSSE
+top           : nanosoc_eth_chiplet_pads
+spec          : /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/gls-netlist/bench/eth_chiplet_fp1505_cc.json
+simulator     : vcs
+zero delay    : 1 (1 = +nospecify +notimingcheck)
+run dir       : /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/fp1505_cc
+date          : 2026-08-19T11:44:42Z
+
+-- staged bench inputs --
+  46625e8e1bfb52308f20868d6261de9e4b552abf4dd90cdbebf41b0776ef862a  flash_image.hex  <- /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/flash/flash_image.hex

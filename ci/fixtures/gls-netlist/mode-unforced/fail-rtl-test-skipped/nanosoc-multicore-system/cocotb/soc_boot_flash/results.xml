@@ -1,0 +1,8 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1784373569" />
+    <testcase name="test_network_core_stage0_boot_from_flash" classname="test_soc_boot_flash" file="test_soc_boot_flash.py" lineno="607" time="0.00"><skipped /></testcase>
+    <testcase name="test_network_core_stage0_bad_crc_halts" classname="test_soc_boot_flash" file="test_soc_boot_flash.py" lineno="785" time="5.54" sim_time_ns="2689459.9" />
+    <testcase name="test_remap_reset_default_then_set" classname="test_soc_boot_flash" file="test_soc_boot_flash.py" lineno="846" time="30.12" sim_time_ns="4290999.9" />
+  </testsuite>
+</testsuites>

@@ -1,0 +1,24 @@
+FORCES 0 no testbench override was applied; no design signal was held by the bench during this run.
+cc_rom.nonx PASS words=512 X=0 mismatch=0
+cc_rom.content PASS words=512 X=0 mismatch=0
+eth_rom.nonx PASS words=512 X=0 mismatch=0
+eth_rom.content PASS words=512 X=0 mismatch=0
+cc_rom_port.accessed PASS accesses=16783 xdata=0
+cc_rom_port.data_nonx PASS accesses=16783 xdata=0
+eth_rom_port.accessed PASS accesses=39919 xdata=0
+eth_rom_port.data_nonx PASS accesses=39919 xdata=0
+cpu1_dmem_write.accessed PASS accesses=512 xdata=0
+cpu1_dmem_write.data_nonx PASS accesses=512 xdata=0
+cpu1_imem_write.accessed PASS accesses=250 xdata=0
+cpu1_imem_write.data_nonx PASS accesses=250 xdata=0
+cpu1_imem_fetch.accessed PASS accesses=21141 xdata=0
+cpu1_imem_fetch.data_nonx PASS accesses=21141 xdata=0
+cc_rom_msp_on_Q PASS at=1490000
+cc_rom_rstvec_on_Q PASS at=1510000
+cpu1_main_entered PASS at=48000000
+eth_rom_msp_on_Q PASS at=3457830000
+eth_rom_rstvec_on_Q PASS at=3457850000
+cpu0_rom_idle_at_1ms PASS at=1000010000
+qspi_flash_addressed PASS at=47590000
+eth_rom_branch_word62 PASS at=3457870000
+RESULT PASS pass=22 fail=0

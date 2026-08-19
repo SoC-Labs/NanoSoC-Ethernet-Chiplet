@@ -1,0 +1,7 @@
+GLSN-FORCES: 1 testbench override(s) applied in this run
+GLSN-FORCE: declared cpu0_bootgate -> 1'b1 : CPU0_BOOTGATE. This bench models no flash device, so CPU1 never reaches the release write. Forcing the bootgate proves CPU0'S ROM FETCH PATH ONLY.
+GLSN-EVENT: 0 simulation start
+GLSN-EVENT: 1280000 reset NRST released
+GLSN-FORCE: 3270000 applied cpu0_bootgate = 1'b1
+GLSN-EVENT: 160000000 run complete
+GLSN-RESULT: PASS  pass=16 fail=0

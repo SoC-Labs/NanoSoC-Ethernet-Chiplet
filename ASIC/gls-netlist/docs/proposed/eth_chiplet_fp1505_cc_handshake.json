@@ -1,0 +1,392 @@
+{
+  "_comment": [
+    "DRAFT bench spec: the handshake rungs ASIC/gls-netlist/bench/",
+    "eth_chiplet_fp1505_cc.json still lacks, added to the spec as it stands on",
+    "2026-08-19 12:25. NOT APPLIED -- bench/ is owned elsewhere. The design note",
+    "is docs/tapeout/57-cpu0-boot-on-the-routed-netlist.md and the signoff stage",
+    "that grades these key names is docs/proposed/signoff-gls-netlist.yaml.",
+    "",
+    "EVERY PROBE BELOW HAS BEEN SIMULATED. They are not proposed from the netlist",
+    "text: they were run on this netlist with this flash model on 2026-08-19 and",
+    "every one of them fired. The verdict and transcript are captured verbatim in",
+    "docs/tapeout/evidence/57-cpu0-boot-verdicts.md section A. What is NOT",
+    "verified is this FILE as a whole: the probes were measured in a spec built on",
+    "flash/bench/eth_chiplet_fp1505_flashboot.json, and are transplanted here onto",
+    "the shipped spec, which had not yet landed when they were measured.",
+    "",
+    "WHAT IS DELIBERATELY NOT HERE, AND WHY.",
+    "",
+    "1. NO PROBE ON THE 4-BIT BUS chip_core_remap_ctrl_w. It is declared",
+    "   `wire [3:0]` in the routed netlist and bits 0, 1 and 3 appear NOWHERE",
+    "   ELSE in the file -- not as a driver, not as a load. cpu1_bootgate is tied",
+    "   1'b1 in nanosoc_multicore_soc.sv so bit 1's control fan-out is dead, and",
+    "   P&R gave the other three flops' outputs the readback net name",
+    "   (chip_core_remap_0_hrdata[n]). So the bus traces as 0xZ -- the UPPER-CASE",
+    "   Z of a PARTLY unknown nibble -- even at the instant the bootgate rises,",
+    "   and an === against a fully-defined 4-bit literal can never match. Two",
+    "   expects written that way shipped for a day as FAIL never and were read as",
+    "   a failed handshake. Probe the BIT, and the flop pin.",
+    "",
+    "2. NO eth_imem_prestaged. The first draft required it, from the firmware's",
+    "   description of the sequence. MEASURED: ZERO writes to the eth IMEM macro",
+    "   while the bootgate was low, and 220 after it. CPU1 does not pre-stage",
+    "   eth's image in this build; CPU0 copies its own. Dropped, not waived.",
+    "",
+    "3. NO memcheck on the eth IMEM. rf_32k's array is `reg [511:0] mem [0:511]`",
+    "   -- 512 rows of 512 bits, column-muxed -- so a word-oriented golden would",
+    "   mismatch every row of a PERFECTLY COPIED image.",
+    "",
+    "4. NO UART BYTE DECODE. There is no UART pad on nanosoc_eth_chiplet_pads, and",
+    "   trace/expect cannot decode a serial byte. eth_sysctrl_remap_set answers",
+    "   the same question structurally; the uart trace below is diagnostic only.",
+    "",
+    "RUN LENGTH IS LOAD-BEARING. run_cycles here is 440000 = 8.8 ms. The shipped",
+    "spec's 250000 ends the simulation at 5.000 ms, and CPU0's post-CRC sysctrl",
+    "REMAP store was MEASURED at 5.484510 ms on the probe image (the shipped",
+    "image's chain runs ~0.28 ms later throughout). Declaring",
+    "eth_sysctrl_remap_set without raising run_cycles produces a red that means",
+    "'the clock ran out' and reads as 'the CRC failed'.",
+    "",
+    "A joint work commissioned on behalf of SoC Labs, under Arm Academic Access",
+    "license. Copyright (C) 2026, SoC Labs (www.soclabs.org)"
+  ],
+  "timescale": "1ns/1ps",
+  "clocks": [
+    {
+      "port": "CLK",
+      "period_ns": 20.0
+    }
+  ],
+  "resets": [
+    {
+      "port": "NRST",
+      "active": 0,
+      "cycles": 64
+    }
+  ],
+  "tie0": [
+    "SE",
+    "TEST",
+    "SWDCK",
+    "RMII_REF_CLK",
+    "RMII_RXD:2",
+    "RMII_CRS_DV",
+    "TL_CLK_RX",
+    "TL_RX:8",
+    "VSS",
+    "VSSIO"
+  ],
+  "tie1": [
+    "VDD",
+    "VDDIO"
+  ],
+  "_flash_nets_note": [
+    "QSPI_SCLK (output) and QSPI_nCS (output) are real ports of",
+    "nanosoc_eth_chiplet_pads - verified in the netlist. They are declared here as",
+    "bare wires so ../flash/gls_flash_attach.sv can `bind` the SST26VF064B model",
+    "onto them. QSPI_IO[3:0] (inout) stays in `pullup`: the flash and the chip's",
+    "pads both tri-state it, and in SPI mode IO2/IO3 are the device's WP#/HOLD#",
+    "inputs that nothing drives at all."
+  ],
+  "tiez": [
+    "QSPI_SCLK",
+    "QSPI_nCS"
+  ],
+  "pullup": [
+    "SWDIO",
+    "QSPI_IO:4",
+    "HOSTIO4_P1:7",
+    "RMII_MDIO",
+    "I2C_SCL",
+    "I2C_SDA"
+  ],
+  "mems": [
+    {
+      "name": "cc_rom",
+      "array": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.mem",
+      "words": 512,
+      "bits": 32,
+      "radix": "b",
+      "golden": "nanosoc_bootrom_chip_core.bintxt"
+    },
+    {
+      "name": "eth_rom",
+      "array": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.mem",
+      "words": 512,
+      "bits": 32,
+      "radix": "b",
+      "golden": "eth_ss_bootrom.bintxt"
+    }
+  ],
+  "romwatch": [
+    {
+      "name": "cc_rom_port",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.CLK",
+      "cen": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "addr_width": 9,
+      "data_width": 32,
+      "latency": 1,
+      "max_log": 60,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    },
+    {
+      "name": "eth_rom_port",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CLK",
+      "cen": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "addr_width": 9,
+      "data_width": 32,
+      "latency": 1,
+      "max_log": 60,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    },
+    {
+      "name": "cpu1_dmem_write",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .CLK",
+      "cen": "(u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .CEN | u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .GWEN)",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .D",
+      "addr_width": 11,
+      "data_width": 32,
+      "latency": 0,
+      "max_log": 40,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    },
+    {
+      "name": "cpu1_imem_write",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .CLK",
+      "cen": "(u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .CEN | u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .GWEN)",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .D",
+      "addr_width": 12,
+      "data_width": 32,
+      "latency": 0,
+      "max_log": 40,
+      "min_accesses": 16,
+      "require_nonx_data": true
+    },
+    {
+      "name": "cpu1_imem_fetch",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .CLK",
+      "cen": "(u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .CEN | ~u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .GWEN)",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .Q",
+      "addr_width": 12,
+      "data_width": 32,
+      "latency": 1,
+      "max_log": 40,
+      "min_accesses": 8,
+      "require_nonx_data": true
+    },
+    {
+      "name": "eth_imem_write_after_release",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .CLK",
+      "cen": "(u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .CEN | u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .GWEN | ~u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.chip_core_remap_ctrl_w[2])",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .D",
+      "addr_width": 13,
+      "data_width": 32,
+      "latency": 0,
+      "max_log": 40,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    },
+    {
+      "name": "eth_imem_fetch",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .CLK",
+      "cen": "(u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .CEN | ~u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .GWEN)",
+      "addr": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .A",
+      "data": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .Q",
+      "addr_width": 13,
+      "data_width": 32,
+      "latency": 1,
+      "max_log": 40,
+      "min_accesses": 1,
+      "require_nonx_data": true
+    }
+  ],
+  "traces": [
+    {
+      "name": "bootgate_cpu0",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.chip_core_remap_ctrl_w[2]",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "qspi_ncs",
+      "signal": "u_dut.QSPI_nCS",
+      "width": 1,
+      "max_log": 60
+    },
+    {
+      "name": "qspi_sclk",
+      "signal": "u_dut.QSPI_SCLK",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "cpu1_imem_CEN",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf .CEN",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "eth_imem_CEN",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf .CEN",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "cc_rom_A",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "width": 9,
+      "max_log": 150
+    },
+    {
+      "name": "eth_rom_A",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.A",
+      "width": 9,
+      "max_log": 150
+    },
+    {
+      "name": "cc_rom_CEN",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "eth_rom_CEN",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CEN",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "remap_wr_en_q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_remap_0_wr_en_q",
+      "width": 1,
+      "max_log": 20
+    },
+    {
+      "name": "xip_active",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_XIP_ACTIVE",
+      "width": 1,
+      "max_log": 10
+    },
+    {
+      "name": "eth_sysctrl_remap0",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.sys_remap_ctrl[0]",
+      "width": 1,
+      "max_log": 10
+    },
+    {
+      "name": "eth_uart_txd",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.uart_txd",
+      "width": 1,
+      "max_log": 40
+    }
+  ],
+  "expects": [
+    {
+      "name": "cc_rom_msp_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h18003c00"
+    },
+    {
+      "name": "cc_rom_rstvec_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h08000189"
+    },
+    {
+      "name": "cpu1_main_entered",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .CLK",
+      "value": "1'b1",
+      "signal": "((u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .CEN === 1'b0) && (u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .GWEN === 1'b0) && (u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .A === 11'h080) && (u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf .D === 32'h0f1c0de1))"
+    },
+    {
+      "name": "eth_rom_msp_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h18003c00"
+    },
+    {
+      "name": "eth_rom_rstvec_on_Q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.Q",
+      "value": "32'h08000189"
+    },
+    {
+      "name": "cpu0_rom_idle_at_1ms",
+      "value": "1'b1",
+      "signal": "((acc_eth_rom_port === 0) && ($time > 1000000))"
+    },
+    {
+      "name": "qspi_flash_addressed",
+      "signal": "u_dut.QSPI_nCS",
+      "value": "1'b0"
+    },
+    {
+      "name": "eth_rom_branch_word62",
+      "clk": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CLK",
+      "value": "1'b1",
+      "signal": "((u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.CEN === 1'b0) && (u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_region_bootrom_0_u_bootrom_u_rom_via.A === 9'h062))"
+    },
+    {
+      "name": "qspi_xip_active_latched",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_XIP_ACTIVE",
+      "value": "1'b1"
+    },
+    {
+      "name": "ipc_slot1_warm_word",
+      "signal": "{u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][31] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][30] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][29] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][28] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][27] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][26] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][25] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][24] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][23] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][22] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][21] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][20] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][19] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][18] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][17] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][16] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][15] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][14] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][13] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][12] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][11] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][10] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][9] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][8] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][7] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][6] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][5] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][4] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][3] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][2] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][1] , u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_ipc_mailbox_0_u_ipc_mailbox_ahb_u_ipc_mailbox_u_slot1_data_regs[0][0] }",
+      "value": "32'hD15C0001"
+    },
+    {
+      "name": "remap_write_strobe",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_chip_core_remap_0_wr_en_q",
+      "value": "1'b1"
+    },
+    {
+      "name": "remap_ctrl_bit2_set",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.chip_core_remap_ctrl_w[2]",
+      "value": "1'b1"
+    },
+    {
+      "name": "remap_bit2_at_flop_q",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_remap_0_remap_q_reg[2] .Q",
+      "value": "1'b1"
+    },
+    {
+      "name": "cpu1_remap_bit0_set",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_remap_0_remap_q_reg[0] .Q",
+      "value": "1'b1"
+    },
+    {
+      "name": "cpu1_remap_bit0_and_bit2",
+      "signal": "{u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\\u_chip_core_remap_0_remap_q_reg[0] .Q, u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.chip_core_remap_ctrl_w[2]}",
+      "value": "2'b11"
+    },
+    {
+      "name": "eth_sysctrl_remap_set",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.sys_remap_ctrl[0]",
+      "value": "1'b1"
+    },
+    {
+      "name": "eth_uart_first_start_bit",
+      "signal": "u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.uart_txd",
+      "value": "1'b0"
+    }
+  ],
+  "run_cycles": 440000,
+  "_flash_model_note": [
+    "This spec declares NO device. The QSPI flash is attached by",
+    "ASIC/gls-netlist/flash/gls_flash_attach.sv, which binds sst26vf064b into",
+    "gls_netlist_tb; the nets it binds to come from `tiez` (QSPI_SCLK, QSPI_nCS)",
+    "and `pullup` (QSPI_IO:4) below, so BOTH LISTS ARE LOAD-BEARING. The toolkit's",
+    "`devices` primitive that an earlier run used was removed on 2026-08-19",
+    "(gen_netlist_tb.py:166) -- do not re-add it here."
+  ]
+}

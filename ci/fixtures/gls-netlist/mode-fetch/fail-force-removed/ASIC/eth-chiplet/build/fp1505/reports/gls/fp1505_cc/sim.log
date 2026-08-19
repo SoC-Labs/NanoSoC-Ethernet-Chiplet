@@ -1,0 +1,5 @@
+GLSN-FORCES: 0 no testbench override was applied in this run
+GLSN-EVENT: 0 simulation start
+GLSN-EVENT: 1280000 reset NRST released
+GLSN-EVENT: 160000000 run complete
+GLSN-RESULT: PASS  pass=16 fail=0

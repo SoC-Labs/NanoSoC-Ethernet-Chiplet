@@ -1,0 +1,77 @@
+Command: /tmpdir/claude-74755/-home-dam1n19-SoCLabs-nanosoc-ethernet-chiplet/449267d5-3232-4cd5-8321-f60c47730f94/scratchpad/probebuild4/gls-netlist/fp1505_cc/./simv +vcs+initreg+0 +flash_image=qspi_flash_image.hex -l sim.log
+Chronologic VCS simulator copyright 1991-2022
+Contains Synopsys proprietary information.
+Compiler version T-2022.06-SP2_Full64; Runtime version T-2022.06-SP2_Full64;  Aug 19 12:14 2026
+GLSN-FORCES: 0 no testbench override was applied in this run
+GLSN-EVENT: 0 simulation start
+GLSN-FLASH: BENCH-SUPPLIED DEVICE sst26vf064b on QSPI_SCLK,QSPI_nCS,QSPI_IO
+GLSN-FLASH:   the boot image below came from the bench, not the design.
+GLSN-FLASH: loaded 'qspi_flash_image.hex' into sst26vf064b.I0.memory (0x100000 bytes pre-erased to FF)
+GLSN-FLASH: offset 0x0 = 54 4f 4f 42 (magic, LE; expect 54 4f 4f 42)
+GLSN-TRACE: 10000 bootgate_remap_ctrl = 0xZ
+GLSN-TRACE: 10000 bootgate_bit2 = 0x0
+GLSN-TRACE: 10000 remap_wr_en_q = 0x0
+GLSN-TRACE: 10000 xip_active = 0x0
+GLSN-TRACE: 10000 eth_sysctrl_remap0 = 0x0
+GLSN-EVENT: 1270000 reset NRST released
+GLSN-EVENT: 1490000 expect cc_rom_msp_on_Q satisfied
+GLSN-EVENT: 1510000 expect cc_rom_rstvec_on_Q satisfied
+GLSN-TRACE: 64970000 xip_active = 0x1
+GLSN-EVENT: 64970000 expect qspi_xip_active_latched satisfied
+GLSN-EVENT: 72710000 expect ipc_slot1_warm_word satisfied
+GLSN-TRACE: 3179210000 remap_wr_en_q = 0x1
+GLSN-EVENT: 3179210000 expect remap_write_strobe satisfied
+GLSN-TRACE: 3179230000 bootgate_remap_ctrl = 0xZ
+GLSN-TRACE: 3179230000 bootgate_bit2 = 0x1
+GLSN-TRACE: 3179230000 remap_wr_en_q = 0x0
+GLSN-EVENT: 3179230000 expect remap_ctrl_bit2_set satisfied
+GLSN-EVENT: 3179230000 expect remap_bit2_at_flop_q satisfied
+GLSN-TRACE: 3179390000 remap_wr_en_q = 0x1
+GLSN-TRACE: 3179410000 remap_wr_en_q = 0x0
+GLSN-EVENT: 3179410000 expect cpu1_remap_bit0_set satisfied
+GLSN-EVENT: 3179410000 expect cpu1_remap_after_verified_image_v2 satisfied
+GLSN-EVENT: 3179430000 expect eth_rom_msp_on_Q satisfied
+GLSN-EVENT: 3179450000 expect eth_rom_rstvec_on_Q satisfied
+GLSN-TRACE: 5484510000 eth_sysctrl_remap0 = 0x1
+GLSN-EVENT: 5484510000 expect eth_sysctrl_remap_set satisfied
+GLSN-EVENT: 19999990000 run complete
+GLSN-VERDICT: cc_rom.nonx PASS words=512 X=0 mismatch=0
+GLSN-VERDICT: cc_rom.content PASS words=512 X=0 mismatch=0
+GLSN-VERDICT: eth_rom.nonx PASS words=512 X=0 mismatch=0
+GLSN-VERDICT: eth_rom.content PASS words=512 X=0 mismatch=0
+GLSN-INFO: cc_rom_port first access A=0x0 D=0x18003c00
+GLSN-VERDICT: cc_rom_port.accessed PASS accesses=15313 xdata=0
+GLSN-VERDICT: cc_rom_port.data_nonx PASS accesses=15313 xdata=0
+GLSN-INFO: eth_rom_port first access A=0x0 D=0x18003c00
+GLSN-VERDICT: eth_rom_port.accessed PASS accesses=12504 xdata=0
+GLSN-VERDICT: eth_rom_port.data_nonx PASS accesses=12504 xdata=0
+GLSN-INFO: cpu1_dmem_write first access A=0x19 D=0x80000c1
+GLSN-VERDICT: cpu1_dmem_write.accessed PASS accesses=510 xdata=0
+GLSN-VERDICT: cpu1_dmem_write.data_nonx PASS accesses=510 xdata=0
+GLSN-INFO: cpu1_imem_write first access A=0x0 D=0x18000c00
+GLSN-VERDICT: cpu1_imem_write.accessed PASS accesses=220 xdata=0
+GLSN-VERDICT: cpu1_imem_write.data_nonx PASS accesses=220 xdata=0
+GLSN-VERDICT: eth_imem_prestaged.accessed FAIL accesses=0 xdata=0
+GLSN-VERDICT: eth_imem_prestaged.data_nonx FAIL accesses=0 xdata=0
+GLSN-INFO: eth_imem_write_after_release first access A=0x0 D=0x18003c00
+GLSN-VERDICT: eth_imem_write_after_release.accessed PASS accesses=220 xdata=0
+GLSN-VERDICT: eth_imem_write_after_release.data_nonx PASS accesses=220 xdata=0
+GLSN-INFO: eth_imem_fetch first access A=0x0 D=0x18003c00
+GLSN-VERDICT: eth_imem_fetch.accessed PASS accesses=436010 xdata=0
+GLSN-VERDICT: eth_imem_fetch.data_nonx PASS accesses=436010 xdata=0
+GLSN-VERDICT: cc_rom_msp_on_Q PASS at=1490000
+GLSN-VERDICT: cc_rom_rstvec_on_Q PASS at=1510000
+GLSN-VERDICT: eth_rom_msp_on_Q PASS at=3179430000
+GLSN-VERDICT: eth_rom_rstvec_on_Q PASS at=3179450000
+GLSN-VERDICT: cpu0_bootgate_released_by_cpu1_BUS FAIL never
+GLSN-VERDICT: cpu1_remap_after_verified_image_BUS FAIL never
+GLSN-VERDICT: remap_ctrl_bit2_set PASS at=3179230000
+GLSN-VERDICT: remap_bit2_at_flop_q PASS at=3179230000
+GLSN-VERDICT: remap_write_strobe PASS at=3179210000
+GLSN-VERDICT: qspi_xip_active_latched PASS at=64970000
+GLSN-VERDICT: ipc_slot1_warm_word PASS at=72710000
+GLSN-VERDICT: cpu1_remap_bit0_set PASS at=3179410000
+GLSN-VERDICT: cpu1_remap_after_verified_image_v2 PASS at=3179410000
+GLSN-VERDICT: eth_sysctrl_remap_set PASS at=5484510000
+GLSN-RESULT: FAIL  pass=28 fail=4
+$finish called from file "/tmpdir/claude-74755/-home-dam1n19-SoCLabs-nanosoc-ethernet-chiplet/449267d5-3232-4cd5-8321-f60c47730f94/scratchpad/probebuild4/gls-netlist/fp1505_cc/gls_netlist_tb.v", line 585.

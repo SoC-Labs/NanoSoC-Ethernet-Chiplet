@@ -1,0 +1,1226 @@
+# -----------------------------------------------------------------------------
+# DRAFT REPLACEMENT for the `gls-netlist` stage in ci/signoff.yaml.
+#
+# NOT APPLIED. ci/signoff.yaml is held uncommitted by another session, so this
+# is the reviewable text rather than an edit. Paste the `- id: gls-netlist`
+# block below over the existing one; the fixtures it names already exist under
+# ci/fixtures/gls-netlist/.
+#
+# PROVEN BEFORE PROPOSED. ASIC/gls-netlist/docs/proposed/prove_draft.py extracts
+# the `check:` text OUT OF THIS FILE (it does not carry a second copy of it --
+# this repo has been bitten by duplicate copies of the same source enough times)
+# and runs it against every fixture in the same sandbox `scripts/ci/signoff.py
+# prove` builds. Run it before landing:
+#
+#     python3 ASIC/gls-netlist/docs/proposed/prove_draft.py
+#
+# The design note is docs/tapeout/57-cpu0-boot-on-the-routed-netlist.md and the
+# CPU0-side open item is docs/tapeout/evidence/57-cpu0-boot-verdicts.md.
+#
+# -----------------------------------------------------------------------------
+# RECONCILED TO THE SHIPPED BENCH, 2026-08-19 16:30
+#
+# An earlier draft of this file graded 12 keys that
+# ASIC/gls-netlist/bench/eth_chiplet_fp1505_cc.json DOES NOT EMIT. A gate that
+# requires a key no bench declares fails for a reason that is not the design --
+# which is the same disease, one turn of the wheel further on, as the in-tree
+# stage that grades four keys and calls a published FAIL a pass. Every key in
+# every list below was checked, one at a time, against that bench file. The
+# key-by-key reconciliation is in section RECONCILIATION at the foot of this
+# header.
+#
+# -----------------------------------------------------------------------------
+# WHAT CHANGED vs THE STAGE IN TREE, AND WHY
+#
+#  1. THE IN-TREE CHECK PASSES A PUBLISHED FAILURE. Not "the eth half is
+#     ungraded" -- worse. It asserts four cc_rom keys and nothing else, and
+#     build/gls-netlist/full0814_cc/verdict.txt (published to
+#     ASIC/eth-chiplet/build/full-20260814/reports/gls/full0814_cc/verdict.txt)
+#     reads `RESULT FAIL pass=10 fail=4` with all four of those keys PASS. Both
+#     eth rungs -- eth_rom_port.accessed/.data_nonx and
+#     eth_rom_msp_on_Q/eth_rom_rstvec_on_Q -- are red. The gate returns success
+#     on a run whose own RESULT line says FAIL, printing that RESULT into the
+#     log on its way past. A live false green.
+#     Fixtures: fail-full0814-published (that verdict, verbatim), fail-eth-rom-red.
+#
+#     THE GENERALISATION, which is the part that keeps it fixed: this check does
+#     not grade a list and ignore the rest. EVERY RED ROW in the verdict must be
+#     either a rung this stage grades (and then it fails, naming the rung) or a
+#     row on the KNOWN_OPEN register (and then it warns, naming the open item
+#     and the evidence). A red row that is neither FAILS THE STAGE, so the next
+#     rung somebody adds to the bench cannot go red unnoticed.
+#     Fixture: fail-ungraded-rung-red.
+#
+#  2. CPU0 IS RELEASED BY CPU1, NOT BY THE BENCH, SO THE STAGE GRADES A BOOT AND
+#     NOT A FETCH. The shipped bench has NO `forces` key at all; there is a QSPI
+#     flash model bound onto the pads and CPU1's stage-0 walks its whole boot --
+#     attempt counter, XiP bring-up, mailbox publish, boot table, image copy,
+#     CRC -- and writes the bootgate itself. MODE is `full_handshake` and
+#     ALLOWED_FORCES is empty.
+#
+#     Measured on the fp1505 routed netlist, 2026-08-19 12:46, published at
+#     ASIC/eth-chiplet/build/fp1505/reports/gls/fp1505_cc/: FORCES 0, QSPI
+#     addressed at 47.590 us, CPU1 in main() at 46.830 us, CPU1's own 250-word
+#     IMEM copy and 21,141 instruction reads out of it, CPU0's ROM untouched at
+#     1 ms, CPU0's MSP at 3.457830 ms, its reset vector at 3.457850 ms and its
+#     branch target at 3.457870 ms.
+#
+#     THE FORCED BENCH STILL EXISTS, at bench/eth_chiplet_fp1505_forced.json. It
+#     is NOT in GLSN_ITEMS, `make gls` never runs it, and it is reachable only
+#     through `make -C ASIC/gls-netlist forced-fallback`. So `fetch_path_only`
+#     REMAINS one of the three modes and remains proven -- prove_draft.py
+#     rehearses it against ci/fixtures/gls-netlist/mode-fetch/* -- but it is not
+#     what ships, and the declaration at the top of the check says so.
+#
+#  3. TWO ETH-SIDE RUNGS ARE ON A KNOWN-OPEN REGISTER, NOT SILENTLY DROPPED.
+#     On the shipped flash image CPU0 boots, takes its reset vector, branches,
+#     and then executes out of eth_rom -- and never completes its own image
+#     copy. MEASURED 2026-08-19 at 302,000 cycles (6.04 ms, 1.75x past CPU0's
+#     release) with the probe definitions verbatim:
+#
+#         eth_imem_write_after_release.accessed FAIL accesses=0
+#         eth_imem_fetch.accessed               FAIL accesses=0
+#         eth_sysctrl_remap_set                 FAIL never
+#
+#     A different, NO-LONGER-REBUILDABLE image did show all three fire
+#     (docs/tapeout/evidence/57-cpu0-boot-verdicts.md SS A: 220 IMEM writes,
+#     436,010 IMEM fetches, sysctrl REMAP at 5.484510 ms). So these are a REAL
+#     OPEN ITEM on the eth firmware side, not a bad probe and not a bench gap.
+#     A separate agent is diagnosing it.
+#
+#     They are therefore NOT REQUIRED, and their reason, their measurement and
+#     the evidence path are carried in the check itself under KNOWN_OPEN, where
+#     they print on every run. There is a RATCHET in the other direction: the
+#     day one of them goes GREEN the stage FAILS, saying "this open item has
+#     closed, move it into Tier C". An open-item register nobody ever closes is
+#     how a gate stops asking.
+#     Fixtures: pass-known-open-eth (they are red, the stage passes and warns),
+#     fail-known-open-closed (one is green, the stage fails and says promote).
+#
+#  4. THE CYCLE BUDGET IS ASSERTED, BECAUSE A SHORT RUN AND A BROKEN DESIGN
+#     PRODUCE THE SAME RED. `run_cycles` is 250,000 at a 20 ns reference clock:
+#     the simulation ends at 5,000,000,000 ps, 5.000 ms. Anything that fires
+#     later than that reads `FAIL never` -- a red that MEANS "the clock ran out"
+#     and READS as "the design failed", and verdict.txt cannot tell the two
+#     apart.
+#
+#     So: the latest rung this stage grades is eth_rom_branch_word62, measured
+#     at 3,457,870,000 ps. The check reads `GLSN-EVENT: <t> run complete` out of
+#     sim.log and REQUIRES t >= that, before it interprets any red. If the run
+#     is shorter, the failure message says WINDOW TOO SHORT and names the
+#     budget, not the design. If sim.log is missing the run length is UNKNOWN:
+#     that is a warning while every late rung is green, and a hard failure the
+#     moment one is red, because then nothing on disk can say which it was.
+#     Fixtures: fail-window-too-short, fail-late-red-unknown-window.
+#
+#     THE HEADROOM IS PRINTED ON EVERY RUN: 5.000 ms declared against 3.457870
+#     ms for the last graded rung leaves 1.542 ms - 30.8% of the window, 44.6%
+#     beyond the rung itself, which is the figure the check prints because it
+#     is the one that scales with the rung. And the number that
+#     matters for the open item: eth_sysctrl_remap_set has only ever been seen
+#     at 5,484,510,000 ps, which is 484,510,000 ps BEYOND the shipped window.
+#     The shipped bench COULD NOT grade that rung even if the firmware fixed
+#     itself, and the check says so rather than letting a future red be read as
+#     a CRC rejection.
+#
+#  5. IT REFUSES THE TWO PROBES THAT CANNOT SEE. chip_core_remap_ctrl_w is a
+#     4-bit bus of which THREE BITS HAVE NO DRIVER in the routed netlist, so it
+#     traces as 0xZ even at the instant the bootgate rises, and any `===`
+#     against a fully-defined 4-bit literal can never match. The shipped bench
+#     has already dropped both, and traces bit 2 alone as an OBSERVATION. The
+#     RETIRED register keeps them out: if either name comes back, the check
+#     fails with a RE-SOURCE instruction rather than a handshake diagnosis.
+#     Fixture: fail-unobservable-probe.
+#
+#  6. IT READS THE FORCE CENSUS OUT OF verdict.txt FIRST. gen_netlist_tb.py
+#     writes, unconditionally and at time 0 so it survives a killed run:
+#         FORCES <n> <prose>
+#         FORCE <name> <signal> = <value> : <reason>      (one per force)
+#     (grammar re-read in ASIC/asic-toolkit/flow/verify/gls/gen_netlist_tb.py
+#     lines 51-62 and 440-462, and matched byte-for-byte against the published
+#     `FORCES 0 no testbench override was applied; ...` line). Because
+#     `FORCES 0` is ALWAYS written, ABSENCE means UNKNOWN and only `FORCES 0`
+#     means unaided. sim.log's `GLSN-FORCE: declared <name> -> ...` lines remain
+#     the fallback for bundles written before that landed, and remain in
+#     artifacts: because they are the only record of WHEN a force was applied.
+#     If the two disagree, the check fails naming the contradiction rather than
+#     silently preferring one.
+#     Fixtures: fail-force-returned, fail-forces-unknown, fail-census-contradiction.
+#
+#  7. IT USES RUN TIME AS A FORCE DISCRIMINATOR. A forced run reaches
+#     eth_rom_msp_on_Q at 3.470 us; the shipped one at 3.457830 ms -- 996x. The
+#     delay is a QSPI bring-up plus a boot-table scan plus an 880-byte serial
+#     copy, and nothing that shortens it leaves the boot intact. The floor is
+#     1,000,000,000 ps, which is the same statement the bench's own
+#     cpu0_rom_idle_at_1ms rung makes from inside the simulation -- deliberately,
+#     so the two corroborate. It clears a forced run by 288x and clears even the
+#     blank-flash negative control (release at 1.021650 ms) by 21 us.
+#     Fixture: fail-release-too-early.
+#
+#  8. IT PINS THE PROBE FORM, not just the key name -- and the pinning is now
+#     CONDITIONAL, because the shipped bench declares neither member of either
+#     pair. A verdict file cannot show what expression a probe used, which is
+#     exactly how (5) went unnoticed, so where a re-sourced signal IS declared
+#     it must be declared TWICE under two names whose at= are IDENTICAL. Both
+#     members present: the at= must match. Exactly one present: that is a
+#     pinning gap and it fails. Neither present: nothing to check, and the
+#     report says the clause was INERT on this verdict rather than letting a
+#     clause that measured nothing read as a clause that passed.
+#     Fixtures: fail-probe-pair-disagree, fail-probe-pair-orphan.
+#
+#  9. IT NAMES ONE TREE INSTEAD OF GLOBBING. `ls .../build/*/reports/gls/*/`
+#     accepts whichever verdicts happen to be on disk, so a stale run satisfies
+#     the gate and a missing current one does not fail it. RUN_TAG/ITEM are
+#     spelled out and cross-checked against the graded run's own inputs.txt --
+#     the doctrine rom-content already settled.
+#     Fixtures: fail-no-verdict, fail-wrong-tree, fail-truncated-verdict.
+#
+# 10. IT CROSS-FOOTS THE RESULT LINE. `RESULT PASS pass=<n> fail=<m>` must
+#     account for exactly the rows above it, and m must equal the number of red
+#     rows. A verdict whose summary does not match its own body has been
+#     truncated or edited.
+#
+# 11. IT CLASSIFIES THE OUTCOME into named states and passes only on S4, so a
+#     green bootgate on a blank flash cannot read as a boot.
+#     Fixtures: fail-blank-flash (S2, the REAL erased-image negative control off
+#     build/gls-netlist-negative/), fail-crc-rejected (S3), fail-cpu0-not-gated (S0).
+#
+# 12. A MISSING KEY FAILS LIKE A RED ONE (fail-tierc-missing): a check deleted
+#     rather than fixed otherwise reads as a pass.
+#
+# 13. sim.log JOINS artifacts:. It was never collected, so a packaged bundle
+#     could not answer "was anything held?" or "how long did it run?" about its
+#     own PASS. Both questions are now load-bearing (6) and (4).
+#
+# -----------------------------------------------------------------------------
+# RECONCILIATION -- every key, checked against the bench that emits it
+#
+# The shipped bench emits EXACTLY 22 keys: 2 mems x 2, 5 romwatch x 2, 8
+# expects. Enumerated from the JSON, not from memory.
+#
+# REMOVED FROM THE DRAFT'S TIER C -- graded, never emitted (12 keys):
+#   qspi_xip_active_latched     no such expect in the bench
+#   ipc_slot1_warm_word         no such expect in the bench
+#   remap_write_strobe          no such expect in the bench
+#   remap_ctrl_bit2_set         no such expect (bit 2 is TRACED, not asserted)
+#   remap_bit2_at_flop_q        no such expect in the bench
+#   cpu1_remap_bit0_set         no such expect in the bench
+#   cpu1_remap_bit0_and_bit2    no such expect in the bench
+#   eth_imem_write_after_release.accessed  -> KNOWN_OPEN, see note 3
+#   eth_imem_write_after_release.data_nonx -> KNOWN_OPEN
+#   eth_imem_fetch.accessed                -> KNOWN_OPEN
+#   eth_imem_fetch.data_nonx               -> KNOWN_OPEN
+#   eth_sysctrl_remap_set                  -> KNOWN_OPEN
+#
+# TWO NAMES CIRCULATING IN THE HANDOVER THAT ARE NOT IN THIS DRAFT AT ALL, and
+# were not in the previous one either -- checked, not assumed:
+#   eth_imem_prestaged   appears ONCE in the previous draft, in a comment saying
+#                        it was measured and deliberately NOT graded. It was
+#                        never in TIER_C.
+#   cpu1_image_copied    appears ZERO times in the previous draft and ZERO times
+#                        in the bench. It does not exist.
+#
+# ADDED (2 keys the bench emits and the draft did not grade):
+#   cpu1_dmem_write.data_nonx   Tier A. The bench emits it; X data written into
+#                               CPU1's DMEM is a real failure and was ungraded.
+#   cpu1_imem_write.data_nonx   already in Tier C, retained.
+#
+# KEPT UNCHANGED: all 10 Tier-A keys, all 5 Tier-B keys, and the four Tier-C
+# keys the bench does emit (qspi_flash_addressed, cpu0_rom_idle_at_1ms, and the
+# cpu1_imem_write / cpu1_imem_fetch pairs).
+#
+# ALSO WRONG IN THE HANDOVER, and checked rather than trusted: the previous
+# draft did NOT declare `MODE = "fetch_path_only"` or
+# `ALLOWED_FORCES = {"cpu0_bootgate"}`. It already declared full_handshake with
+# an empty allow-list (lines 157/160 of the file as it stood). Nothing to change
+# there; the mode set still covers fetch_path_only for the forced fallback.
+#
+# -----------------------------------------------------------------------------
+# WHAT THIS DRAFT DOES ON TODAY'S PUBLISHED EVIDENCE
+#
+# ASIC/eth-chiplet/build/fp1505/reports/gls/fp1505_cc/verdict.txt, as it stands
+# on disk at 2026-08-19 12:46, is a 27-row file reading `RESULT FAIL pass=22
+# fail=5`. Its 22 green rows are EXACTLY the 22 the shipped bench emits; its 5
+# red rows are exactly the KNOWN_OPEN register. That run was made at 302,000
+# cycles with the eth-side probes still declared, which is why it carries five
+# rows the shipped bench no longer emits.
+#
+#   -> THIS CHECK PASSES IT, with five warnings naming the open item, the
+#      6.04 ms window that was long enough to settle four of them, and the one
+#      (eth_sysctrl_remap_set) whose only observed firing is beyond even that.
+#   -> IT ALSO PASSES the 22-row `RESULT PASS pass=22 fail=0` the shipped bench
+#      produces when it is re-run, which is fixture `pass`.
+#   -> IT REJECTS full0814's `RESULT FAIL pass=10 fail=4`, which is the whole
+#      point of replacing the stage.
+#   -> IT REJECTS the erased-flash run at build/gls-netlist-negative/, which is
+#      `make -C ASIC/gls-netlist negative-control`'s own requirement.
+#
+# PROMOTION TO `gate: block`: the mode question is settled -- full_handshake is
+# declared and met. What is left is the eth-side open item in note 3. Promote
+# when KNOWN_OPEN is empty, which the ratchet in (3) will demand anyway.
+#
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+# license.  Copyright (C) 2026, SoC Labs (www.soclabs.org)
+# -----------------------------------------------------------------------------
+
+  - id: gls-netlist
+    phase: physical
+    gate: report
+    label: soclabs-sim
+    description: "Gate-level simulation of the routed netlist: does CPU1 bring up XiP from a real flash device, copy and verify its own image, execute it, and release CPU0 -- and does CPU0 then fetch its reset vector out of its own mask ROM and branch -- all out of these gates, with nothing held by the bench?"
+    # WHY THIS IS STILL report AND NOT block.
+    # CPU1's boot and CPU0's release are measured and asserted. CPU0's OWN image
+    # copy is not: on the shipped flash image it never happens (see the
+    # KNOWN_OPEN register in the check). That is an open firmware question with
+    # an owner, and a blocking gate red for it would stop everyone else's work
+    # for something this stage cannot fix.
+    #
+    # WHAT A PASS HERE DOES NOT MEAN, and it must travel with any quote of it:
+    #   * CPU0 DID NOT BOOT ITS APPLICATION. A pass means both mask ROMs hold
+    #     their firmware; CPU1 booted a flash image end to end and is executing
+    #     it; CPU0 was released BY CPU1 and reached its own ROM and branched.
+    #     Nothing here says CPU0 copied or verified an image.
+    #   * the file simulated is NOT the tapeout netlist. fp1505's _pnr.v leaves
+    #     17,231 instances across 63 cell types with no .VDD()/.VSS(), so
+    #     neither vendor library can simulate it as written; the gate completes
+    #     the supplies into a COPY and records what it changed in pg_complete.txt.
+    #   * it is not a timing check. Zero-delay, no SDF, and the simulation
+    #     Verilog is an older cell revision than the Liberty the design was
+    #     timed against. It says the logic works, not that it closes.
+    #   * the CRC rungs prove faithful TRANSPORT, not a correct PAYLOAD. Each
+    #     ROM checks its copy against a CRC field taken from the same flash
+    #     blob, so a consistent-but-wrong image passes.
+    #   * the flash device is BENCH-SUPPLIED. Everything the boot reads came
+    #     from a model bound into the testbench, not from the design. Its image
+    #     and sha256 are in inputs.txt under `staged bench inputs`, and sim.log
+    #     carries the attachment's own GLSN-FLASH banner.
+    run: make -C ASIC/gls-netlist gls
+    # THE CHECK NEVER CONSULTS AN EXIT CODE. `make gls` exits non-zero on any
+    # red item, so a status-based check cannot tell "CPU1 still boots" from "the
+    # whole run collapsed" - and those need different responses. The verdict is
+    # recomputed from the published per-item verdict.txt, which anyone can
+    # re-read months later with no simulator and no licence -- and, now, from
+    # the sim.log beside it, which is the only place the RUN LENGTH is written.
+    check: |
+      python3 - <<'PYEOF'
+      import os, re, sys, xml.etree.ElementTree as ET
+
+      # -- DECLARATION -----------------------------------------------------
+      # These values are the stage's claim about what it is grading. The check
+      # cross-examines every one of them against the evidence.
+      MODE           = "full_handshake"   # full_handshake | unforced_fetch | fetch_path_only
+      RUN_TAG        = "fp1505"
+      ITEM           = "fp1505_cc"
+      ALLOWED_FORCES = set()              # non-empty ONLY in fetch_path_only
+      RTL_TEST       = "test_network_core_stage0_boot_from_flash"
+
+      EVID    = "ASIC/eth-chiplet/build/%s/reports/gls/%s" % (RUN_TAG, ITEM)
+      VERDICT = os.path.join(EVID, "verdict.txt")
+      SIMLOG  = os.path.join(EVID, "sim.log")
+      INPUTS  = os.path.join(EVID, "inputs.txt")
+      RTL_XML = "nanosoc-multicore-system/cocotb/soc_boot_flash/results.xml"
+      ETH_SV  = "nanosoc-multicore-system/src/rtl/bootrom/eth_ss_bootrom.sv"
+      ETH_BIN = ("nanosoc-multicore-system/build/cmake/gcc-m0plus-le/firmware/"
+                 "bootloader/stage0_bootrom/eth_ss_bootrom.bintxt")
+
+      # THE BENCH'S OWN BUDGET, restated here so the check can say what the
+      # window is rather than inferring it. bench/eth_chiplet_fp1505_cc.json:
+      # clocks[0].period_ns = 20.0, run_cycles = 250000.
+      REF_PERIOD_PS       = 20000
+      DECLARED_RUN_CYCLES = 250000
+      DECLARED_RUN_PS     = REF_PERIOD_PS * DECLARED_RUN_CYCLES   # 5,000,000,000
+
+      # -- WHAT MUST BE GREEN ----------------------------------------------
+      # EVERY KEY BELOW WAS CHECKED AGAINST bench/eth_chiplet_fp1505_cc.json.
+      # The bench emits 22 keys: cc_rom/eth_rom x {nonx,content}; cc_rom_port,
+      # eth_rom_port, cpu1_dmem_write, cpu1_imem_write, cpu1_imem_fetch x
+      # {accessed,data_nonx}; and 8 expects. All 22 are graded here.
+      #
+      # TIER A - the ROMs hold the firmware and CPU1 runs. Required always.
+      TIER_A = ["cc_rom.nonx", "cc_rom.content",
+                "eth_rom.nonx", "eth_rom.content",
+                "cc_rom_port.accessed", "cc_rom_port.data_nonx",
+                "cc_rom_msp_on_Q", "cc_rom_rstvec_on_Q",
+                "cpu1_dmem_write.accessed", "cpu1_dmem_write.data_nonx",
+                "cpu1_main_entered"]
+      # TIER B - CPU0 reaches its own ROM, takes the reset vector, and branches.
+      TIER_B = ["eth_rom_port.accessed", "eth_rom_port.data_nonx",
+                "eth_rom_msp_on_Q", "eth_rom_rstvec_on_Q",
+                "eth_rom_branch_word62"]
+      # TIER C - the handshake: a real flash device was addressed, CPU0 stayed
+      # idle until CPU1 let it go, and CPU1 copied AND THEN EXECUTED its own
+      # image. Required when MODE=full_handshake; a Tier-C key that is PRESENT
+      # AND RED is a failure in EVERY mode - the mode narrows what is REQUIRED,
+      # never what is allowed to be broken.
+      #
+      # WHY cpu1_imem_fetch IS THE VERIFICATION RUNG. copy_image happens BEFORE
+      # the CRC check, so cpu1_imem_write alone cannot separate "copied" from
+      # "copied and accepted". main.c:388 flips CPU1's own REMAP and jumps only
+      # after nanosoc_crc32 over the copied image matched the table's CRC, so
+      # CPU1 executing out of its IMEM macro is the post-CRC evidence.
+      #
+      # WHY THE BOOTGATE IS NOT HERE. stage0_bootrom_chip_core/main.c writes
+      # NETWORK_CORE_BOOTGATE (0x4) TWICE: on the success path (main.c:383) and
+      # UNCONDITIONALLY after every candidate including the golden recovery
+      # image has failed (main.c:403), deliberately, so a blank flash cannot
+      # silently hold CPU0 in reset. A gate built on the bootgate WOULD PASS
+      # WITH A BLANK FLASH. The shipped bench traces bit 2 as an observation and
+      # asserts nothing on it, and neither does this check.
+      TIER_C = ["qspi_flash_addressed",
+                "cpu0_rom_idle_at_1ms",
+                "cpu1_imem_write.accessed", "cpu1_imem_write.data_nonx",
+                "cpu1_imem_fetch.accessed", "cpu1_imem_fetch.data_nonx"]
+
+      GRADED = set(TIER_A) | set(TIER_B) | set(TIER_C)
+
+      # -- THE KNOWN-OPEN REGISTER ------------------------------------------
+      # NOT "dropped". These three probes were WRITTEN, RUN AND MEASURED, and
+      # they are red for a reason that lives in the eth firmware, not in the
+      # bench and not in the netlist. Recording that here, where it prints on
+      # every run, is the difference between an open item and an omission.
+      #
+      # MEASURED 2026-08-19 12:46, 302,000 cycles = 6,039,990,000 ps, 1.75x past
+      # CPU0's release at 3,457,830,000 ps, published verdict at
+      # ASIC/eth-chiplet/build/fp1505/reports/gls/fp1505_cc/verdict.txt:
+      #     eth_imem_write_after_release.accessed FAIL accesses=0
+      #     eth_imem_fetch.accessed               FAIL accesses=0
+      #     eth_sysctrl_remap_set                 FAIL never
+      # CPU0 fetched 39,919 words out of eth_rom over that window - it is
+      # RUNNING - while its IMEM macro's chip-enable never fell.
+      #
+      # A DIFFERENT, NO-LONGER-REBUILDABLE IMAGE DID SHOW THEM FIRE:
+      # docs/tapeout/evidence/57-cpu0-boot-verdicts.md SS A - 220 IMEM writes,
+      # 436,010 IMEM fetches, sysctrl REMAP at 5,484,510,000 ps. So the probes
+      # are sound and the rungs are reachable; this image does not reach them.
+      #
+      # value = (first_observed_ps or None, why)
+      KNOWN_OPEN = {
+        "eth_imem_write_after_release.accessed": (None,
+          "CPU0 never writes its IMEM macro after release on the shipped flash "
+          "image. Measured over 6.04 ms - 1.75x past CPU0's release - so the "
+          "run window is NOT the explanation for this one."),
+        "eth_imem_write_after_release.data_nonx": (None,
+          "same rung, data half: with zero accesses there is nothing to check."),
+        "eth_imem_fetch.accessed": (None,
+          "CPU0 never reads back an image it never wrote. Downstream of "
+          "eth_imem_write_after_release; it cannot go green before that does."),
+        "eth_imem_fetch.data_nonx": (None,
+          "same rung, data half."),
+        "eth_sysctrl_remap_set": (5484510000,
+          "CPU0's post-CRC sysctrl REMAP store. The ONLY time this has ever "
+          "been observed is 5,484,510,000 ps, which is 484,510,000 ps BEYOND "
+          "the shipped bench's own 5,000,000,000 ps window - so on a 250,000-"
+          "cycle run a red here would mean 'the clock ran out' even if the "
+          "firmware were fixed. Raising run_cycles is a prerequisite to ever "
+          "grading it."),
+      }
+      OPEN_ITEM_REF = "docs/tapeout/evidence/57-cpu0-boot-verdicts.md"
+
+      # -- PROBES THAT CANNOT SEE -------------------------------------------
+      # chip_core_remap_ctrl_w is declared `wire [3:0]` in the routed netlist
+      # and bits 0, 1 and 3 appear NOWHERE ELSE in the file - not as a driver,
+      # not as a load. cpu1_bootgate is tied 1'b1 in nanosoc_multicore_soc.sv so
+      # bit 1's control fan-out is dead, and P&R gave the other three flops'
+      # outputs the readback net name (chip_core_remap_0_hrdata[n]) instead. The
+      # bus traces as 0xZ even at the instant the bootgate rises, so any `===`
+      # against a fully-defined 4-bit literal can NEVER match. The shipped bench
+      # has already dropped both; this register stops them coming back.
+      RETIRED = {
+        "cpu0_bootgate_released_by_cpu1":
+          "probes the 4-bit bus chip_core_remap_ctrl_w against 4'b0100. Three "
+          "of those four bits have no driver in the routed netlist, so it can "
+          "NEVER match and its FAIL says nothing about the design. Replace it "
+          "with remap_ctrl_bit2_set (...chip_core_remap_ctrl_w[2] === 1'b1) AND "
+          "remap_bit2_at_flop_q (...\\u_chip_core_remap_0_remap_q_reg[2] .Q === "
+          "1'b1).",
+        "cpu1_remap_after_verified_image":
+          "probes the same 4-bit bus against 4'b0101, and bit 0's control net "
+          "does not exist in the routed netlist at all. Replace it with "
+          "cpu1_remap_bit0_set (...\\u_chip_core_remap_0_remap_q_reg[0] .Q === "
+          "1'b1) AND cpu1_remap_bit0_and_bit2 ({that, ...ctrl_w[2]} === 2'b11).",
+      }
+
+      # -- PROBE-FORM PINNING ------------------------------------------------
+      # A verdict file records a key name and a result; it cannot record what
+      # EXPRESSION the probe used - which is exactly how the bus probes above
+      # went unnoticed for a day. So each re-sourced signal is asserted TWICE
+      # under two names whose at= must be IDENTICAL: they are two probes on the
+      # same flop, so a difference means one of them is not on that flop.
+      #
+      # THE SHIPPED BENCH DECLARES NEITHER PAIR, so this clause is INERT today
+      # and the report SAYS SO. A clause that measured nothing must not read as
+      # a clause that passed. Present-and-matching passes; present-and-differing
+      # fails; exactly one present is a pinning GAP and fails, because one name
+      # alone cannot show which expression was used.
+      SAME_INSTANT = [("remap_ctrl_bit2_set", "remap_bit2_at_flop_q"),
+                      ("cpu1_remap_bit0_set", "cpu1_remap_bit0_and_bit2")]
+
+      # -- ORDERING, from the at= fields the verdict already records ---------
+      # Only over keys the SHIPPED bench emits, and only where both ends carry
+      # an at=. Measured on the published run: 1.490 us, 1.510 us, 46.830 us,
+      # 47.590 us, 1000.010 us, 3457.830 us, 3457.850 us, 3457.870 us.
+      # NOTE what is NOT ordered: anything on two cores that run CONCURRENTLY
+      # from the release onwards. Their order is not architecturally guaranteed
+      # and asserting it would be a flake.
+      ORDER = [("cc_rom_msp_on_Q",       "cc_rom_rstvec_on_Q"),
+               ("cc_rom_rstvec_on_Q",    "cpu1_main_entered"),
+               ("cpu1_main_entered",     "qspi_flash_addressed"),
+               ("qspi_flash_addressed",  "cpu0_rom_idle_at_1ms"),
+               ("cpu0_rom_idle_at_1ms",  "eth_rom_msp_on_Q"),
+               ("eth_rom_msp_on_Q",      "eth_rom_rstvec_on_Q"),
+               ("eth_rom_rstvec_on_Q",   "eth_rom_branch_word62"),
+               # kept for the day the bench declares the handshake rungs; each
+               # pair is skipped unless BOTH ends are present.
+               ("qspi_flash_addressed",  "qspi_xip_active_latched"),
+               ("qspi_xip_active_latched", "ipc_slot1_warm_word"),
+               ("ipc_slot1_warm_word",   "remap_write_strobe"),
+               ("remap_write_strobe",    "remap_ctrl_bit2_set"),
+               ("remap_ctrl_bit2_set",   "cpu1_remap_bit0_and_bit2"),
+               ("remap_ctrl_bit2_set",   "eth_rom_msp_on_Q"),
+               ("eth_rom_branch_word62", "eth_sysctrl_remap_set")]
+
+      # -- THE CYCLE BUDGET --------------------------------------------------
+      # MEASURED firing times on the published run. Used for two things: to know
+      # how far the simulation must get before a red can be read as a design
+      # statement, and to say WHICH of "the clock ran out" and "the design
+      # failed" a given red is.
+      MEASURED_AT = {
+        "cc_rom_msp_on_Q":       1490000,
+        "cc_rom_rstvec_on_Q":    1510000,
+        "cpu1_main_entered":    46830000,
+        "qspi_flash_addressed": 47590000,
+        "cpu0_rom_idle_at_1ms": 1000010000,
+        "eth_rom_msp_on_Q":     3457830000,
+        "eth_rom_rstvec_on_Q":  3457850000,
+        "eth_rom_branch_word62":3457870000,
+      }
+      # A rung measured before this cannot plausibly be a budget artefact: no
+      # run that produced a RESULT line at all stopped in the first microsecond.
+      LATE_RUNG_PS = 1000000000
+      LATE = dict((k, v) for k, v in MEASURED_AT.items()
+                  if k in GRADED and v >= LATE_RUNG_PS)
+      LATEST_GRADED_PS = max(LATE.values()) if LATE else 0
+
+      # -- THE PROXIMITY CLAUSE (inert on the shipped bench) ------------------
+      # The remap block's own registered write strobe must rise WITH the
+      # bootgate bit, not merely somewhere in the run: a force raises the bit
+      # with no strobe beside it, and an unrelated write to the remap block
+      # raises the strobe far away from it. MEASURED 2026-08-19: strobe
+      # at=3179210000, bit at=3179230000 - 20,000 ps, one 20 ns reference cycle.
+      # The window is ten cycles.
+      STROBE_WINDOW_PS = 200000
+
+      # -- THE RELEASE-TIME FLOOR - a force discriminator needing no log -----
+      # A forced run reaches eth_rom_msp_on_Q at 3,470,000 ps; the shipped one
+      # at 3,457,830,000 ps, 996x later. The floor is 1,000,000,000 ps, which is
+      # the SAME STATEMENT the bench's own cpu0_rom_idle_at_1ms rung makes from
+      # inside the simulation - deliberately, so the two corroborate from
+      # different evidence. Clears a force by 288x; clears the blank-flash
+      # negative control (release measured at 1,021,650,000 ps) by 21 us, which
+      # is why the blank-flash case is caught by the IMEM rungs and not here.
+      EARLIEST_REAL_RELEASE_PS = 1000000000
+
+      bad  = []
+      warn = []
+      info = []
+      def fail(m): bad.append(m)
+      def note(m): warn.append(m)
+      def obs(m):  info.append(m)
+
+      # -- 1. the graded verdict, by name, not by glob -----------------------
+      if not os.path.exists(VERDICT):
+          print("gls-netlist: FAIL - no verdict at %s. Either nothing ran, or "
+                "GLSN_EVIDENCE_%s is unset so the evidence stayed in a build/ "
+                "directory no packager collects. UNVERIFIED IS NOT A PASS."
+                % (VERDICT, ITEM))
+          sys.exit(1)
+
+      # THE GRAMMAR. gen_netlist_tb.py's rule: an UPPER-CASE first token is a
+      # RECORD ABOUT THE RUN (RESULT, FORCES, FORCE, DEVICE), a lower-case one
+      # is a check. Keying on that rather than on a table of key names means a
+      # new record type arriving does not read as a mysteriously failing check.
+      res, result_line, forces_line, force_rows = {}, None, None, []
+      for ln in open(VERDICT):
+          ln = ln.rstrip("\n")
+          if not ln.strip():
+              continue
+          tok = ln.split()[0]
+          if tok.isupper():
+              if tok == "RESULT":   result_line = ln
+              elif tok == "FORCES": forces_line = ln
+              elif tok == "FORCE":  force_rows.append(ln)
+              continue
+          m = re.match(r"^(\S+)\s+(PASS|FAIL)\s*(.*)$", ln)
+          if m:
+              res[m.group(1)] = (m.group(2), m.group(3))
+      if result_line is None:
+          fail("%s has no RESULT line. A verdict file without its own summary "
+               "is a truncated run - the simulator died before $fclose - and "
+               "the rows above it describe a run that never finished." % VERDICT)
+      if not res:
+          fail("%s records 0 verdict items. A loop over nothing reports no "
+               "failures." % VERDICT)
+
+      reds = sorted(k for k, v in res.items() if v[0] != "PASS")
+
+      # THE RESULT LINE MUST ACCOUNT FOR ITS OWN BODY. A summary that does not
+      # foot against the rows above it has been truncated or edited.
+      if result_line is not None:
+          m = re.match(r"^RESULT\s+(PASS|FAIL)\s+pass=(\d+)\s+fail=(\d+)\s*$",
+                       result_line)
+          if not m:
+              if not re.match(r"^RESULT\s+FAIL\s+watchdog\s*$", result_line):
+                  fail("%s has a RESULT line this check cannot parse: %r"
+                       % (VERDICT, result_line[:120]))
+              else:
+                  fail("%s reports the generator's WATCHDOG: the simulation did "
+                       "not reach its own end. Nothing above that line describes "
+                       "a finished run." % VERDICT)
+          else:
+              np_, nf_ = int(m.group(2)), int(m.group(3))
+              if np_ + nf_ != len(res):
+                  fail("%s says pass=%d fail=%d (%d items) but carries %d "
+                       "check rows. The summary does not foot against its own "
+                       "body: the file is truncated or edited."
+                       % (VERDICT, np_, nf_, np_ + nf_, len(res)))
+              if nf_ != len(reds):
+                  fail("%s says fail=%d but %d row(s) read FAIL."
+                       % (VERDICT, nf_, len(reds)))
+
+      def at(key):
+          d = res.get(key, (None, ""))[1]
+          m = re.search(r"at=(\d+)", d or "")
+          return int(m.group(1)) if m else None
+
+      def ok(k): return res.get(k, ("",))[0] == "PASS"
+
+      def require(keys, why):
+          for k in keys:
+              st = res.get(k)
+              if st is None:
+                  fail("%s: NOT DECLARED in %s. %s - a check that was deleted "
+                       "rather than fixed reads as a pass." % (k, VERDICT, why))
+              elif st[0] != "PASS":
+                  fail("%s: %s %s -- %s" % (k, st[0], st[1], why))
+
+      # -- 2. probes that cannot see ----------------------------------------
+      # BEFORE anything else, because their reds would otherwise be read as
+      # handshake failures and would drive the outcome ladder to a wrong state.
+      for k, how in RETIRED.items():
+          if k in res:
+              fail("RETIRED PROBE STILL DECLARED: %s. It %s Its result in this "
+                   "verdict (%s) carries NO information about the design either "
+                   "way." % (k, how, res[k][0]))
+
+      # -- 3. the tiers ------------------------------------------------------
+      require(TIER_A, "CPU1 no longer boots from its boot ROM, or a ROM's "
+                      "contents no longer match the firmware")
+      require(TIER_B, "CPU0 no longer reaches its own boot ROM macro, takes its "
+                      "reset vector and branches to it")
+      # A Tier-C key that EXISTS AND IS RED is a failure in every mode: the mode
+      # narrows what is REQUIRED, never what is allowed to be broken. Under
+      # full_handshake require(TIER_C) below says the same thing with a fuller
+      # message, so this loop is skipped there rather than duplicating it.
+      if MODE != "full_handshake":
+          for k in TIER_C:
+              st = res.get(k)
+              if st is not None and st[0] != "PASS":
+                  fail("%s: %s %s -- the bench declares this handshake "
+                       "assertion, so a red one is a real unmet requirement "
+                       "whatever MODE says is REQUIRED." % (k, st[0], st[1]))
+
+      # -- 3b. NO RED ROW GOES UNACCOUNTED FOR -------------------------------
+      # This is the generalisation of the defect this stage exists to fix. The
+      # in-tree check grades four keys and never looks at the rest, so a
+      # published FAIL passes. Here every red row must be a rung this stage
+      # grades (reported above), a retired probe (reported above), or a row on
+      # the KNOWN_OPEN register (reported below, as a warning with its reason).
+      # Anything else is a rung the bench declares and this stage does not, and
+      # it is RED: that fails, and names itself.
+      for k in reds:
+          if k in GRADED or k in RETIRED or k in KNOWN_OPEN:
+              continue
+          fail("UNGRADED RUNG IS RED: %s %s. The bench declares this assertion "
+               "and this stage does not grade it, so nothing else in this check "
+               "would have said a word about it. Either add it to a tier or add "
+               "it to KNOWN_OPEN with a reason - a red nobody grades is exactly "
+               "how the stage this replaces passed a published FAIL."
+               % (k, res[k][1]))
+
+      # -- 4. the run graded is the run declared -----------------------------
+      if not os.path.exists(INPUTS):
+          fail("no inputs.txt at %s: the verdict cannot be tied to a netlist, a "
+               "firmware build or a date." % INPUTS)
+      else:
+          txt = open(INPUTS).read()
+          if not re.search(r"^netlist\s*:.*/build/%s/outputs/" % re.escape(RUN_TAG),
+                           txt, re.M):
+              m = re.search(r"^netlist\s*:\s*(\S+)", txt, re.M)
+              fail("inputs.txt says the netlist came from %s, but this stage "
+                   "declares RUN_TAG=%s. The stage would be declaring one tree "
+                   "and measuring another."
+                   % (m.group(1) if m else "<unparseable>", RUN_TAG))
+
+      # -- 5. THE FORCE CENSUS ----------------------------------------------
+      # Source order is stated, not implied: the verdict's own census first,
+      # sim.log only as a fallback for bundles written before it existed.
+      declared, src = None, None
+      if forces_line is not None:
+          m = re.match(r"^FORCES\s+(\d+)\b", forces_line)
+          if not m:
+              fail("%s has a FORCES line this check cannot parse: %r"
+                   % (VERDICT, forces_line[:120]))
+          else:
+              n = int(m.group(1))
+              declared = set()
+              for row in force_rows:
+                  mm = re.match(r"^FORCE\s+(\S+)\s", row)
+                  if mm: declared.add(mm.group(1))
+              if len(declared) != n:
+                  fail("%s says FORCES %d but carries %d FORCE row(s). The "
+                       "census and its detail disagree; one of them is stale."
+                       % (VERDICT, n, len(declared)))
+              src = "verdict.txt FORCES census"
+
+      slog = None
+      run_end = None
+      if os.path.exists(SIMLOG):
+          slog = open(SIMLOG, errors="replace").read()
+          in_log = set(re.findall(r"^GLSN-FORCE: declared (\S+) ->", slog, re.M))
+          if declared is None:
+              declared, src = in_log, "sim.log GLSN-FORCE lines (no FORCES census)"
+          elif in_log != declared:
+              fail("THE TWO FORCE RECORDS DISAGREE. %s says {%s}; sim.log's "
+                   "GLSN-FORCE lines say {%s}. Two records of the same fact that "
+                   "disagree mean one is stale, and picking a winner silently is "
+                   "how a gate ends up quoting the wrong one."
+                   % (VERDICT, ", ".join(sorted(declared)) or "nothing",
+                      ", ".join(sorted(in_log)) or "nothing"))
+          m = re.search(r"^GLSN-EVENT:\s+(\d+)\s+run complete", slog, re.M)
+          if m:
+              run_end = int(m.group(1))
+      else:
+          if declared is None:
+              fail("no FORCES census in %s and no sim.log at %s. NOTHING in this "
+                   "evidence says whether the bench held a design signal, and "
+                   "'not shown' is not 'not present'. A verdict without the "
+                   "census predates gen_netlist_tb.py's force record (landed "
+                   "2026-08-19) or was written by a generator with that block "
+                   "removed; either way it is UNKNOWN, not clean."
+                   % (VERDICT, SIMLOG))
+          else:
+              note("no sim.log beside the verdict. The FORCES census answers "
+                   "WHETHER a signal was held; only sim.log records WHEN it was "
+                   "applied, and a force applied after the event it would have "
+                   "faked is a different thing from one applied at reset.")
+
+      if declared is not None:
+          extra = declared - ALLOWED_FORCES
+          if extra:
+              fail("TESTBENCH OVERRIDE(S) NOT ON THIS STAGE'S ALLOW-LIST: %s "
+                   "(source: %s). This stage allows %s. A force added to the "
+                   "bench passes every existing verdict item identically while "
+                   "proving less."
+                   % (", ".join(sorted(extra)), src,
+                      ", ".join(sorted(ALLOWED_FORCES)) or "NONE"))
+
+      # -- 5b. DID THE CLOCK RUN LONG ENOUGH TO REACH WHAT WE GRADE? ---------
+      # THE TRAP THIS EXISTS FOR. run_cycles=250000 at 20 ns ends the simulation
+      # at 5,000,000,000 ps. A rung that fires later than that reads `FAIL
+      # never` in verdict.txt, and `FAIL never` for "the clock ran out" is
+      # BYTE-IDENTICAL to `FAIL never` for "the design failed". So before any
+      # red is interpreted, the run must be shown to have reached past the last
+      # rung this stage grades. Under fetch_path_only the netlist leg claims
+      # only a fetch path and its run is deliberately short, so the clause is
+      # scoped to the modes that claim a real boot.
+      WINDOW_MODES = ("full_handshake", "unforced_fetch")
+      window_short = False        # drives the outcome state, see section 7
+      if MODE in WINDOW_MODES and LATE:
+          latest_name = max(LATE, key=lambda k: LATE[k])
+          if run_end is None:
+              msg = ("THE RUN LENGTH IS UNKNOWN: no `GLSN-EVENT: <t> run "
+                     "complete` line %s. Nothing on disk says how far this "
+                     "simulation got, so a red on any rung after %d ps cannot "
+                     "be told from a window that ended first."
+                     % ("in " + SIMLOG if slog is not None
+                        else "and no sim.log at " + SIMLOG, LATE_RUNG_PS))
+              if any(k in LATE and not ok(k) for k in reds):
+                  window_short = True
+                  fail(msg + " There IS such a red in this verdict, so this is "
+                       "unresolvable from the published evidence: collect "
+                       "sim.log, or re-run.")
+              else:
+                  note(msg + " Every late rung is green here, so this run is "
+                       "unambiguous - but the next red one would not be.")
+          elif run_end < LATEST_GRADED_PS:
+              window_short = True
+              fail("WINDOW TOO SHORT FOR WHAT THIS STAGE GRADES. The simulation "
+                   "ended at %d ps; the last rung graded here, %s, has only "
+                   "ever been observed at %d ps. Every red below is ambiguous "
+                   "by construction - it means 'the clock ran out' and reads as "
+                   "'the design failed'. Raise run_cycles (the bench declares "
+                   "%d cycles x %d ps = %d ps) or narrow what is graded."
+                   % (run_end, latest_name, LATEST_GRADED_PS,
+                      DECLARED_RUN_CYCLES, REF_PERIOD_PS, DECLARED_RUN_PS))
+          else:
+              obs("window: ran to %d ps, %d ps past %s at %d ps (%.1f%% "
+                  "headroom); the bench declares %d cycles = %d ps."
+                  % (run_end, run_end - LATEST_GRADED_PS, latest_name,
+                     LATEST_GRADED_PS,
+                     100.0 * (run_end - LATEST_GRADED_PS) / LATEST_GRADED_PS,
+                     DECLARED_RUN_CYCLES, DECLARED_RUN_PS))
+          # per-rung, so the message names the rung and not just the budget
+          for k in reds:
+              if k in LATE and run_end is not None and run_end < LATE[k]:
+                  window_short = True
+                  fail("%s IS RED BECAUSE THE CLOCK RAN OUT, NOT BECAUSE THE "
+                       "DESIGN FAILED - or at least nothing here can tell them "
+                       "apart. The run ended at %d ps and this rung has only "
+                       "ever been observed at %d ps." % (k, run_end, LATE[k]))
+
+      # -- 5c. THE KNOWN-OPEN REGISTER --------------------------------------
+      # Reds here are EXPECTED and do not fail the stage - but they are printed,
+      # with their reason and with what the run length does or does not settle.
+      # Greens here RATCHET: the open item has closed and the register is stale.
+      for k, (first_ps, why) in sorted(KNOWN_OPEN.items()):
+          st = res.get(k)
+          if st is None:
+              continue                    # the shipped bench does not emit it
+          if st[0] == "PASS":
+              fail("KNOWN-OPEN ITEM HAS CLOSED: %s is PASS %s. This stage still "
+                   "carries it on the KNOWN_OPEN register as a red it tolerates. "
+                   "Move it into TIER_C and delete the register entry - a gate "
+                   "that keeps excusing a rung that now works has stopped "
+                   "asking. (%s)" % (k, st[1], OPEN_ITEM_REF))
+              continue
+          if first_ps is None:
+              dating = ("no measured firing time exists for this rung, so the "
+                        "run length cannot settle it either way")
+          elif run_end is None:
+              dating = ("run length unknown, and this rung has only ever fired "
+                        "at %d ps" % first_ps)
+          elif run_end < first_ps:
+              dating = ("UNMEASURED, NOT OPEN: the run ended at %d ps, before "
+                        "%d ps, the only time this rung has ever fired. This "
+                        "red says the clock ran out. Do not quote it as "
+                        "evidence about the firmware" % (run_end, first_ps))
+          else:
+              dating = ("the run reached %d ps, past the %d ps at which this "
+                        "rung has fired before, and it still did not fire"
+                        % (run_end, first_ps))
+          note("KNOWN OPEN - %s: %s %s. %s. %s. Owner: eth firmware; "
+               "evidence: %s" % (k, st[0], st[1], why.rstrip("."),
+                                 dating.rstrip("."), OPEN_ITEM_REF))
+
+      # -- 6. MODE ----------------------------------------------------------
+      if MODE not in ("full_handshake", "unforced_fetch", "fetch_path_only"):
+          fail("MODE=%r is not one of full_handshake, unforced_fetch, "
+               "fetch_path_only." % MODE)
+
+      if MODE in ("full_handshake", "unforced_fetch") and ALLOWED_FORCES:
+          fail("MODE=%s with a non-empty ALLOWED_FORCES (%s). The two "
+               "contradict each other; empty the allow-list."
+               % (MODE, ", ".join(sorted(ALLOWED_FORCES))))
+
+      if MODE == "full_handshake":
+          require(TIER_C, "MODE=full_handshake claims the design brings up XiP "
+                          "from a real device, verifies CPU1's image, executes "
+                          "it and releases CPU0 unaided, so every link of that "
+                          "chain that this bench can see must be asserted")
+
+      # probe-form pinning, in all modes: a form change is a form change.
+      pins_seen = 0
+      for a, b in SAME_INSTANT:
+          ha, hb = a in res, b in res
+          if not ha and not hb:
+              continue
+          if ha != hb:
+              fail("PROBE FORM IS PINNED BY A PAIR AND ONLY ONE HALF IS "
+                   "DECLARED: %s is %s and %s is %s. A verdict records a key "
+                   "name, never the expression behind it, so one name alone "
+                   "cannot show which signal was probed. Declare both or "
+                   "neither."
+                   % (a, "present" if ha else "absent",
+                      b, "present" if hb else "absent"))
+              continue
+          pins_seen += 1
+          ta, tb = at(a), at(b)
+          if ta is None or tb is None:
+              fail("PROBE PAIR %s/%s is declared but at least one half has no "
+                   "at= timestamp, so the two cannot be compared." % (a, b))
+          elif ta != tb:
+              fail("PROBE PAIR DISAGREES: %s at=%d and %s at=%d are two "
+                   "probes on the SAME FLOP and must fire at the same "
+                   "instant. One of them is not on that flop -- which is "
+                   "the failure a verdict file cannot otherwise show, "
+                   "because it records a key name and not an expression."
+                   % (a, ta, b, tb))
+      if pins_seen == 0:
+          obs("probe-form pinning: INERT on this verdict - none of the %d probe "
+              "pairs is declared (%s). The clause MEASURED NOTHING; it did not "
+              "pass. It goes live the day the bench declares a re-sourced probe."
+              % (len(SAME_INSTANT),
+                 "; ".join("%s/%s" % p for p in SAME_INSTANT)))
+
+      # ordering, in all modes, over whatever pairs are actually present
+      ord_seen = 0
+      for a, b in ORDER:
+          ta, tb = at(a), at(b)
+          if ta is None or tb is None:
+              continue                  # a rung this bench does not declare
+          ord_seen += 1
+          if not ta <= tb:
+              fail("ORDERING VIOLATED: %s at=%d did not precede %s at=%d. "
+                   "The chain ran out of order; a green row per rung with "
+                   "the rungs in the wrong sequence is not a boot."
+                   % (a, ta, b, tb))
+      obs("ordering: %d of %d pairs checked; the other %d name a rung this "
+          "bench does not declare and were SKIPPED, not passed."
+          % (ord_seen, len(ORDER), len(ORDER) - ord_seen))
+
+      # the proximity clause, only where the bench declares both halves
+      ts, tg = at("remap_write_strobe"), at("remap_ctrl_bit2_set")
+      if tg is not None and ts is None and "remap_write_strobe" in res:
+          fail("CPU0's BOOTGATE ROSE WITH NO WRITE STROBE BESIDE IT. "
+               "remap_ctrl_bit2_set is PASS at=%d but remap_write_strobe "
+               "never fired, so nothing wrote the remap register: the bit "
+               "was put there by something other than the design." % tg)
+      elif tg is not None and ts is not None:
+          if not (0 <= tg - ts <= STROBE_WINDOW_PS):
+              fail("BOOTGATE AND WRITE STROBE ARE NOT THE SAME EVENT: strobe "
+                   "at=%d, bit set at=%d, %d ps apart (window %d ps; measured "
+                   "on a real boot: 20000). A write to the remap block "
+                   "somewhere else in the run does not evidence THIS bit being "
+                   "set by THIS write." % (ts, tg, tg - ts, STROBE_WINDOW_PS))
+
+      if MODE in ("full_handshake", "unforced_fetch"):
+          if declared:
+              fail("MODE=%s but the run declared force(s) %s. Under either of "
+                   "these modes the design is claimed to release CPU0 by "
+                   "itself." % (MODE, ", ".join(sorted(declared))))
+          t0 = at("remap_ctrl_bit2_set") or at("eth_rom_msp_on_Q")
+          if t0 is not None and t0 < EARLIEST_REAL_RELEASE_PS:
+              fail("CPU0 WAS RELEASED AT at=%d ps, WHICH IS TOO EARLY TO BE THE "
+                   "DESIGN DOING IT. A real release is behind a QSPI XiP "
+                   "bring-up, a boot-table scan and an 880-byte serial-flash "
+                   "copy: measured 3457830000 ps. A forced one lands a few "
+                   "cycles after reset: measured 3470000 ps. The floor here is "
+                   "%d ps, the same instant the bench's own cpu0_rom_idle_at_1ms "
+                   "rung tests from inside the simulation. Something is holding "
+                   "that wire, or the flash model is not attached."
+                   % (t0, EARLIEST_REAL_RELEASE_PS))
+
+      if MODE in ("unforced_fetch", "fetch_path_only"):
+          # THE OTHER HALF OF THE CLAIM. In these modes the netlist leg does not
+          # evidence the verified handshake, so it must be evidenced somewhere
+          # -- and by a run of the SAME eth firmware that is in the mask ROM.
+          if MODE == "fetch_path_only":
+              if declared is not None and not declared:
+                  fail("MODE=fetch_path_only but the run declared NO forces. "
+                       "Either the bench stopped needing the CPU0_BOOTGATE "
+                       "force -- in which case this stage is under-asserting "
+                       "and MODE must be promoted -- or the force was dropped "
+                       "without the handshake landing. Either way the "
+                       "declaration is stale.")
+              missing = ALLOWED_FORCES - (declared or set())
+              if declared is not None and missing:
+                  fail("expected force(s) %s are on this stage's allow-list but "
+                       "were not declared by the run."
+                       % ", ".join(sorted(missing)))
+          if not os.path.exists(RTL_XML):
+              fail("MODE=%s requires the RTL handshake evidence at %s and it is "
+                   "absent. In this mode the netlist leg does not evidence a "
+                   "VERIFIED handshake; with no RTL leg either, nothing in this "
+                   "pipeline does." % (MODE, RTL_XML))
+          else:
+              try:
+                  tcs = ET.parse(RTL_XML).getroot().findall(".//testcase")
+              except ET.ParseError as e:
+                  tcs = None
+                  fail("%s does not parse (%s); a partial file is a partial run."
+                       % (RTL_XML, e))
+              if tcs is not None:
+                  hit = [t for t in tcs if t.get("name") == RTL_TEST]
+                  if not hit:
+                      fail("%s does not contain testcase %s. The suite ran, but "
+                           "not the test that observes CPU1's genuine release. "
+                           "Of the 20 testcases in that suite, SEVEN reach the "
+                           "testbench backstop _release_network_core_bootgate() "
+                           "and set the gate themselves, so a green suite is "
+                           "not evidence of a design release -- this one "
+                           "testcase is." % (RTL_XML, RTL_TEST))
+                  for t in hit:
+                      if t.find("skipped") is not None:
+                          fail("%s is <skipped/> in %s. A PASS THAT DID NOT RUN "
+                               "IS NOT A CLEAN PASS." % (RTL_TEST, RTL_XML))
+                      if t.find("failure") is not None or t.find("error") is not None:
+                          fail("%s FAILED in %s." % (RTL_TEST, RTL_XML))
+          # THE PIN. Two legs only compose if they ran the same firmware.
+          def rom_words_sv(p):
+              t = open(p, errors="replace").read()
+              d = {}
+              for a_, v in re.findall(
+                      r"9'h([0-9a-fA-F]+)\s*:\s*rdata\s*=\s*32'h([0-9a-fA-F]+)", t):
+                  d[int(a_, 16)] = int(v, 16)
+              return d
+          if not (os.path.exists(ETH_SV) and os.path.exists(ETH_BIN)):
+              fail("cannot pin the RTL leg to the mask ROM: %s or %s is missing. "
+                   "Unpinned, the RTL result describes some eth stage-0, not "
+                   "necessarily the one on the die." % (ETH_SV, ETH_BIN))
+          else:
+              sv = rom_words_sv(ETH_SV)
+              bs = [int(x.strip(), 2) for x in open(ETH_BIN) if x.strip()]
+              diff = [i for i in range(len(bs)) if sv.get(i) != bs[i]]
+              if len(sv) != len(bs):
+                  fail("eth boot ROM pin: the RTL slot %s holds %d words, the "
+                       "mask ROM code file %s holds %d."
+                       % (ETH_SV, len(sv), ETH_BIN, len(bs)))
+              if diff:
+                  fail("ETH BOOT ROM PIN BROKEN: %s differs from the mask ROM "
+                       "contents (%s) in %d of %d words, first at 0x%03x. The "
+                       "RTL leg and the netlist leg therefore run DIFFERENT eth "
+                       "stage-0 firmware and DO NOT COMPOSE. Refresh the slot "
+                       "from the firmware build's own generated .sv."
+                       % (ETH_SV, ETH_BIN, len(diff), len(bs), diff[0]))
+
+      # THE RATCHET, in the direction that matters: a mode that has stopped
+      # asking. If every Tier-C rung is present and green with no force, the
+      # evidence is a full handshake and a lesser MODE is under-declaring it.
+      if MODE != "full_handshake" and all(ok(k) for k in TIER_C) and not declared:
+          fail("MODE=%s, but every Tier-C rung in this verdict is GREEN and no "
+               "force was declared: the evidence describes a complete, "
+               "unforced handshake. Promote MODE to full_handshake. A "
+               "declaration that has stopped matching the evidence is how a "
+               "gate quietly stops asking." % MODE)
+
+      # -- 7. FIVE OUTCOMES, NOT TWO ----------------------------------------
+      # "CPU0 did not boot" hides states with different owners.
+      #
+      # WHAT THE SHIPPED BENCH CAN AND CANNOT ATTRIBUTE. It declares no
+      # remap_write_strobe rung, so there is no direct evidence that the DESIGN
+      # wrote the bootgate. Attribution here rests on two indirect facts
+      # instead: cpu0_rom_idle_at_1ms (CPU0 had not touched its ROM once at
+      # 1 ms) and the release-time floor (its first fetch is 996x later than a
+      # forced run's). That is weaker than a strobe and it is stated as such
+      # rather than being quietly upgraded.
+      released   = ok("eth_rom_msp_on_Q")
+      gated      = ok("cpu0_rom_idle_at_1ms")
+      copied_any = ok("cpu1_imem_write.accessed")
+      copied_ok  = copied_any and ok("cpu1_imem_write.data_nonx")
+      exec_any   = ok("cpu1_imem_fetch.accessed")
+      exec_ok    = exec_any and ok("cpu1_imem_fetch.data_nonx")
+      addressed  = ok("qspi_flash_addressed")
+      fetched    = released and ok("eth_rom_branch_word62") and ok("eth_rom_port.data_nonx")
+      if "eth_rom_msp_on_Q" not in res:
+          state = ("SU UNCLASSIFIABLE - THE RELEASE IS NOT ASSERTED",
+                   "this verdict declares no rung for CPU0 reaching its ROM, so "
+                   "nothing here says whether the design released CPU0 or "
+                   "something else did. That is a BENCH gap, not a design "
+                   "failure: do not read it as S1.")
+      elif any(k in res for k in RETIRED):
+          state = ("SX PROBE CANNOT SEE",
+                   "a retired 4-bit-bus probe is still declared. Its red says "
+                   "nothing about the design, so no outcome can be classified "
+                   "from this verdict until it is re-sourced.")
+      # THE CLOCK-RAN-OUT STATE, and it comes BEFORE every design state on
+      # purpose. A rung that never fired because the simulation stopped first is
+      # not a design outcome at all, and classifying it as one - "S1 NO RELEASE"
+      # on a run that simply ended at 2 ms - is the exact misreading the run
+      # -length assertion exists to prevent.
+      elif window_short:
+          state = ("SW WINDOW TOO SHORT - NOT CLASSIFIABLE",
+                   "the simulation ended before, or is not known to have "
+                   "reached, the rungs this stage grades. The reds below mean "
+                   "'the clock ran out' and read as 'the design failed'. Fix "
+                   "the budget, then re-read: nothing here is a statement "
+                   "about the design.")
+      elif not released:
+          state = ("S1 NO RELEASE",
+                   "CPU0 never reached its own boot ROM. CPU1 never got to "
+                   "either of its two 0x4 writes, so it halted before the "
+                   "boot-table scan - suspect XiP bring-up.")
+      elif "cpu0_rom_idle_at_1ms" in res and not gated:
+          state = ("S0 RELEASE NOT ATTRIBUTABLE TO THE DESIGN",
+                   "CPU0 reached its ROM, and it was ALREADY FETCHING AT 1 ms - "
+                   "long before CPU1 could have finished a QSPI bring-up and a "
+                   "boot-table scan. Something outside the design let it go, or "
+                   "it is not gated in this build at all.")
+      # A KEY THAT IS NOT DECLARED IS NOT A KEY THAT FAILED, and the two must
+      # never share a state name. Under a bench that does not assert CPU1's
+      # image copy - which is every bench in unforced_fetch and fetch_path_only,
+      # and would be any future one that narrowed - the copy states below cannot
+      # be evaluated at all. Saying so is not the same as saying S2.
+      elif ("cpu1_imem_write.accessed" not in res
+            or "cpu1_imem_fetch.accessed" not in res):
+          state = ("SD NOT FULLY CLASSIFIABLE - THE COPY RUNGS ARE NOT DECLARED",
+                   "CPU0 was released and reached its ROM, but this bench does "
+                   "not assert whether CPU1 copied and executed an image, so "
+                   "nothing here can separate a real boot from the "
+                   "all-candidates-failed release. That is a statement about "
+                   "this bench's SCOPE, not about the design.")
+      elif not copied_any:
+          state = ("S2 RELEASED, NOTHING WAS COPIED",
+                   "this is the main.c:403 unconditional release after every "
+                   "candidate failed. A blank/absent/corrupt flash produces "
+                   "exactly this, and it is NOT a design failure - check that a "
+                   "flash model is attached and its image is programmed. "
+                   "`make -C ASIC/gls-netlist negative-control` produces it on "
+                   "purpose and REQUIRES this stage to be red.")
+      elif not copied_ok:
+          state = ("S3 COPIED WITH X IN IT",
+                   "CPU1 wrote its IMEM macro and some of what it wrote was X. "
+                   "The transfer path is broken, not the image: a word that "
+                   "leaves the flash defined and arrives undefined never came "
+                   "off the device.")
+      elif not exec_any:
+          state = ("S3 RELEASED AND COPIED, BUT NOT VERIFIED",
+                   "CPU1's image moved into IMEM and CPU1 never executed out of "
+                   "it. The copy happens BEFORE the CRC check, so this is a "
+                   "copy the CRC then rejected - the flash is present and the "
+                   "payload or the copy is wrong.")
+      elif not exec_ok:
+          state = ("S3 EXECUTED AND READ X BACK",
+                   "CPU1 fetched out of its own IMEM and some of what came back "
+                   "was X. The macro or its read path, not the image.")
+      elif not (fetched and addressed):
+          state = ("S3 RELEASED AND COPIED, BUT NOT VERIFIED",
+                   "a rung between the flash device and CPU0's branch is red; "
+                   "see the ladder below.")
+      else:
+          state = ("S4 CPU1 BOOTED AND VERIFIED; CPU0 RELEASED AND FETCHING",
+                   "every rung this bench declares is green, in order, with no "
+                   "override. NOTE WHAT THIS IS NOT: it is not CPU0 booting its "
+                   "application - see the KNOWN_OPEN warnings.")
+
+      # -- 8. the ladder: NAME the first rung that broke ---------------------
+      LADDER = [
+        ("cpu1_dmem_write.accessed",  "CPU1 never wrote its DMEM: it did not reach main(). Look before the bootrom - reset, clock, or the ROM fetch path."),
+        ("cpu1_main_entered",         "CPU1 ran but never stored its liveness marker 0x0F1C0DE1 to DMEM word 0x080. main() was entered but did not get past its first statement, or the marker moved. Measured on a good run: 46.830 us."),
+        ("qspi_flash_addressed",      "QSPI_nCS never went low: NOTHING ON THE BOARD WAS ADDRESSED. Either no flash model is attached to the pads or CPU1 never issued a command. This is the rung that separates 'flash model absent' from 'flash model blank' - a blank flash still gets addressed. Measured on a good run: 47.590 us."),
+        ("cpu1_imem_write.accessed",  "CPU1 addressed the flash and never wrote its OWN IMEM. It read the boot table and found no candidate it could copy - blank, corrupt or wrong-magic image. Measured on a good run: 250 words."),
+        ("cpu1_imem_write.data_nonx", "CPU1 wrote its IMEM and some of what it wrote was X. That is a transfer path fault, not a bad image: a word that leaves the flash defined and arrives undefined never came off the device."),
+        ("cpu1_imem_fetch.accessed",  "CPU1 wrote its IMEM and never read it back. It copied the words and did not execute them: the copy happens before the CRC, so this is a CRC rejection or a failed remap/VTOR store. Measured on a good run: 21,141 reads."),
+        ("cpu1_imem_fetch.data_nonx", "CPU1 executed out of its IMEM and some of what came back was X. Suspect the macro or its read path, not the image."),
+        ("cpu0_rom_idle_at_1ms",      "CPU0 WAS ALREADY FETCHING AT 1 ms, LONG BEFORE CPU1 COULD HAVE RELEASED IT. A real release is behind a QSPI bring-up and a boot-table scan; measured at 3.458 ms. Something is holding the bootgate, or CPU0 is not gated in this build at all."),
+        ("eth_rom_port.accessed",     "CPU0's boot ROM macro was never accessed at all: CPU0 was not released, or its clock or reset never arrived."),
+        ("eth_rom_msp_on_Q",          "CPU0 reached its ROM and still did not read its stack pointer out of it. Suspect CPU0's own reset release, clock, or ROM decode. Measured on a good run: 3.457830 ms."),
+        ("eth_rom_rstvec_on_Q",       "CPU0 read its MSP and never its reset vector - one word later. Measured on a good run: 3.457850 ms."),
+        ("eth_rom_branch_word62",     "CPU0 fetched the vector table but never fetched word 0x62, the reset vector's target. It took the vector and did not branch there. Measured on a good run: 3.457870 ms."),
+      ]
+      first_broken = None
+      for k, why in LADDER:
+          st = res.get(k)
+          if st is None:
+              continue                   # not declared in this MODE's bench
+          if st[0] != "PASS":
+              first_broken = (k, why); break
+
+      if not state[0].startswith("S4") and MODE == "full_handshake" and not bad:
+          fail("the evidence describes %s, not a boot, yet every declared "
+               "assertion is green. The bench is not asking enough: add the "
+               "rung that would have been red." % state[0])
+
+      # -- report -----------------------------------------------------------
+      print("  verdict : %s" % VERDICT)
+      if result_line: print("    %s" % result_line)
+      print("    MODE    : %s" % MODE)
+      print("    forces  : %s  [%s]"
+            % (", ".join(sorted(declared)) if declared
+               else ("NONE declared" if declared is not None else "UNKNOWN"),
+               src or "no source"))
+      print("    window  : %s"
+            % ("%d ps" % run_end if run_end is not None else "UNKNOWN"))
+      print("    OUTCOME : %s" % state[0])
+      print("      %s" % state[1])
+      if first_broken:
+          print("    DIAGNOSIS: first broken rung is %s" % first_broken[0])
+          print("      %s" % first_broken[1])
+      for i in info:
+          print("gls-netlist: note - %s" % i)
+      for w in warn:
+          print("gls-netlist: WARN - %s" % w)
+      for b in bad:
+          print("gls-netlist: FAIL - %s" % b)
+      if not bad:
+          n_c = sum(1 for k in TIER_C if ok(k))
+          print("gls-netlist: PASS - %d/%d Tier-A, %d/%d Tier-B, %d/%d Tier-C "
+                "green, %d known-open red, %s"
+                % (len(TIER_A), len(TIER_A), len(TIER_B), len(TIER_B),
+                   n_c, len(TIER_C),
+                   sum(1 for k in KNOWN_OPEN if k in res and not ok(k)),
+                   state[0]))
+      sys.exit(1 if bad else 0)
+      PYEOF
+    check_proof:
+      must_pass:
+        # 1. THE SHIPPED BENCH'S OWN SHAPE. Exactly the 22 keys
+        #    bench/eth_chiplet_fp1505_cc.json emits, RESULT PASS pass=22 fail=0,
+        #    FORCES 0, and a sim.log whose run-complete is the declared
+        #    250,000-cycle window.
+        - ci/fixtures/gls-netlist/pass
+        # 2. THE VERDICT AS IT STANDS PUBLISHED TODAY: 27 rows, RESULT FAIL
+        #    pass=22 fail=5, where all five reds are the KNOWN_OPEN register.
+        #    Must PASS, with five warnings - a published FAIL is not
+        #    automatically a stage failure, but every red in it must be
+        #    accounted for by name.
+        - ci/fixtures/gls-netlist/pass-known-open-eth
+        # 3. THE BENCH GROWN THE HANDSHAKE RUNGS. Proves the probe-pair,
+        #    strobe-proximity and extended-ordering clauses are live, not
+        #    decorative, the day the bench declares them.
+        - ci/fixtures/gls-netlist/pass-extra-rungs
+      must_fail:
+        # THE DEFECT, verbatim: the published `RESULT FAIL pass=10 fail=4` the
+        # in-tree check passes today, with all four of its cc_rom keys green.
+        - ci/fixtures/gls-netlist/fail-full0814-published
+        # the same shape on the shipped bench's key set.
+        - ci/fixtures/gls-netlist/fail-eth-rom-red
+        # THE GENERALISATION: a red row this stage does not grade.
+        - ci/fixtures/gls-netlist/fail-ungraded-rung-red
+        # THE KNOWN-OPEN RATCHET: the open item closed and nobody promoted it.
+        - ci/fixtures/gls-netlist/fail-known-open-closed
+        # THE CYCLE BUDGET, both shapes.
+        - ci/fixtures/gls-netlist/fail-window-too-short
+        - ci/fixtures/gls-netlist/fail-late-red-unknown-window
+        # a probe that cannot see is still declared: its red must read as
+        # "re-source this", never as "the handshake failed".
+        - ci/fixtures/gls-netlist/fail-unobservable-probe
+        # the force record, in its three failure shapes.
+        - ci/fixtures/gls-netlist/fail-force-returned
+        - ci/fixtures/gls-netlist/fail-forces-unknown
+        - ci/fixtures/gls-netlist/fail-census-contradiction
+        # released three orders of magnitude too early to be the design.
+        - ci/fixtures/gls-netlist/fail-release-too-early
+        # the two force-is-gone shapes that need no log at all.
+        - ci/fixtures/gls-netlist/fail-release-without-strobe
+        - ci/fixtures/gls-netlist/fail-strobe-far-from-release
+        # probe form: two names on one flop that disagree, and one name alone.
+        - ci/fixtures/gls-netlist/fail-probe-pair-disagree
+        - ci/fixtures/gls-netlist/fail-probe-pair-orphan
+        # an assertion deleted rather than fixed, and one left red.
+        - ci/fixtures/gls-netlist/fail-tierc-missing
+        - ci/fixtures/gls-netlist/fail-tierc-red
+        # every rung green, wrong sequence.
+        - ci/fixtures/gls-netlist/fail-order-violated
+        # THE ONE A BOOTGATE ASSERTION WOULD HAVE PASSED: the REAL erased-image
+        # run from build/gls-netlist-negative/. CPU1 releases CPU0 anyway via
+        # main.c:403 at 1.0215 ms and nothing was copied.
+        - ci/fixtures/gls-netlist/fail-blank-flash
+        # released and copied, CRC rejected.
+        - ci/fixtures/gls-netlist/fail-crc-rejected
+        # CPU0 fetching before CPU1 could possibly have let it go.
+        - ci/fixtures/gls-netlist/fail-cpu0-not-gated
+        # evidence integrity.
+        - ci/fixtures/gls-netlist/fail-no-verdict
+        - ci/fixtures/gls-netlist/fail-truncated-verdict
+        - ci/fixtures/gls-netlist/fail-wrong-tree
+        - ci/fixtures/gls-netlist/fail-result-miscount
+    artifacts:
+      - ASIC/eth-chiplet/build/*/reports/gls/*/verdict.txt
+      # sim.log WAS NOT COLLECTED BEFORE, and TWO clauses now depend on it: the
+      # force census fallback, and the RUN LENGTH that separates "the clock ran
+      # out" from "the design failed". Without it a packaged bundle cannot
+      # answer either question about its own PASS.
+      - ASIC/eth-chiplet/build/*/reports/gls/*/sim.log
+      - ASIC/eth-chiplet/build/*/reports/gls/*/census.txt
+      - ASIC/eth-chiplet/build/*/reports/gls/*/inputs.txt
+      - ASIC/eth-chiplet/build/*/reports/gls/*/pg_complete.txt
