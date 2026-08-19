@@ -253,8 +253,6 @@ nav:
       - System bug report: templates/SYSTEM_BUG_REPORT_TEMPLATE.md
 
   - Plans:
-      - GDS run plan: plans/GDS_RUN_PLAN_2026-08-19.md
-      - Broker questions: plans/BROKER_QUESTIONS_2026-08-19.md
       - Convergence plan: plans/CONVERGENCE_PLAN_2026-08-18.md
 
   - History (not current reference):
