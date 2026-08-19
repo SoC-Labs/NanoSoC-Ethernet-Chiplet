@@ -71,7 +71,10 @@ def main() -> int:
         return 2
 
     src = gate.read_text()
-    print("netlist    : %s  (%.1f MB)" % (gate.name, gate.stat().st_size / 1e6))
+    import datetime as _dt
+    print("netlist    : %s  (%.1f MB, mtime %s)"
+          % (gate.name, gate.stat().st_size / 1e6,
+             _dt.datetime.fromtimestamp(gate.stat().st_mtime).strftime("%m-%d %H:%M")))
 
     fails = []
 
@@ -144,33 +147,72 @@ def main() -> int:
                     fails.append("%s appears %d times in syn.log" % (cls, n))
 
     # --- 6. timing by path group ----------------------------------------------
+    # --- 6. timing by path group ----------------------------------------------
+    #
+    # READ THE SYNTHESIS REPORT, BY NAME, AND NOTHING ELSE.
+    #
+    # An earlier version globbed `timing_summary*` and `*qor*.rep` and took the
+    # first that parsed. That is how this script FAILED a good run: another
+    # session was running `place` inside the same build tag, its
+    # `timing_summary_00_pre_place.rep` was newer than my `syn_qor.rep`, and the
+    # script judged a SYNTHESIS netlist against a PLACE stage. It reported
+    # reg2out -0.512 for a run whose real reg2out was +3834.7 ps.
+    #
+    # Comparing two different stages is not a small error -- pre-place timing is
+    # a different measurement with different parasitics, and the sign flip looked
+    # exactly like the regression this script exists to catch. So: one named
+    # file, and a loud warning if the tag contains artefacts from a later stage,
+    # because a shared tag means the netlist may not be the one judged either.
+    SYN_REPORT = "syn_qor.rep"
+
     def groups(tag):
         d = pathlib.Path(tag) / "reports"
-        for f in sorted(d.glob("timing_summary*")) + sorted(d.glob("*qor*.rep")):
-            g = dict(re.findall(r"Group\s*:\s*(\w+)\s+(-?[\d.]+)", f.read_text(errors="ignore")))
-            if g:
-                return g
-        return {}
+        f = d / SYN_REPORT
+        if not f.is_file():
+            return {}, ["%s absent -- cannot judge synthesis timing" % (f,)]
+        notes = []
+        later = sorted(x.name for x in d.glob("*")
+                       if any(k in x.name for k in ("_place", "_cts", "_route")))
+        if later:
+            notes.append("tag also holds %d post-synthesis artefact(s) (%s...) -- "
+                         "another stage has run in this tag; the netlist judged above "
+                         "may not be the one those describe"
+                         % (len(later), later[0]))
+        notes.append("timing read from %s (mtime %s)"
+                     % (f, __import__("datetime").datetime.fromtimestamp(
+                            f.stat().st_mtime).strftime("%m-%d %H:%M")))
+        g = {}
+        for line in f.read_text(errors="ignore").splitlines():
+            m = re.match(r"^([a-z][\w]*)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+\S+\s+(\d+)\s*$", line)
+            if m and not m.group(1).startswith("cg_enable"):
+                g[m.group(1)] = (float(m.group(2)), float(m.group(3)), int(m.group(4)))
+        return g, notes
 
-    g = groups(b)
+    g, notes = groups(b)
+    for n in notes:
+        print("NOTE       : %s" % n)
     if g:
-        print("timing     : " + "  ".join("%s %s" % (k, v) for k, v in g.items()))
-        for io in ("in2reg", "reg2out"):
-            if io in g:
-                try:
-                    if float(g[io]) < 0:
-                        fails.append("I/O path group %s is now NEGATIVE (%s) -- the "
-                                     "boundary mux has entered a failing cone" % (io, g[io]))
-                except ValueError:
+        print("timing     : " + "  ".join("%s slack=%.1f fep=%d" % (k, v[0], v[2])
+                                          for k, v in sorted(g.items())))
+        # FAIL on FAILING ENDPOINTS, not on the sign of a slack number whose units
+        # and stage vary between reports. A group with 0 failing endpoints is
+        # closed however its slack is spelled.
+        for io in ("in2reg", "reg2out", "in2out"):
+            if io in g and g[io][2] > 0:
+                fails.append("I/O path group %s has %d failing endpoint(s) (slack %.1f) "
+                             "-- the boundary mux has entered a failing cone"
+                             % (io, g[io][2], g[io][0]))
+        if False:
+            try:
+                if False:
                     pass
+            except ValueError:
+                pass
         if args.control:
-            c = groups(args.control)
+            c, _ = groups(args.control)
             for k in sorted(set(g) & set(c)):
-                try:
-                    print("  delta %-10s %+.3f  (%s -> %s)"
-                          % (k, float(g[k]) - float(c[k]), c[k], g[k]))
-                except ValueError:
-                    pass
+                print("  delta %-10s slack %+9.1f   fep %+d   (%.1f -> %.1f)"
+                      % (k, g[k][0] - c[k][0], g[k][2] - c[k][2], c[k][0], g[k][0]))
 
     print()
     if fails:

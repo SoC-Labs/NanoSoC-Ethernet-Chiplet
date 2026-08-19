@@ -73,21 +73,46 @@ set_false_path -from [get_ports SE]
 # STA handles both edges of one clock without help; this note exists so nobody
 # "fixes" the negedge population by adding a shifted generated clock.
 
-# ── 4. The boundary register is not on any functional path ───────────────────
+# ── 4. THE REGISTER MUST EXIST. This is an assertion, not a constraint. ──────
 #
-# Shifting happens only while SE is high and the chip is on a tester. The shift
-# path (cell to cell around the ring) must not be timed against the functional
-# clock, and the capture path is timed by TCK.
+# Constraints are read AFTER elaborate, so by this point
+# `u_nanosoc_eth_chiplet_bscan` either resolves or the boundary-scan register is
+# NOT IN THE DESIGN. There is no third reading. That is precisely the failure
+# removing `set_case_analysis 0 [get_ports SE]` exists to prevent: with SE held
+# constant the register is unreachable and unobservable, Genus deletes all 76
+# cells as correct constant propagation, and synthesis reports success.
 #
-# Scoped to the register's own instance so this cannot leak into functional
-# logic if the hierarchy is ever flattened differently.
-if {[llength [get_cells -quiet u_nanosoc_eth_chiplet_bscan]]} {
-    set_multicycle_path -setup 2 -from [get_pins -quiet u_nanosoc_eth_chiplet_bscan/*] \
-                                 -to   [get_pins -quiet u_nanosoc_eth_chiplet_bscan/*]
-    set_multicycle_path -hold  1 -from [get_pins -quiet u_nanosoc_eth_chiplet_bscan/*] \
-                                 -to   [get_pins -quiet u_nanosoc_eth_chiplet_bscan/*]
-} else {
-    puts "WARNING: \[bscan\] u_nanosoc_eth_chiplet_bscan not found — boundary-scan\
-          constraints did NOT apply. If the pad ring is spliced, something deleted\
-          the register."
+# An earlier version of this block printed a WARNING here. A warning in a
+# 3000-line Genus log that already carries 163 of them is not a response to
+# silently shipping a chip with no boundary scan. It is an error.
+if {![llength [get_cells -quiet u_nanosoc_eth_chiplet_bscan]]} {
+    error "bscan: u_nanosoc_eth_chiplet_bscan does not exist in the elaborated\
+           design. The boundary-scan register has been optimised away or was\
+           never read. Check that SE has no set_case_analysis and that\
+           src/rtl/bscan/*.sv are in the flist."
 }
+
+# NO MULTICYCLE ON THE SHIFT CHAIN, deliberately.
+#
+# An earlier version carried:
+#     set_multicycle_path -setup 2 -from [get_pins u_nanosoc_eth_chiplet_bscan/*] ...
+# It was removed after its first run through Genus, for two reasons.
+#
+# It did not do what it looked like. `get_pins <inst>/*` expands to the
+# instance's hierarchical BOUNDARY pins, and most of those are not valid timing
+# start/endpoints -- Genus accepted the command and then reported TIM-316/317
+# ("provided from_point is 'hpin:.../u_nanosoc_eth_chiplet_bscan/tck'"), applying
+# the exception to some points and silently skipping others. This is the same
+# root as the C2 `set_max_delay -from [get_cells .../fifo/mem]` block that cost
+# this project 21 hours: a hierarchical object expanded to pins that cannot carry
+# an exception. C2's form FAILED outright and left a row in the read_sdc
+# statistics table. This form SUCCEEDS and leaves only a warning -- the more
+# dangerous of the two, because nothing counts it.
+#
+# And it was never needed. TCK is the SWDCK pad and `swdclk` is already 4x the
+# core period, so a single-cycle check on the shift chain has ~40 ns to make. The
+# measured result on the first probe: r2r_swdclk slack +17838 ps with ZERO
+# failing endpoints, i.e. 17.8 ns of margin without any exception at all.
+#
+# If a real exception is ever needed here, the valid forms are
+# `-from [get_clocks swdclk]` or the leaf flop clk pins -- never `<inst>/*`.
