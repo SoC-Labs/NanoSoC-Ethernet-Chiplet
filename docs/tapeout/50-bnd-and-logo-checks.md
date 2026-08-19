@@ -1,6 +1,6 @@
 # 50 — BND (pad-ring BEOL) and the LOGO keep-out rules
 
-[← 48 pgfix-a run record](48-pgfix-a-run-record.md) · [index](00-index.md) · [12 Calibre DRC](12-calibre-drc.md) · [28 DRC status and attribution](28-drc-status-and-attribution.md)
+[← 48 IMEC signoff results](48-imec-signoff-results-analysis.md) · [index](00-index.md) · [12 Calibre DRC](12-calibre-drc.md) · [28 DRC status and attribution](28-drc-status-and-attribution.md)
 
 Two pieces of unfinished work, consolidated: the BND (bond-pad / seal-ring BEOL) Calibre
 deck, which had a working project wrapper but no `make` target and no comparison against
@@ -381,6 +381,267 @@ make drc-logo-check LOGO_AP_ONLY=0 LOGO_STRIP_JACK=1   # A/B: text-only, expect 
 
 ---
 
+---
+
+## Part C — Promotion pass (2026-08-18): real census scripts, a real waiver
+## file, and the archive-2 cross-check
+
+`docs/tapeout/53-gate-promotion-plan.md` §1 row 4 sets `bnd`'s promotion bar:
+the rule-by-rule IMEC diff closed with a real script (not the by-hand
+comparison Part A did), and the LOGO AP-only fix re-verified under full-merge
+conditions. This section is that pass, done against the corner-rotation-fixed
+`.io` (verified present: all four `PCORNER_G` instances carry the corrected
+`orientation=` values) and a real Calibre seat.
+
+### C.1 `scripts/ci/bnd_census.py` — same pattern as `drc_census.py`, a real waiver file
+
+New sibling script, same shape as `scripts/ci/drc_census.py` (parse the
+summary once, main section only; cell-scoped waivers from a yaml file;
+refuse in code to ever waive the layout primary cell; fail on stale or
+drifted waiver entries) and the same self-test discipline `docs/tapeout/
+39-po-r8-resolved.md` §7-8 established: `ci/fixtures/bnd/{pass,
+fail-design-results,fail-saturated-cap,fail-no-summary,fail-waiver-stale}`,
+wired into `ci/signoff.yaml`'s new `bnd` stage as `check_proof`, all five
+cases pass under `signoff.py prove bnd`. Deliberately NOT sharing code with
+`drc_census.py` via an import — that script is the block-gated `drc` stage's
+entire verdict, with its own fixture history; duplicating ~150 lines is the
+lower-risk choice for a brand-new, unpromoted script. See the module
+docstring for the full reasoning.
+
+Re-run for real (`MGC_HOME`/`MGLS_LICENSE_FILE` both set, a real Calibre
+seat), against the exact file IMEC checked (md5 `7f621496…`, same as Part A):
+
+```
+$ make bnd BND_GDS=runs/20260811T103338Z_fill-verify/prev_outputs/nanosoc_eth_chiplet_pads_logo_full_L300.gds \
+           BND_RUNDIR=calibre_runs/bnd_postfix_check
+...
+TOTAL RESULTS GENERATED = 18 (98)
+$ python3 scripts/ci/bnd_census.py calibre_runs/bnd_postfix_check
+TOTAL results  : 18
+  less waived  : 2
+  REPORTED     : 16
+owner split: design 16, io-pad-abstract 2
+FAIL: 16 design-owned results > budget 0.
+```
+
+Reproduces Part A's numbers exactly (12 AP.W.1 + 2 AP.W.2 + 4 AP.S.1 = 18;
+0 PM.W.1, 0 AP.S.4). `BND_GDS=` is also a real bugfix this pass made: the
+Makefile's own header has documented that override since the target was
+written, but the recipe hardcoded `$(GDS)` into the exported `BND_GDS`
+regardless — the override never worked. Fixed in
+`ASIC/genus-innovus/Makefile` (`BND_GDS ?= $(GDS)`, then the recipe uses
+`$(BND_GDS)`), caught while reproducing this exact command.
+
+### C.2 A genuine, previously undocumented finding: 16 un-rootcaused results in OUR OWN top cell
+
+Part A's "exact match" framing answered *reproducibility*, not
+*acceptability*. Pulling coordinates out of
+`calibre_runs/bnd_postfix_check/nanosoc_eth_chiplet_pads.bnd.results`:
+all 12 `AP.W.1` + 4 `AP.S.1` results are attributed to the **layout primary
+cell itself** (`nanosoc_eth_chiplet_pads`), and every polygon sits at
+x 314-1006µm, y 872-1125µm on a 1600×2000µm die with a 135µm pad row —
+squarely in the **core**, nowhere near the pad ring or seal ring. This is
+real AP-layer redistribution routing this design drew itself (plausibly,
+not yet confirmed, near the `u_tidelink` SRAM macro at (230.6, 1210) —
+proximate, not proven), not a pad-ring or vendor-abstraction artefact.
+
+It is an **exact match** against IMEC's independent Calibre run on **both**
+archives (see C.3) — which confirms the finding is real and reproducible,
+but that is a different claim from "acceptable", and nothing in Part A ever
+asked the second question. There is no mechanism argument here the way
+`PO.R.8`'s black-boxing story provides one: a width-below-3µm or
+spacing-below-2µm result in metal this design routed is either a real defect
+to fix or a deliberate, undocumented design choice. `bnd_waivers.yaml`
+records this explicitly as **DELIBERATELY NOT WAIVED** — the same positive-
+control discipline `docs/tapeout/39-po-r8-resolved.md` §8 uses for PO.R.8's
+six never-waived `VIA3.R.2` vendor-memory results — and it is the reason
+`bnd` is not promoted to a zero-budget block gate by this pass. See §C.5.
+
+### C.3 `scripts/ci/imec_rule_diff.py` — the rule-by-rule diff, as a real script
+
+New generic comparison engine: N labelled Calibre-format reports (local
+`*.summary` files and IMEC archive `*.rpt` files are the same grammar — IMEC
+runs Calibre too, so the identical parser reads both), a rule-name list,
+and a rule × report matrix with by-cell breakdown. This is what closes doc
+53's "rule-by-rule diff against IMEC's report closed" criterion with a real
+script rather than the side-by-side reading Part A and
+`docs/tapeout/48-imec-signoff-results-analysis.md` did by hand.
+
+```
+$ python3 scripts/ci/imec_rule_diff.py --rules PM.W.1,AP.W.1,AP.W.2,AP.S.1,AP.S.4 \
+    --report local=calibre_runs/bnd_postfix_check/nanosoc_eth_chiplet_pads.bnd.summary \
+    --report archive1=ASIC/imec_results/Archive_..._17Aug26_15u14/bnd/*.rpt \
+    --report archive2=ASIC/imec_results/Archive_..._18Aug26_19u28/bnd/*.rpt --by-cell
+```
+
+| rule | local | archive1 (17Aug, pad-ring merge) | archive2 (18Aug, full merge) | verdict |
+|---|---:|---:|---:|---|
+| `PM.W.1` | 0 | 889 (967) | 919 (**1000, now capped**) | DELTA — explained (Part A: no PM geometry locally) |
+| `AP.W.1` | 12 | 12 | 12 | **EXACT_MATCH**, all 3 |
+| `AP.W.2` | 2 (82) | 2 (82) | 2 (82) | **EXACT_MATCH**, all 3, by-cell too (`PAD70GU`=1, `PAD70NU`=1 identically) |
+| `AP.S.1` | 4 | 4 | 4 | **EXACT_MATCH**, all 3 |
+| `AP.S.4` | 0 | 131 (131) | 46 (46) | DELTA — explained (needs the same absent PM/CB2 geometry) |
+
+By cell, `CORNER_B`'s `PM.W.1` count is **byte-identical across both
+archives** (26/104 both times) — confirming
+`CONVERGENCE_PLAN_2026-08-18.md` §8's claim with a script instead of a
+by-hand read. One new cell appears only in archive2's by-cell breakdown:
+`UCSRN_NOVIA` (`PM.W.1` = 1/4) — real vendor seal-ring-adjacent geometry
+this design cannot see locally (no Back-End PDK), consistent with the
+"needs-vendor-data" class `docs/tapeout/39-po-r8-resolved.md` names for
+`PO.R.8`'s undirectly-demonstrated portion.
+
+**`AP.W.1`/`AP.W.2`/`AP.S.1` all stay exact matches under full library
+merge** — real standard-cell/seal-ring content being added nearby did not
+move any of the three rules this design's own metal or the vendor pad cells
+are responsible for. That is corroborating evidence, not proof, that these
+are stable, geometry-local findings rather than something a black-boxing
+artefact would eventually reveal more of — relevant to §C.2's still-open
+question but not a substitute for actually root-causing it.
+
+### C.4 `scripts/ci/logo_census.py` — LOGO census, and a third independent re-confirmation
+
+New gate-facing script for `make drc-logo-check`'s output, reusing
+`bnd_census.py`'s parser (imported, not copied — both are new, unpromoted
+scripts, so the "duplicate to protect a promoted gate" argument in C.1 does
+not apply between the two of them). Reports LOGO.S.1/R.4/O.1's TRUE
+(uncapped) count specifically, because a naive grep of the Makefile's own
+inline awk cannot tell `= 0 (0)` from `= 1000 (1199)` without reading the
+parenthesised number.
+
+Re-ran `make drc-logo-check` (AP-only, the default) for real against
+`ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds` — the
+current, route-complete, TOOLKIT-lineage stream, denser and more realistic
+than either of Part B's original test streams:
+
+```
+$ make drc-logo-check GDS=.../fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
+      DRC_LOGO_RUNDIR=.../fp1505/work/drc_logo_run
+... 1904 rulechecks, 930 raw results (PO.R.8 691, real routing findings, unrelated to LOGO) ...
+RULECHECK LOGO.S.1 ...... TOTAL Result Count = 0 (0)
+RULECHECK LOGO.O.1 ...... TOTAL Result Count = 0 (0)
+RULECHECK LOGO.R.4 ...... TOTAL Result Count = 0 (0)
+$ python3 scripts/ci/logo_census.py .../fp1505/work/drc_logo_run
+PASS (on THIS local stream only): every measured LOGO.* rule is a real zero...
+```
+
+**Third independent zero** for LOGO_AP_ONLY: Part B's original measurement,
+Part B's direct `run_drc.sh` cross-check, and now this pass's run against a
+different, denser, real-full-chip-routed stream. `DRC_LOGO_RUNDIR` is also a
+real bugfix landed alongside this: `drc-logo`/`drc-logo-check` used to
+hardcode their rundir into the gitignored `calibre_runs/` tree with **no
+override at all**, unlike `bnd`/`drc`/`erc` — the exact "CI clones the repo
+and finds nothing there" defect `ci/signoff.yaml`'s `drc` stage comment
+already describes fixing for the main deck, never applied here until now.
+
+**This still does not answer the full-library-merge question** — see C.5.
+fp1505 carries real full-chip routing but no real TSMC standard-cell/pad/
+seal-ring geometry; it is a better LOCAL approximation, not a merge.
+
+### C.5 The genuine open question: does LOGO_AP_ONLY's zero survive full-merge conditions?
+
+**Answered honestly: NOT DIRECTLY TESTABLE from what exists, and here is the
+real evidence rather than an assumption.**
+
+Neither IMEC archive ever checked the AP-only artefact. Both the 17Aug
+(pad-ring-only merge) and 18Aug (full std-cell + seal-ring merge) archives
+checked the **original**, 158-marked, full-pictorial logo — the one already
+known (Part B) to saturate the 1000-result cap. `scripts/ci/imec_rule_diff.py`
+against both archives' `drc/*.rpt`:
+
+| rule | archive1 (17Aug) | archive2 (18Aug, full merge) | verdict |
+|---|---:|---:|---|
+| `LOGO.S.1` | 1000 (1000) | 1000 (1000) | unchanged displayed value — **still capped, true count beyond 1000 is unknown either time** |
+| `LOGO.R.4` | 1000 (1000) | 1000 (**1199**) | **true count grew +19.9%** under full merge |
+| `LOGO.O.1` | absent | absent | IMEC's real deck does not report this rule at all, either archive |
+
+This is the load-bearing new data point: for the **marked** logo,
+`LOGO.R.4`'s true count demonstrably grows once real standard-cell/seal-ring
+geometry is merged in — the same class of change `PO.R.8` (691→0) and the
+`CSR.R.2`/`CSR.EN.8` cluster (+519%/+783%/+243%) already showed for other
+rules. "More real geometry changes LOGO numbers" is not a hypothetical for
+this project; it is demonstrated, twice now, for two different rule
+families. That is precisely why LOGO_AP_ONLY's zero cannot be assumed to
+generalise on the strength of Part B's local measurement alone — which is
+what this task set out to check, rather than assume.
+
+**Why the answer leans towards "yes, it survives" anyway — a mechanism
+argument, not a repeat of the same untested assumption:** `LOGO.S.1` and
+`LOGO.R.4` are defined **entirely** in terms of the LOGO marker layer's
+bounding box versus real OD/PO/M1-M9 (Part 0 above). `strip_logo_layers.py`
+drops that marker layer entirely — the AP-only artefact has **no
+LOGO marker shape anywhere in the stream**. The mechanism that grew `LOGO.R.4`
+under full merge is "more real geometry now falls inside the fixed 10µm halo
+measured from the marker" — a mechanism that requires a marker to measure
+from. An AP-only mark has nothing for the rule to measure from, at any
+merge density, by construction of the rule itself, not by an assumption
+about how much geometry happens to be nearby. This is the same shape of
+argument that resolved `PO.R.8` (net-based mechanism, confirmed by a
+controlled experiment) rather than trusting a single measurement's
+generalisation.
+
+**What this pass could NOT do, said plainly:** actually run Calibre with
+real TSMC standard-cell/seal-ring geometry merged in locally — this project
+holds no Back-End PDK (`docs/tapeout/53-gate-promotion-plan.md` §4, `docs/
+DRC_WAIVER_INVENTORY.md`), so a true full-merge local re-run of the AP-only
+artefact is not possible here. The only way to close this for real is
+either (a) a fresh IMEC/broker check-only submission of the actual AP-only
+merged stream, or (b) waiting for real vendor geometry to become available
+locally. Neither happened in this pass.
+
+**Verdict: `LOGO_AP_ONLY`'s zero is HIGH CONFIDENCE, NOT PROVEN, under
+full-merge conditions.** `logo` stays `gate: report` for exactly this
+reason — see §C.6.
+
+### C.5.1 A minor, new, informational finding — triaged here, not chased further
+
+`custom_drc`'s archive comparison surfaced one new rule category:
+`IM.RADHARD.1:WARN` ("Potential radiation hardened device detected... Possible
+military application") fires 22 times in archive2, **absent entirely from
+archive1**. Mechanism: this can only fire once real transistor-level device
+geometry exists to pattern-match against, which archive2's `tcbn65lp` merge
+supplied for the first time — same structural class as items 1/7/9 in
+`CONVERGENCE_PLAN_2026-08-18.md` §9's retrospective table
+("structurally undetectable locally"). WARN severity, informational, no
+action — recorded here per doc 53 §9's "mandatory triage-or-defer" discipline
+so it does not repeat item 2's mistake (a real finding sitting unwritten for
+eight days).
+
+### C.6 Promotion decision
+
+Per `docs/tapeout/53-gate-promotion-plan.md`'s own bar — "promote to `block`
+ONLY if validation gives real confidence; if a specific piece is uncertain,
+keep it `report`-gated even if the rest promotes":
+
+- **`bnd` (new `ci/signoff.yaml` stage, `gate: report`, NOT block.)** The
+  rule-by-rule IMEC diff IS closed with a real script (C.3). But C.2's 16
+  design-owned, exact-IMEC-matching, un-rootcaused `AP.W.1`/`AP.S.1` results
+  are a **new** finding this pass surfaced, not an old one this pass closed
+  — a zero-budget block gate would fail on them permanently and
+  uninformatively starting today, which is exactly the failure mode doc 53's
+  promotion bar exists to prevent. Wired for real (`check:`, cell-scoped
+  `bnd_waivers.yaml`, `check_proof` with all 5 cases proven via `signoff.py
+  prove bnd`) so the finding is measured and printed on every run, not
+  silently deferred.
+- **`logo` (new `ci/signoff.yaml` stage, `gate: report`.)** Per §C.5: high
+  confidence, not proven, under full-merge conditions — the task's explicit
+  instruction to keep an uncertain piece `report`-gated even if a sibling
+  promotes applies directly here.
+- **CI reality check, stated plainly:** both new stages' `run:` targets
+  `ASIC/eth-chiplet/build/fp1505` (matching `drc`/`erc`'s own convention, so
+  a bare CI clone can reproduce them at all) — but fp1505 carries almost no
+  pad-ring/AP content (`LAYER APi`: 7 (12) shapes there against 40 (285) on
+  the legacy reference stream), so `bnd`'s CI number is a structurally weak,
+  near-null measurement (`bnd_census.py`'s new `AP.DN.1` "sparse density,
+  never gated" bucket exists specifically because of this). The REAL,
+  validated `bnd` numbers in this document come from a host-local run
+  against the legacy pad-ring-merged snapshot, which is gitignored/host-only
+  and not yet reproducible from a fresh clone — a real, named gap, same
+  class as doc 53 §3's "needs a Calibre seat" items, not swept under the
+  `report` gate.
+
+---
+
 ## Files touched by this pass
 
 | File | What changed |
@@ -397,3 +658,18 @@ make drc-logo-check LOGO_AP_ONLY=0 LOGO_STRIP_JACK=1   # A/B: text-only, expect 
 No foundry-owned file was read into, copied, or modified — the PDK mount (`$TSMC_65_HOME`)
 stays read-only, per every existing convention in this repo (`ci/check-vendor-collateral.sh`,
 `scripts/calibre/README.md` §"Two things not to break").
+
+### Files touched by the promotion pass (2026-08-18, Part C)
+
+| File | What changed |
+|---|---|
+| `scripts/ci/bnd_census.py` | **new** — BND census + waiver engine, sibling to `drc_census.py` |
+| `scripts/ci/logo_census.py` | **new** — LOGO census over `drc-logo-check`'s output, imports `bnd_census.py` |
+| `scripts/ci/imec_rule_diff.py` | **new** — generic N-way rule-by-rule diff engine against IMEC archive reports |
+| `ASIC/genus-innovus/scripts/calibre/bnd_waivers.yaml` | **new** — cell-scoped BND waivers (AP.W.2 only; AP.W.1/AP.S.1 deliberately NOT waived, see §C.2) |
+| `ASIC/genus-innovus/Makefile` | `BND_GDS ?= $(GDS)` bugfix (the override never worked); `DRC_LOGO_RUNDIR` added (was hardcoded into gitignored `calibre_runs/`, no override existed) |
+| `ci/signoff.yaml` | new `bnd` and `logo` stages, both `gate: report`, both with real `check:`/`check_proof:` |
+| `ci/fixtures/bnd/{pass,fail-design-results,fail-saturated-cap,fail-no-summary,fail-waiver-stale}` | **new** — `bnd` stage's `check_proof` fixtures |
+| `ci/fixtures/logo/{pass,fail-nonzero-true,fail-no-summary}` | **new** — `logo` stage's `check_proof` fixtures |
+
+No foundry-owned file was read into, copied, or modified in this pass either.

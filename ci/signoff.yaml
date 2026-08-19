@@ -1657,6 +1657,8 @@ stages:
     phase: physical
     gate: report
     label: soclabs-pdk
+    needs_implementation:
+      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre ERC — does the routed GDS carry power/ground TEXT LABELS?"
     # ADDED 2026-08-18, IN RESPONSE TO A REAL FOUNDRY SIGNOFF ERROR. IMEC's own
     # ERC run against a GDS we sent them (2026-08-17/18) returned one hard
@@ -1667,51 +1669,240 @@ stages:
     # invisible to us until they told us. docs/tapeout/51-erc-pg-labels.md is
     # the full write-up; this stage is its CI half.
     #
-    # gate: report, DELIBERATELY, same reasoning as lvs-preflight above it. This
-    # is the FIRST time this exact check has ever run against a current-toolkit
-    # stream — there is not yet enough runtime history to trust it as a hard
-    # gate, and unlike drc's census this has no fixture-proven waiver story yet.
-    # Promote to block once it has run clean (or with an understood, waived
-    # PARTIAL) across several builds in a row.
+    # PROMOTION-ORDER ROW #3, docs/tapeout/53-gate-promotion-plan.md §1: this
+    # is that row, implemented 2026-08-18. `check:` now parses the OVERALL line
+    # itself rather than trusting run_erc.sh's exit code (which treats OK and
+    # PARTIAL identically — both 0). scripts/ci/erc_census.py is the
+    # `drc_census`-equivalent script the plan calls for, with its own
+    # check_proof fixtures below.
     #
-    # WHAT THIS STAGE MEASURED, so a future reader does not have to re-derive it
-    # from the log alone (full detail: docs/tapeout/51-erc-pg-labels.md §5):
+    # STILL gate: report, and here is exactly what is still missing to promote
+    # to block, so the next reader does not have to re-derive it:
+    #   * the CHECK can now fail (see check_proof below) — that part is done.
+    #   * the FIX for the one thing it was failing on (VDDIO/VSSIO carrying no
+    #     text anywhere in the GDS) is written — ASIC/genus-innovus/scripts/
+    #     power_plan.tcl now routes VDDIO/VSSIO via route_special, not just
+    #     connect_global_net — and VALIDATED, but only by replaying it against
+    #     fp1505's own routed database read-only (no P&R re-run); see
+    #     docs/tapeout/51-erc-pg-labels.md §5.5 for the full before/after.
+    #     `make erc` against fp1505's ACTUAL shipped GDS (below) still reads
+    #     PARTIAL today, because fp1505 itself has not been rebuilt with the
+    #     fix — the validation ran against a side artefact, not this stage's
+    #     graded one.
+    #   * the stage's own original bar (still correct): "run clean ... across
+    #     several builds in a row." One validated fix on one replayed database
+    #     is not that. Promote once fp1505 (or its successor) is rebuilt from
+    #     `place` onward with this power_plan.tcl and a fresh `make erc` on
+    #     THAT build reads OK.
+    #
+    # WHAT THIS STAGE MEASURES TODAY (full detail: docs/tapeout/
+    # 51-erc-pg-labels.md §5):
     #   * calibrated against the EXACT GDS IMEC checked (md5
     #     7f6214965501c911bd65069378ae911d) — reproduces IMEC's finding exactly,
     #     both via Calibre's own ERC and an independent klayout structural scan.
     #   * fp1505 (this stage's target, same build `drc` above grades): the
     #     SPNET stream-map fix (ASIC/asic-toolkit/tech/tsmc65/derive.tcl,
-    #     gdsmap_derive) DOES now label VDD/VSS — Calibre resolves both and the
+    #     gdsmap_derive) DOES label VDD/VSS — Calibre resolves both and the
     #     klayout scan finds real text on the M9 text/SPNET layer. It does NOT label
-    #     VDDIO/VSSIO — zero text for either name anywhere in the whole GDS
-    #     hierarchy, not just the top cell. Verdict: PARTIAL, not OK.
-    #   * full-20260814 (NOT this stage's target — superseded, see the drc
-    #     stage's own note on why fp1505 was promoted): this ERC run
-    #     INDEPENDENTLY reproduces, via Calibre's short-isolation report rather
-    #     than Innovus check_drc, the already-known VDD/VSS rail-to-rail short
-    #     documented in docs/tapeout/43-drc-fp1505.md §3.
+    #     VDDIO/VSSIO on the GDS actually shipped — verdict: PARTIAL, not OK.
     #
     # ERC_RUNDIR is pinned into the BUILD TREE, same reasoning as the drc stage
     # comment above (CI clones the repo and only ever sees the build tree, not
     # ASIC/genus-innovus/work/ which ASIC/*/work in .gitignore excludes).
+    #
+    # `mkdir -p` before the make: tee needs the directory to exist before the
+    # pipeline's first byte, and run_erc.sh's own mkdir happens partway through
+    # its execution — after preflight, before the Calibre invocation — which is
+    # too late for a `| tee` sitting outside the script.
     run: |
+      mkdir -p ASIC/eth-chiplet/build/fp1505/work/erc_run
       make -C ASIC/genus-innovus erc \
         ERC_GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
         ERC_RUNDIR=$PWD/ASIC/eth-chiplet/build/fp1505/work/erc_run \
+        BLOCK=nanosoc_eth_chiplet_pads \
+        2>&1 | tee ASIC/eth-chiplet/build/fp1505/work/erc_run/run_erc.log
+    # run_erc.sh prints its OVERALL verdict to ITS OWN stdout — it is not
+    # written into calibre_erc.sum or any other Calibre artefact — so the tee
+    # above is what gives erc_census.py something repo-relative to read. See
+    # that script's own docstring for why OVERALL: PARTIAL must be a hard fail
+    # here even though run_erc.sh itself exits 0 on it (RC_OK — PARTIAL is
+    # deliberately not fatal to the STANDALONE tool, see its own header) and
+    # only NOT SIGNED OFF is RC_NOPG.
+    check: |
+      python3 scripts/ci/erc_census.py ASIC/eth-chiplet/build/fp1505/work/erc_run
+    check_proof:
+      must_pass: ci/fixtures/erc/pass
+      must_fail:
+        - ci/fixtures/erc/fail-partial
+        - ci/fixtures/erc/fail-not-signed-off
+        - ci/fixtures/erc/fail-no-output
+    artifacts:
+      - ASIC/eth-chiplet/build/fp1505/work/erc_run/**
+
+  - id: bnd
+    phase: physical
+    gate: report
+    label: soclabs-pdk
+    description: "Calibre BND (bond-pad / seal-ring BEOL) — separate foundry deck from `drc`"
+    run: |
+      make -C ASIC/genus-innovus bnd \
+        BND_GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
+        BND_RUNDIR=$PWD/ASIC/eth-chiplet/build/fp1505/work/bnd_run \
         BLOCK=nanosoc_eth_chiplet_pads
-    # No check: — same shape as lvs-preflight. run_erc.sh's own exit code IS the
-    # verdict (0 = OK or PARTIAL-with-warning printed, non-zero = NOT SIGNED OFF
-    # or a tool/preflight failure), and PARTIAL is deliberately not distinguished
-    # from OK at the exit-code level (see docs/tapeout/51-erc-pg-labels.md §4.3)
-    # — this is a report gate, so the printed OVERALL line is what a human reads,
-    # not a machine-parsed census. A block-gate promotion should add a real
-    # check: that greps OVERALL and fails the census on PARTIAL specifically,
-    # the same way drc's census fails on a saturated check rather than trusting
-    # calibre's own exit status.
+    check: |
+      python3 scripts/ci/bnd_census.py ASIC/eth-chiplet/build/fp1505/work/bnd_run
+    check_proof:
+      must_pass: ci/fixtures/bnd/pass
+      must_fail:
+        - ci/fixtures/bnd/fail-design-results
+        - ci/fixtures/bnd/fail-saturated-cap
+        - ci/fixtures/bnd/fail-no-summary
+        # Same live waiver-file test as drc's fail-waiver-stale: a plausible
+        # cell rename (PAD70GU -> PAD70GU_RECOMPILED) makes bnd_waivers.yaml's
+        # AP.W.2 entry match nothing while the check still fires. If someone
+        # widens that entry to a rule-scoped suppression, this stops failing.
+        - ci/fixtures/bnd/fail-waiver-stale
     needs_implementation:
       - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
     artifacts:
-      - ASIC/eth-chiplet/build/fp1505/work/erc_run/**
+      - ASIC/eth-chiplet/build/fp1505/work/bnd_run/**
+
+  # --- LOGO keep-out (AP-only fix) — same promotion-order row as `bnd`, kept
+  # a SEPARATE stage rather than folded in, because its promotion evidence is
+  # a genuinely different, weaker claim than bnd's. docs/tapeout/
+  # 50-bnd-and-logo-checks.md Part B, docs/tapeout/53-gate-promotion-plan.md
+  # §1 row 4 ("LOGO AP-only fix wired into the real submission stream and
+  # re-verified post full-merge").
+  #
+  # gate: report, DELIBERATELY, and NOT promotable by this pass, said plainly
+  # per the task brief that added this stage: LOGO_AP_ONLY's real-zero
+  # (LOGO.S.1/R.4/O.1 = 0/0/0) has been reproduced THREE times now — doc 50's
+  # original measurement, an independent re-run via `run_drc.sh` directly,
+  # and this pass's re-run against fp1505 (a denser, more-realistic LOCAL
+  # stream than either of doc 50's) — but NEITHER real IMEC archive ever
+  # checked the AP-only artefact. Both archives (17Aug pad-ring-only merge,
+  # 18Aug full std-cell + seal-ring merge) tested the ORIGINAL, 158-marked,
+  # full-pictorial logo, which stays saturated in both
+  # (scripts/ci/imec_rule_diff.py: LOGO.S.1 1000/1000 both archives, LOGO.R.4
+  # true count 1000 -> 1199, +19.9%, under full merge — real, measurable
+  # growth for the MARKED logo). The mechanism argument for why AP-only
+  # should be immune (LOGO.S.1/R.4 are defined purely against the 158/LOGO
+  # marker's bounding box, and AP-only drops that marker entirely — nothing
+  # for the rule to measure from, regardless of surrounding geometry) is
+  # sound and stated in scripts/ci/logo_census.py's docstring, but it is a
+  # mechanism argument, not a direct archive measurement, and doc 53's bar is
+  # measurement. THIS IS THE GENUINE OPEN QUESTION THE TASK ASKED FOR AN
+  # HONEST ANSWER TO — see docs/tapeout/50-bnd-and-logo-checks.md Part B.4.
+  - id: logo
+    phase: physical
+    gate: report
+    label: soclabs-pdk
+    description: "LOGO keep-out (LOGO.S.1/R.4/O.1) on the AP-only-marked submission artefact"
+    # DRC_LOGO_RUNDIR pinned into the BUILD TREE, same reasoning as `drc`/
+    # `erc`/`bnd` above — see that fix, landed alongside this stage, in
+    # ASIC/genus-innovus/Makefile (`drc-logo` target).
+    run: |
+      make -C ASIC/genus-innovus drc-logo-check \
+        GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
+        DRC_LOGO_RUNDIR=$PWD/ASIC/eth-chiplet/build/fp1505/work/drc_logo_run
+    check: |
+      python3 scripts/ci/logo_census.py ASIC/eth-chiplet/build/fp1505/work/drc_logo_run
+    check_proof:
+      must_pass: ci/fixtures/logo/pass
+      must_fail:
+        - ci/fixtures/logo/fail-nonzero-true
+        - ci/fixtures/logo/fail-no-summary
+    needs_implementation:
+      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+    artifacts:
+      - ASIC/eth-chiplet/build/fp1505/work/drc_logo_run/**
+
+  - id: padring-power-domain
+    phase: physical
+    gate: report
+    label: soclabs-sim
+    description: "PVDD2POC_G instance-count visibility check -- tracks IMEC's 'multiple PVDD2POC cells in digital domain' padring error"
+    # report, not block, AND NOT A FIX -- doc 53 §2 is explicit that this is a
+    # TRACKING mechanism, not a resolution. IMEC's archive-2 Padringcheck
+    # (ASIC/imec_results/Archive_..._dummy_merged_dummyWithSealRing_18Aug26_19u28/
+    # padring/Padring_check.rpt) reports "Error-padringcheck, multiple PVDD2POC
+    # cells in digital domain" against a design its own SUMMARY confirms has
+    # exactly 1 power domain ("Number of power domains: 1, Domain 0 is
+    # DIGITAL"). This design instantiates PVDD2POC_G four times -- once per
+    # pad-ring side (ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v:
+    # 215,228,241,249) -- all wired to VDDIO.
+    #
+    # Best-evidenced (UNCONFIRMED) read: Calibre likely wants this domain-
+    # boundary/anchor cell once PER RING, not once per side. No TSMC POC-cell
+    # datasheet is on this site to confirm or refute that reading. See
+    # docs/tapeout/53-gate-promotion-plan.md §2 and
+    # CONVERGENCE_PLAN_2026-08-18.md §8 "New: PVDD2POC".
+    #
+    # THIS STAGE DOES NOT DECIDE 1 VS 4 AND DOES NOT CONVERT ANY INSTANCE --
+    # see scripts/check_pvdd2poc_cardinality.py's docstring. Its job is DRIFT
+    # DETECTION: it fails (report, not block) if the instance count, its
+    # wiring, or the cross-referenced instance names in the .io/
+    # place_bondpads.tcl sources move from today's recorded baseline (4), so
+    # an unreviewed change -- adding a fifth, or someone silently converting
+    # instances to PVDD2DGZ_G without a broker/vendor answer -- is visible
+    # rather than silent.
+    #
+    # No PDK, no Calibre seat, no build needed -- just the tracked Verilog
+    # source, so label: soclabs-sim (not soclabs-pdk) is the true
+    # requirement, even though this sits in the physical/padring-signoff
+    # phase alongside padring-gds directly above, matching its style
+    # (needs_implementation-free, run: + artifacts:, no check: -- same shape
+    # doc 53 §1 calls "report, not yet promotable without more runtime
+    # history").
+    run: |
+      mkdir -p ASIC/genus-innovus/reports
+      python3 scripts/check_pvdd2poc_cardinality.py \
+        --json ASIC/genus-innovus/reports/pvdd2poc_cardinality_report.json
+    artifacts:
+      - ASIC/genus-innovus/reports/pvdd2poc_cardinality_report.json
+
+  - id: csr-category-ratchet
+    phase: physical
+    gate: report
+    label: soclabs-sim
+    description: "CSR/seal-ring rule-category budget ratchet -- don't let a future IMEC re-check exceed today's known-bad CSR.R.2:B/D, CSR.EN.8 counts or grow past the 157 archive-2-only rule categories unnoticed"
+    # report, not block, AND NOT A FIX -- see docs/tapeout/53-gate-promotion-
+    # plan.md §2 "CSR / 157-category ratchet" and
+    # CONVERGENCE_PLAN_2026-08-18.md §8. Archive 2 (the first full
+    # std-cell+seal-ring library merge IMEC ran) showed CSR.R.2:B 104->644,
+    # CSR.R.2:D 91(364)->804(816) and CSR.EN.8 28->96 against archive 1 --
+    # none of this is root-caused or fixed. It also showed 157 rule
+    # categories fire that never appeared in archive 1 at all (only
+    # detectable once real library geometry is merged in, so this is
+    # structurally invisible to any purely-local run -- see doc 53 §4's
+    # "Structurally undetectable locally" classification and
+    # CONVERGENCE_PLAN §9 item 9).
+    #
+    # THE BASELINE IS AGAINST THE STALE REFERENCE GDS (legacy engine, dated
+    # 2026-08-10), NOT the current fp1505/full-20260814 toolkit build -- see
+    # ASIC/genus-innovus/scripts/calibre/csr_ratchet_budget.yaml's own header.
+    # So this stage's real job right now is "don't let a FUTURE re-check
+    # against IMEC show these numbers growing past today's baseline", not
+    # "gate the current build" -- the current lineage has never had a
+    # full-library-merge DRC run at all. There is therefore no live IMEC
+    # summary to check on every CI run today; this stage runs the ratchet's
+    # OWN self-test suite instead, which both proves the mechanism
+    # discriminates and re-validates the recorded baseline against the two
+    # archive reports on disk whenever they are reachable (host-local,
+    # gitignored -- ASIC/imec_results is not in this checkout by default, so
+    # that half degrades to "skipped, not measured" rather than a false
+    # pass; see the script's own docstring).
+    #
+    # Promote to block "once the count has a verified ceiling and no
+    # unexplained residue" (doc 53 §1's own bar) -- today it has neither: the
+    # ~800/644/96 hits are mostly unattributed by cell (CONVERGENCE_PLAN §8),
+    # and the 157 categories are untriaged.
+    run: |
+      mkdir -p ASIC/genus-innovus/reports
+      python3 scripts/ci/csr_ratchet.py --self-test \
+        --json ASIC/genus-innovus/reports/csr_ratchet_selftest.json
+    artifacts:
+      - ASIC/genus-innovus/reports/csr_ratchet_selftest.json
 
   # --- Power delivery ---------------------------------------------------------
   # THE FIRST VOLTAGE THIS PIPELINE HAS EVER COMPUTED. Before this row the
@@ -2017,27 +2208,116 @@ stages:
 
   - id: padring-gds
     phase: physical
-    gate: report
+    gate: block
     label: soclabs-pdk
-    needs_implementation: true
-    description: "GDS-level padframe name/count/order check -- the local analog of the broker's CompareCells + Padringcheck"
-    # report, not block: this is a NEW check (added after IMEC's CompareCells
-    # said "No identical cell names found!" and Padringcheck said "Design does
-    # not contain any TSMC IO cells or bondpads" on a GDS this repo had no
-    # local way to have predicted). It needs a run against more builds before
-    # its own false-positive rate is trusted enough to gate on. Promote to
-    # block once triaged, same policy as lvs-preflight and cdc above.
+    description: "GDS-level padframe name/count/order AND corner-orientation check -- the local analog of the broker's CompareCells + Padringcheck"
+    # PROMOTED report -> block, 2026-08-18 (docs/tapeout/53-gate-promotion-plan.md
+    # SS1, promotion-order #1). Names/counts/order have been clean on every real
+    # build checked (fp1505, full-20260814, and the exact GDS IMEC evaluated --
+    # docs/tapeout/52-padring-gds-check.md SS5) -- that half of this gate meets
+    # `drc`'s own promotion bar today. The NEW half, added alongside the
+    # promotion, is corner orientation: scripts/check_padring_gds.py now reads
+    # each PCORNER_G placement's live STRANS/ANGLE transform out of the GDS
+    # and diffs it against a reviewed EXPECTED_ORIENTATION table (see that
+    # script's own header comment for why the table is hand-written and NOT
+    # re-derived from nanosoc_eth_chiplet_pads.io at runtime, or from a
+    # formula -- both would be blind to a repeat of the exact bug this exists
+    # to catch).
+    #
+    # WHY THIS IS SAFE TO BLOCK ON TODAY, AND WHY IT WILL BE RED. IMEC's
+    # foundry Padringcheck caught all four PCORNER_G corners placed 180 degrees
+    # wrong (Error-padringcheck x4, ASIC/imec_results/Archive_..._18Aug26_19u28/
+    # padring/Padring_check.rpt). The .io SOURCE has been hand-fixed
+    # (commit d93331f), but fixing the source does not retroactively fix an
+    # ALREADY-STREAMED GDS -- that needs a new Innovus place/route run, which
+    # has not happened on this site since the fix. Measured 2026-08-18: running
+    # the extended checker directly against fp1505's real, current
+    # outputs/nanosoc_eth_chiplet_pads.gds -- the build `needs_implementation:`
+    # below points at, the one that would ship -- reproduces the IMEC finding
+    # exactly (all 4 corners, same wrong/expected angle pairs). So this stage
+    # goes live RED, on a REAL, currently-true defect nobody had a local gate
+    # for before today. That is not a reason to leave it `report`: it is the
+    # whole point of promoting it (same doctrine as `drc`'s own promotion note
+    # a few hundred lines up -- "THIS STAGE STAYS RED, and that is the point.
+    # No green is manufactured here"). It goes green the day a re-stream picks
+    # up the corrected .io.
     #
     # WHAT THIS DOES NOT DO: prove the padframe is DRC-clean or that the
     # streamed geometry electrically matches the real TSMC cell -- we hold no
     # usable tpbn65v/tphn65lpgv2od3 GDS to diff against on this machine. It
-    # only proves OUR OWN intended pad/corner/bond-pad names, counts and
-    # per-side order actually made it into the stream. See
+    # only proves OUR OWN intended pad/corner/bond-pad names, counts, per-side
+    # order and corner orientation actually made it into the stream. See
     # scripts/check_padring_gds.py's docstring for the full scope and limits,
     # and docs/tapeout/52-padring-gds-check.md for what running it against the
-    # exact GDS IMEC saw found (short version: our names/counts/order were all
-    # correct — IMEC's failure is NOT explained by a local naming mistake).
-    run: make asic-padring-gds
+    # exact GDS IMEC saw found.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+    # fp1505, named explicitly -- same "declare one build, run and grade that
+    # SAME build" discipline as drc/rom-gds above (this file's own comment
+    # block ahead of the physical-phase stages explains why: a bare
+    # `make asic-padring-gds` resolves GDS against the LEGACY outputs/ dir,
+    # which holds no GDS at all).
+    run: make -C ASIC/genus-innovus padring-gds GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+    # Re-read the JSON report rather than trusting the tool's own exit code --
+    # same doctrine as every other block-gated stage in this file. The script's
+    # own rc (EXIT_MISMATCH on any non-empty `problems`) is ALREADY an honest
+    # predicate (verified: `signoff.py prove` below exercises it end to end),
+    # but a `check:` that re-derives PASS/FAIL from the ARTEFACT, not the exit
+    # status, is what catches a tool that silently measured nothing (the
+    # "0 RTL ports agrees with 0 classified" class of bug chip-boundary's own
+    # check guards against) -- so this asserts the report actually measured
+    # something (counts non-empty, all 4 corners resolved) as well as that it
+    # found nothing wrong.
+    check: |
+      python3 - <<'EOF'
+      import json, sys
+      p = "ASIC/genus-innovus/reports/padring_gds_report.json"
+      try:
+          d = json.load(open(p))
+      except (OSError, json.JSONDecodeError) as e:
+          print(f"padring-gds: FAIL — no readable JSON report at {p} ({e}); "
+                f"the stage produced no evidence")
+          sys.exit(1)
+      bad = []
+      if not d.get("top_cell"):
+          bad.append("no top_cell recorded — the run never resolved the design's top cell")
+      counts = d.get("counts") or {}
+      if not counts:
+          bad.append("0 cell families in 'counts' — the run measured nothing, "
+                     "which is not the same as measuring nothing wrong")
+      orient = d.get("corner_orientation") or {}
+      if len(orient) != 4:
+          bad.append(f"{len(orient)} corner(s) in 'corner_orientation', expected "
+                     f"4 — the orientation check did not run over all four corners")
+      else:
+          for name, v in orient.items():
+              if "observed_angle" not in v:
+                  bad.append(f"{name}: orientation could not be resolved against "
+                             f"the GDS (see 'problems' for why)")
+      problems = d.get("problems") or []
+      if problems:
+          kinds = sorted({pr["kind"] for pr in problems})
+          bad.append(f"{len(problems)} problem group(s) reported: {', '.join(kinds)}")
+      for b in bad:
+          print("padring-gds: FAIL —", b)
+      if not bad:
+          print(f"padring-gds: PASS — {len(counts)} cell families, "
+                f"{len(orient)} corner(s), 0 problems")
+      sys.exit(1 if bad else 0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/padring-gds/pass
+      must_fail:
+        # The orientation channel this promotion adds -- REAL captured evidence
+        # (ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds,
+        # unmodified), not a hand-typed shape. See its PROVENANCE.
+        - ci/fixtures/padring-gds/fail-orientation-corner-180
+        # The three defect classes doc 53 SS1's promotion-evidence column names
+        # for the pre-existing name/count/order checks, which had NO check_proof
+        # coverage at all before this promotion (there was no check: to prove).
+        - ci/fixtures/padring-gds/fail-dropped-cell
+        - ci/fixtures/padring-gds/fail-renamed-cell
+        - ci/fixtures/padring-gds/fail-reordered-side
     artifacts:
       - ASIC/genus-innovus/reports/padring_gds_report.json
 

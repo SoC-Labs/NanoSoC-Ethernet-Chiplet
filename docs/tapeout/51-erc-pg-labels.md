@@ -32,12 +32,22 @@ Results land in `ERC_RUNDIR` (default `../work/erc_run`, override it -- see
 | `calibre_lvs.log` | full transcript, incl. the short-isolation report path |
 | `*.lvs.rep.shorts` | which nets Calibre found electrically shorted, if any |
 | `run.deck` | the assembled deck actually run (foundry body + our substitutions) |
+| `run_erc.log` | **NEW 2026-08-18** -- `ci/signoff.yaml`'s `erc` stage tees the whole run_erc.sh transcript here, because that is where its `OVERALL:` verdict line lives (see section 6) |
 
 **This did not exist before 2026-08-18.** `ci/signoff.yaml` had no `erc` stage at all
-(`grep -c "id: erc" ci/signoff.yaml` gives 0), and the one hard error IMEC's own signoff
-run returned in 2026-08-17/18 -- *"No labels found in topcell. At least power/ground
-labels are required."* -- is exactly the class of thing nothing local would have caught
-before sending a GDS out. This page and `run_erc.sh` are the fix.
+(`grep -c "id: erc" ci/signoff.yaml` gives 0), and the one hard error IMEC's own
+signoff run returned in 2026-08-17/18 -- *"No labels found in topcell. At least
+power/ground labels are required."* -- is exactly the class of thing nothing local
+would have caught before sending a GDS out. This page and `run_erc.sh` are the fix.
+
+**UPDATE, same day, later:** the VDDIO/VSSIO gap section 5 measured as "open" is now
+root-caused, fixed, and validated -- see section 5.5 and section 6. The one-line
+version: the LEF pin-type defect this page originally pointed at (and the promotion
+plan named as still outstanding) turned out to be **already fixed and working**. The
+actual, still-open defect was a completely different line in a completely different
+file: `ASIC/genus-innovus/scripts/power_plan.tcl` never routed VDDIO/VSSIO at all --
+every `add_rings`/`add_stripes`/`route_special` call in that script named only
+`{VDD VSS}`. Section 5.5 has the measured evidence for both halves of that claim.
 
 ---
 
@@ -154,6 +164,12 @@ substitutes for the other; the default mode runs both and makes you read both.**
 - **`NOT SIGNED OFF`** (exit 4 / `RC_NOPG`) -- at least one side (power or ground) has
   **no** text at all anywhere the checks looked. This is the IMEC failure mode.
 
+**`ci/signoff.yaml`'s `erc` stage does not read run_erc.sh's exit code at all any more**
+-- `PARTIAL` and `OK` are the same exit code (0) by design (see the quote above), so a
+gate that trusted `rc` would treat a half-fixed stream as clean. `scripts/ci/
+erc_census.py` parses the `OVERALL:` line itself and fails on anything except `OK`.
+Section 6 covers this.
+
 ## 5. Validation -- does the fix actually work? (measured 2026-08-18)
 
 Three real runs, same script, same deck, same two supply-name lists (`VDD VDDIO` /
@@ -214,17 +230,9 @@ layer found none.
 
 **The SPNET fix works, partially.** It produces real, Calibre-recognised `VDD`/`VSS`
 labels where before there were none. It does **not** label `VDDIO`/`VSSIO` on this
-build. Whether that is because those two supplies are genuinely never routed as
-top-level special nets (a legitimate reason for absent text -- see `run_erc.sh`'s own
-`pg_partial_warn()`) or because of something else is **open** --
-`ASIC/eth-chiplet/config/design_config.tcl:177-189` separately documents a *different*,
-already-identified defect specific to `VDDIO`/`VSSIO`: the vendor IO-driver LEF declares
-three pad-cell supply pins as plain signal pins, which the comment says previously left
-"the VDDIO/VSSIO special nets empty" outright (no routed special-net geometry at all,
-not just no label) and cost 76 DRC records. If that geometry gap is why there's no label
-here either, the SPNET map fix cannot be expected to help -- there is nothing for it to
-label. **This needs its own follow-up**; this page proves the symptom (no label) with
-hard evidence, not the deeper mechanism.
+*shipped* build (fixed on a validation replay -- section 5.5 -- but fp1505 itself has
+not been rebuilt with the fix; see section 6 for exactly what that does and does not
+prove). Section 5.4/5.5 below settle *why*.
 
 ### 5.3 The superseded build: `full-20260814` -- a second, independent finding
 
@@ -271,7 +279,7 @@ something is badly wrong on this build*, not as a trustworthy violation count in
 right -- the same "a capped, erroring check is not a measurement" caution this project
 applies elsewhere (density windows, DRC saturation).
 
-### 5.4 The answer
+### 5.4 The answer, as it stood before the root-cause investigation
 
 **Does the SPNET fix work end-to-end? Partially, and it is now measured rather than
 assumed:**
@@ -283,11 +291,215 @@ assumed:**
 | `full-20260814` (superseded) | labelled, but shorted together | no text anywhere | NOT SIGNED OFF | independently reproduces the known 4-short defect (doc 43) |
 
 The core `VDD`/`VSS` labelling gap IMEC actually flagged is fixed on the build that
-matters (`fp1505`). The IO-supply (`VDDIO`/`VSSIO`) labelling gap is **not** fixed on
-either build, and is now a named, evidenced, open item rather than an "unconfirmed" one
--- see punch-list item 4 in [48](48-imec-signoff-results-analysis.md).
+matters (`fp1505`). The IO-supply (`VDDIO`/`VSSIO`) labelling gap was **not** fixed on
+either build as of the last measurement -- but the mechanism behind it is now
+understood and fixed. Section 5.5 has the investigation and the evidence.
 
-## 6. If Calibre is not available
+### 5.5 Root cause of the VDDIO/VSSIO gap -- investigated, one claim refuted, the real one found and fixed (2026-08-18)
+
+The gate-promotion plan (`docs/tapeout/53-gate-promotion-plan.md` §3) named a specific
+suspect for this gap: *"a LEF pin-type defect at
+`ASIC/eth-chiplet/config/design_config.tcl:177-189`, not yet fixed."* That claim was
+checked directly against the source and the actual build evidence, not re-quoted.
+
+**The claim, read literally, does not hold up.** `design_config.tcl:177-189` is a
+comment block titled *"NO DESIGN_LEF_OVERRIDES, AND THAT IS DELIBERATE"* -- it explains
+why *this file* declares no LEF override, because the fix already lives elsewhere: the
+tech pack reads a patched IO-driver LEF through the `TSMC65_IO_DRIVER_LEF` environment
+variable (`design.mk:318`, `ASIC/asic-toolkit/tech/tsmc65/tech.tcl:196-206`), generated
+by `ASIC/tech_wrappers/tsmc65/scripts/patch_pad_lef.py` (`make pad-lef`, wired as a
+prerequisite of `syn place cts route` in `design.mk:812`). That script inserts
+`USE POWER ;` / `USE GROUND ;` after the `DIRECTION` line on exactly the three pins the
+vendor left unclassified (`PVDD2DGZ_G`/`PVDD2POC_G` pin `VDDPST`, `PVSS2DGZ_G` pin
+`VSSPST`) -- the mechanism `tech.tcl:1060-1082`'s `io_lef_pg_pin_override_note` (marked
+"VERIFIED IN THE VENDOR FILE, not inferred") documents in full.
+
+**Is that fix actually landing on `fp1505`? Checked directly against the build's own
+log, not assumed:**
+
+```
+$ grep 'Loading LEF file' .../fp1505/work/innovus.log1
+Loading LEF file .../ASIC/tech_wrappers/tsmc65/generated/tphn65lpgv2od3_sl_9lm.patched.lef ...
+$ grep VSSPST .../fp1505/work/innovus.log1
+Pin 'VSSPST' of cell 'PVSS2DGZ_G' is declared as power/ground in LEF but as signal
+    in timing library.  Treat it as power/ground.
+Pin 'VDDPST' of cell 'PVDD2POC_G' is declared as power/ground in LEF but as signal
+    in timing library.  Treat it as power/ground.
+Pin 'VDDPST' of cell 'PVDD2DGZ_G' is declared as power/ground in LEF but as signal
+    in timing library.  Treat it as power/ground.
+```
+
+The patched LEF loads, and Innovus itself confirms it reads the three pins as
+power/ground. **The LEF pin-type fix is landed and is taking effect on `fp1505`. It is
+not the open defect, and "not yet fixed" was wrong about this specific file.** The
+promotion plan's underlying *mechanism* (three vendor pins misdeclared as signal pins)
+is real and well-evidenced -- it was simply already closed, via a different file than
+the one named, before this investigation started.
+
+**So why is VDDIO/VSSIO still empty?** `connect_global_net VDDIO -type pg_pin
+-pin_base_name VDDPST -inst_base_name *` (`power_plan.tcl:68`) only establishes *pin
+membership* -- it tells Innovus which physical pins belong to net `VDDIO`. It creates no
+metal. Geometry is created separately, by `add_rings`, `add_stripes` and
+`route_special`, and a full read of `ASIC/genus-innovus/scripts/power_plan.tcl`
+(692 executable lines) found that **every single one of those calls names only
+`{VDD VSS}`** -- `add_rings -nets {VDD VSS} ...` (:76), both early
+`route_special -nets {VDD}` / `{VSS}` pad-ring passes (:77-93), both `add_stripes -nets
+{VDD VSS}` M8/M9 passes (:124, :178), the M5 island-feed and main ladder (:478, :827),
+the later combined `route_special -nets {VDD VSS}` pad-ring pass (:834), and the final
+block/core/floating-stripe pass (:960-968). `VDDIO`/`VSSIO` appear **nowhere** in this
+file except the two `connect_global_net` lines. So the two IO-supply nets reach
+`write_stream` with pins registered but **zero routed special-net geometry** -- which is
+exactly "empty special nets" (the phrase `design_config.tcl:180` uses), and exactly why
+`gdsmap_derive`'s `NAME <layer>/SPNET` rows -- which fixed `VDD`/`VSS` -- have nothing to
+attach a label to for `VDDIO`/`VSSIO`: SPNET text is emitted where there is routed
+special-net metal, and there was none.
+
+**Verdict: the promotion plan's named location was wrong; the mechanism it half-pointed
+at (a vendor LEF pin-type defect) was real but already fixed; the actual, still-open
+defect is a separate, un-investigated omission in `ASIC/genus-innovus/scripts/
+power_plan.tcl` -- it was never given `add_rings`/`add_stripes`/`route_special` calls
+for the IO supplies at all.**
+
+**The fix.** Two new `route_special -connect {pad_pin pad_ring}` calls, added to
+`power_plan.tcl` immediately after the existing VDD/VSS pad-ring passes, naming
+`VDDIO`/`VSSIO`, mirroring the existing VDD/VSS calls' options exactly with one
+deliberate difference: `-pad_pin_width` is **omitted**. Innovus 21.11's own reference
+(`TCRcom/route_special.html`) states leaving it unset lets the tool compute the pad pin
+width itself and that specifying one "is usually not necessary" -- there is no
+measured/vendor-derived width for `VDDPST`/`VSSPST`'s connecting wire the way 1.63/1.5
+were derived for VDD/VSS, and guessing one risks a DRC width mismatch for no reason the
+documented default doesn't already cover.
+
+**Validated -- against the real database, not reasoned about:**
+
+fp1505's own routed checkpoint (`work/nanosoc_eth_chiplet_pads_routed`, the exact
+database `write_stream` produced the shipped GDS from) was reloaded **read-only**
+(`read_db`, the same discipline `ASIC/asic-toolkit/flow/verify/restream.tcl` already
+uses for a map-only A/B: no `write_db`, nothing written back to the checkpoint on disk),
+the two new `route_special` calls were run against it, and the result was streamed to a
+new GDS with the same map (`work/tech/gdsout.stream.map`, unchanged) and the same merge
+list fp1505's own `write_stream` used:
+
+```
+VDDIOFIX: === BEFORE FIX ===
+VDDIOFIX:   net VDD     pins=0     special_wires=8066
+VDDIOFIX:   net VSS     pins=0     special_wires=6905
+VDDIOFIX:   net VDDIO   pins=0     special_wires=0
+VDDIOFIX:   net VSSIO   pins=0     special_wires=0
+VDDIOFIX: === APPLYING route_special for VDDIO / VSSIO ===
+VDDIOFIX: === AFTER FIX ===
+VDDIOFIX:   net VDD     pins=0     special_wires=8066
+VDDIOFIX:   net VSS     pins=0     special_wires=6905
+VDDIOFIX:   net VDDIO   pins=0     special_wires=60
+VDDIOFIX:   net VSSIO   pins=0     special_wires=60
+VDDIOFIX: wrote 312384876 bytes to .../nanosoc_eth_chiplet_pads_vddiofix.gds
+```
+
+(the `pins=0` field is a `get_db .pins` query that reads 0 for all four nets including
+`VDD`/`VSS`, which visibly do have pins -- it is the wrong DB attribute for what it was
+meant to show and is not evidence of anything here; `special_wires` is the metric that
+matters and is the one this section's claims rest on.)
+
+`VDD`/`VSS` are unchanged (the fix touches nothing about them -- same 8066/6905 special
+wires before and after), and `VDDIO`/`VSSIO` go from **zero** routed special-net
+geometry to **60 each**. Then `run_erc.sh` was run for real -- full Calibre ERC plus the
+klayout structural cross-check, same as every other run on this page -- against that new
+GDS:
+
+```
+== Calibre verdict (PATHCHK POWER/GROUND + the deck's own per-name check) ==
+  OK — Calibre found at least one resolving power name and one resolving
+  ground name, and none of [VDD VDDIO] / [VSS VSSIO] hit the deck's own
+  no-data list...
+
+== Structural cross-check (klayout, independent of the deck's PATHCHK/
+   POWER_NAME-GROUND_NAME universe): does EACH of [VDD VDDIO] / [VSS VSSIO]
+   have text anywhere in the top cell? ==
+  OK — every declared name has top-cell text.
+
+== OVERALL: OK — labels present and resolved for [VDD VDDIO] / [VSS VSSIO]. ==
+```
+
+**`OVERALL: OK`, for the first time this page has ever recorded it against a real,
+Calibre-checked, non-reference GDS.** `VDD`, `VSS`, `VDDIO` and `VSSIO` all resolve, on
+both signals.
+
+**What this does and does not prove.** This is a real Calibre run against a real,
+routed database -- not a simulation, not reasoning about what *should* happen. It proves
+the fix mechanism works: the missing `route_special` calls are the actual cause, and
+adding them produces real, Calibre-recognised, klayout-visible labels for both IO
+supplies. It does **not** prove `fp1505` itself is fixed: the validation reloaded
+fp1505's routed checkpoint and streamed a *side* GDS from it (deliberately never
+overwriting the signoff artefact, same discipline `restream.tcl` documents for exactly
+this reason) rather than rebuilding `fp1505` through `place`/`cts`/`route`. `fp1505`'s
+own shipped GDS is untouched and will still read `PARTIAL` until it -- or a successor
+build -- is regenerated with the corrected `power_plan.tcl`. See section 6 for what a
+real rebuild would need and why it was not attempted here.
+
+## 6. `ci/signoff.yaml`'s `erc` stage, and its `check:` (added 2026-08-18)
+
+The stage existed (added earlier 2026-08-18) with `gate: report` and **no `check:`** --
+its own comment explained why: *"run_erc.sh's own exit code IS the verdict ... PARTIAL
+is deliberately not distinguished from OK at the exit-code level ... A block-gate
+promotion should add a real check: that greps OVERALL and fails the census on PARTIAL
+specifically."* That is `scripts/ci/erc_census.py`, added alongside this section,
+following the same doctrine `scripts/ci/drc_census.py` established: *"the tool exited 0"
+is never sufficient; each promoted gate needs its own explicit pass/fail predicate.*
+
+**What it reads.** `run_erc.sh` prints its `OVERALL:` line to its own stdout -- it is
+not written into `calibre_erc.sum` or any other Calibre artefact. So the stage's `run:`
+now tees the whole transcript into `ERC_RUNDIR/run_erc.log`, inside the build tree (same
+reasoning as the `drc` stage's own note: CI clones the repo and only ever sees what's in
+`ASIC/eth-chiplet/build/<tag>/`, not the gitignored `ASIC/genus-innovus/work/`), and
+`erc_census.py` reads that file.
+
+**The predicate.** Strips ANSI colour (`run_erc.sh`'s `red()`/`grn()` wrap `OK` and
+`NOT SIGNED OFF` in escape codes), matches the `OVERALL:` line, and:
+
+- `OK` -> pass.
+- `PARTIAL` -> **hard fail**, even though `run_erc.sh` itself exits 0 on this result.
+  This is the one substantive change from "trust the exit code": PARTIAL must never be
+  folded into a pass at the gate level, or the gate would have called `fp1505` clean
+  while `VDDIO`/`VSSIO` carried no text anywhere in the GDS.
+- `NOT SIGNED OFF`, no `OVERALL:` line at all, an empty transcript, or no transcript file
+  -> fail, each with a distinct, printed reason.
+
+**Proof it can fail, both directions -- `signoff.py prove erc`, run for real:**
+
+```
+stage           case                                        result     detail
+--------------------------------------------------------------------------------------------------------------
+erc             must_pass:pass                              ok         rc=0  0.1s
+erc             must_fail:fail-partial                      ok         rc=1  0.1s
+erc             must_fail:fail-not-signed-off               ok         rc=1  0.2s
+erc             must_fail:fail-no-output                    ok         rc=1  0.1s
+
+4 case(s) over 16 check(s); 0 problem(s)
+```
+
+Four fixtures, `ci/fixtures/erc/`:
+
+| Fixture | Content | Provenance |
+|---|---|---|
+| `pass` | trimmed real transcript, `OVERALL: OK` | this page's own section 5.5 validation run, 2026-08-18 |
+| `fail-partial` | real transcript excerpt, `OVERALL: PARTIAL` | section 5.2's `fp1505` measurement, verbatim |
+| `fail-not-signed-off` | real transcript excerpt, `OVERALL: NOT SIGNED OFF` | section 5.1's reference-GDS calibration run, verbatim |
+| `fail-no-output` | synthetic: Calibre licence never granted, script dies before any `OVERALL:` line | not a capture -- proves the "ran, but never reached a verdict" arm, distinct from a missing or empty log |
+
+Each fixture's `erc_run/` directory carries a `.__exclusive__` marker (the same
+mechanism `drc`'s fixtures use, `signoff.py`'s `_sandbox()`) so a real `erc_run` present
+on the host that runs `prove` cannot leak into the sandbox and decide the case instead
+of the fixture.
+
+**Still `gate: report`, deliberately.** The check can now fail -- that part of the
+promotion is done and proven. The design still cannot pass it as shipped: `fp1505`'s own
+GDS is unchanged and reads `PARTIAL`. Promoting to `gate: block` before a rebuilt
+`fp1505` (or successor) actually reads `OK` would manufacture a green gate the way this
+project's own culture explicitly refuses to -- see `ci/signoff.yaml`'s `drc` stage
+comment on the same question. Promote once a real `place`-onward rebuild with the
+corrected `power_plan.tcl` produces a GDS this stage's `run:` reads as `OK`.
+
+## 7. If Calibre is not available
 
 `run_erc.sh --check` fails fast and names exactly what is missing, without ever
 launching Calibre or taking a licence. If it reports `calibre` missing or the deck
@@ -313,6 +525,12 @@ post-P&R netlist. The resulting LVS *comparison* against that dummy is garbage (
 layout instance reads as unmatched) -- this is expected, and the script never inspects
 it. If you need a real LVS compare, use `ASIC/lvs-flow/run_lvs.sh` instead.
 
+**3. NEW -- `power_plan.tcl`'s VDDIO/VSSIO `route_special` calls omit `-pad_pin_width`
+on purpose.** Do not "complete the pattern" by copying VDD's `1.63` or VSS's `1.5` onto
+them -- those numbers were derived for a different pin family and were never measured
+for `VDDPST`/`VSSPST`. Innovus's own documented default (auto-computed pad pin width) is
+what section 5.5's validation actually ran against.
+
 ## Gotchas
 
 - `calibre` exiting non-zero (this deck's ERC-only runs typically report Calibre exit
@@ -325,3 +543,7 @@ it. If you need a real LVS compare, use `ASIC/lvs-flow/run_lvs.sh` instead.
 - Text present is not proof of a real, connected supply net -- section 5.3 is a real
   example of exactly that gap (label present, net shorted to the other supply). Only
   Calibre's own checks see connectivity; klayout only sees text.
+- **NEW -- `run_erc.sh`'s exit code and `ci/signoff.yaml`'s `erc` stage verdict can now
+  disagree, by design.** The script exits 0 on both `OK` and `PARTIAL`; the stage's
+  `check:` (`erc_census.py`) fails on `PARTIAL`. Read the `OVERALL:` line, not the exit
+  code, whichever way you ran it.
