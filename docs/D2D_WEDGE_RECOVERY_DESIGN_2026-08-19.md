@@ -159,22 +159,44 @@ status") and sets `TRIGGER_POSITION 2048` = the 50% position. `0x21F8` read over
 > None of the technical conclusions were touched by any of this, for one reason only: each was
 > re-derived from the raw CSV and the RTL rather than from testimony.
 
-#### Two CHEAP discriminators that need no new bitstream (both VERIFIED implemented, not spec-only)
-- **`0x2158` A2L_REPLAY_OBS** (`tidelink_top.sv:1443`, `[0] app_ready [1] link_empty [6:2] wptr
-  [11:7] synced_ack`). If its decode covers the B node, one register read during a wedge discriminates
-  case (i). ⚠ Trap noted in the RTL itself at `:1441` — in V2 the eye_shim path can win and make it
-  read `0x00000000` with no marker; check for the marker before trusting a zero.
-- **`xhb_stall_ctr_w`** (`:1852`, 12-bit; `:1865` re-zeroes on **every** `xhb_sub_hreadyout_raw` high).
-  Sampling it repeatedly during a wedge yields the **actual re-zero cadence**, hardening the
-  starvation story without an ILA. This is the right way to upgrade the n=1 pulse observation below
-  into a rate measurement.
-- A `bnode_reg.py` is reportedly staged on the board at `~/td/scripts/` (not in this repo) — check it
-  before writing a reader.
+#### ⚠ BOTH "cheap discriminators" I proposed are DEAD ENDS — struck, with replacements
+- **`0x2158` — STRUCK. Wrong node.** It observes the **TideLink sideband** FC node only
+  (`axi_chiplet_controller.sv:2658-2666` → `u_wlink` → `Wlink.v:1910 TideLinkToWlink tl2wl` →
+  `WlinkGenericFCSM_6` → `WlinkGenericFCReplayV2_13`). The AXI channels are a **different instance
+  tree** (`axi2wl/wlink_axi{aw,w,b}FC`). It cannot discriminate anything about B at any price.
+  (`REGISTER_MAP.md:352` also disagrees with the RTL on this offset — the RTL wins.)
+- **`xhb_stall_ctr_w` sampling — STRUCK. Not readable.** Bits `[23:12]` of the obs word are a literal
+  `12'h0`; only the saturation sticky `[10]` escapes the die. The counter never leaves.
+- **REPLACEMENT for the B binary — `0x21E0` (Region F, marker `0xAD`), and it IS free.**
+  `tidelink_axinode_obs` taps `.tgt_b_valid(axi_tgt_0_b_valid)` / `.tgt_b_ready(axi_tgt_0_b_ready)`
+  (`axi_chiplet_controller.sv:3065-3066`), and those are exactly `s_axi_bvalid_ctrl` / `s_axi_bready`.
+  **bit [2] = tgt_b live-stall, bit [12] = tgt_b wedge-sticky.**
+  ⚠ **ONE-WAY TEST:** `[2]=1` or `[12]=1` **PROVES case (ii)** (bvalid asserted, bready held low →
+  inside vendor XHB500). But `[2]=0 ∧ [12]=0` is **NO INFORMATION** — a never-driven B produces no
+  stall and the word still reads "healthy". Only claim case (i) if a liveness check on the sampler
+  succeeded first.
+- **REPLACEMENT for the cadence — a free BRACKET, no ILA.** If `[10]=1 ∧ [8]=0 ∧ [9]=0` then
+  `xhb_stall_ctr_w` hit `12'hFFF` at least once (≥4096 hclk with no re-zero) while `sub_stall_ctr_r`
+  never reached 2^16 ⇒ **the re-zero interval is bracketed to [4096, 65536) hclk.** No clock rate
+  assumed, no duration estimated. Report it as a bracket, never a point estimate.
+- **⛔ `bnode_reg.py` — DO NOT RUN on the pair-onchip target.** It uses the **eth-chiplet** address map
+  (`WINDOW=0x400000000`, `TLAPB=0x2E030000`) and would read an unmapped address here; and its `arm`
+  path is a **WRITE** to the Wlink error injector that is MEASURED to cause a **HARD PS WEDGE**
+  (`AXI_DATANODE_RECOVERY_GAP_2026_07_31.md:24`), ending the session. Reuse its offsets at
+  `0x8403_xxxx`; never its script.
 
 ### Still NOT PROVEN
 - **Branch C — XHB500 producing no write data — is now the LEADING open branch**, since the stall is
   demonstrably downstream of a healthy W channel.
-- **Throughput cost** of the prevention layer (§3) is unmeasured.
+- **Throughput cost** of the prevention layer (§3) is unmeasured — measurement in progress
+  (four arms: posted baseline / landed `[3:2]` / narrow `[2]`-only / an `hprot=0` control that must
+  be identical across tie-down states or the run is void).
+- **FPGA != ASIC configuration.** The A/B validates the EDIT on the FPGA vehicle; the tapeout ships
+  ECC/CRC/FCSM settings the FPGA does not. It does not validate the tapeout configuration.
+- **ARM B faulting (bounded AXI error) rather than hanging is NOT evidence that TL-037/N3/TL-043
+  work.** The sticky that fired belongs to the synth-B drain, which PREDATES all three and is on the
+  tapeout pin too; and TL-037's branch requires `sub_wr_os_ctr == 0` while this wedge pins it at 4,
+  so it structurally cannot have fired. Test it as a null-result-expected control only.
 
 ---
 
@@ -240,6 +262,17 @@ Remove the traffic class that arms the mechanism, rather than recovering from it
   and XHB500's Fix-K BID-correction **dead code**. That is a *stronger* property (the path cannot be
   constructed rather than being caught at runtime), but it makes this one line the sole protection.
   **If it is ever relaxed for throughput, those two must be revived first.**
+- **✅ HARDWARE VALIDATED 2026-08-20 — the edit itself, not just its mechanism.** Matched-conditions
+  A/B on `kr260-eth-chiplet` (the vehicle that instantiates this file), both dies `fcsm=4`, CAM
+  programmed, arms differing by exactly the two fix hunks:
+  **ARM B (pre-fix) 4 KB and 64 KB → AXI ERROR; ARM A (fix) 256 B..64 KB → ALL COMPLETED.**
+  The obs plane confirms the MECHANISM, not just the outcome: `pipe_hprot_r[2]` B=1 / A=0 (the
+  tie-down is in effect on silicon), `sub_wr_os_hwm` B=4 (saturated) / A=1 (cannot saturate),
+  `sub_wr_stuck_sticky` B=1 / A=0, RegionF `data_healthy` B=0 / A=1.
+  Evidence: `tidelink/imp/hw_gate/awready_ila_capture/results_ab_2026_08_20/AB_RESULT.md`
+  (tidelink `fae6d250`). ⚠ An earlier ARM A run hung the board at a DIFFERENT link state
+  (re-anchored) and is VOID, not a negative result — under matched conditions ARM A completes every
+  size tested. Bring-up here is a marginal-eye lottery; only compare arms at `fcsm=4` on both dies.
 - **⭐ THE CAPTURE MAKES THIS THE DIRECT FIX, not merely a prevention.** The measured mechanism is
   hazard-list saturation — and `hazard_add` is gated on `hprot[2]`. With `HPROT[2]` forced to 0 **no
   hazard entry is ever allocated**, so the list cannot saturate and the measured wedge becomes
