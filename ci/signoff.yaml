@@ -3091,8 +3091,57 @@ stages:
                    "the bench may have held a design signal. A pass obtained by force "
                    "is not the same claim." % _v)
           else:
-              info.append("secondary tree %s/%s: RESULT %s pass=%s fail=0, FORCES 0"
-                          % (_tag, _item, _m.group(1), _m.group(2)))
+              # PROVENANCE. A verdict sitting at the right path proves nothing about
+              # WHICH netlist produced it. The primary tree gets this in section 4;
+              # without it here, a pass published under a run tag need never have come
+              # from that run. This item simulates a STRIPPED COPY, so its inputs.txt
+              # records only that copy in build/ - the chain has to be walked:
+              #   strip_leaf_defs.txt names a SOURCE under this run's outputs/, and
+              #   its `out` is the very file inputs.txt says was simulated.
+              # A tree whose netlist is directly under the run's outputs/ needs no
+              # strip report; one that is neither is UNPROVEN and fails.
+              _ip = os.path.join(_d, "inputs.txt")
+              _nl = None
+              if os.path.exists(_ip):
+                  _mm = re.search(r"^netlist\s*:\s*(\S+)", open(_ip).read(), re.M)
+                  _nl = _mm.group(1) if _mm else None
+              _out_re = r"/build/%s/outputs/" % re.escape(_tag)
+              if _nl is None:
+                  fail("SECONDARY TREE HAS NO inputs.txt NETLIST LINE: %s. Its verdict "
+                       "cannot be tied to any netlist at all." % _d)
+              elif re.search(_out_re, _nl):
+                  info.append("secondary tree %s/%s: RESULT %s pass=%s fail=0, FORCES 0, "
+                              "netlist directly under %s/outputs/"
+                              % (_tag, _item, _m.group(1), _m.group(2), _tag))
+              else:
+                  _sp = os.path.join(_d, "strip_leaf_defs.txt")
+                  if not os.path.exists(_sp):
+                      fail("SECONDARY TREE PROVENANCE UNPROVEN: %s simulated %s, which is "
+                           "not under /build/%s/outputs/, and there is no "
+                           "strip_leaf_defs.txt to say where it came from. The verdict is "
+                           "published under this run's tag but nothing ties it to this "
+                           "run's netlist." % (_d, _nl, _tag))
+                  else:
+                      _st = open(_sp).read()
+                      _src = re.search(r"^strip_leaf_defs:\s*(\S+)", _st, re.M)
+                      _dst = re.search(r"^\s*out\s*:\s*(\S+)", _st, re.M)
+                      if not _src or not _dst:
+                          fail("SECONDARY TREE STRIP REPORT UNPARSEABLE: %s carries neither "
+                               "a source nor an out line." % _sp)
+                      elif not re.search(_out_re, _src.group(1)):
+                          fail("SECONDARY TREE STRIPPED THE WRONG NETLIST: %s says it "
+                               "stripped %s, which is not under /build/%s/outputs/. The "
+                               "evidence is published under that tag regardless."
+                               % (_sp, _src.group(1), _tag))
+                      elif _dst.group(1) != _nl:
+                          fail("SECONDARY TREE CHAIN IS BROKEN: %s stripped to %s, but "
+                               "inputs.txt says %s was simulated. Two different files; the "
+                               "strip report does not describe this run." 
+                               % (_sp, _dst.group(1), _nl))
+                      else:
+                          info.append("secondary tree %s/%s: RESULT %s pass=%s fail=0, "
+                                      "FORCES 0, netlist stripped from %s/outputs/"
+                                      % (_tag, _item, _m.group(1), _m.group(2), _tag))
 
 
       for i in info:
@@ -3164,6 +3213,12 @@ stages:
         #             UNVERIFIED IS NOT A PASS; retiring a run is a deliberate edit.
         - ci/fixtures/gls-netlist/fail-secondary-red
         - ci/fixtures/gls-netlist/fail-secondary-missing
+        #   wrong netlist : the tree is published under this run's tag, passes, is
+        #                   unforced - and its strip report says the netlist it
+        #                   simulated came out of a DIFFERENT run's outputs/. A
+        #                   verdict at the right path proves nothing about which
+        #                   netlist produced it; that is what this clause is for.
+        - ci/fixtures/gls-netlist/fail-secondary-wrong-netlist
         # RETIRED 2026-08-19: fail-known-open-closed. It proved the ratchet by showing
         # a KNOWN_OPEN rung gone green. With the register empty that shape is now
         # identical to `pass`, so the case could no longer test what it named. The

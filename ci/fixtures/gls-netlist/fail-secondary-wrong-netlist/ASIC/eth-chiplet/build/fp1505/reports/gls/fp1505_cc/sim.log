@@ -1,0 +1,888 @@
+Command: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/fp1505_cc/./simv +vcs+initreg+0 -l sim.log
+Chronologic VCS simulator copyright 1991-2022
+Contains Synopsys proprietary information.
+Compiler version T-2022.06-SP2_Full64; Runtime version T-2022.06-SP2_Full64;  Aug 19 16:57 2026
+GLSN-FORCES: 0 no testbench override was applied in this run
+GLSN-EVENT: 0 simulation start
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_ethmac_0_u_inner_u_eth_top_wishbone_bd_ram_u_sram_u_rf at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_ethmac_0_u_inner_u_eth_top_wishbone_bd_ram_u_sram_u_rf at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_dmem_0_u_sram_u_sram_gen_rf_16k.u_rf_sp_hdf  at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_dmem_0_u_sram_u_sram_gen_rf_16k.u_rf_sp_hdf  at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_eth_scratch_rx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_eth_scratch_rx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_eth_scratch_tx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_eth_scratch_tx_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf  at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.\u_region_imem_0_u_mem_u_sram_gen_rf_32k.u_rf_sp_hdf  at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf  at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\u_chip_core_u_region_imem_0_u_mem_u_sram_gen_rf_16k.u_rf_sp_hdf  at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\u_shared_sram_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\u_shared_sram_0_u_sram_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_tag_ram_0_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_tag_ram_0_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_tag_ram_0_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_tag_ram_0_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_0_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_0_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_3_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_3_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_3_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_3_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_1_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_1_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_1_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_1_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_2_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_2_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.\u_chip_core_u_region_dmem_0_u_mem_u_sram_gen_rf_08k.u_rf_sp_hdf  at 0
+VDD should be powered up after VDD in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink.u_tidelink_fifo_u_fifo_mem_u_sram_u_rf at 0
+Illegal power up sequencing in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink.u_tidelink_fifo_u_fifo_mem_u_sram_u_rf at 0
+                   0 ++BUS CONFLICT++ : gls_netlist_tb.u_dut.uPAD_QSPI_IO_2
+                   0 ++BUS CONFLICT++ : gls_netlist_tb.u_dut.uPAD_QSPI_IO_3
+Warning: Set Value for EMA doesn't match Default value 2 in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_soc.u_network_core.u_ethmac_0_u_inner_u_eth_top_wishbone_bd_ram_u_sram_u_rf at 0
+                   0 ++BUS CONFLICT++ : gls_netlist_tb.u_dut.uPAD_QSPI_IO_0
+                   0 ++BUS CONFLICT++ : gls_netlist_tb.u_dut.uPAD_I2C_SCL
+Warning: Set Value for EMA doesn't match Default value 2 in gls_netlist_tb.u_dut.u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink.u_tidelink_fifo_u_fifo_mem_u_sram_u_rf at 0
+GLSN-FLASH: BENCH-SUPPLIED DEVICE sst26vf064b on QSPI_SCLK,QSPI_nCS,QSPI_IO
+GLSN-FLASH:   the boot image below came from the bench, not the design.
+GLSN-FLASH: loaded 'flash_image.hex' into sst26vf064b.I0.memory (0x100000 bytes pre-erased to FF)
+GLSN-FLASH: offset 0x0 = 54 4f 4f 42 (magic, LE; expect 54 4f 4f 42)
+GLSN-TRACE: 10000 bootgate_cpu0 = 0x0
+GLSN-TRACE: 10000 qspi_ncs = 0x1
+GLSN-TRACE: 10000 qspi_sclk = 0x0
+GLSN-TRACE: 10000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 10000 eth_imem_CEN = 0x1
+GLSN-TRACE: 10000 cc_rom_A = 0x0
+GLSN-TRACE: 10000 eth_rom_A = 0x0
+GLSN-TRACE: 10000 cc_rom_CEN = 0x1
+GLSN-TRACE: 10000 eth_rom_CEN = 0x1
+GLSN-EVENT: 1270000 reset NRST released
+GLSN-TRACE: 1470000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1490000 cc_rom_A = 0x1
+GLSN-EVENT: 1490000 expect cc_rom_msp_on_Q satisfied
+GLSN-ACCESS: cc_rom_port t=1490000 #1 A=0x0 D=0x18003c00
+GLSN-TRACE: 1510000 cc_rom_A = 0x0
+GLSN-TRACE: 1510000 cc_rom_CEN = 0x1
+GLSN-EVENT: 1510000 expect cc_rom_rstvec_on_Q satisfied
+GLSN-ACCESS: cc_rom_port t=1510000 #2 A=0x1 D=0x8000189
+GLSN-TRACE: 1530000 cc_rom_A = 0x62
+GLSN-TRACE: 1530000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1550000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=1550000 #3 A=0x62 D=0x4a0b490a
+GLSN-TRACE: 1570000 cc_rom_A = 0x6d
+GLSN-TRACE: 1570000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1590000 cc_rom_A = 0x63
+GLSN-ACCESS: cc_rom_port t=1590000 #4 A=0x6d D=0x8000684
+GLSN-TRACE: 1610000 cc_rom_A = 0x6e
+GLSN-ACCESS: cc_rom_port t=1610000 #5 A=0x63 D=0x1a9b4b0b
+GLSN-TRACE: 1630000 cc_rom_A = 0x63
+GLSN-TRACE: 1630000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=1630000 #6 A=0x6e D=0x18000000
+GLSN-TRACE: 1650000 cc_rom_A = 0x6f
+GLSN-TRACE: 1650000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1670000 cc_rom_A = 0x64
+GLSN-ACCESS: cc_rom_port t=1670000 #7 A=0x6f D=0x18000068
+GLSN-TRACE: 1690000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=1690000 #8 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 1710000 cc_rom_A = 0x65
+GLSN-TRACE: 1710000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1730000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=1730000 #9 A=0x65 D=0x50d058c8
+GLSN-TRACE: 1750000 cc_rom_A = 0x1ba
+GLSN-TRACE: 1750000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1770000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=1770000 #10 A=0x1ba D=0x80000c1
+GLSN-TRACE: 1790000 cc_rom_A = 0x19
+GLSN-TRACE: 1790000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=1790000 #11 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 1810000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=1830000 #1 A=0x19 D=0x80000c1
+GLSN-TRACE: 1870000 cc_rom_A = 0x64
+GLSN-TRACE: 1870000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1890000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=1890000 #12 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 1910000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=1910000 #13 A=0x65 D=0x50d058c8
+GLSN-TRACE: 1930000 cc_rom_A = 0x1b9
+GLSN-TRACE: 1930000 cc_rom_CEN = 0x0
+GLSN-TRACE: 1950000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=1950000 #14 A=0x1b9 D=0x80000e9
+GLSN-TRACE: 1970000 cc_rom_A = 0x18
+GLSN-TRACE: 1970000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=1970000 #15 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 1990000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=2010000 #2 A=0x18 D=0x80000e9
+GLSN-TRACE: 2050000 cc_rom_A = 0x64
+GLSN-TRACE: 2050000 cc_rom_CEN = 0x0
+GLSN-TRACE: 2070000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=2070000 #16 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 2090000 cc_rom_CEN = 0x1
+GLSN-ACCESS: cc_rom_port t=2090000 #17 A=0x65 D=0x50d058c8
+GLSN-TRACE: 2110000 cc_rom_A = 0x1b8
+GLSN-TRACE: 2110000 cc_rom_CEN = 0x0
+GLSN-TRACE: 2130000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=2130000 #18 A=0x1b8 D=0x0
+GLSN-TRACE: 2150000 cc_rom_A = 0x17
+GLSN-ACCESS: cc_rom_port t=2150000 #19 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 2170000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=2190000 #3 A=0x17 D=0x0
+GLSN-TRACE: 2230000 cc_rom_A = 0x64
+GLSN-TRACE: 2250000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=2250000 #20 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=2270000 #21 A=0x65 D=0x50d058c8
+GLSN-TRACE: 2290000 cc_rom_A = 0x1b7
+GLSN-TRACE: 2310000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=2310000 #22 A=0x1b7 D=0x0
+GLSN-TRACE: 2330000 cc_rom_A = 0x16
+GLSN-ACCESS: cc_rom_port t=2330000 #23 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 2350000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=2370000 #4 A=0x16 D=0x0
+GLSN-TRACE: 2410000 cc_rom_A = 0x64
+GLSN-TRACE: 2430000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=2430000 #24 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=2450000 #25 A=0x65 D=0x50d058c8
+GLSN-TRACE: 2470000 cc_rom_A = 0x1b6
+GLSN-TRACE: 2490000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=2490000 #26 A=0x1b6 D=0x0
+GLSN-TRACE: 2510000 cc_rom_A = 0x15
+GLSN-ACCESS: cc_rom_port t=2510000 #27 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 2530000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=2550000 #5 A=0x15 D=0x0
+GLSN-TRACE: 2590000 cc_rom_A = 0x64
+GLSN-TRACE: 2610000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=2610000 #28 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=2630000 #29 A=0x65 D=0x50d058c8
+GLSN-TRACE: 2650000 cc_rom_A = 0x1b5
+GLSN-TRACE: 2670000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=2670000 #30 A=0x1b5 D=0x0
+GLSN-TRACE: 2690000 cc_rom_A = 0x14
+GLSN-ACCESS: cc_rom_port t=2690000 #31 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 2710000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=2730000 #6 A=0x14 D=0x0
+GLSN-TRACE: 2770000 cc_rom_A = 0x64
+GLSN-TRACE: 2790000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=2790000 #32 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=2810000 #33 A=0x65 D=0x50d058c8
+GLSN-TRACE: 2830000 cc_rom_A = 0x1b4
+GLSN-TRACE: 2850000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=2850000 #34 A=0x1b4 D=0x0
+GLSN-TRACE: 2870000 cc_rom_A = 0x13
+GLSN-ACCESS: cc_rom_port t=2870000 #35 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 2890000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=2910000 #7 A=0x13 D=0x0
+GLSN-TRACE: 2950000 cc_rom_A = 0x64
+GLSN-TRACE: 2970000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=2970000 #36 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=2990000 #37 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3010000 cc_rom_A = 0x1b3
+GLSN-TRACE: 3030000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=3030000 #38 A=0x1b3 D=0x0
+GLSN-TRACE: 3050000 cc_rom_A = 0x12
+GLSN-ACCESS: cc_rom_port t=3050000 #39 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3070000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=3090000 #8 A=0x12 D=0x0
+GLSN-TRACE: 3130000 cc_rom_A = 0x64
+GLSN-TRACE: 3150000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=3150000 #40 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=3170000 #41 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3190000 cc_rom_A = 0x1b2
+GLSN-TRACE: 3210000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=3210000 #42 A=0x1b2 D=0x0
+GLSN-TRACE: 3230000 cc_rom_A = 0x11
+GLSN-ACCESS: cc_rom_port t=3230000 #43 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3250000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=3270000 #9 A=0x11 D=0x0
+GLSN-TRACE: 3310000 cc_rom_A = 0x64
+GLSN-TRACE: 3330000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=3330000 #44 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=3350000 #45 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3370000 cc_rom_A = 0x1b1
+GLSN-TRACE: 3390000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=3390000 #46 A=0x1b1 D=0x0
+GLSN-TRACE: 3410000 cc_rom_A = 0x10
+GLSN-ACCESS: cc_rom_port t=3410000 #47 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3430000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=3450000 #10 A=0x10 D=0x0
+GLSN-TRACE: 3490000 cc_rom_A = 0x64
+GLSN-TRACE: 3510000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=3510000 #48 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=3530000 #49 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3550000 cc_rom_A = 0x1b0
+GLSN-TRACE: 3570000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=3570000 #50 A=0x1b0 D=0x0
+GLSN-TRACE: 3590000 cc_rom_A = 0xf
+GLSN-ACCESS: cc_rom_port t=3590000 #51 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3610000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=3630000 #11 A=0xf D=0x0
+GLSN-TRACE: 3670000 cc_rom_A = 0x64
+GLSN-TRACE: 3690000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=3690000 #52 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=3710000 #53 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3730000 cc_rom_A = 0x1af
+GLSN-TRACE: 3750000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=3750000 #54 A=0x1af D=0x0
+GLSN-TRACE: 3770000 cc_rom_A = 0xe
+GLSN-ACCESS: cc_rom_port t=3770000 #55 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3790000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=3810000 #12 A=0xe D=0x0
+GLSN-TRACE: 3850000 cc_rom_A = 0x64
+GLSN-TRACE: 3870000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=3870000 #56 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: cc_rom_port t=3890000 #57 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3910000 cc_rom_A = 0x1ae
+GLSN-TRACE: 3930000 cc_rom_A = 0x66
+GLSN-ACCESS: cc_rom_port t=3930000 #58 A=0x1ae D=0x0
+GLSN-TRACE: 3950000 cc_rom_A = 0xd
+GLSN-ACCESS: cc_rom_port t=3950000 #59 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3970000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=3990000 #13 A=0xd D=0x0
+GLSN-TRACE: 4030000 cc_rom_A = 0x64
+GLSN-TRACE: 4050000 cc_rom_A = 0x65
+GLSN-ACCESS: cc_rom_port t=4050000 #60 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 4090000 cc_rom_A = 0x1ad
+GLSN-TRACE: 4110000 cc_rom_A = 0x66
+GLSN-TRACE: 4130000 cc_rom_A = 0xc
+GLSN-TRACE: 4150000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=4170000 #14 A=0xc D=0x0
+GLSN-TRACE: 4210000 cc_rom_A = 0x64
+GLSN-TRACE: 4230000 cc_rom_A = 0x65
+GLSN-TRACE: 4270000 cc_rom_A = 0x1ac
+GLSN-TRACE: 4290000 cc_rom_A = 0x66
+GLSN-TRACE: 4310000 cc_rom_A = 0xb
+GLSN-TRACE: 4330000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=4350000 #15 A=0xb D=0x0
+GLSN-TRACE: 4390000 cc_rom_A = 0x64
+GLSN-TRACE: 4410000 cc_rom_A = 0x65
+GLSN-TRACE: 4450000 cc_rom_A = 0x1ab
+GLSN-TRACE: 4470000 cc_rom_A = 0x66
+GLSN-TRACE: 4490000 cc_rom_A = 0xa
+GLSN-TRACE: 4510000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=4530000 #16 A=0xa D=0x0
+GLSN-TRACE: 4570000 cc_rom_A = 0x64
+GLSN-TRACE: 4590000 cc_rom_A = 0x65
+GLSN-TRACE: 4630000 cc_rom_A = 0x1aa
+GLSN-TRACE: 4650000 cc_rom_A = 0x66
+GLSN-TRACE: 4670000 cc_rom_A = 0x9
+GLSN-TRACE: 4690000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=4710000 #17 A=0x9 D=0x0
+GLSN-TRACE: 4750000 cc_rom_A = 0x64
+GLSN-TRACE: 4770000 cc_rom_A = 0x65
+GLSN-TRACE: 4810000 cc_rom_A = 0x1a9
+GLSN-TRACE: 4830000 cc_rom_A = 0x66
+GLSN-TRACE: 4850000 cc_rom_A = 0x8
+GLSN-TRACE: 4870000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=4890000 #18 A=0x8 D=0x0
+GLSN-TRACE: 4930000 cc_rom_A = 0x64
+GLSN-TRACE: 4950000 cc_rom_A = 0x65
+GLSN-TRACE: 4990000 cc_rom_A = 0x1a8
+GLSN-TRACE: 5010000 cc_rom_A = 0x66
+GLSN-TRACE: 5030000 cc_rom_A = 0x7
+GLSN-TRACE: 5050000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=5070000 #19 A=0x7 D=0x0
+GLSN-TRACE: 5110000 cc_rom_A = 0x64
+GLSN-TRACE: 5130000 cc_rom_A = 0x65
+GLSN-TRACE: 5170000 cc_rom_A = 0x1a7
+GLSN-TRACE: 5190000 cc_rom_A = 0x66
+GLSN-TRACE: 5210000 cc_rom_A = 0x6
+GLSN-TRACE: 5230000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=5250000 #20 A=0x6 D=0x0
+GLSN-TRACE: 5290000 cc_rom_A = 0x64
+GLSN-TRACE: 5310000 cc_rom_A = 0x65
+GLSN-TRACE: 5350000 cc_rom_A = 0x1a6
+GLSN-TRACE: 5370000 cc_rom_A = 0x66
+GLSN-TRACE: 5390000 cc_rom_A = 0x5
+GLSN-TRACE: 5410000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=5430000 #21 A=0x5 D=0x0
+GLSN-TRACE: 5470000 cc_rom_A = 0x64
+GLSN-TRACE: 5490000 cc_rom_A = 0x65
+GLSN-TRACE: 5530000 cc_rom_A = 0x1a5
+GLSN-TRACE: 5550000 cc_rom_A = 0x66
+GLSN-TRACE: 5570000 cc_rom_A = 0x4
+GLSN-TRACE: 5590000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=5610000 #22 A=0x4 D=0x0
+GLSN-TRACE: 5650000 cc_rom_A = 0x64
+GLSN-TRACE: 5670000 cc_rom_A = 0x65
+GLSN-TRACE: 5710000 cc_rom_A = 0x1a4
+GLSN-TRACE: 5730000 cc_rom_A = 0x66
+GLSN-TRACE: 5750000 cc_rom_A = 0x3
+GLSN-TRACE: 5770000 cc_rom_A = 0x0
+GLSN-ACCESS: cpu1_dmem_write t=5790000 #23 A=0x3 D=0x0
+GLSN-TRACE: 5830000 cc_rom_A = 0x64
+GLSN-TRACE: 5850000 cc_rom_A = 0x65
+GLSN-TRACE: 5890000 cc_rom_A = 0x1a3
+GLSN-ACCESS: cpu1_dmem_write t=5970000 #24 A=0x2 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=6150000 #25 A=0x1 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=6330000 #26 A=0x0 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=6570000 #27 A=0x41 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=6710000 #28 A=0x40 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=6850000 #29 A=0x3f D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=6990000 #30 A=0x3e D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=7130000 #31 A=0x3d D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=7270000 #32 A=0x3c D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=7410000 #33 A=0x3b D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=7550000 #34 A=0x3a D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=7690000 #35 A=0x39 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=7830000 #36 A=0x38 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=7970000 #37 A=0x37 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=8110000 #38 A=0x36 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=8250000 #39 A=0x35 D=0x0
+GLSN-ACCESS: cpu1_dmem_write t=8390000 #40 A=0x34 D=0x0
+GLSN-EVENT: 46830000 expect cpu1_main_entered satisfied
+GLSN-TRACE: 47590000 qspi_ncs = 0x0
+GLSN-EVENT: 47590000 expect qspi_flash_addressed satisfied
+GLSN-TRACE: 47670000 qspi_sclk = 0x1
+GLSN-TRACE: 47690000 qspi_sclk = 0x0
+GLSN-TRACE: 47710000 qspi_sclk = 0x1
+GLSN-TRACE: 47730000 qspi_sclk = 0x0
+GLSN-TRACE: 47750000 qspi_sclk = 0x1
+GLSN-TRACE: 47770000 qspi_sclk = 0x0
+GLSN-TRACE: 47790000 qspi_sclk = 0x1
+GLSN-TRACE: 47810000 qspi_sclk = 0x0
+GLSN-TRACE: 47830000 qspi_sclk = 0x1
+GLSN-TRACE: 47850000 qspi_sclk = 0x0
+GLSN-TRACE: 47870000 qspi_sclk = 0x1
+GLSN-TRACE: 47890000 qspi_sclk = 0x0
+GLSN-TRACE: 47910000 qspi_sclk = 0x1
+GLSN-TRACE: 47930000 qspi_sclk = 0x0
+GLSN-TRACE: 47950000 qspi_sclk = 0x1
+GLSN-TRACE: 47970000 qspi_ncs = 0x1
+GLSN-TRACE: 47970000 qspi_sclk = 0x0
+GLSN-TRACE: 48670000 qspi_ncs = 0x0
+GLSN-TRACE: 48750000 qspi_sclk = 0x1
+GLSN-TRACE: 48770000 qspi_sclk = 0x0
+GLSN-TRACE: 48790000 qspi_sclk = 0x1
+GLSN-TRACE: 49050000 qspi_ncs = 0x1
+GLSN-TRACE: 49990000 qspi_ncs = 0x0
+GLSN-TRACE: 56770000 qspi_ncs = 0x1
+GLSN-TRACE: 58590000 qspi_ncs = 0x0
+GLSN-TRACE: 58970000 qspi_ncs = 0x1
+GLSN-TRACE: 60630000 qspi_ncs = 0x0
+GLSN-TRACE: 62330000 qspi_ncs = 0x1
+GLSN-TRACE: 63030000 qspi_ncs = 0x0
+GLSN-TRACE: 63730000 qspi_ncs = 0x1
+GLSN-TRACE: 65470000 qspi_ncs = 0x0
+GLSN-TRACE: 72250000 qspi_ncs = 0x1
+GLSN-TRACE: 73390000 qspi_ncs = 0x0
+GLSN-TRACE: 80170000 qspi_ncs = 0x1
+GLSN-TRACE: 80750000 qspi_ncs = 0x0
+GLSN-TRACE: 87530000 qspi_ncs = 0x1
+GLSN-TRACE: 88110000 qspi_ncs = 0x0
+GLSN-TRACE: 94890000 qspi_ncs = 0x1
+GLSN-TRACE: 95470000 qspi_ncs = 0x0
+GLSN-TRACE: 102250000 qspi_ncs = 0x1
+GLSN-TRACE: 102830000 qspi_ncs = 0x0
+GLSN-TRACE: 109610000 qspi_ncs = 0x1
+GLSN-TRACE: 110190000 qspi_ncs = 0x0
+GLSN-TRACE: 116970000 qspi_ncs = 0x1
+GLSN-TRACE: 117550000 qspi_ncs = 0x0
+GLSN-TRACE: 124330000 qspi_ncs = 0x1
+GLSN-TRACE: 124910000 qspi_ncs = 0x0
+GLSN-TRACE: 131690000 qspi_ncs = 0x1
+GLSN-TRACE: 132270000 qspi_ncs = 0x0
+GLSN-TRACE: 139050000 qspi_ncs = 0x1
+GLSN-TRACE: 139630000 qspi_ncs = 0x0
+GLSN-TRACE: 146410000 qspi_ncs = 0x1
+GLSN-TRACE: 146990000 qspi_ncs = 0x0
+GLSN-TRACE: 153770000 qspi_ncs = 0x1
+GLSN-TRACE: 154350000 qspi_ncs = 0x0
+GLSN-TRACE: 161130000 qspi_ncs = 0x1
+GLSN-TRACE: 161710000 qspi_ncs = 0x0
+GLSN-TRACE: 168490000 qspi_ncs = 0x1
+GLSN-TRACE: 169070000 qspi_ncs = 0x0
+GLSN-TRACE: 175850000 qspi_ncs = 0x1
+GLSN-TRACE: 176430000 qspi_ncs = 0x0
+GLSN-TRACE: 183210000 qspi_ncs = 0x1
+GLSN-TRACE: 183790000 qspi_ncs = 0x0
+GLSN-TRACE: 190570000 qspi_ncs = 0x1
+GLSN-TRACE: 191150000 qspi_ncs = 0x0
+GLSN-TRACE: 197930000 qspi_ncs = 0x1
+GLSN-TRACE: 198510000 qspi_ncs = 0x0
+GLSN-TRACE: 205290000 qspi_ncs = 0x1
+GLSN-TRACE: 205870000 qspi_ncs = 0x0
+GLSN-TRACE: 212650000 qspi_ncs = 0x1
+GLSN-TRACE: 213230000 qspi_ncs = 0x0
+GLSN-TRACE: 220010000 qspi_ncs = 0x1
+GLSN-TRACE: 220590000 qspi_ncs = 0x0
+GLSN-TRACE: 227370000 qspi_ncs = 0x1
+GLSN-TRACE: 227950000 qspi_ncs = 0x0
+GLSN-TRACE: 234730000 qspi_ncs = 0x1
+GLSN-TRACE: 235310000 qspi_ncs = 0x0
+GLSN-EVENT: 1000010000 expect cpu0_rom_idle_at_1ms satisfied
+GLSN-TRACE: 1143690000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1143690000 #1 A=0x0 D=0x18000c00
+GLSN-TRACE: 1143710000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1151050000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1151050000 #2 A=0x1 D=0x10000189
+GLSN-TRACE: 1151070000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1158410000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1158410000 #3 A=0x2 D=0x100001cd
+GLSN-TRACE: 1158430000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1165770000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1165770000 #4 A=0x3 D=0x100001cf
+GLSN-TRACE: 1165790000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1173130000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1173130000 #5 A=0x4 D=0x0
+GLSN-TRACE: 1173150000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1180490000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1180490000 #6 A=0x5 D=0x0
+GLSN-TRACE: 1180510000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1187850000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1187850000 #7 A=0x6 D=0x0
+GLSN-TRACE: 1187870000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1195210000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1195210000 #8 A=0x7 D=0x0
+GLSN-TRACE: 1195230000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1202570000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1202570000 #9 A=0x8 D=0x0
+GLSN-TRACE: 1202590000 cpu1_imem_CEN = 0x1
+GLSN-TRACE: 1209930000 cpu1_imem_CEN = 0x0
+GLSN-ACCESS: cpu1_imem_write t=1209930000 #10 A=0x9 D=0x0
+GLSN-ACCESS: cpu1_imem_write t=1217290000 #11 A=0xa D=0x0
+GLSN-ACCESS: cpu1_imem_write t=1224650000 #12 A=0xb D=0x100001d7
+GLSN-ACCESS: cpu1_imem_write t=1232010000 #13 A=0xc D=0x0
+GLSN-ACCESS: cpu1_imem_write t=1239370000 #14 A=0xd D=0x0
+GLSN-ACCESS: cpu1_imem_write t=1246730000 #15 A=0xe D=0x100001db
+GLSN-ACCESS: cpu1_imem_write t=1254090000 #16 A=0xf D=0x100001dd
+GLSN-ACCESS: cpu1_imem_write t=1261450000 #17 A=0x10 D=0x100001df
+GLSN-ACCESS: cpu1_imem_write t=1268810000 #18 A=0x11 D=0x100001e1
+GLSN-ACCESS: cpu1_imem_write t=1276170000 #19 A=0x12 D=0x100001e3
+GLSN-ACCESS: cpu1_imem_write t=1283530000 #20 A=0x13 D=0x100001e5
+GLSN-ACCESS: cpu1_imem_write t=1290890000 #21 A=0x14 D=0x100001e7
+GLSN-ACCESS: cpu1_imem_write t=1298250000 #22 A=0x15 D=0x100001e9
+GLSN-ACCESS: cpu1_imem_write t=1305610000 #23 A=0x16 D=0x100001eb
+GLSN-ACCESS: cpu1_imem_write t=1312970000 #24 A=0x17 D=0x100001ed
+GLSN-ACCESS: cpu1_imem_write t=1320330000 #25 A=0x18 D=0x100001ef
+GLSN-ACCESS: cpu1_imem_write t=1327690000 #26 A=0x19 D=0x100001f1
+GLSN-ACCESS: cpu1_imem_write t=1335050000 #27 A=0x1a D=0x100001f3
+GLSN-ACCESS: cpu1_imem_write t=1342410000 #28 A=0x1b D=0x0
+GLSN-ACCESS: cpu1_imem_write t=1349770000 #29 A=0x1c D=0x100001f5
+GLSN-ACCESS: cpu1_imem_write t=1357130000 #30 A=0x1d D=0x100001f7
+GLSN-ACCESS: cpu1_imem_write t=1364490000 #31 A=0x1e D=0x100001f9
+GLSN-ACCESS: cpu1_imem_write t=1371850000 #32 A=0x1f D=0x100001fb
+GLSN-ACCESS: cpu1_imem_write t=1379210000 #33 A=0x20 D=0x100001fd
+GLSN-ACCESS: cpu1_imem_write t=1386570000 #34 A=0x21 D=0x100001ff
+GLSN-ACCESS: cpu1_imem_write t=1393930000 #35 A=0x22 D=0x10000201
+GLSN-ACCESS: cpu1_imem_write t=1401290000 #36 A=0x23 D=0x10000203
+GLSN-ACCESS: cpu1_imem_write t=1408650000 #37 A=0x24 D=0x10000205
+GLSN-ACCESS: cpu1_imem_write t=1416010000 #38 A=0x25 D=0x10000207
+GLSN-ACCESS: cpu1_imem_write t=1423370000 #39 A=0x26 D=0x10000209
+GLSN-ACCESS: cpu1_imem_write t=1430730000 #40 A=0x27 D=0x1000020b
+GLSN-ACCESS: cpu1_imem_fetch t=2756330000 #1 A=0x0 D=0x18000c00
+GLSN-ACCESS: cpu1_imem_fetch t=2756810000 #2 A=0x0 D=0x18000c00
+GLSN-ACCESS: cpu1_imem_fetch t=2757290000 #3 A=0x0 D=0x18000c00
+GLSN-ACCESS: cpu1_imem_fetch t=2757770000 #4 A=0x0 D=0x18000c00
+GLSN-ACCESS: cpu1_imem_fetch t=2758250000 #5 A=0x1 D=0x10000189
+GLSN-ACCESS: cpu1_imem_fetch t=2758730000 #6 A=0x1 D=0x10000189
+GLSN-ACCESS: cpu1_imem_fetch t=2759210000 #7 A=0x1 D=0x10000189
+GLSN-ACCESS: cpu1_imem_fetch t=2759690000 #8 A=0x1 D=0x10000189
+GLSN-ACCESS: cpu1_imem_fetch t=2760170000 #9 A=0x2 D=0x100001cd
+GLSN-ACCESS: cpu1_imem_fetch t=2760650000 #10 A=0x2 D=0x100001cd
+GLSN-ACCESS: cpu1_imem_fetch t=2761130000 #11 A=0x2 D=0x100001cd
+GLSN-ACCESS: cpu1_imem_fetch t=2761610000 #12 A=0x2 D=0x100001cd
+GLSN-ACCESS: cpu1_imem_fetch t=2762090000 #13 A=0x3 D=0x100001cf
+GLSN-ACCESS: cpu1_imem_fetch t=2762570000 #14 A=0x3 D=0x100001cf
+GLSN-ACCESS: cpu1_imem_fetch t=2763050000 #15 A=0x3 D=0x100001cf
+GLSN-ACCESS: cpu1_imem_fetch t=2763530000 #16 A=0x3 D=0x100001cf
+GLSN-ACCESS: cpu1_imem_fetch t=2764010000 #17 A=0x4 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2764490000 #18 A=0x4 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2764970000 #19 A=0x4 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2765450000 #20 A=0x4 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2765930000 #21 A=0x5 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2766410000 #22 A=0x5 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2766890000 #23 A=0x5 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2767370000 #24 A=0x5 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2767850000 #25 A=0x6 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2768330000 #26 A=0x6 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2768810000 #27 A=0x6 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2769290000 #28 A=0x6 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2769770000 #29 A=0x7 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2770250000 #30 A=0x7 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2770730000 #31 A=0x7 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2771210000 #32 A=0x7 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2771690000 #33 A=0x8 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2772170000 #34 A=0x8 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2772650000 #35 A=0x8 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2773130000 #36 A=0x8 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2773610000 #37 A=0x9 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2774090000 #38 A=0x9 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2774570000 #39 A=0x9 D=0x0
+GLSN-ACCESS: cpu1_imem_fetch t=2775050000 #40 A=0x9 D=0x0
+GLSN-TRACE: 3179230000 bootgate_cpu0 = 0x1
+GLSN-TRACE: 3179410000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3179430000 eth_rom_A = 0x1
+GLSN-EVENT: 3179430000 expect eth_rom_msp_on_Q satisfied
+GLSN-ACCESS: eth_rom_port t=3179430000 #1 A=0x0 D=0x18003c00
+GLSN-TRACE: 3179450000 eth_rom_A = 0x0
+GLSN-TRACE: 3179450000 eth_rom_CEN = 0x1
+GLSN-EVENT: 3179450000 expect eth_rom_rstvec_on_Q satisfied
+GLSN-ACCESS: eth_rom_port t=3179450000 #2 A=0x1 D=0x8000189
+GLSN-TRACE: 3179470000 eth_rom_A = 0x62
+GLSN-TRACE: 3179470000 eth_rom_CEN = 0x0
+GLSN-EVENT: 3179470000 expect eth_rom_branch_word62 satisfied
+GLSN-TRACE: 3179490000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3179490000 #3 A=0x62 D=0x4a0b490a
+GLSN-TRACE: 3179510000 eth_rom_A = 0x6d
+GLSN-TRACE: 3179510000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3179530000 eth_rom_A = 0x63
+GLSN-ACCESS: eth_rom_port t=3179530000 #4 A=0x6d D=0x8000498
+GLSN-TRACE: 3179550000 eth_rom_A = 0x6e
+GLSN-ACCESS: eth_rom_port t=3179550000 #5 A=0x63 D=0x1a9b4b0b
+GLSN-TRACE: 3179570000 eth_rom_A = 0x63
+GLSN-TRACE: 3179570000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3179570000 #6 A=0x6e D=0x18000000
+GLSN-TRACE: 3179590000 eth_rom_A = 0x6f
+GLSN-TRACE: 3179590000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3179610000 eth_rom_A = 0x64
+GLSN-ACCESS: eth_rom_port t=3179610000 #7 A=0x6f D=0x18000068
+GLSN-TRACE: 3179630000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3179630000 #8 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 3179650000 eth_rom_A = 0x65
+GLSN-TRACE: 3179650000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3179670000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3179670000 #9 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3179690000 eth_rom_A = 0x13f
+GLSN-TRACE: 3179690000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3179710000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3179710000 #10 A=0x13f D=0x80000c1
+GLSN-TRACE: 3179730000 eth_rom_A = 0x19
+GLSN-TRACE: 3179730000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3179730000 #11 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3179750000 eth_rom_A = 0x0
+GLSN-TRACE: 3179810000 eth_rom_A = 0x64
+GLSN-TRACE: 3179810000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3179830000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3179830000 #12 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 3179850000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3179850000 #13 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3179870000 eth_rom_A = 0x13e
+GLSN-TRACE: 3179870000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3179890000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3179890000 #14 A=0x13e D=0x80000e9
+GLSN-TRACE: 3179910000 eth_rom_A = 0x18
+GLSN-TRACE: 3179910000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3179910000 #15 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3179930000 eth_rom_A = 0x0
+GLSN-TRACE: 3179990000 eth_rom_A = 0x64
+GLSN-TRACE: 3179990000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3180010000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3180010000 #16 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 3180030000 eth_rom_CEN = 0x1
+GLSN-ACCESS: eth_rom_port t=3180030000 #17 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3180050000 eth_rom_A = 0x13d
+GLSN-TRACE: 3180050000 eth_rom_CEN = 0x0
+GLSN-TRACE: 3180070000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3180070000 #18 A=0x13d D=0x0
+GLSN-TRACE: 3180090000 eth_rom_A = 0x17
+GLSN-ACCESS: eth_rom_port t=3180090000 #19 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3180110000 eth_rom_A = 0x0
+GLSN-TRACE: 3180170000 eth_rom_A = 0x64
+GLSN-TRACE: 3180190000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3180190000 #20 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3180210000 #21 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3180230000 eth_rom_A = 0x13c
+GLSN-TRACE: 3180250000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3180250000 #22 A=0x13c D=0x0
+GLSN-TRACE: 3180270000 eth_rom_A = 0x16
+GLSN-ACCESS: eth_rom_port t=3180270000 #23 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3180290000 eth_rom_A = 0x0
+GLSN-TRACE: 3180350000 eth_rom_A = 0x64
+GLSN-TRACE: 3180370000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3180370000 #24 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3180390000 #25 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3180410000 eth_rom_A = 0x13b
+GLSN-TRACE: 3180430000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3180430000 #26 A=0x13b D=0x0
+GLSN-TRACE: 3180450000 eth_rom_A = 0x15
+GLSN-ACCESS: eth_rom_port t=3180450000 #27 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3180470000 eth_rom_A = 0x0
+GLSN-TRACE: 3180530000 eth_rom_A = 0x64
+GLSN-TRACE: 3180550000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3180550000 #28 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3180570000 #29 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3180590000 eth_rom_A = 0x13a
+GLSN-TRACE: 3180610000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3180610000 #30 A=0x13a D=0x0
+GLSN-TRACE: 3180630000 eth_rom_A = 0x14
+GLSN-ACCESS: eth_rom_port t=3180630000 #31 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3180650000 eth_rom_A = 0x0
+GLSN-TRACE: 3180710000 eth_rom_A = 0x64
+GLSN-TRACE: 3180730000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3180730000 #32 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3180750000 #33 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3180770000 eth_rom_A = 0x139
+GLSN-TRACE: 3180790000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3180790000 #34 A=0x139 D=0x0
+GLSN-TRACE: 3180810000 eth_rom_A = 0x13
+GLSN-ACCESS: eth_rom_port t=3180810000 #35 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3180830000 eth_rom_A = 0x0
+GLSN-TRACE: 3180890000 eth_rom_A = 0x64
+GLSN-TRACE: 3180910000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3180910000 #36 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3180930000 #37 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3180950000 eth_rom_A = 0x138
+GLSN-TRACE: 3180970000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3180970000 #38 A=0x138 D=0x0
+GLSN-TRACE: 3180990000 eth_rom_A = 0x12
+GLSN-ACCESS: eth_rom_port t=3180990000 #39 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3181010000 eth_rom_A = 0x0
+GLSN-TRACE: 3181070000 eth_rom_A = 0x64
+GLSN-TRACE: 3181090000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3181090000 #40 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3181110000 #41 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3181130000 eth_rom_A = 0x137
+GLSN-TRACE: 3181150000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3181150000 #42 A=0x137 D=0x0
+GLSN-TRACE: 3181170000 eth_rom_A = 0x11
+GLSN-ACCESS: eth_rom_port t=3181170000 #43 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3181190000 eth_rom_A = 0x0
+GLSN-TRACE: 3181250000 eth_rom_A = 0x64
+GLSN-TRACE: 3181270000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3181270000 #44 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3181290000 #45 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3181310000 eth_rom_A = 0x136
+GLSN-TRACE: 3181330000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3181330000 #46 A=0x136 D=0x0
+GLSN-TRACE: 3181350000 eth_rom_A = 0x10
+GLSN-ACCESS: eth_rom_port t=3181350000 #47 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3181370000 eth_rom_A = 0x0
+GLSN-TRACE: 3181430000 eth_rom_A = 0x64
+GLSN-TRACE: 3181450000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3181450000 #48 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3181470000 #49 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3181490000 eth_rom_A = 0x135
+GLSN-TRACE: 3181510000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3181510000 #50 A=0x135 D=0x0
+GLSN-TRACE: 3181530000 eth_rom_A = 0xf
+GLSN-ACCESS: eth_rom_port t=3181530000 #51 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3181550000 eth_rom_A = 0x0
+GLSN-TRACE: 3181610000 eth_rom_A = 0x64
+GLSN-TRACE: 3181630000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3181630000 #52 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3181650000 #53 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3181670000 eth_rom_A = 0x134
+GLSN-TRACE: 3181690000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3181690000 #54 A=0x134 D=0x0
+GLSN-TRACE: 3181710000 eth_rom_A = 0xe
+GLSN-ACCESS: eth_rom_port t=3181710000 #55 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3181730000 eth_rom_A = 0x0
+GLSN-TRACE: 3181790000 eth_rom_A = 0x64
+GLSN-TRACE: 3181810000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3181810000 #56 A=0x64 D=0x3b04dd03
+GLSN-ACCESS: eth_rom_port t=3181830000 #57 A=0x65 D=0x50d058c8
+GLSN-TRACE: 3181850000 eth_rom_A = 0x133
+GLSN-TRACE: 3181870000 eth_rom_A = 0x66
+GLSN-ACCESS: eth_rom_port t=3181870000 #58 A=0x133 D=0x0
+GLSN-TRACE: 3181890000 eth_rom_A = 0xd
+GLSN-ACCESS: eth_rom_port t=3181890000 #59 A=0x66 D=0x4909dcfb
+GLSN-TRACE: 3181910000 eth_rom_A = 0x0
+GLSN-TRACE: 3181970000 eth_rom_A = 0x64
+GLSN-TRACE: 3181990000 eth_rom_A = 0x65
+GLSN-ACCESS: eth_rom_port t=3181990000 #60 A=0x64 D=0x3b04dd03
+GLSN-TRACE: 3182030000 eth_rom_A = 0x132
+GLSN-TRACE: 3182050000 eth_rom_A = 0x66
+GLSN-TRACE: 3182070000 eth_rom_A = 0xc
+GLSN-TRACE: 3182090000 eth_rom_A = 0x0
+GLSN-TRACE: 3182150000 eth_rom_A = 0x64
+GLSN-TRACE: 3182170000 eth_rom_A = 0x65
+GLSN-TRACE: 3182210000 eth_rom_A = 0x131
+GLSN-TRACE: 3182230000 eth_rom_A = 0x66
+GLSN-TRACE: 3182250000 eth_rom_A = 0xb
+GLSN-TRACE: 3182270000 eth_rom_A = 0x0
+GLSN-TRACE: 3182330000 eth_rom_A = 0x64
+GLSN-TRACE: 3182350000 eth_rom_A = 0x65
+GLSN-TRACE: 3182390000 eth_rom_A = 0x130
+GLSN-TRACE: 3182410000 eth_rom_A = 0x66
+GLSN-TRACE: 3182430000 eth_rom_A = 0xa
+GLSN-TRACE: 3182450000 eth_rom_A = 0x0
+GLSN-TRACE: 3182510000 eth_rom_A = 0x64
+GLSN-TRACE: 3182530000 eth_rom_A = 0x65
+GLSN-TRACE: 3182570000 eth_rom_A = 0x12f
+GLSN-TRACE: 3182590000 eth_rom_A = 0x66
+GLSN-TRACE: 3182610000 eth_rom_A = 0x9
+GLSN-TRACE: 3182630000 eth_rom_A = 0x0
+GLSN-TRACE: 3182690000 eth_rom_A = 0x64
+GLSN-TRACE: 3182710000 eth_rom_A = 0x65
+GLSN-TRACE: 3182750000 eth_rom_A = 0x12e
+GLSN-TRACE: 3182770000 eth_rom_A = 0x66
+GLSN-TRACE: 3182790000 eth_rom_A = 0x8
+GLSN-TRACE: 3182810000 eth_rom_A = 0x0
+GLSN-TRACE: 3182870000 eth_rom_A = 0x64
+GLSN-TRACE: 3182890000 eth_rom_A = 0x65
+GLSN-TRACE: 3182930000 eth_rom_A = 0x12d
+GLSN-TRACE: 3182950000 eth_rom_A = 0x66
+GLSN-TRACE: 3182970000 eth_rom_A = 0x7
+GLSN-TRACE: 3182990000 eth_rom_A = 0x0
+GLSN-TRACE: 3183050000 eth_rom_A = 0x64
+GLSN-TRACE: 3183070000 eth_rom_A = 0x65
+GLSN-TRACE: 3183110000 eth_rom_A = 0x12c
+GLSN-TRACE: 3183130000 eth_rom_A = 0x66
+GLSN-TRACE: 3183150000 eth_rom_A = 0x6
+GLSN-TRACE: 3183170000 eth_rom_A = 0x0
+GLSN-TRACE: 3183230000 eth_rom_A = 0x64
+GLSN-TRACE: 3183250000 eth_rom_A = 0x65
+GLSN-TRACE: 3183290000 eth_rom_A = 0x12b
+GLSN-TRACE: 3183310000 eth_rom_A = 0x66
+GLSN-TRACE: 3183330000 eth_rom_A = 0x5
+GLSN-TRACE: 3183350000 eth_rom_A = 0x0
+GLSN-TRACE: 3183410000 eth_rom_A = 0x64
+GLSN-TRACE: 3183430000 eth_rom_A = 0x65
+GLSN-TRACE: 3183470000 eth_rom_A = 0x12a
+GLSN-TRACE: 3183490000 eth_rom_A = 0x66
+GLSN-TRACE: 3183510000 eth_rom_A = 0x4
+GLSN-TRACE: 3183530000 eth_rom_A = 0x0
+GLSN-TRACE: 3183590000 eth_rom_A = 0x64
+GLSN-TRACE: 3183610000 eth_rom_A = 0x65
+GLSN-TRACE: 3183650000 eth_rom_A = 0x129
+GLSN-TRACE: 3183670000 eth_rom_A = 0x66
+GLSN-TRACE: 3183690000 eth_rom_A = 0x3
+GLSN-TRACE: 3183710000 eth_rom_A = 0x0
+GLSN-TRACE: 3183770000 eth_rom_A = 0x64
+GLSN-TRACE: 3183790000 eth_rom_A = 0x65
+GLSN-TRACE: 3183830000 eth_rom_A = 0x128
+GLSN-TRACE: 3474970000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3474970000 #1 A=0x0 D=0x18003c00
+GLSN-TRACE: 3474990000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3482290000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3482290000 #2 A=0x1 D=0x189
+GLSN-TRACE: 3482310000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3489610000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3489610000 #3 A=0x2 D=0x1cd
+GLSN-TRACE: 3489630000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3496930000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3496930000 #4 A=0x3 D=0x1cf
+GLSN-TRACE: 3496950000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3504250000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3504250000 #5 A=0x4 D=0x0
+GLSN-TRACE: 3504270000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3511570000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3511570000 #6 A=0x5 D=0x0
+GLSN-TRACE: 3511590000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3518890000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3518890000 #7 A=0x6 D=0x0
+GLSN-TRACE: 3518910000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3526210000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3526210000 #8 A=0x7 D=0x0
+GLSN-TRACE: 3526230000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3533530000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3533530000 #9 A=0x8 D=0x0
+GLSN-TRACE: 3533550000 eth_imem_CEN = 0x1
+GLSN-TRACE: 3540850000 eth_imem_CEN = 0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3540850000 #10 A=0x9 D=0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3548170000 #11 A=0xa D=0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3555490000 #12 A=0xb D=0x1d7
+GLSN-ACCESS: eth_imem_write_after_release t=3562810000 #13 A=0xc D=0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3570130000 #14 A=0xd D=0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3577450000 #15 A=0xe D=0x1db
+GLSN-ACCESS: eth_imem_write_after_release t=3584770000 #16 A=0xf D=0x1dd
+GLSN-ACCESS: eth_imem_write_after_release t=3592090000 #17 A=0x10 D=0x1df
+GLSN-ACCESS: eth_imem_write_after_release t=3599410000 #18 A=0x11 D=0x1e1
+GLSN-ACCESS: eth_imem_write_after_release t=3606730000 #19 A=0x12 D=0x1e3
+GLSN-ACCESS: eth_imem_write_after_release t=3614050000 #20 A=0x13 D=0x1e5
+GLSN-ACCESS: eth_imem_write_after_release t=3621370000 #21 A=0x14 D=0x1e7
+GLSN-ACCESS: eth_imem_write_after_release t=3628690000 #22 A=0x15 D=0x1e9
+GLSN-ACCESS: eth_imem_write_after_release t=3636010000 #23 A=0x16 D=0x1eb
+GLSN-ACCESS: eth_imem_write_after_release t=3643330000 #24 A=0x17 D=0x1ed
+GLSN-ACCESS: eth_imem_write_after_release t=3650650000 #25 A=0x18 D=0x1ef
+GLSN-ACCESS: eth_imem_write_after_release t=3657970000 #26 A=0x19 D=0x1f1
+GLSN-ACCESS: eth_imem_write_after_release t=3665290000 #27 A=0x1a D=0x1f3
+GLSN-ACCESS: eth_imem_write_after_release t=3672610000 #28 A=0x1b D=0x0
+GLSN-ACCESS: eth_imem_write_after_release t=3679930000 #29 A=0x1c D=0x1f5
+GLSN-ACCESS: eth_imem_write_after_release t=3687250000 #30 A=0x1d D=0x1f7
+GLSN-ACCESS: eth_imem_write_after_release t=3694570000 #31 A=0x1e D=0x1f9
+GLSN-ACCESS: eth_imem_write_after_release t=3701890000 #32 A=0x1f D=0x1fb
+GLSN-ACCESS: eth_imem_write_after_release t=3709210000 #33 A=0x20 D=0x1fd
+GLSN-ACCESS: eth_imem_write_after_release t=3716530000 #34 A=0x21 D=0x1ff
+GLSN-ACCESS: eth_imem_write_after_release t=3723850000 #35 A=0x22 D=0x201
+GLSN-ACCESS: eth_imem_write_after_release t=3731170000 #36 A=0x23 D=0x203
+GLSN-ACCESS: eth_imem_write_after_release t=3738490000 #37 A=0x24 D=0x205
+GLSN-ACCESS: eth_imem_write_after_release t=3745810000 #38 A=0x25 D=0x207
+GLSN-ACCESS: eth_imem_write_after_release t=3753130000 #39 A=0x26 D=0x209
+GLSN-ACCESS: eth_imem_write_after_release t=3760450000 #40 A=0x27 D=0x20b
+GLSN-ACCESS: eth_imem_fetch t=5276390000 #1 A=0x0 D=0x18003c00
+GLSN-ACCESS: eth_imem_fetch t=5276850000 #2 A=0x0 D=0x18003c00
+GLSN-ACCESS: eth_imem_fetch t=5277310000 #3 A=0x0 D=0x18003c00
+GLSN-ACCESS: eth_imem_fetch t=5277770000 #4 A=0x0 D=0x18003c00
+GLSN-ACCESS: eth_imem_fetch t=5278230000 #5 A=0x1 D=0x189
+GLSN-ACCESS: eth_imem_fetch t=5278690000 #6 A=0x1 D=0x189
+GLSN-ACCESS: eth_imem_fetch t=5279150000 #7 A=0x1 D=0x189
+GLSN-ACCESS: eth_imem_fetch t=5279610000 #8 A=0x1 D=0x189
+GLSN-ACCESS: eth_imem_fetch t=5280070000 #9 A=0x2 D=0x1cd
+GLSN-ACCESS: eth_imem_fetch t=5280530000 #10 A=0x2 D=0x1cd
+GLSN-ACCESS: eth_imem_fetch t=5280990000 #11 A=0x2 D=0x1cd
+GLSN-ACCESS: eth_imem_fetch t=5281450000 #12 A=0x2 D=0x1cd
+GLSN-ACCESS: eth_imem_fetch t=5281910000 #13 A=0x3 D=0x1cf
+GLSN-ACCESS: eth_imem_fetch t=5282370000 #14 A=0x3 D=0x1cf
+GLSN-ACCESS: eth_imem_fetch t=5282830000 #15 A=0x3 D=0x1cf
+GLSN-ACCESS: eth_imem_fetch t=5283290000 #16 A=0x3 D=0x1cf
+GLSN-ACCESS: eth_imem_fetch t=5283750000 #17 A=0x4 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5284210000 #18 A=0x4 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5284670000 #19 A=0x4 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5285130000 #20 A=0x4 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5285590000 #21 A=0x5 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5286050000 #22 A=0x5 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5286510000 #23 A=0x5 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5286970000 #24 A=0x5 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5287430000 #25 A=0x6 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5287890000 #26 A=0x6 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5288350000 #27 A=0x6 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5288810000 #28 A=0x6 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5289270000 #29 A=0x7 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5289730000 #30 A=0x7 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5290190000 #31 A=0x7 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5290650000 #32 A=0x7 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5291110000 #33 A=0x8 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5291570000 #34 A=0x8 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5292030000 #35 A=0x8 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5292490000 #36 A=0x8 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5292950000 #37 A=0x9 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5293410000 #38 A=0x9 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5293870000 #39 A=0x9 D=0x0
+GLSN-ACCESS: eth_imem_fetch t=5294330000 #40 A=0x9 D=0x0
+GLSN-EVENT: 5731830000 expect eth_sysctrl_remap_set satisfied
+GLSN-EVENT: 6399990000 run complete
+GLSN-VERDICT: cc_rom.nonx PASS words=512 X=0 mismatch=0
+GLSN-VERDICT: cc_rom.content PASS words=512 X=0 mismatch=0
+GLSN-VERDICT: eth_rom.nonx PASS words=512 X=0 mismatch=0
+GLSN-VERDICT: eth_rom.content PASS words=512 X=0 mismatch=0
+GLSN-INFO: cc_rom_port first access A=0x0 D=0x18003c00
+GLSN-VERDICT: cc_rom_port.accessed PASS accesses=15313 xdata=0
+GLSN-VERDICT: cc_rom_port.data_nonx PASS accesses=15313 xdata=0
+GLSN-INFO: eth_rom_port first access A=0x0 D=0x18003c00
+GLSN-VERDICT: eth_rom_port.accessed PASS accesses=13908 xdata=0
+GLSN-VERDICT: eth_rom_port.data_nonx PASS accesses=13908 xdata=0
+GLSN-INFO: cpu1_dmem_write first access A=0x19 D=0x80000c1
+GLSN-VERDICT: cpu1_dmem_write.accessed PASS accesses=510 xdata=0
+GLSN-VERDICT: cpu1_dmem_write.data_nonx PASS accesses=510 xdata=0
+GLSN-INFO: cpu1_imem_write first access A=0x0 D=0x18000c00
+GLSN-VERDICT: cpu1_imem_write.accessed PASS accesses=220 xdata=0
+GLSN-VERDICT: cpu1_imem_write.data_nonx PASS accesses=220 xdata=0
+GLSN-INFO: cpu1_imem_fetch first access A=0x0 D=0x18000c00
+GLSN-VERDICT: cpu1_imem_fetch.accessed PASS accesses=97304 xdata=0
+GLSN-VERDICT: cpu1_imem_fetch.data_nonx PASS accesses=97304 xdata=0
+GLSN-INFO: eth_imem_write_after_release first access A=0x0 D=0x18003c00
+GLSN-VERDICT: eth_imem_write_after_release.accessed PASS accesses=247 xdata=0
+GLSN-VERDICT: eth_imem_write_after_release.data_nonx PASS accesses=247 xdata=0
+GLSN-INFO: eth_imem_fetch first access A=0x0 D=0x18003c00
+GLSN-VERDICT: eth_imem_fetch.accessed PASS accesses=8576 xdata=0
+GLSN-VERDICT: eth_imem_fetch.data_nonx PASS accesses=8576 xdata=0
+GLSN-VERDICT: cc_rom_msp_on_Q PASS at=1490000
+GLSN-VERDICT: cc_rom_rstvec_on_Q PASS at=1510000
+GLSN-VERDICT: cpu1_main_entered PASS at=46830000
+GLSN-VERDICT: eth_rom_msp_on_Q PASS at=3179430000
+GLSN-VERDICT: eth_rom_rstvec_on_Q PASS at=3179450000
+GLSN-VERDICT: cpu0_rom_idle_at_1ms PASS at=1000010000
+GLSN-VERDICT: qspi_flash_addressed PASS at=47590000
+GLSN-VERDICT: eth_rom_branch_word62 PASS at=3179470000
+GLSN-VERDICT: eth_sysctrl_remap_set PASS at=5731830000
+GLSN-RESULT: PASS  pass=27 fail=0
+$finish called from file "/home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/fp1505_cc/gls_netlist_tb.v", line 534.
+$finish at simulation time           6399990000
+           V C S   S i m u l a t i o n   R e p o r t 
+Time: 6399990000 ps
+CPU Time:     52.380 seconds;       Data structure size:  35.2Mb
+Wed Aug 19 16:58:08 2026
