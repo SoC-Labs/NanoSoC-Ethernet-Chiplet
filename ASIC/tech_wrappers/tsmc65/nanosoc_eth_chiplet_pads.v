@@ -46,6 +46,29 @@
 //-----------------------------------------------------------------------------
 
 module nanosoc_eth_chiplet_pads (
+  // SUPPLY PORTS -- ADDED 2026-08-20.
+  //
+  // These four were internal `wire`s until now, which is why this design streamed
+  // with NO top-level power/ground labels and imec's ERC failed twice with "No
+  // labels found in topcell. At least power/ground labels are required."
+  //
+  // Innovus writes LABELS, not pins, into GDS, and it only writes one where a pin
+  // (or, with a NAME <layer>/SPNET map row, special-net wire) gives it an anchor.
+  // A top-level `inout` on a PG net creates that pin, and the STOCK PDK map already
+  // carries the row that labels it: NAME M<n>/PIN -> 13<n>.
+  //
+  // This is what the previous SoCLabs TSMC65 tapeout did --
+  // nanosoc_tech/ASIC/nanosoc_chip_pads/tsmc65lp/nanosoc_chip_pads_44pin.v declares
+  // exactly these as `inout wire`, its post-P&R netlist still carries all four, and
+  // its shipped GDS has VDD/VDDIO/VSS/VSSIO on layer 137 with an UNMODIFIED map.
+  // Six of the eight chip-pads variants in that library declare them; we were the
+  // outlier. Doing the same here lets the local NAME/SPNET map rows be removed,
+  // which is what imec asked for.
+  inout  wire           VDDIO,
+  inout  wire           VSSIO,
+  inout  wire           VDD,
+  inout  wire           VSS,
+
   input  wire           SE,
   input  wire           CLK, // input
   input  wire           TEST, // input
@@ -206,10 +229,11 @@ nanosoc_eth_chiplet_chip u_nanosoc_eth_chiplet_chip (
 //   PVSS1DGZ_G             -> .VSS     core ground
 // Each is a lone `inout` with a self-connected `tran` (sim no-op); wiring
 // them just states ring connectivity in the source for LVS.
-wire VDDIO;   // IO   supply -- 12 pads
-wire VSSIO;   // IO   ground -- 12 pads
-wire VDD;     // core supply --  6 pads
-wire VSS;     // core ground --  4 pads
+// VDDIO / VSSIO / VDD / VSS are now TOP-LEVEL `inout` PORTS (see the module
+// header). They were internal wires here; a port is already a net, so
+// redeclaring them would be a duplicate declaration.
+//   VDDIO  IO   supply -- 12 pads      VDD  core supply --  6 pads
+//   VSSIO  IO   ground -- 12 pads      VSS  core ground --  4 pads
 
 // PVDD2POC_G is the ring's power-on-control anchor cell. Padring convention
 // (MiniASIC user guide p.32-33 item 6) requires exactly ONE per power domain
