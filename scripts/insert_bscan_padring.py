@@ -207,11 +207,31 @@ def main():
     blk.append(");")
     blk.append("")
 
-    # insert immediately before the first pad cell instantiation
-    anchor = re.search(r"\n\s*//[^\n]*\n\s*PDDW04DGZ_G\s+uPAD_SE_I", src)
-    if not anchor:
-        anchor = re.search(r"\n\s*PD[DU]W\d+DGZ_G\s+uPAD_", src)
-    pos = anchor.start()
+    # Insert immediately before the FIRST pad cell instantiation, found by asking
+    # the table which instances exist and taking the earliest one that appears.
+    #
+    # An earlier version anchored on the literal `PDDW04DGZ_G uPAD_SE_I` with a
+    # `PD[DU]W\d+DGZ_G uPAD_` fallback. Both are this die's spelling: the first
+    # names its enable pad AND that pad's cell type, and the second assumes the
+    # TSMC PDDW/PDUW naming. It survived the compute chiplet only because the
+    # fallback happened to match. Worse, when both miss, `anchor.start()` raises
+    # AttributeError from a line that gives no clue what went wrong -- the header
+    # of this file claims nothing design-specific is hardcoded, and that claim
+    # was false here.
+    #
+    # The table already knows every pad instance in this ring, so use it.
+    positions = []
+    for p in pads:
+        m = re.search(r"[ \t]%s\s*\(" % re.escape(p["inst"]), src)
+        if m:
+            # back up to the start of the cell-type token on that line
+            ls = src.rfind("\n", 0, m.start()) + 1
+            positions.append(ls)
+    if not positions:
+        sys.exit("ERROR: found none of the %d pad instances from the table in %s.\n"
+                 "       The table and the pad ring do not describe the same design."
+                 % (len(pads), pads_path))
+    pos = min(positions)
     src = src[:pos] + "\n" + "\n".join(blk) + src[pos:]
 
     pathlib.Path(args.output or pads_path).write_text(src)

@@ -203,7 +203,25 @@ module bscan_ir #(
       INSN_SAMPLE_PRELOAD : dec = 5'b00100;  // boundary reg, pads functional
       INSN_IDCODE         : dec = 5'b01000;  // 32-bit ID reg in the wrapper
       INSN_CLAMP          : dec = 5'b10010;  // BYPASS in chain, pads held by BSR
-      INSN_HIGHZ          : dec = 5'b10001;  // BYPASS in chain, all pads off
+      // HIGHZ IS NOT IMPLEMENTED, AND MUST NOT BE DECODED. It used to map to
+      // 5'b10001 -- bypass in the chain, `highz` asserted, all drivers off.
+      // The BSDL does not declare HIGHZ (gen_bscan.py omits it, because 15 of
+      // the 48 pads are pure outputs whose OEN is tied low in the pad ring and
+      // which therefore CANNOT be tri-stated), so opcode 4'b0100 falls into the
+      // BSDL's BYPASS list.
+      //
+      // That made the two artefacts disagree about the same opcode, silently
+      // and dangerously: a tester reading the BSDL issues 0100 believing it
+      // asked for BYPASS, the scan path behaves exactly like BYPASS because the
+      // bypass register really is in the chain -- and 13 bidir plus 2
+      // open-drain pads go high-Z underneath it with nothing to see. On a board
+      // with the D2D link live that drops this die's drivers mid-test.
+      //
+      // Resolved in favour of the BSDL: 0100 now falls through to `default` and
+      // behaves as plain BYPASS, which is what the BSDL promises and what
+      // Clause 8.4 requires of an unimplemented opcode. If HIGHZ is ever wanted
+      // for real, give the 15 output pads a control cell each (chain 76 -> 91),
+      // declare it in the BSDL, and restore this arm -- all three together.
       INSN_BYPASS         : dec = 5'b10000;
       // 1149.1 Clause 8.4: every unimplemented opcode must behave as BYPASS.
       // Not a defensive nicety — a tester that guesses a private opcode must
