@@ -351,6 +351,15 @@ GLSN_EVIDENCE_gdsrun_cc := $(REPO)/ASIC/eth-chiplet/build/gdsrun-20260819/report
 # `gls-netlist-%`, which re-runs the whole item - so setting GLSN_EVIDENCE after a
 # good run otherwise costs another full simulation to copy six files. Nothing here
 # recomputes evidence; it copies what the run already wrote.
+# strip_leaf_defs.txt JOINS THE EVIDENCE, and it is load-bearing rather than
+# decorative. This item simulates a STRIPPED COPY of the routed netlist, so its
+# inputs.txt records only that copy's path in build/ - nothing in the published
+# evidence otherwise ties the run to the gdsrun outputs tree it came from. The
+# strip report names the source, and the signoff stage's SECONDARY block asserts
+# the chain: report source under the declared run's outputs/, report `out` equal
+# to the netlist inputs.txt actually simulated.
+GLSN_EVIDENCE_FILES += strip_leaf_defs.txt
+
 gls-netlist-publish-%: ; @$(call glsn_publish,$*)
 GLSN_BUILD_TIMEOUT_gdsrun_cc := 7200
 GLSN_RUN_TIMEOUT_gdsrun_cc   := 7200

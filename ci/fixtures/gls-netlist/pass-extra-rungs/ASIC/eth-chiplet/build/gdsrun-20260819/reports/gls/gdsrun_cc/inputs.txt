@@ -1,0 +1,33 @@
+item          : gdsrun_cc
+netlist       : /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/gdsrun_cc/nanosoc_eth_chiplet_pads_pnr_pg_stripped.v
+netlist sha256: 7b5c7db0e30eaeb6880b45fd29f0850e1c89e524d63f1438a08c5d036ccfd50c
+simulated file: /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/gdsrun_cc/nanosoc_eth_chiplet_pads_pnr_pg_stripped_pgc.v
+  sha256      : 7b5c7db0e30eaeb6880b45fd29f0850e1c89e524d63f1438a08c5d036ccfd50c
+  pg pairs    : VDD:VSS VDDE:VSSE
+top           : nanosoc_eth_chiplet_pads
+spec          : /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/gls-netlist/bench/eth_chiplet_fp1505_cc.json
+simulator     : vcs
+zero delay    : 1 (1 = +nospecify +notimingcheck)
+run dir       : /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/gdsrun_cc
+date          : 2026-08-20T08:10:37Z
+
+-- models --
+  REDACTED IN THIS FIXTURE. The real run's inputs.txt lists every simulation
+  model by absolute site path and by revision-coded library release name.
+  This file is committed to a public repository, so that list is not carried
+  here. The check reads only the `netlist:` line and the FORCES rows.
+-- stub declarations --
+  d438cb564d95f9e6ac59dd31b259aae3060fab08ae9acea11bcff0563c724c15  /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/lec/bondpad_stubs.v
+-- stub cells declared inert --
+  PAD70GU PAD70NU
+
+-- staged model content (basename read OUT OF the model) --
+  20095b283997c1dde4a05511443780291798a8b50624325058cc240627f2510f  rom_via_verilog.rcf  <- /home/dam1n19/SoCLabs/gds-run-20260819/ASIC/eth-chiplet/build/gdsrun-20260819/romlibs/cc_rom/rom_via_verilog.rcf
+      asked for by: /home/dam1n19/SoCLabs/gds-run-20260819/ASIC/eth-chiplet/build/gdsrun-20260819/romlibs/cc_rom/rom_via.v
+  582200fea960fd5987a4b276b28544ea32c2612cc2c6d24809f72fea52a1e29c  eth_rom_via_verilog.rcf  <- /home/dam1n19/SoCLabs/gds-run-20260819/ASIC/eth-chiplet/build/gdsrun-20260819/romlibs/eth_rom/eth_rom_via_verilog.rcf
+      asked for by: /home/dam1n19/SoCLabs/gds-run-20260819/ASIC/eth-chiplet/build/gdsrun-20260819/romlibs/eth_rom/eth_rom_via.v
+
+-- staged bench inputs --
+  20095b283997c1dde4a05511443780291798a8b50624325058cc240627f2510f  nanosoc_bootrom_chip_core.bintxt  <- /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/nanosoc-multicore-system/build/cmake/gcc-m0plus-le/firmware/bootloader/stage0_bootrom_chip_core/nanosoc_bootrom_chip_core.bintxt
+  582200fea960fd5987a4b276b28544ea32c2612cc2c6d24809f72fea52a1e29c  eth_ss_bootrom.bintxt  <- /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/nanosoc-multicore-system/build/cmake/gcc-m0plus-le/firmware/bootloader/stage0_bootrom/eth_ss_bootrom.bintxt
+  325b8885a619a22364be5db714c446275949988987ae9ee33b6027d6584924fe  flash_image.hex  <- /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/flash/flash_image.hex

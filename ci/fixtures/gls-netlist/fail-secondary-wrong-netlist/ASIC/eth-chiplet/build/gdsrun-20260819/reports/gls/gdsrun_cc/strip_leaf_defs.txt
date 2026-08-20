@@ -1,0 +1,6 @@
+strip_leaf_defs: /some/other/tree/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads_pnr_pg.v
+  out            : /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet/build/gls-netlist/gdsrun_cc/nanosoc_eth_chiplet_pads_pnr_pg_stripped.v
+  models         : 11 file(s), 920 modules
+  definitions dropped: 392
+  definitions kept   : 3054
+  dropped (first 12): AN2D0, AN2D1, AN2D2, AN2D4, AN2D8, AN2XD1, AN3D0, AN3D1, AN3D2, AN3D4, AN3XD1, AN4D1
