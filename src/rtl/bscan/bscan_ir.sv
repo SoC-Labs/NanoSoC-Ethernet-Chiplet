@@ -82,17 +82,19 @@
 // chain ordering live. The value the generator must use, per section 5 of the
 // interface contract:
 //
-//     parameter logic [31:0] IDCODE_VALUE = 32'h1000_05A1;
-//        // {version[3:0]=4'h1, part[15:0]=16'h0000, manuf[10:0]=11'h2D0, 1'b1}
+//     parameter logic [31:0] IDCODE_VALUE = 32'h1000_1001;
+//        // {version[3:0]=4'h1, part[15:0]=16'h0001, manuf[10:0]=11'h000, 1'b1}
 //
-//   * The contract writes this literal as `32'h1_0000_05A1`, which is NINE hex
-//     digits — 36 bits crammed into a 32-bit literal. It truncates to
-//     32'h0000_05A1 and silently loses the version nibble. `32'h1000_05A1` is
-//     the value the contract's own field breakdown describes. Flagged, not
-//     silently "corrected" anywhere it would change behaviour.
-//   * The contract's phrase "manufacturer 0x2D0>>1" is also off by a shift:
-//     0x2D0 is already the 11-bit manufacturer FIELD, and 0x5A1 is that field
-//     shifted up by one with the mandatory LSB=1 underneath. 0x5A1>>1 == 0x2D0.
+//   * WRITE EIGHT HEX DIGITS. An earlier contract revision wrote the literal as
+//     `32'h1_0000_05A1` — NINE digits, 36 bits crammed into a 32-bit literal,
+//     which truncates and silently loses the version nibble. The bench's
+//     mutation M9 exists to catch exactly that.
+//   * THE MANUFACTURER FIELD IS 0x000 ON PURPOSE. IDCODE[11:1] is a packed
+//     JEDEC JEP106 identity, (continuation_count << 7) | code7, so any code in
+//     1..126 names a real company. This design previously carried 0x2D0, which
+//     decodes to JEP106 bank 6 code 0x50 — assigned to Neterion Inc. Code 0 is
+//     the one value JEP106 can never issue, so it is the only placeholder that
+//     impersonates nobody; tools render it "<invalid>" and stop.
 //   * SOC LABS HAS NO ASSIGNED JEDEC MANUFACTURER ID. 0x2D0 is a placeholder
 //     and part number 0x0000 is a placeholder. Both MUST be replaced with a
 //     real JEDEC assignment before tapeout: an unassigned ID collides with

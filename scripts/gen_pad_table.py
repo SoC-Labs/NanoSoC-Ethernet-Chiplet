@@ -180,7 +180,7 @@ def main() -> int:
     ap.add_argument("--tap-tms", required=True, help="pad instance carrying TMS")
     ap.add_argument("--tap-tdi", required=True, help="pad instance carrying TDI")
     ap.add_argument("--tap-tdo", required=True, help="pad instance carrying TDO")
-    ap.add_argument("--idcode", default="0x100005A1",
+    ap.add_argument("--idcode", default="0x10001001",
                     help="32-bit JTAG IDCODE. PLACEHOLDER until a JEDEC ID is assigned.")
     ap.add_argument("-o", "--out", default="pad_table.json",
                     help="where to write the pad table (default: pad_table.json)")
