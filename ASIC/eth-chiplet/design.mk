@@ -743,6 +743,55 @@ export CTS_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501 \
                                 CHKCTS-1 CHKCTS-2 CHKCTS-9
 export ROUTE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
 
+# ── CTS_TARGET_TRAN — the cheaper half of the CHKCTS-1/-2/-9 debt above ─────
+# DERIVED 2026-08-20, NOT YET RUN-CONFIRMED. Closes CHKCTS-1/-2 only.
+# CTS_ROUTE_TYPE (closes CHKCTS-9) is untouched here, deliberately: it needs a
+# metal-layer-range judgement call the toolkit refuses to guess
+# (ASIC/asic-toolkit/tech/tsmc65/tech.tcl:477) and docs/tapeout/scripts/
+# 06-cts-and-route.md §3.2 recommends deferring it until after hold repair,
+# since it spends routing resource on a design already at 83.6-92% density.
+# All three IDs stay on CTS_ERROR_ALLOWLIST above until a run confirms this.
+#
+# SOURCE: build/full-20260814/reports/cts_clock_trees.rep (the 2026-08-17 CTS
+# run also cited by cts_manifest.txt in that directory), "Clock Timing
+# Summary" table. Every "auto computed" Leaf/Trunk Slew Target entry in that
+# table reads 0.136 ns - 42 of them, the same count CHKCTS-1/-2 each fire
+# (one per clock_tree x delay_corner), with zero variation across any of the
+# 4 real clock trees (clk, rmii_ref_clk, swdclk, D2D_RX_CLK_0) or the
+# generated-clock trees CCOpt also balances alongside them. This is not a
+# proposed number - it is the target Innovus already computes and builds to
+# for this design with CTS_TARGET_TRAN unset (0 = auto,
+# ASIC/asic-toolkit/flow/innovus/3_cts.tcl:140), read back from its own
+# report on the most recent CTS run.
+#
+# ACHIEVABLE, NOT ASPIRATIONAL. The same report's "Total Transition Slacks
+# Summary" shows total LEAF overslew of 0.030 ns across the entire design (9
+# violating pins, worst single one 0.024 ns) once four structurally-excluded
+# nets are set aside. Those four - SWDCK, RMII_REF_CLK, CLK, TL_CLK_RX -
+# dominate the report's "Top Overslews" list (4.864 / 2.864 / 1.064 /
+# 0.368 ns) but are marked dont_touch=Y ideal-network PAD ROOTS: there is no
+# buffer CTS can insert before an ideal source. That is the separate, unset
+# ROOT DRIVER MODEL gap named at ASIC/asic-toolkit/flow/innovus/
+# 3_cts.tcl:120-131 (CTS_CLK_SRC_DRIVER/CTS_CLK_SRC_SLEW) - a different knob,
+# not addressed here, and not what 0.136 is being asked to fix. Excluding
+# those four, this design's actual buffered clock tree already sits within
+# 0.030 ns of 0.136 everywhere. Independent corroboration, same run:
+# nanosoc_eth_chiplet_pads_cts.tran.gz records only 6 max_tran violations in
+# the whole design, all on external/pad-boundary nets (I2C_SCL, I2C_SDA,
+# QSPI_IO[0:3]), remarked non-fixable (M/E/B), zero on any internal clock net.
+#
+# WHAT STILL NEEDS A RUN. An explicit target is not proven identical to
+# CCOpt's automatic one merely because the numbers read the same today - the
+# Innovus user guide's own recommendation to set one implies the explicit and
+# automatic paths are not the same code path, only the same value on this
+# build. Confirming CHKCTS-1/-2 actually stop firing, and that the tree does
+# not move when the knob goes from automatic to explicit, requires a real
+# `make cts` (previous cts stage alone: runtime_s 3489 per
+# reports/cts_manifest.txt, ~58 minutes). That run was NOT launched to derive
+# this value and has not been run since. Do not remove CHKCTS-1/CHKCTS-2 from
+# CTS_ERROR_ALLOWLIST above on the strength of this derivation alone.
+export CTS_TARGET_TRAN ?= 0.136
+
 
 # ── 11. THE COUNTS THIS DIE IS, AND THE RATCHETS THAT HOLD THEM ─────────────
 #
