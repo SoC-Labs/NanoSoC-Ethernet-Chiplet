@@ -493,6 +493,39 @@ ROM_RUN_DIR         = $(RUN_DIR)/romlibs
 # rather than three reads of a shared directory.
 export ROMLIBS_DIR  = $(ROM_RUN_DIR)
 
+## ---------------------------------------------------------------------------
+## POST-ROUTE SIGNOFF REPORT -- ADDED 2026-08-20.
+##
+## `make design-report` stops before Calibre; it reads the Innovus database and
+## says nothing about the signoff decks. The broker's CheckAll+ return is almost
+## entirely rulecheck tables, so there was nothing on our side to set beside it,
+## and the DRC evidence sat in $(RUN_DIR)/work/drc_run/ -- OUTSIDE the outputs/
+## and reports/ that package_submission.sh collects.
+##
+## This writes $(RUN_DIR)/reports/signoff_report.{txt,json}: stream identity and
+## md5, every non-zero rulecheck grouped by family with vendor-macro attribution
+## and saturation flags, the per-window density tables, POST-ROUTE timing (the
+## last QoR snapshot, not the CTS one design_report quotes), ROM verdicts, and --
+## the part a broker report cannot give you -- an explicit NOT RUN list.
+##
+## It also prints the DERIVED-LAYER WITNESSES (CHIP / CHIP_NOSR / EMPTY_AREA /
+## SEALRING / SR_EDGE). Those are what separate "checked and clean" from "had
+## nothing to check": with a seal ring in the stream EMPTY_AREA collapses and
+## every CSR.R.1 subrule is vacuous while still reporting zero.
+##
+## Read-only over artefacts already on disk. No licence, seconds to run, safe to
+## invoke on a finished run at any time.
+SIGNOFF_REPORT_SCRIPT ?= $(DESIGN_HOME)/scripts/ci/signoff_report.py
+
+.PHONY: signoff-report
+signoff-report:
+	@test -d "$(RUN_DIR)" || { \
+	    echo "FAIL: no run at $(RUN_DIR) -- set RUN_TAG to a build that exists."; \
+	    exit 1; }
+	@test -r "$(SIGNOFF_REPORT_SCRIPT)" || { \
+	    echo "FAIL: $(SIGNOFF_REPORT_SCRIPT) is not readable."; exit 1; }
+	python3 "$(SIGNOFF_REPORT_SCRIPT)" --run "$(RUN_DIR)" --json
+
 .PHONY: legacy-paths asic-flist romlibs-check rom-ensure cpf-patch
 
 # ── STAGE ORDERING, AND THE ROM WRITE-WRITE RACE ────────────────────────────
@@ -743,55 +776,6 @@ export CTS_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501 \
                                 CHKCTS-1 CHKCTS-2 CHKCTS-9
 export ROUTE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
 
-# ── CTS_TARGET_TRAN — the cheaper half of the CHKCTS-1/-2/-9 debt above ─────
-# DERIVED 2026-08-20, NOT YET RUN-CONFIRMED. Closes CHKCTS-1/-2 only.
-# CTS_ROUTE_TYPE (closes CHKCTS-9) is untouched here, deliberately: it needs a
-# metal-layer-range judgement call the toolkit refuses to guess
-# (ASIC/asic-toolkit/tech/tsmc65/tech.tcl:477) and docs/tapeout/scripts/
-# 06-cts-and-route.md §3.2 recommends deferring it until after hold repair,
-# since it spends routing resource on a design already at 83.6-92% density.
-# All three IDs stay on CTS_ERROR_ALLOWLIST above until a run confirms this.
-#
-# SOURCE: build/full-20260814/reports/cts_clock_trees.rep (the 2026-08-17 CTS
-# run also cited by cts_manifest.txt in that directory), "Clock Timing
-# Summary" table. Every "auto computed" Leaf/Trunk Slew Target entry in that
-# table reads 0.136 ns - 42 of them, the same count CHKCTS-1/-2 each fire
-# (one per clock_tree x delay_corner), with zero variation across any of the
-# 4 real clock trees (clk, rmii_ref_clk, swdclk, D2D_RX_CLK_0) or the
-# generated-clock trees CCOpt also balances alongside them. This is not a
-# proposed number - it is the target Innovus already computes and builds to
-# for this design with CTS_TARGET_TRAN unset (0 = auto,
-# ASIC/asic-toolkit/flow/innovus/3_cts.tcl:140), read back from its own
-# report on the most recent CTS run.
-#
-# ACHIEVABLE, NOT ASPIRATIONAL. The same report's "Total Transition Slacks
-# Summary" shows total LEAF overslew of 0.030 ns across the entire design (9
-# violating pins, worst single one 0.024 ns) once four structurally-excluded
-# nets are set aside. Those four - SWDCK, RMII_REF_CLK, CLK, TL_CLK_RX -
-# dominate the report's "Top Overslews" list (4.864 / 2.864 / 1.064 /
-# 0.368 ns) but are marked dont_touch=Y ideal-network PAD ROOTS: there is no
-# buffer CTS can insert before an ideal source. That is the separate, unset
-# ROOT DRIVER MODEL gap named at ASIC/asic-toolkit/flow/innovus/
-# 3_cts.tcl:120-131 (CTS_CLK_SRC_DRIVER/CTS_CLK_SRC_SLEW) - a different knob,
-# not addressed here, and not what 0.136 is being asked to fix. Excluding
-# those four, this design's actual buffered clock tree already sits within
-# 0.030 ns of 0.136 everywhere. Independent corroboration, same run:
-# nanosoc_eth_chiplet_pads_cts.tran.gz records only 6 max_tran violations in
-# the whole design, all on external/pad-boundary nets (I2C_SCL, I2C_SDA,
-# QSPI_IO[0:3]), remarked non-fixable (M/E/B), zero on any internal clock net.
-#
-# WHAT STILL NEEDS A RUN. An explicit target is not proven identical to
-# CCOpt's automatic one merely because the numbers read the same today - the
-# Innovus user guide's own recommendation to set one implies the explicit and
-# automatic paths are not the same code path, only the same value on this
-# build. Confirming CHKCTS-1/-2 actually stop firing, and that the tree does
-# not move when the knob goes from automatic to explicit, requires a real
-# `make cts` (previous cts stage alone: runtime_s 3489 per
-# reports/cts_manifest.txt, ~58 minutes). That run was NOT launched to derive
-# this value and has not been run since. Do not remove CHKCTS-1/CHKCTS-2 from
-# CTS_ERROR_ALLOWLIST above on the strength of this derivation alone.
-export CTS_TARGET_TRAN ?= 0.136
-
 
 # ── 11. THE COUNTS THIS DIE IS, AND THE RATCHETS THAT HOLD THEM ─────────────
 #
@@ -970,29 +954,35 @@ export ROUTE_EXPECT_UNROUTED ?= 2
 # (power_plan.tcl:890) - 1.000um falls in the WIDTH bucket covering [0.4,
 # 1.5)um, not the narrowest (signal-routing) row. Two aliasing PG stripes run
 # parallel for a macro's height or more, tens of um - and in that WIDTH row
-# the required spacing already reaches its maximum by PRL 0.4um and does not
-# increase for any longer overlap, so the geometry here sits at the row's
-# SATURATED, worst-case entry, not some lower default. That entry is 0.160um.
-# This is the bare DRC minimum edge-to-edge spacing between two different-net
-# M5 shapes of this width: at or above it the gap is legal, below it is an
-# actual foundry-rule spacing violation - which is what "danger of a short"
-# means for this layer. 0.160um sits well under the 0.500um this grid
-# actually runs at (power_plan.tcl:890), so it does not fire on the healthy
-# grid the retraction above already measured at 0.5000um on all 42 macro/net
-# rows - better than 3x headroom.
+# the required spacing already reaches its maximum well under PRL 1um and
+# does not increase for any longer overlap, so the geometry here sits at the
+# row's SATURATED, worst-case entry, not some lower default. THE ENTRY'S
+# VALUE IS DELIBERATELY NOT REPEATED HERE, per VENDOR_COLLATERAL.md ("when
+# you need foundry numbers, write a program that reads them at runtime -
+# never a file that contains them") - re-derive it with the same method
+# (`pdk_paths.sh tech-lef`, LAYER M5, SPACINGTABLE, the WIDTH/PRL bucket
+# above) rather than trust a transcribed digit. It is the bare DRC minimum
+# edge-to-edge spacing between two different-net M5 shapes of this width: at
+# or above it the gap is legal, below it is an actual foundry-rule spacing
+# violation - which is what "danger of a short" means for this layer. It
+# sits well under the 0.500um this grid actually runs at (power_plan.tcl:890)
+# - confirmed by the exported floor below still landing with better than 3x
+# headroom under the grid the retraction above already measured at 0.5000um
+# on all 42 macro/net rows.
 #
-# MARGIN ADDED, STATED EXPLICITLY: the floor below is 0.155um, ONE
-# MANUFACTURINGGRID STEP (0.005um, this tech LEF's own drawing grid) under the
-# bare 0.160um minimum - not a round number and not a percentage pad. This
-# follows the toolkit's own instruction at the knob's definition
-# (2_place.tcl: "set it in design.mk to just under the smallest clearance the
-# design is known to be safe at") and this file's own idiom for every other
-# ratchet in this section: PLACE_MIN_PG_VIAS in 11b is "one below measured",
-# an integer floor one quantum inside its boundary; a continuous micron value
-# has no integer quantum, so the process's own manufacturing grid is the
-# smallest legitimate step to use instead. No larger margin is added: min_gap
-# has never been gated before tonight, so unlike 11b's two ratchets - which
-# had TEN pad-correct runs of measured spread to size a margin from - there is
+# MARGIN ADDED, STATED EXPLICITLY: the floor below is ONE
+# MANUFACTURINGGRID STEP - this tech LEF's own drawing grid, also not
+# repeated here for the same reason - under the bare SPACINGTABLE minimum
+# above, not a round number and not a percentage pad. This follows the
+# toolkit's own instruction at the knob's definition (2_place.tcl: "set it
+# in design.mk to just under the smallest clearance the design is known to
+# be safe at") and this file's own idiom for every other ratchet in this
+# section: PLACE_MIN_PG_VIAS in 11b is "one below measured", an integer
+# floor one quantum inside its boundary; a continuous micron value has no
+# integer quantum, so the process's own manufacturing grid is the smallest
+# legitimate step to use instead. No larger margin is added: min_gap has
+# never been gated before tonight, so unlike 11b's two ratchets - which had
+# TEN pad-correct runs of measured spread to size a margin from - there is
 # no measured healthy-spread data for this metric to derive a bigger one from,
 # and inventing one would repeat the 2.70um mistake this section already made
 # once: a plausible number with no grounding in what it is gating.
