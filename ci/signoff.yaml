@@ -3065,9 +3065,14 @@ stages:
           _v = os.path.join(_d, "verdict.txt")
           if not os.path.exists(_v):
               fail("SECONDARY TREE NOT PUBLISHED: %s. This stage declares it and grades "
-                   "it, so its absence is UNVERIFIED, not a pass. Either publish it "
-                   "(GLSN_EVIDENCE_%s) or take the entry out of SECONDARY by hand. (%s)"
-                   % (_v, _item, _why))
+                   "it, so its absence is UNVERIFIED, not a pass. THIS IS THE EXPECTED RED "
+                   "WHEN A RUN IS SUPERSEDED, and it is deliberate. Two ways out, both by "
+                   "hand. Publish that run's evidence: set GLSN_EVIDENCE_%s in "
+                   "ASIC/gls-netlist/Makefile, then `make -C ASIC/gls-netlist "
+                   "gls-netlist-publish-%s`. Or retire the entry: in ci/signoff.yaml, in "
+                   "this stage's check, search for `SECONDARY = [`. Retiring is a "
+                   "reviewable edit rather than a gate quietly going quiet. (%s)"
+                   % (_v, _item, _item, _why))
               continue
           _t = open(_v).read()
           if _t == open(VERDICT).read():
@@ -3117,6 +3122,22 @@ stages:
         #    strobe-proximity and extended-ordering clauses are live, not
         #    decorative, the day the bench declares them.
         - ci/fixtures/gls-netlist/pass-extra-rungs
+      # A KNOWN WEAKNESS IN THIS SET, recorded rather than left to be discovered.
+      # Most fail-* fixtures below are 22-row verdicts built before the five CPU0
+      # rungs moved into TIER_C. They now fail for their OWN reason AND with five
+      # extra `... NOT DECLARED` lines, because a 22-row verdict cannot declare a
+      # rung this stage now requires. Verified 2026-08-20: every case still fails
+      # for its named reason, so the proofs hold today - fail-tierc-missing is the
+      # only one whose failures are all NOT DECLARED, and for that case that IS the
+      # named reason.
+      #
+      # The risk is future, not present: if someone fixes the defect a fixture
+      # exhibits, the case keeps failing on NOT DECLARED and nobody notices it
+      # stopped testing what it names. `prove` asserts THAT a case fails, never WHY.
+      # Two ways to close it, neither done here: rebuild each fail-* verdict on the
+      # 27-row base so it fails only for its own reason, or teach check_proof a
+      # per-case expected-substring so a case that fails for the wrong reason is
+      # itself a failure. The second is the better fix and is not local to this file.
       must_fail:
         # THE DEFECT, verbatim: the published `RESULT FAIL pass=10 fail=4` the
         # in-tree check passes today, with all four of its cc_rom keys green.
