@@ -86,15 +86,42 @@ def main() -> int:
     # this check counted those names, read 0 on a run where the register was
     # perfectly intact, and would have condemned a good netlist. Sequential cells
     # inside the register's own module survive ungrouping; module names do not.
+    # COUNT BY INSTANCE NAME, WRAP-TOLERANT, WHETHER OR NOT THE MODULE SURVIVED.
+    #
+    # Two independent things defeated an earlier version of this check and
+    # together they produced a FALSE ALARM that a re-synthesis had deleted 117 of
+    # 119 boundary cells. It had deleted 4.
+    #
+    #   1. UNGROUPING. `auto_ungroup` defaults to `both`. One run kept
+    #      `module nanosoc_eth_chiplet_bscan`; the next dissolved it into the
+    #      parent. Anchoring on the module declaration reports ABSENT for a
+    #      register that is entirely present.
+    #   2. LINE WRAPPING. Once ungrouped, instance names carry the full
+    #      hierarchical path and Genus wraps the instantiation, putting the cell
+    #      type and the instance name ON SEPARATE LINES:
+    #
+    #          SDFCNQD1
+    #               u_nanosoc_eth_chiplet_bscan_u_bsc_27_..._dr_q_reg(.CDN
+    #
+    #      Every single-line regex then matches only the few short-named cells.
+    #      That is what turned 115 into "2".
+    #
+    # What actually survives both is the INSTANCE NAME, because it is built from
+    # the hierarchical path. So match on that, across newlines, and never require
+    # the module to exist.
     module = design["module"]
     mm = re.search(r"\nmodule\s+%s\s*\(.*?\nendmodule" % re.escape(module), src, re.S)
+    inst_re = re.compile(r"(?:^|\n)\s*((?:S?DF|EDF|QDF)[A-Z0-9]+)\s+(\\?[^\s(]+)\s*\(")
+    bsc_all = [n for c, n in inst_re.findall(src) if "u_bsc_" in n]
     if not mm:
-        fails.append("module %s is not defined in the netlist -- the register was "
-                     "optimised away entirely" % module)
-        print("bsr module : ABSENT")
+        print("bsr module : ungrouped into the parent (auto_ungroup=both) -- "
+              "counting by instance name")
+        if not bsc_all:
+            fails.append("no u_bsc_* sequential instances anywhere in the netlist -- "
+                         "the boundary register really is gone")
     else:
         body = mm.group(0)
-        seq = len(re.findall(r"^\s+(?:S?DF|EDF|QDF)[A-Z0-9]*\s+\S+\s*\(", body, re.M))
+        seq = len([n for c, n in inst_re.findall(body)])
         # EDGE COMES FROM THE CLOCK PIN, NOT THE CELL NAME. In tcbn65lp a
         # negative-edge flop takes .CPN and a positive-edge flop takes .CP;
         # the letter N elsewhere in the name means an active-low SET or CLEAR.
@@ -137,12 +164,34 @@ def main() -> int:
     # paren, no instance name -- so it does NOT match this pattern and must not be
     # subtracted. Getting that wrong made an earlier version of this check report
     # "defined but never instantiated" about a correctly instantiated register.
-    n_inst = len(re.findall(r"^[ \t]+%s\s+\w+\s*\(" % re.escape(design["module"]),
-                            src, re.M))
-    print("bsr inst   : %d" % n_inst)
-    if n_inst != 1:
-        fails.append("%s is instantiated %d times, expected exactly 1"
+    n_inst = len(re.findall(r"(?:^|\n)[ \t]*%s\s+\S+\s*\(" % re.escape(design["module"]),
+                            src))
+    print("bsr inst   : %d%s" % (n_inst, "" if mm else "  (n/a -- ungrouped)"))
+    if mm and n_inst != 1:
+        fails.append("%s is defined as a module but instantiated %d times, expected 1"
                      % (design["module"], n_inst))
+
+    # ---- THE ASSERTION THAT MATTERS: CHAIN LENGTH -----------------------------
+    #
+    # Assert the SHIFT stages, not the total flop population. The chain length is
+    # what the BSDL promises a tester and what must never move; the update-stage
+    # count legitimately can.
+    #
+    # Measured case: bscan-probe2 has 39 update stages where bscan-probe had 43.
+    # The 4 absent ones are on the TAP-muxed pads -- SWDIO(TMS), HOST_IO_0(TDI)
+    # and HOST_IO_1(TDO). The pad ring overrides those pins whenever boundary
+    # scan is enabled, and `mode` implies `bscan_en`, so no input combination
+    # lets those update values reach a pad. Genus removed provably dead logic and
+    # was right to. IEEE 1149.1 Clause 10 excludes TAP pins from the boundary
+    # register for exactly this reason. Failing on that count would train people
+    # to waive a correct result.
+    shift = [n for n in bsc_all if "_dr_q" in n]
+    upd   = [n for n in bsc_all if "_update_q" in n]
+    print("bsr cells  : %d shift (expect %d) + %d update" % (len(shift), want, len(upd)))
+    if len(shift) != want:
+        fails.append("%d shift stages in the netlist, expected %d -- the chain "
+                     "length has changed and the BSDL no longer describes it"
+                     % (len(shift), want))
 
     # --- 4. pad survival -------------------------------------------------------
     # ANCHORED. `inst in src` is a bare substring test that any comment mentioning

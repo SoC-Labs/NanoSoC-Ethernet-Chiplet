@@ -144,10 +144,23 @@ for f in "$NETLIST_SRC" "$BONDPAD_STUBS" "$PAD_TABLE" "$PG_COMPLETE" \
 done
 grep -qsE '^module[[:space:]]+nanosoc_eth_chiplet_pads[[:space:]]*\(' "$NETLIST_SRC" || \
     setup_fail "$NETLIST_SRC does not define module nanosoc_eth_chiplet_pads"
-grep -qsE '^module[[:space:]]+nanosoc_eth_chiplet_bscan[[:space:]]*\(' "$NETLIST_SRC" || \
-    setup_fail "$NETLIST_SRC contains no nanosoc_eth_chiplet_bscan -- this is a netlist from
-   a run WITHOUT boundary scan inserted, and every test below would fail for
-   that reason and no other. Point BSCAN_GATE_NETLIST at a bscan-probe build."
+# THE REGISTER MAY OR MAY NOT SURVIVE AS A MODULE, AND BOTH ARE FINE.
+# Genus ungroups by choice, not by contract: build/bscan-probe kept
+# `module nanosoc_eth_chiplet_bscan`, and build/bscan-probe2 -- same RTL, same
+# flow -- dissolved it into the parent. An earlier version of this guard tested
+# for the module declaration alone and REFUSED TO RUN against a perfectly good
+# netlist, reporting it as "a run WITHOUT boundary scan inserted".
+#
+# Accept either shape. What actually survives ungrouping is the INSTANCE NAMES,
+# because they are built from the hierarchical path: the flops come out as
+# `u_nanosoc_eth_chiplet_bscan_<...>_reg`. So look for the module OR for those.
+if ! grep -qsE '^module[[:space:]]+nanosoc_eth_chiplet_bscan[[:space:]]*\(' "$NETLIST_SRC" \
+   && [ "$(grep -csE '(^|[^A-Za-z0-9_])\\?u_nanosoc_eth_chiplet_bscan' "$NETLIST_SRC")" -lt 50 ]; then
+    setup_fail "$NETLIST_SRC contains neither a nanosoc_eth_chiplet_bscan module nor
+   a meaningful population of u_nanosoc_eth_chiplet_bscan* instances. This is a
+   netlist from a run WITHOUT boundary scan inserted, and every test below would
+   fail for that reason and no other. Point BSCAN_GATE_NETLIST at a bscan build."
+fi
 
 # ---------------------------------------------------------------------------
 # STALE-BUILD TRAP. VCS re-runs yesterday's simv whenever today's compile fails
