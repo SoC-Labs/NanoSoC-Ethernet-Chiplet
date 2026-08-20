@@ -838,22 +838,116 @@ export ROUTE_EXPECT_UNROUTED ?= 2
 # whether a stripe was inside a macro at all; the shorts surfaced at check_drc,
 # hours later, inside a budgeted total the same change had reduced.
 #
-# THREE HONEST RESPONSES, in order of preference:
-#   1. the structural fix power_plan.tcl already names - one M5 ladder over the
-#      whole core instead of one per row region. It closes this AND the
-#      macro-blockage DRC class, and is the only one that removes the hazard.
-#   2. ratchet PLACE_MAX_MACRO_STRIPES to the measured count, WITH the count and
-#      this defect named beside it. A regression detector, nothing more.
-#   3. set PLACE_MACRO_PG_CHECK=0, only with a written reason. It returns this
-#      design to the state it was in when the shorts arrived.
+# CORRECTED 2026-08-19, SAME DAY: the paragraph above (mechanism, the four real
+# shorts) is still true. What follows it in every prior version of this section
+# was NOT - the CROSSINGS ceiling itself was the defect, not the crossings. Kept
+# here rather than deleted because the reasoning that reached the wrong ceiling
+# is exactly the reasoning someone will reach for again.
 #
-# Left at the toolkit default of 0 deliberately: naming the knob without setting
-# it is the point, since an unratcheted default is exactly how the two ratchets
-# above sat inert. The NEAR-MISS arm (PLACE_MIN_MACRO_PG_GAP) stays ungated until
-# it has been measured on this design - the clearances above come from
-# power_plan.tcl's aliasing arithmetic, not from this census, and a floor set from
-# another instrument's number is not a ratchet. The census reports the value every
-# run, so a CHANGE is visible meanwhile.
+# THE CROSSINGS ARM IS RETIRED. Four independent findings, two of them checked
+# directly against source rather than taken on report:
+#   1. PHYSICS, decisive, verified against the LEF: every macro's OBS block
+#      (eth_rom_via, flash_cache_data, flash_cache_tag, rf_01k/08k/16k/32k,
+#      rom_via) lists M1-M4 and VIA1-VIA3 and NOTHING above M4. No macro
+#      obstructs M5. An M5 stripe running THROUGH a macro footprint violates
+#      nothing - the toolkit comment this ceiling was built on ("M5 is a layer a
+#      mesh pass is meant to cut at a macro boundary") describes a tech this
+#      library is not.
+#   2. ARITHMETIC. Sum of macro heights / the 15um set-to-set pitch x 2 stripes
+#      predicts 278 crossings for an UNCUT UNIFORM ladder; 300 was measured, 8%
+#      over from partial-overlap boundary effects. 300 is what the mesh looks
+#      like built exactly as power_plan.tcl specifies it - not a defect count.
+#   3. PROVENANCE, verified against the commit: PLACE_MAX_MACRO_STRIPES 0
+#      landed inside the toolkit's c66522c, a 4,465-line commit ABOUT METAL
+#      DENSITY whose message never mentions macro stripes once, confirmed by
+#      grep. The stated reason at the site was process hygiene ("a ratchet
+#      nobody ratchets is the defect this file is full of"), never achievability.
+#   4. NO REFERENCE. No census manifest, on either chiplet, has ever recorded
+#      macro_pg_crossings at 0. The one number anyone has ever cited as a
+#      reference - 306/300 from the toolkit fix's own live-verification commit -
+#      was measured on THIS design, not an independent one.
+# A 0 ceiling would additionally have been ACTIVELY HARMFUL if enforced by
+# cutting M5 at every macro: M5 is add_stripes_stacked_via_bottom_layer for the
+# M8/M9 passes above, and M4 is the only macro-pin layer, so cutting M5 at the
+# boundary removes the M8/M9 mesh's only landing point over every macro in the
+# design - manufacturing the exact supply hole the grid exists to prevent.
+# One supporting signature, independently noticed before the measurement
+# confirmed it: the crossings were uniform across all 21 macros at EXACTLY the
+# M5 ladder's own design spacing (-width 1 -spacing 0.5, power_plan.tcl:890),
+# not a scatter of near-collisions - systematic mesh geometry, not a stochastic
+# alias. `PLACE_MAX_MACRO_STRIPES` is retired to its toolkit default; do not
+# ratchet a ceiling now known to have no achievable value.
+#
+# THE ORIGINAL HAZARD IS STILL REAL AND IS NOT COVERED BY ANY OF THIS. The
+# crossings arm never would have caught the four shorts - that was a min_gap ->
+# 0 event between two DIFFERENT macros' ladders, not a stripe crossing one
+# macro's own footprint. The arm that answers this is PLACE_MIN_MACRO_PG_GAP,
+# and it is currently -1 (UNGATED - see 2_place.tcl:1174-1195, which warns
+# "NOT GATED" at that value on every run). Retiring the crossings ceiling
+# WITHOUT gating this leaves the real hazard uncovered, which is worse than
+# today's state, not better. REQUIRED BEFORE THE NEXT CANDIDATE RUN: derive a
+# real floor for PLACE_MIN_MACRO_PG_GAP. VERIFIED WRONG, do not reuse: the
+# 2.70um clearance figure above is `(S+2W) - (D mod P)` from the PHASE-OVERLAP
+# formula - how much room a macro had to MOVE before its ladder aliased a
+# neighbour's, not an edge-to-edge PG gap. The census already measures 0.5000um
+# on all 42 macro/net rows on a HEALTHY grid (power_plan.tcl:890's own
+# -spacing 0.5) - so a floor at 2.70 would fire on every one of the 300
+# crossings at nominal spacing, look authoritative because it is a real number
+# from this design's own history, and be wrong for exactly that reason. The
+# floor wants to come from the M5 SPACINGTABLE for the relevant width and
+# parallel-run length in the TECH LEF, not this design's own arithmetic, and it
+# must sit BELOW 0.5um or it flags the nominal grid too. Set it, with the
+# derivation and the date, in the same style as every other budget in this
+# file. Left unset here deliberately: naming the requirement is the point,
+# exactly as an unratcheted default sat inert twice already in this section.
+#
+# set PLACE_MACRO_PG_CHECK=0 remains forbidden for the reason the mechanism
+# paragraph above still states - it silences BOTH arms, including the one
+# (min_gap) that is the actual live hazard once gated. A run that did this
+# anyway on 2026-08-19 (RUN_TAG gdsrun-20260819) is carried as a baseline with
+# this blind spot named, not as a signoff candidate.
+#
+# DERIVED 2026-08-20: THE FLOOR, FROM THE TECH LEF, NOT FROM THIS DESIGN'S
+# OWN HISTORY. Source is LAYER M5's SPACINGTABLE PARALLELRUNLENGTH rule in the
+# installed TSMC 65LP routing tech LEF (resolve it with
+# `ASIC/tech_wrappers/tsmc65/scripts/pdk_paths.sh tech-lef` under
+# TSMC_65_HOME - the install path and revision are deliberately not repeated
+# here, per that script's own header, since this repo is public). M5 carries
+# no SAMENET override in this LEF, so this table is the ONLY spacing rule
+# governing two M5 shapes on different nets - exactly what min_gap measures.
+#
+# The table is two-dimensional: WIDTH buckets and PARALLELRUNLENGTH (PRL)
+# buckets, five breakpoints each. This design's M5 PG stripes are `-width 1`
+# (power_plan.tcl:890) - 1.000um falls in the WIDTH bucket covering [0.4,
+# 1.5)um, not the narrowest (signal-routing) row. Two aliasing PG stripes run
+# parallel for a macro's height or more, tens of um - and in that WIDTH row
+# the required spacing already reaches its maximum by PRL 0.4um and does not
+# increase for any longer overlap, so the geometry here sits at the row's
+# SATURATED, worst-case entry, not some lower default. That entry is 0.160um.
+# This is the bare DRC minimum edge-to-edge spacing between two different-net
+# M5 shapes of this width: at or above it the gap is legal, below it is an
+# actual foundry-rule spacing violation - which is what "danger of a short"
+# means for this layer. 0.160um sits well under the 0.500um this grid
+# actually runs at (power_plan.tcl:890), so it does not fire on the healthy
+# grid the retraction above already measured at 0.5000um on all 42 macro/net
+# rows - better than 3x headroom.
+#
+# MARGIN ADDED, STATED EXPLICITLY: the floor below is 0.155um, ONE
+# MANUFACTURINGGRID STEP (0.005um, this tech LEF's own drawing grid) under the
+# bare 0.160um minimum - not a round number and not a percentage pad. This
+# follows the toolkit's own instruction at the knob's definition
+# (2_place.tcl: "set it in design.mk to just under the smallest clearance the
+# design is known to be safe at") and this file's own idiom for every other
+# ratchet in this section: PLACE_MIN_PG_VIAS in 11b is "one below measured",
+# an integer floor one quantum inside its boundary; a continuous micron value
+# has no integer quantum, so the process's own manufacturing grid is the
+# smallest legitimate step to use instead. No larger margin is added: min_gap
+# has never been gated before tonight, so unlike 11b's two ratchets - which
+# had TEN pad-correct runs of measured spread to size a margin from - there is
+# no measured healthy-spread data for this metric to derive a bigger one from,
+# and inventing one would repeat the 2.70um mistake this section already made
+# once: a plausible number with no grounding in what it is gating.
+export PLACE_MIN_MACRO_PG_GAP ?= 0.155
 
 # ── 11e. MISSING POWER VIAS, OVER THE WHOLE STACK ───────────────────────────
 #
