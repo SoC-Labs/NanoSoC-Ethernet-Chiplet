@@ -961,10 +961,60 @@ export PLACE_MIN_MACRO_PG_GAP ?= 0.155
 #     {bottom .. top-1}         556 missing - 452 of them in a single mid-stack
 #                               layer pair, 357 on one rail and 199 on the other
 #
-# The full-stack range has never been run to the TOP layer here, so the true
-# number is 556 plus whatever the last interface adds. Do NOT write
-# ROUTE_BUDGET_PG_VIAS from arithmetic on those two: run it once, then ratchet
-# with the per-layer-pair split recorded beside it.
+# UPDATE 2026-08-20: the layer-range half of this is closed, the budget half
+# is still not answerable, and it took two more runs to tell those apart.
+#
+# {M1 AP} genuinely IS the full stack including the top interface -
+# routing_layer_bottom is M1 and top_metal_layer has been AP in this tech pack
+# since the toolkit's own import (tech/tsmc65/tech.tcl:505, commit eddaf0c),
+# so the route gate has always defaulted to the full range. No special command
+# is needed; `make route` already asks the right question every time it runs.
+# Two real runs confirm this rather than assert it:
+#   fp1505           build/fp1505/reports/..._power_vias.rep,   Aug-19 00:17
+#                    `check_power_vias -layer_range {M1 AP}` -> 575 missing
+#                    (M4->M5 475; full by-pair split in that report's Summary)
+#   gdsrun-20260819  build/gdsrun-20260819/reports/..._power_vias.rep, 18:47,
+#                    same command -> 520 missing (M4->M5 415), also recorded
+#                    at reports/route_manifest.txt:185 `pg_via_missing 520`
+#
+# NEITHER CLOSES THE BUDGET, for three separate reasons - do not reach for
+# either number:
+#   1. gdsrun-20260819 is the exact RUN_TAG 11d (above) already disqualifies:
+#      built with `PLACE_MACRO_PG_CHECK=0` (reconfirmed here directly from its
+#      own reports/place_manifest.txt:103), which 11d calls "carried as a
+#      baseline with this blind spot named, not as a signoff candidate." One
+#      run, one database - that verdict was reached about min_gap and applies
+#      here unchanged.
+#   2. Both fp1505 and gdsrun-20260819 record `prov.design.git_dirty yes` in
+#      their own manifests (gdsrun-20260819's git_describe:
+#      `pgfix-island-feed-20260818-48-g4ddf4be-dirty`) - neither is
+#      reproducible from a clean HEAD, the same disqualifier this project
+#      applies to the shipping stream elsewhere.
+#   3. fp1505 is additionally stale on its own terms: its power_plan.tcl was
+#      36,789 bytes at the time it ran versus 60,858 at HEAD now - it predates
+#      the PG island feed and the VDDIO/VSSIO route_special, so it measures a
+#      grid that no longer exists (docs/plans/GDS_RUN_PLAN_2026-08-19.md: "Any
+#      re-run produces a different power grid and every number above must be
+#      re-measured").
+#
+# ALL THREE NUMBERS ON RECORD ARE DIFFERENT DATABASES - say so, do not
+# arithmetic across them. 575 (fp1505) and 520 (gdsrun-20260819) cannot be the
+# same lineage as each other (they disagree, and neither run's own history
+# derives from the other); and neither can be "556 (bottom..top-1) plus
+# whatever AP adds" from the ONE DATABASE the 4/556 pair above was measured
+# on, because 520 < 556 and adding layers to a range can only ADD missing
+# vias, never remove them. Three builds, three counts - 556-ish, 575, 520 -
+# none of them the answer for a budget derived from a current, clean HEAD.
+#
+# WHAT WOULD ACTUALLY CLOSE THIS: the same `-layer_range {M1 AP}` command
+# (free - it is what `make route` already runs), taken from a build that is
+# BOTH clean and reproducible (`git_dirty no` against a committed HEAD, not a
+# worktree scratch state) AND NOT run with `PLACE_MACRO_PG_CHECK=0` (i.e.
+# built after PLACE_MIN_MACRO_PG_GAP above is gated at 0.155, not the
+# forbidden knob that produced gdsrun-20260819). That run does not exist yet.
+# Do NOT write ROUTE_BUDGET_PG_VIAS from any run on record: run the clean one,
+# then ratchet with the per-layer-pair split recorded beside it, same as
+# always intended.
 
 # ── 11f. METAL DENSITY IS THE FOUNDRY'S ─────────────────────────────────────
 #
