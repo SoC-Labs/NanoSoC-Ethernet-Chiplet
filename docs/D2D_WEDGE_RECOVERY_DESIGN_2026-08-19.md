@@ -221,6 +221,35 @@ The narrow variant amortises as predicted (3.7x / 10.7x) **but is not a usable o
 territory: its 10.7x came from a burst that delivered wrong data and then hung the bus.
 ⇒ **This reframes the full tie-down: it is not just the safe choice, it actively forecloses a live
 corruption-then-wedge on the burst path.**
+#### This is a DISCLOSED RESIDUAL, now measured — not a surprise defect
+The burst fix's own hardening note bounded itself in writing, and the bound held exactly where it said
+(`imp/hw_gate/burst_fix_proto/BURST_FIX_HARDENING.md`, verified):
+> *"DEPTH-1 SUFFICIENT for the validated (non-bufferable, `hprot=0`) peer-write path … **NOT covered
+> (honest bound)**: the BUFFERABLE / EWR path (`hprot[2]=1`) … If a bufferable burst is ever a real
+> traffic class, **that path must be re-measured before depth-1 is assumed there.**"*
+
+**This measurement IS that "re-measured", and the answer is: broken.** `AWLEN>0` only arises on the
+bufferable path the bound excluded. ⇒ **The burst fix is not wrong — its PRECONDITION is.** Extending
+the hold past depth-1 is a design change carrying its own risk; enforcing `hprot[2]=0` (what the full
+tie-down does) keeps the fix inside its validated envelope. Stated at full strength: **the full
+tie-down is not the conservative option, it is the only option currently inside anyone's validated
+envelope.**
+
+⚠ **DO NOT MISREAD THE SIGNATURE.** The burst fix IS live in the measured arms (`hwdata_hold_r` 4,
+`peer_wcon_r` 7, `w_beat_consumed` 8 at HEAD). `d2d_ahb_m_hwdata_q` still appears because post-fix it
+survives as the **muxed output** — `:346  wire [31:0] d2d_ahb_m_hwdata_q = cap_done_r ? hwdata_hold_r
+: d2d_ahb_m_hwdata;`. Seeing that name in the corruption signature does **NOT** mean the arm was on
+pre-fix RTL. The obvious reading is the wrong one.
+
+#### The throughput lever is LINK LATENCY — not the tie-down, not the outstanding count
+Since the per-word cost **is** the B round trip, the cost is the semantics of **non-posted writes over
+a link with that latency**, not an implementation inefficiency. Nobody can optimise it away in the
+wrapper. And the tempting alternative — **pipeline several outstanding singles to amortise the round
+trip while keeping `AWLEN=0` — CANNOT WORK**: non-bufferable writes are non-posted *by definition*,
+so each must complete before the next issues. Allowing several in flight means making them bufferable,
+which is exactly the `hprot[2]=1` path that saturates the hazard list, wedges, and now also corrupts
+on `AWLEN>0`. **Do not spend a week on wrapper pipelining.**
+
 ⇒ A **THIRD precondition**, beyond the two named at the forcing site (revive the EWR guard and Fix-K):
 **the wrapper's write-data hold must be fixed for `AWLEN>0`** before any HPROT relaxation is worth
 pursuing.
