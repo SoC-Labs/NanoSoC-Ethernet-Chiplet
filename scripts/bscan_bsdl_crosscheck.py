@@ -1832,9 +1832,27 @@ def main(argv=None):
     if top is None:
         rep.unjudged("0/parse", "netlist has no module `%s` (the BSDL entity)"
                      % top_name, args.netlist)
-    if bsc is None:
+    if bsc is None and top is not None and "u_bsc_" in top.text:
+        # UNGROUPED, NOT ABSENT. `auto_ungroup` defaults to `both`, so the
+        # register may have been dissolved into the pad ring. Its contents are
+        # all still there, carrying a hierarchical-path prefix on every instance
+        # name. The chain is traced by CONNECTIVITY -- find the flop taking tdi,
+        # read its shift enable, walk forward -- so widening the scope to the top
+        # module finds exactly the same chain.
+        #
+        # Reporting "module absent" here is what turned a netlist that had lost
+        # FOUR provably-dead flops into an alarm that it had lost 117.
+        n_bsc = len(re.findall(r"u_bsc_\d+", top.text))
+        rep.warn("0/parse", "boundary-scan module `%s` was UNGROUPED into `%s` "
+                 "(auto_ungroup=both); %d u_bsc_* references found there. "
+                 "Tracing in the top scope instead -- this is not a defect."
+                 % (bscan_name, top_name, n_bsc), args.netlist)
+        bsc = top
+    elif bsc is None:
         rep.unjudged("0/parse", "netlist has no module `%s` (pad table "
-                     "design.module)" % bscan_name, args.netlist)
+                     "design.module) and no u_bsc_* instances in `%s` either -- "
+                     "the register really is absent" % (bscan_name, top_name),
+                     args.netlist)
 
     for m in (top, bsc):
         if m is not None and m.multi_driven:

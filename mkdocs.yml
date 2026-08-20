@@ -109,6 +109,13 @@ nav:
       - Chiplet alignment (eth ↔ compute): design/CHIPLET_ALIGNMENT.md
       - Upstreaming the block YAMLs: design/UPSTREAMING_BLOCK_YAMLS.md
       - TideLink freeze manifest: design/TIDELINK_FREEZE_MANIFEST_2026-08-19.md
+  - Boundary scan:
+      - "Bring-up procedure": bscan/BRINGUP.md
+      - "IDCODE decision record": bscan/IDCODE_DECISION.md
+      - "Toolkit promotion plan": bscan/TOOLKIT_PROMOTION_PLAN.md
+      - "Survival-gate design": bscan/DELETION_GUARD_DESIGN.md
+      - "Root cause: the deletion that was not": bscan/DELETION_ROOTCAUSE.md
+      - "Run input diff": bscan/RUN_INPUT_DIFF.md
 
   - Verification:
       - Lint findings: verification/LINT_FINDINGS.md

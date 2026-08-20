@@ -30,3 +30,45 @@
 # binds to nothing reports nothing and looks exactly like success.
 source [file join [file dirname [info script]] .. .. genus-innovus scripts protect_link_clk_div.tcl]
 protect_link_clk_div_pre_generic
+
+# --- IEEE 1149.1 boundary-scan register ---------------------------------------
+# Keep nanosoc_eth_chiplet_bscan from being ungrouped, for the same reason as the
+# divider above and with the same precedent — but this one was learned the
+# expensive way, so the reasoning is worth stating.
+#
+# WHAT HAPPENED. Two synthesis runs of the same design, 16 hours apart: the first
+# kept `module nanosoc_eth_chiplet_bscan`, the second dissolved it into the pad
+# ring. Nothing in the RTL changed to cause that. What changed was that a
+# `set_multicycle_path -from [get_pins u_nanosoc_eth_chiplet_bscan/*]` pair was
+# REMOVED from bscan_constraints.sdc — deleted because it was inert and
+# misleading, which it was. But `get_pins <inst>/*` anchors exceptions to
+# hierarchical boundary pins, and Genus will not auto-ungroup a hinst whose
+# boundary pins carry exceptions. So a constraint that did nothing it claimed had
+# been acting as an accidental `ungroup_ok false`.
+#
+# WHY IT MATTERS ENOUGH TO PIN. Ungrouping is not a defect in itself — the second
+# netlist is correct, and is arguably the better of the two. What it costs is
+# EVERY TOOL THAT INSPECTS THE REGISTER. Once dissolved, instance names gain a
+# 28-character hierarchical prefix, Genus wraps the instantiation so the cell type
+# and instance name land on separate lines, and `tdi` stops being a module port so
+# the chain can no longer be traced by connectivity from its head. Three separate
+# checks reported a healthy netlist as catastrophically broken before that was
+# understood.
+#
+# So: pin it deliberately and say why, rather than depend on a bogus timing
+# exception to do it by accident. If a future revision decides the area is worth
+# more than the inspectability, delete this — but delete it knowing what it buys.
+#
+# Fails loud if the instance is not found. At this point in the flow — after
+# elaborate — an unresolvable instance means the register is not in the design at
+# all, which is the one thing this whole structure must never silently become.
+set _bs_inst [get_cells -quiet u_nanosoc_eth_chiplet_bscan]
+if {![llength $_bs_inst]} {
+    error "pre_synth: u_nanosoc_eth_chiplet_bscan does not exist in the elaborated\
+           design. The boundary-scan register was never read, or the pad ring is\
+           unspliced. Check src/rtl/bscan/*.sv are in the ASIC filelist and that\
+           scripts/insert_bscan_padring.py --check passes."
+}
+foreach _h $_bs_inst { set_db $_h .ungroup_ok false }
+puts "SYN: bscan: ungroup_ok=false on [llength $_bs_inst] instance(s)"
+unset _bs_inst

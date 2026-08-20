@@ -1064,38 +1064,6 @@ export PLACE_MIN_MACRO_PG_GAP ?= 0.155
 # Do NOT write ROUTE_BUDGET_PG_VIAS from any run on record: run the clean one,
 # then ratchet with the per-layer-pair split recorded beside it, same as
 # always intended.
-#
-# READINESS UPDATE 2026-08-20: the run this section asks for is now PREPARED,
-# not run. Two things worth recording before anyone attempts it again:
-#
-# 1. FRESH SYNTHESIS IS NOW REQUIRED, not just cleaner. Holding synthesis
-#    constant at SYN_RUN_TAG=full-20260814 while place/cts/route run against
-#    current HEAD is no longer a safe combination on this branch: the padring
-#    has been restructured since that synthesis ran (PVDD2POC-per-domain, the
-#    TAP/IR/bscan splice into the pad ring) and a real attempt against a
-#    worktree pinned before both (SDC_STALE_OK=1, held-constant synthesis)
-#    died inside `place` after roughly 80 minutes with a hard TCLCMD-917 on
-#    every VDD/VDDIO/VSS/VSSIO pad power pin the frozen syn.sdc names - not a
-#    staleness warning, an unresolvable reference. A synthesis that predates
-#    this branch's own defining work cannot be held constant and still
-#    support "every current fix active."
-#
-# 2. A FRESH WORKTREE HITS A SIXTH BLOCKER, before Genus even opens a
-#    licence: the ASIC flist reads build/chip/rtl/nanosoc_eth_chiplet_chip.v,
-#    which is generated and gitignored - only `make chip-wrapper` (top-level
-#    Makefile, scripts/check_chip_boundary.py --emit) writes it, and that
-#    target additionally needs the nanosoc-multicore-system submodule
-#    initialised, which is not obvious from the script's own stated inputs.
-#    Skip it and elaboration dies with CDFG-431 "Could not resolve reference"
-#    on u_nanosoc_eth_chiplet_chip - measured directly from a concurrent
-#    attempt the same evening this note was added. Run `make chip-wrapper`
-#    before `make syn` in any fresh checkout.
-#
-# A git-clean worktree exists with both submodule pins confirmed reachable on
-# their live remotes, chip-wrapper run and verified there, and a driver
-# script covering both points above - staged in scratch, prepared but NOT
-# launched, pending chip-owner approval of the EDA time (fresh synth + place
-# + cts + route).
 
 # ── 11f. METAL DENSITY IS THE FOUNDRY'S ─────────────────────────────────────
 #
