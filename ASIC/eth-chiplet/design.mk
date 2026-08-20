@@ -317,6 +317,65 @@ INNOVUS_CPU_PER_REMOTE ?= 6
 # the census output; watch them there.
 GDS_EXPECT ?= PAD70GU=42 PAD70NU=40 PCORNER_G=4
 
+## BONDPAD_CELLS -- SET 2026-08-20. Without this, LVS cannot reach a verdict.
+##
+## The tpbn65v bond pads (PAD70GU x42, PAD70NU x40) are CLASS BLOCK, pin-less,
+## and that library is FRONT-END ONLY on this site -- there is no CDL for them
+## anywhere. `write_netlist` still emits the instances (`XBuPAD_HOST_IO_6
+## PAD70NU`), so the LVS netlist compiler hits 82 x
+##     Error: No matching ".SUBCKT" statement for "PAD70NU"
+## and stops before the comparison. The run then ends "NO VERDICT -- report has a
+## comparison section but no CORRECT/INCORRECT", which is what every LVS attempt
+## on this chiplet has produced. MEASURED on gdsrun-20260819: 82 compiler errors,
+## all of this one class, nothing else in the design unresolved.
+##
+## ASIC/lvs-flow/lvs.mk:143 already anticipates exactly this -- "Pin-less bump/pad
+## cells: LEF-only, no model at all, so they need an empty .SUBCKT or the SPICE
+## source will not even read" -- and defaults it EMPTY.
+##
+## WHY IT LOOKED SET: ASIC/genus-innovus/lvs_project.mk:212 carries
+## `BONDPAD_CELLS ?= PAD70GU PAD70NU`, but that file is included by the LEGACY
+## genus-innovus Makefile only. The toolkit's `lvs-batch` runs from
+## ASIC/eth-chiplet, which never sees it:
+##     make -C ASIC/genus-innovus  -> [PAD70GU PAD70NU]
+##     make -C ASIC/eth-chiplet    -> []
+## So the knob was right and unreachable. Setting it here puts it on the live path.
+##
+## The IO DRIVERS do not need this -- tphn65lpgv2od3_sl ships a CDL, so
+## PDDW*/PVDD*/PVSS* are boxed AND modelled. Only the bond pads are model-less.
+BONDPAD_CELLS ?= PAD70GU PAD70NU
+
+## LVS SUPPLY NAMES -- SET 2026-08-20, same class of bug as BONDPAD_CELLS above.
+##
+## ASIC/genus-innovus/lvs_project.mk carries these and is included ONLY by the
+## LEGACY genus-innovus Makefile. The toolkit's `lvs-batch` runs from
+## ASIC/eth-chiplet and never sees it, so the flow defaults took over:
+##     legacy                          live (before this)
+##     LVS_POWER       VDD VDDIO       VDD
+##     LVS_GROUND      VSS VSSIO       VSS
+##     LVS_GLOBAL_NETS VDD VDDIO VSSIO VDD VSS
+## Confirmed in the deck that actually ran: `LVS POWER NAME VDD`, `LVS GROUND
+## NAME VSS`. VDDIO and VSSIO were never declared as supplies at all.
+##
+## WHY `.GLOBAL VSS` IS ACTIVELY HARMFUL AND IS OMITTED BELOW. The boot ROM's
+## real supplies are VDDE/VSSE; `VSS` is an INTERNAL node inside rom_via, used
+## ~1040 times, and the power-gate footer sits drain-on-VSS source-on-VSSE.
+## `.GLOBAL VSS` merges the two and FABRICATES A SHORT ACROSS THE POWER GATE,
+## source side only. Measured consequence in the 2026-08-20 run: 390 of 396
+## incorrect nets and all 62 property errors inside the two ROMs, 32 unmatched
+## NPGEN* power-gate enable nets, and the matcher losing the ability to tell the
+## two ROM instances apart (1,003 arbitrary matches). lvs_project.mk:187-193
+## predicted this exactly, before it was measured.
+##
+## THE DISCLOSED COST of omitting VSS, stated so nobody rediscovers it: it leaves
+## ~16.8k floating <inst>/VSS source nets, which inflates source-side Net VSS and
+## MASKS the VSS half of any real PG open. The clean fix is project-local ROM CDL
+## copies with the internal VSS renamed, after which VSS can go back into
+## .GLOBAL -- see lvs_project.mk:197-204. Not done here; this is the cheap half.
+LVS_POWER       ?= VDD VDDIO
+LVS_GROUND      ?= VSS VSSIO
+LVS_GLOBAL_NETS ?= VDD VDDIO VSSIO
+
 
 # ── 9. SIGNOFF DECLARATIONS ─────────────────────────────────────────────────
 #
@@ -492,6 +551,39 @@ ROM_RUN_DIR         = $(RUN_DIR)/romlibs
 # That one export is what makes synthesis, P&R and stream-out open one build
 # rather than three reads of a shared directory.
 export ROMLIBS_DIR  = $(ROM_RUN_DIR)
+
+## ---------------------------------------------------------------------------
+## POST-ROUTE SIGNOFF REPORT -- ADDED 2026-08-20.
+##
+## `make design-report` stops before Calibre; it reads the Innovus database and
+## says nothing about the signoff decks. The broker's CheckAll+ return is almost
+## entirely rulecheck tables, so there was nothing on our side to set beside it,
+## and the DRC evidence sat in $(RUN_DIR)/work/drc_run/ -- OUTSIDE the outputs/
+## and reports/ that package_submission.sh collects.
+##
+## This writes $(RUN_DIR)/reports/signoff_report.{txt,json}: stream identity and
+## md5, every non-zero rulecheck grouped by family with vendor-macro attribution
+## and saturation flags, the per-window density tables, POST-ROUTE timing (the
+## last QoR snapshot, not the CTS one design_report quotes), ROM verdicts, and --
+## the part a broker report cannot give you -- an explicit NOT RUN list.
+##
+## It also prints the DERIVED-LAYER WITNESSES (CHIP / CHIP_NOSR / EMPTY_AREA /
+## SEALRING / SR_EDGE). Those are what separate "checked and clean" from "had
+## nothing to check": with a seal ring in the stream EMPTY_AREA collapses and
+## every CSR.R.1 subrule is vacuous while still reporting zero.
+##
+## Read-only over artefacts already on disk. No licence, seconds to run, safe to
+## invoke on a finished run at any time.
+SIGNOFF_REPORT_SCRIPT ?= $(DESIGN_HOME)/scripts/ci/signoff_report.py
+
+.PHONY: signoff-report
+signoff-report:
+	@test -d "$(RUN_DIR)" || { \
+	    echo "FAIL: no run at $(RUN_DIR) -- set RUN_TAG to a build that exists."; \
+	    exit 1; }
+	@test -r "$(SIGNOFF_REPORT_SCRIPT)" || { \
+	    echo "FAIL: $(SIGNOFF_REPORT_SCRIPT) is not readable."; exit 1; }
+	python3 "$(SIGNOFF_REPORT_SCRIPT)" --run "$(RUN_DIR)" --json
 
 .PHONY: legacy-paths asic-flist romlibs-check rom-ensure cpf-patch
 

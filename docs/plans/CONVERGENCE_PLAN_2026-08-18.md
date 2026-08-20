@@ -366,8 +366,11 @@ Full classification (all 157 individually coded, annotated inline in
   looked promising: it isn't, today.** `floorplan.tcl:198-232` already has exactly the right
   blockage — `CSR_CORNER_KEEPOUT`, `create_route_blockage -fills -layers {M1..M9 AP}`, the same
   four 74×74µm corner squares, explicitly commented as serving both `CSR.R.1` *and* dummy fill
-  ("one keep-out serves both"), and *proven* to be honoured by a real fill pass (measured
-  2026-08-08, against Innovus's own `add_metal_fill`). But `create_route_blockage` is an
+    ("one keep-out serves both"). **CORRECTION 2026-08-19: it is NOT proven by any fill pass.**
+    An earlier revision here claimed it was, citing a 2026-08-08 measurement against Innovus's
+    own `add_metal_fill`. `CSR_CORNER_KEEPOUT` landed in `d7dad16` on 2026-08-13, five days AFTER
+    all three fill runs, whose archived floorplans contain 0 occurrences of it.
+    But `create_route_blockage` is an
   Innovus-session-internal construct — nothing in `gdsmap_derive.py` or anywhere else in this
   flow translates it into real geometry on the layers a foundry dummy-fill utility would
   actually read (`DMEXCL`/`ODBLK`/`POBLK` — confirmed by exhaustive grep: those three layer

@@ -61,8 +61,29 @@
 # ---------------------------------------------------------------------------
 
 import argparse
+import os
 import re
 import sys
+
+
+## DRC_MAX_RESULTS -- ADDED 2026-08-20. This cap was hardcoded at 1000 and there
+## was no supported way to raise it: `DRC MAXIMUM RESULTS` is an SVRF
+## SPECIFICATION statement, so feeding it through DECK_APPEND (which lands after
+## the rule body) fails compilation with `ERROR: Error SPC1 on line <n>`.
+##
+## That mattered because a check whose TRUE count exceeds the cap was
+## unmeasurable. Calibre writes the truncated value into BOTH count fields, so a
+## saturated LOGO.R.4 reports `1000 (1000)` and reads exactly like a real number.
+## Every historical logoed run on this design hit that.
+##
+## Raise it deliberately for a MEASUREMENT. Leave it at 1000 for signoff, so that
+## drc_census.py's `MAXIMUM RDB limit ... reached` detection stays the mechanism
+## that catches overflow rather than a bigger number quietly hiding it.
+## ESTIMATE remains unavailable on this install -- see NOTE_MAX_RESULTS below.
+MAX_RESULTS = (os.environ.get("DRC_MAX_RESULTS") or "1000").strip()
+if not (MAX_RESULTS.isdigit() and int(MAX_RESULTS) > 0) and MAX_RESULTS.upper() != "ALL":
+    sys.exit("make_project_header: DRC_MAX_RESULTS must be a positive integer or "
+             "ALL, got %r" % MAX_RESULTS)
 
 SWITCH_START = re.compile(r"^/\* SWITCH DEFINITION START \*/")
 SWITCH_END = re.compile(r"^/\* SWITCH DEFINITION END \*/")
@@ -418,7 +439,8 @@ EDITS = [
 
     ("note", r"^\s*DRC\s+MAXIMUM\s+RESULTS\b", NOTE_MAX_RESULTS,
      "why the cap exists and why ESTIMATE cannot be used on this install"),
-    ("replace", r"^\s*DRC\s+MAXIMUM\s+RESULTS\b", "DRC MAXIMUM RESULTS 1000",
+    ("replace", r"^\s*DRC\s+MAXIMUM\s+RESULTS\b",
+     "DRC MAXIMUM RESULTS %s" % MAX_RESULTS,
      "cap per check; saturation detected downstream by drc_census.py"),
     ("after", r"^\s*DRC\s+MAXIMUM\s+RESULTS\b",
      NOTE_MAX_DENSITY + "\nDRC MAXIMUM RESULTS DENSITY ALL\nDRC MAXIMUM VERTEX  4096",

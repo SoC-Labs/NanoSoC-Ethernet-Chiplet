@@ -84,7 +84,7 @@ place+CTS: 81.5 min stage time, 87 min end-to-end
 
 ### 1.4 Good news, under-recorded
 
-- Metal fill has already run (`EVR_METAL_FILL=1` in two manifests) and added **zero** DRC violations. Every doc says otherwise.
+- ~~Metal fill has already run (`EVR_METAL_FILL=1` in two manifests) and added **zero** DRC violations.~~ **RETRACTED 2026-08-19 — wrong on both counts.** There are **six** `EVR_METAL_FILL=1` runs, not two, all in the retired `genus-innovus` engine. Against the matched-era Calibre control (`drc_track2` unfilled vs `drc_filled`), fill *added* ~4,012 results — `DM8.EN.1` 997, `DM9.EN.1` 316, `CSR.R.1` 699 in the corners, and `DM9.W.1`/`DM9.S.1` **saturated at the 1000 cap** so unbounded. It also closed 6,185 core density windows to 0, which is the real benefit. Every landed fix for that damage (`927f853` deck geometry, `d7dad16` corner keep-out) postdates all six runs and **has never been executed**. The live toolkit has never filled at all (`ROUTE_METAL_FILL 0`; every `route_manifest.txt` reads `metal_fill off`).
 - Post-P&R LEC is logically clean: 61,375/61,375 equivalent, 0 non-equivalent, 0 abort. `RESULT=FAIL` is harness policy on 34 points matched on both sides.
 - GDS stream-out is the best-executed part of the downstream flow: unmodified foundry map file, correct `-unit 1000`, layers agreeing with the deck.
 - **The QRC deck for the exact stack exists on this machine**: `$TSMC_65_HOME/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile`, 178 MiB. The comment at `scripts/preplace.tcl:31-34` ("No correct dataset exists here") is **wrong** — it looked only in `CMOS/util/`. StarRC `.nxtgrd`/`.itf` for the same stack at `$TSMC_65_HOME/CMOS/LP/pdk/CCI/online/1p9m_6X1Z1U/`.

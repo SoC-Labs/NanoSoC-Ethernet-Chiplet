@@ -1,0 +1,437 @@
+<title>Reticle Watch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#F6F7F9;
+  --panel:#FFFFFF;
+  --panel-2:#EFF1F5;
+  --ink:#131822;
+  --ink-2:#3D4658;
+  --ink-3:#6C7689;
+  --rule:#DDE1E8;
+  --rule-2:#C6CCD7;
+  --accent:#A8741A;
+  --accent-soft:#F5EBD8;
+  --pass:#1F6F5C;
+  --pass-soft:#E0EFE9;
+  --fail:#A83A26;
+  --fail-soft:#F8E4DF;
+  --void:#5B4E8C;
+  --void-soft:#EBE7F5;
+  --shadow:0 1px 2px rgba(19,24,34,.06),0 4px 14px rgba(19,24,34,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D1118;
+    --panel:#151B25;
+    --panel-2:#1D2531;
+    --ink:#E9ECF2;
+    --ink-2:#B4BDCC;
+    --ink-3:#7E8899;
+    --rule:#28313F;
+    --rule-2:#3A4553;
+    --accent:#D9A441;
+    --accent-soft:#2E2412;
+    --pass:#4FB89A;
+    --pass-soft:#122C26;
+    --fail:#E2705A;
+    --fail-soft:#331812;
+    --void:#9C8DD6;
+    --void-soft:#211C36;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 18px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D1118;
+  --panel:#151B25;
+  --panel-2:#1D2531;
+  --ink:#E9ECF2;
+  --ink-2:#B4BDCC;
+  --ink-3:#7E8899;
+  --rule:#28313F;
+  --rule-2:#3A4553;
+  --accent:#D9A441;
+  --accent-soft:#2E2412;
+  --pass:#4FB89A;
+  --pass-soft:#122C26;
+  --fail:#E2705A;
+  --fail-soft:#331812;
+  --void:#9C8DD6;
+  --void-soft:#211C36;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 18px rgba(0,0,0,.3);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:15px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px 96px}
+
+h1,h2,h3,.cond{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif}
+code,.mono,td.num,.tag{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+
+/* ---------- masthead ---------- */
+.masthead{border-bottom:2px solid var(--ink);padding:40px 0 18px;margin-bottom:28px}
+.kicker{
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--accent);margin:0 0 12px;font-weight:600;
+}
+h1{font-size:clamp(34px,5.5vw,52px);line-height:1.02;margin:0 0 14px;font-weight:700;letter-spacing:-.02em;text-wrap:balance}
+.standfirst{font-size:18px;color:var(--ink-2);max-width:62ch;margin:0 0 22px;line-height:1.5}
+.byline{
+  display:flex;flex-wrap:wrap;gap:20px;font-family:"IBM Plex Mono",monospace;
+  font-size:11.5px;color:var(--ink-3);letter-spacing:.03em;
+}
+.byline b{color:var(--ink-2);font-weight:500}
+
+/* ---------- countdown / verdict ---------- */
+.verdict{
+  display:grid;grid-template-columns:1.6fr 1fr;gap:0;
+  border:1px solid var(--rule-2);border-radius:3px;overflow:hidden;
+  background:var(--panel);box-shadow:var(--shadow);margin-bottom:34px;
+}
+.verdict-main{padding:26px 28px;border-right:1px solid var(--rule)}
+.verdict-main h2{margin:0 0 10px;font-size:23px;font-weight:700;letter-spacing:-.01em}
+.verdict-main p{margin:0 0 12px;color:var(--ink-2);font-size:14.5px;max-width:56ch}
+.verdict-main p:last-child{margin-bottom:0}
+.tally{display:grid;grid-template-rows:repeat(3,1fr)}
+.tally-row{
+  display:flex;align-items:center;gap:14px;padding:0 24px;
+  border-bottom:1px solid var(--rule);
+}
+.tally-row:last-child{border-bottom:none}
+.tally-n{
+  font-family:"IBM Plex Mono",monospace;font-size:30px;font-weight:600;
+  font-variant-numeric:tabular-nums;min-width:2.1ch;text-align:right;line-height:1;
+}
+.tally-l{font-size:12px;line-height:1.35;color:var(--ink-2);text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+.tally-row.p .tally-n{color:var(--pass)}
+.tally-row.f .tally-n{color:var(--fail)}
+.tally-row.v .tally-n{color:var(--void)}
+
+/* ---------- sections ---------- */
+section{margin:44px 0 0;scroll-margin-top:20px}
+h2.sec{
+  font-size:13px;text-transform:uppercase;letter-spacing:.14em;font-weight:700;
+  color:var(--ink);margin:0 0 4px;padding-bottom:9px;border-bottom:1px solid var(--ink);
+  display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+}
+h2.sec span{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.05em;color:var(--ink-3);text-transform:none;font-weight:400}
+.lede{color:var(--ink-2);margin:16px 0 20px;max-width:70ch;font-size:15px}
+
+/* ---------- tables ---------- */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:3px;background:var(--panel);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:660px}
+thead th{
+  background:var(--panel-2);text-align:left;padding:10px 14px;
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.09em;color:var(--ink-2);
+  border-bottom:1px solid var(--rule-2);white-space:nowrap;
+}
+tbody td{padding:11px 14px;border-bottom:1px solid var(--rule);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:none}
+tbody td:first-child{color:var(--ink);font-weight:500}
+td.num{text-align:right;white-space:nowrap;color:var(--ink)}
+td.mono,td .mono{font-size:12.5px}
+tbody tr.sep td{border-top:2px solid var(--rule-2)}
+
+/* status chips */
+.chip{
+  display:inline-block;padding:2px 8px;border-radius:2px;font-family:"IBM Plex Mono",monospace;
+  font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;
+  border:1px solid transparent;
+}
+.chip.pass{background:var(--pass-soft);color:var(--pass);border-color:var(--pass)}
+.chip.fail{background:var(--fail-soft);color:var(--fail);border-color:var(--fail)}
+.chip.void{background:var(--void-soft);color:var(--void);border-color:var(--void)}
+.chip.warn{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+
+/* severity stripe on gate rows */
+tbody tr td:first-child{border-left:3px solid transparent}
+tr.s-pass td:first-child{border-left-color:var(--pass)}
+tr.s-fail td:first-child{border-left-color:var(--fail)}
+tr.s-void td:first-child{border-left-color:var(--void)}
+
+/* ---------- fact grid ---------- */
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(184px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.fact{background:var(--panel);padding:15px 16px}
+.fact dt{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-3);font-weight:600;margin-bottom:5px;font-family:"IBM Plex Sans Condensed",sans-serif}
+.fact dd{margin:0;font-family:"IBM Plex Mono",monospace;font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1.3}
+.fact dd small{display:block;font-size:11px;color:var(--ink-3);margin-top:3px;font-family:"IBM Plex Sans",sans-serif}
+
+/* ---------- callout ---------- */
+.note{
+  border-left:3px solid var(--accent);background:var(--panel);padding:16px 20px;
+  margin:20px 0;border-radius:0 3px 3px 0;box-shadow:var(--shadow);
+}
+.note.bad{border-left-color:var(--fail)}
+.note.good{border-left-color:var(--pass)}
+.note.void{border-left-color:var(--void)}
+.note h4{margin:0 0 7px;font-size:14.5px;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;color:var(--ink)}
+.note p{margin:0 0 9px;font-size:14px;color:var(--ink-2);max-width:72ch}
+.note p:last-child{margin-bottom:0}
+
+/* ---------- critical path ---------- */
+.path{list-style:none;padding:0;margin:20px 0 0;counter-reset:step}
+.path li{
+  counter-increment:step;display:grid;grid-template-columns:38px 1fr;gap:16px;
+  padding:16px 0;border-bottom:1px solid var(--rule);
+}
+.path li:last-child{border-bottom:none}
+.path li::before{
+  content:counter(step,decimal-leading-zero);
+  font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:600;color:var(--accent);
+  padding-top:2px;letter-spacing:.02em;
+}
+.path h4{margin:0 0 5px;font-size:15.5px;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700}
+.path p{margin:0;font-size:14px;color:var(--ink-2);max-width:70ch}
+.path .meta{
+  margin-top:7px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);
+}
+.path .meta b{color:var(--ink-2);font-weight:500}
+
+/* ---------- decisions ---------- */
+.decisions{display:grid;gap:14px;margin-top:18px}
+.dec{border:1px solid var(--rule-2);border-radius:3px;background:var(--panel);padding:17px 20px;box-shadow:var(--shadow)}
+.dec h4{margin:0 0 6px;font-size:15px;font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:700;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.dec p{margin:0;font-size:14px;color:var(--ink-2);max-width:74ch}
+.dec .q{color:var(--accent);font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+
+code{background:var(--panel-2);padding:1.5px 5px;border-radius:2px;font-size:12.5px;color:var(--ink)}
+a{color:var(--accent)}
+b,strong{color:var(--ink);font-weight:600}
+hr.end{border:none;border-top:2px solid var(--ink);margin:52px 0 18px}
+.foot{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);line-height:1.8}
+@media (max-width:760px){
+  .verdict{grid-template-columns:1fr}
+  .verdict-main{border-right:none;border-bottom:1px solid var(--rule)}
+  .tally-row{padding:14px 24px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="kicker">Ethernet chiplet · TSMC 65 nm · mini@sic MPW</p>
+  <h1>Reticle Watch</h1>
+  <p class="standfirst">Where the eth-chiplet stands twelve days out from the 1 September final GDS, what the stream on disk actually is, and which checks have never been pointed at it.</p>
+  <div class="byline">
+    <span><b>Compiled</b> 2026-08-20</span>
+    <span><b>Stream</b> gdsrun-20260819</span>
+    <span><b>Project</b> TMWB45_10042</span>
+    <span><b>Days to final</b> 12</span>
+  </div>
+</header>
+
+<div class="verdict">
+  <div class="verdict-main">
+    <h2>Not submittable today — but the blocker is measurement, not silicon</h2>
+    <p>The design's own geometric defect population is small, bounded and <b>byte-stable at identical coordinates for nine days</b>: 103 violations, every one of them in the power grid, none in signal routing. That is a tractable engineering problem.</p>
+    <p>What is not tractable on the current schedule is the checking. Of the six physical checks the broker requires, <b>four have never been run against this stream at all</b>, and the two that have both come back red.</p>
+  </div>
+  <div class="tally">
+    <div class="tally-row p"><span class="tally-n">5</span><span class="tally-l">Gates passed<br>on this stream</span></div>
+    <div class="tally-row f"><span class="tally-n">5</span><span class="tally-l">Gates failed<br>on this stream</span></div>
+    <div class="tally-row v"><span class="tally-n">11</span><span class="tally-l">Never run<br>on this stream</span></div>
+  </div>
+</div>
+
+<section>
+  <h2 class="sec">The stream on disk <span>measured 2026-08-20</span></h2>
+  <dl class="facts">
+    <div class="fact"><dt>GDS size</dt><dd>301.0 MiB<small>315,660,256 bytes</small></dd></div>
+    <div class="fact"><dt>md5</dt><dd style="font-size:12px">b1441d78e083<small>26def9f59ae8eb1539a8</small></dd></div>
+    <div class="fact"><dt>Die extent</dt><dd>1600 × 2000<small>µm, exact</small></dd></div>
+    <div class="fact"><dt>Structures</dt><dd>2,653<small>3,552,785 geometry records</small></dd></div>
+    <div class="fact"><dt>Layers</dt><dd>37<small>distinct layer/datatype</small></dd></div>
+    <div class="fact"><dt>Instances</dt><dd>201,591<small>77.8% utilisation</small></dd></div>
+    <div class="fact"><dt>Design commit</dt><dd>4ddf4be<small>dirty — one unstaged hunk</small></dd></div>
+    <div class="fact"><dt>Toolkit commit</dt><dd>8e23478<small>all four stages, one pin</small></dd></div>
+  </dl>
+
+  <div class="note good">
+    <h4>Reproducibility is better here than in the shipping GDS</h4>
+    <p>All four implementation stages — synthesis, place, CTS, route — ran at <b>one</b> toolkit commit and one project commit. The split-lineage defect that made the shipping stream unreproducible does not apply to this run. Three things still block a clean-clone rebuild: the tag is local-only and never pushed, the route stage carries one uncommitted patch, and <code>eth_ss_bootrom.sv</code> is untracked so a fresh recursive clone cannot pass the ROM gate.</p>
+  </div>
+</section>
+
+<section>
+  <h2 class="sec">Gate matrix <span>what each check actually read</span></h2>
+  <p class="lede">The third column is the one that matters. This project has a documented history of green verdicts measured against retired streams, so every gate below is recorded by <em>what it read</em>, not by what it returned.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr>
+      <th>Gate</th><th>State</th><th>What it read</th><th>Result</th><th>Can it fail?</th>
+    </tr></thead>
+    <tbody>
+      <tr class="s-pass"><td>Route → GDS</td><td><span class="chip pass">Pass</span></td><td class="mono">gdsrun-20260819</td><td>Streamed, 3,958 s</td><td>Yes</td></tr>
+      <tr class="s-fail"><td>Calibre DRC</td><td><span class="chip fail">Fail</span></td><td class="mono">gdsrun-20260819</td><td>846 results / 1,926 rulechecks</td><td>Yes</td></tr>
+      <tr class="s-pass"><td>GLS — boot, zero-init</td><td><span class="chip pass">Pass</span></td><td class="mono">gdsrun _pnr_pg.v</td><td>27/27, FORCES 0, both CPUs</td><td>Yes — negative control red</td></tr>
+      <tr class="s-pass"><td>GLS — boot, <b>random init</b></td><td><span class="chip pass">Pass</span></td><td class="mono">gdsrun _pnr_pg.v</td><td>27/27 — <b>new today</b></td><td>Yes</td></tr>
+      <tr class="s-pass"><td>ROM at the reticle</td><td><span class="chip pass">Pass</span></td><td class="mono">gdsrun GDS geometry</td><td>512/512 both ROMs, 4-way SHA identity</td><td>Yes — mutation-proven</td></tr>
+      <tr class="s-pass"><td>Floorplan PG audit</td><td><span class="chip pass">Pass</span></td><td class="mono">gdsrun place DB</td><td>FP-SHORT 0, FP-ISLAND 0/18</td><td>Yes</td></tr>
+
+      <tr class="s-fail sep"><td>Padring</td><td><span class="chip fail">Fail</span></td><td class="mono">gdsrun-20260819</td><td><code>PVDD2POC_G</code> ×4, mandatory ×1</td><td>Yes — fixture-proven</td></tr>
+      <tr class="s-fail"><td>Post-route timing</td><td><span class="chip fail">Fail</span></td><td class="mono">gdsrun route DB</td><td>WNS −0.746, 1,678 failing endpoints</td><td>Yes</td></tr>
+      <tr class="s-fail"><td>Metal density</td><td><span class="chip fail">Fail</span></td><td class="mono">gdsrun-20260819</td><td>6,013 core windows short</td><td>Yes</td></tr>
+      <tr class="s-fail"><td>Route DRC gate</td><td><span class="chip fail">Fail</span></td><td class="mono">gdsrun route DB</td><td>67 violations, 100% power grid</td><td>Yes</td></tr>
+
+      <tr class="s-void sep"><td>LVS</td><td><span class="chip void">Never run</span></td><td class="mono">— last: 08-10, different DB</td><td>No <code>CORRECT</code> verdict has ever existed</td><td>Untested here</td></tr>
+      <tr class="s-void"><td>Antenna</td><td><span class="chip void">Never run</span></td><td class="mono">— last: 08-17, other stream</td><td>Null result anyway — no gate area</td><td>No</td></tr>
+      <tr class="s-void"><td>BND / wire-bond</td><td><span class="chip void">Never run</span></td><td class="mono">—</td><td>Structurally empty: 5 AP shapes on 103 pads</td><td>No</td></tr>
+      <tr class="s-void"><td>ERC</td><td><span class="chip void">Never run</span></td><td class="mono">—</td><td>Mechanism fixed; only 2 of 4 supplies labelled</td><td>Yes, when run</td></tr>
+      <tr class="s-void"><td>LEC — RTL → gate</td><td><span class="chip void">Never completed</span></td><td class="mono">— dies on sub-compare 21</td><td>No verdict has ever been rendered, any lineage</td><td>Yes — fixture-proven</td></tr>
+      <tr class="s-void"><td>LEC — gate → routed</td><td><span class="chip void">Never run</span></td><td class="mono">— passes are full-20260814</td><td>Hashes differ; carries over to nothing</td><td>Yes — fixture-proven</td></tr>
+      <tr class="s-void"><td>Metal fill</td><td><span class="chip void">Never run</span></td><td class="mono">—</td><td><code>add_metal_fill</code> issued 0 times, ever</td><td>n/a</td></tr>
+      <tr class="s-void"><td>CDC — wired (HAL)</td><td><span class="chip void">Cannot fail</span></td><td class="mono">aborts at BLDSTP</td><td>Reads no SDC → 9 rules always zero</td><td><b>No — by construction</b></td></tr>
+      <tr class="s-void"><td>CDC — SpyGlass</td><td><span class="chip void">Unwired</span></td><td class="mono">08-17 RTL</td><td>139 unsync crossings, 19 convergences</td><td>Not in CI</td></tr>
+      <tr class="s-void"><td>Signoff STA</td><td><span class="chip void">Never run</span></td><td class="mono">— pinned full-20260814</td><td>Tempus installed, harness works, wired to nothing</td><td>n/a</td></tr>
+      <tr class="s-void"><td>IR drop</td><td><span class="chip void">Never run</span></td><td class="mono">— pinned fp1505</td><td>Voltus installed, 6 must-fail proofs exist</td><td>Yes, when run</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note void">
+    <h4>“Never run” is not “clean”</h4>
+    <p>Four of the eleven would return a <b>zero that measured nothing</b> even if executed today. Antenna has no gate area to measure — 72% of the die contains no transistor. BND is the pad-metal deck and the top cell holds 5 AP shapes on a 103-pad wire-bond die. Recording those as passes would repeat the exact failure this project has already made four times.</p>
+  </div>
+</section>
+
+<section>
+  <h2 class="sec">Three classes of problem <span>they need different responses</span></h2>
+
+  <div class="note bad">
+    <h4>Class 1 — Real design defects (103, all in the power grid)</h4>
+    <p>Innovus <code>check_drc</code> reports 67, and <b>every one is on a Special Wire</b> — 62 on VDD, 8 on VSS. Not one is in signal routing. Calibre's coordinates match one-for-one. The population splits into 39 PG straps clashing with the flash-cache macro pins on an 8.4 µm pitch, 38 mesh slivers where straps meet vias and rings, and 20 single-cut vias on wide metal, plus 6 inside the vendor <code>rf_01k</code> memory that are not ours to fix.</p>
+    <p>The encouraging part: <code>M4.S.2.1</code> is 28/28 coordinate-identical to fp1505, <code>VIA3.R.2</code> 23/23 identical, <code>PO.R.8</code> 691/691 identical. Two runs at two commits produce the same violations at the same microns. These are deterministic properties of the floorplan and PG template — a bounded, well-localised, in-flow-fixable set.</p>
+  </div>
+
+  <div class="note void">
+    <h4>Class 2 — Artefacts of a stream with no transistors in it</h4>
+    <p><code>PO.R.8</code> = 691 is the largest single number in the DRC report and it is <b>not ours</b>: all 691 are attributed to 22 memory and ROM macro cells whose input pins dead-end at absent standard cells. It is byte-identical on every full-chip run since 09 August — layout-independent. imec's own merged run drove the same class from 8 to 0 the moment real cell layout was imported.</p>
+    <p>Density is the inverse case, and it is <b>real</b>: standard-cell merge fixes M1 only. M4–M9 is roughly 4,000 core windows that no black-box merge can close. M7 fails 100% of its windows at 2.4% mean against a 10% floor. That is not marginal, and §6.5 puts density in the never-waivable class.</p>
+  </div>
+
+  <div class="note">
+    <h4>Class 3 — Reporting defects that make good numbers look bad and bad numbers look good</h4>
+    <p><code>design_report.json</code> is frozen at post-CTS because the route stage fails its gate and aborts before the report step. It therefore reads <b>WNS +0.006 ns, 0 failing endpoints</b> while the streamed database is <b>−0.746 ns, 1,678 failing endpoints</b>. The documented “source of chip numbers” describes a database superseded 66 minutes later, and looks complete. This is precisely the shape that gets mis-quoted to a broker.</p>
+    <p>Alongside it: the CI <code>metal-fill</code> stage sets a knob no live code reads and globs for a filename the toolkit never writes, so it burns an hour of licence and records <code>unverified</code>; and six ladder stages point at a GDS path that does not exist.</p>
+  </div>
+</section>
+
+<section>
+  <h2 class="sec">What the broker has actually seen <span>and the zero that misled us</span></h2>
+  <p class="lede">A correction to the standing assumption: a preliminary GDS <b>was</b> delivered, twice. The seat is booked under project <code>TMWB45_10042</code>. Both returns graded the same 10 August stream, md5 <code>7f621496…</code>, and neither touches the current lineage.</p>
+
+  <div class="note bad">
+    <h4>imec's <code>CSR.R.1 = 0</code> is a null result, and the defect is renamed rather than absent</h4>
+    <p>Their flow is fill → seal ring → DRC. The TSMC deck derives <code>EMPTY_AREA</code> from <code>CHIP NOT INTERACT SR_EDGE</code>, and every one of the 162 <code>CSR.R.1</code> subrules is <code>EMPTY_AREA AND &lt;layer&gt;</code>. With a seal ring present the region collapses and the whole family becomes vacuous. Our own Calibre run on TSMC's seal-ring cell proves it: <b>162 subrules, 0 nonzero</b>. They also reported zero on a stream we measure at 56.</p>
+    <p>In their filled output the same physical defect surfaces as <b>4,814 results across 16 subrules of the CSR.R.2/R.3/S/EN and SR.* families, 100% localised to the four die corners</b> by coordinate test, two of them saturated at the 1000 cap. Controls confirm the test discriminates. <b>Any future imec green must be read on those families, never on <code>CSR.R.1</code>.</b></p>
+  </div>
+
+  <div class="note">
+    <h4>The question that decides the schedule has not been asked</h4>
+    <p>Both spent broker loops were wasted on library-replacement errors. Nothing on file tells us how long the import-and-decks loop takes, or what the cut-off is for a revised stream. That single answer determines whether 1 September is reachable, and it costs nothing to ask today.</p>
+  </div>
+</section>
+
+<section>
+  <h2 class="sec">Critical path to 1 September <span>dependency-ordered</span></h2>
+  <ol class="path">
+    <li>
+      <h4>Send the broker mail</h4>
+      <p>Lead with turnaround and cut-off date, then request a re-run with the pad library from the <code>cup</code> branch plus the missing <code>plots/</code> images that made both prior loops unusable. Ask for the waiver template and locate the Design Delivery Form — no copy of it exists on this host, and it carries the FTP instructions.</p>
+      <div class="meta"><b>Cost</b> one email · <b>Blocks</b> everything downstream · <b>Needs</b> David</div>
+    </li>
+    <li>
+      <h4>Re-stream from a commit that carries the padring fix</h4>
+      <p>Commit <code>7581af0</code> lands one <code>PVDD2POC</code> per domain but is seven hours younger than the run's launch point and is not an ancestor of it. Sending the current stream spends a broker loop reproducing a defect already fixed in source.</p>
+      <div class="meta"><b>Cost</b> ~4 h of Innovus · <b>Fixes</b> the one hard padring error · <b>Also clears</b> a dirty tag</div>
+    </li>
+    <li>
+      <h4>Fix the PG mesh in the same re-run</h4>
+      <p>All 103 geometric violations and all 60 connectivity opens are one problem. Re-enable the macro-PG census — it was explicitly disabled at launch — add a routing halo over the flash-cache block, and repair the strap-to-ring stitch. This is the only genuine design fix on the list, and 97 of the 103 are ours.</p>
+      <div class="meta"><b>Cost</b> folded into the same run · <b>Removes</b> the largest real defect class</div>
+    </li>
+    <li>
+      <h4>Decide fill ownership, then act on it</h4>
+      <p>Density is short by a wide margin and someone must fill. Delegation is currently unavailable — §7.1 conditions it on a design clean but for fill-solvable violations, and we carry 149 that are not. Either self-fill with the corner keep-out engaged, or ship <code>BLOCKAGEFILL</code> map rows so a foundry filler can see the keep-out at all. Today it is an in-tool object that streams nowhere.</p>
+      <div class="meta"><b>Cost</b> 54 s of tool time, or five edits · <b>Needs</b> a decision, not more analysis</div>
+    </li>
+    <li>
+      <h4>Run the four checks that have never been pointed at this stream</h4>
+      <p>ERC, BND at imec's own deck revision and pitch, antenna, and LVS via <code>lvs-batch</code>. Three of the four decks are already on this host — including the exact wire-bond deck we previously recorded as missing. Expect antenna and BND to come back structurally empty; that must be recorded as unmeasured, not banked as a pass.</p>
+      <div class="meta"><b>Cost</b> ~1 day of licence time · <b>Two are licence-free and take minutes</b></div>
+    </li>
+    <li>
+      <h4>Close the equivalence chain on the shipping netlist</h4>
+      <p>Run <code>lec-gate</code> and <code>lec-pnr</code> against the stream being submitted, and diagnose why the RTL→gate leg dies on its twenty-first sub-compare. The <code>work/fv</code> model needed for that leg has been archived today at 5.6 MB so a clean cannot destroy it.</p>
+      <div class="meta"><b>Cost</b> two Conformal seats, ~6 h each · <b>Both legs are fixture-proven and automated</b></div>
+    </li>
+    <li>
+      <h4>Repoint the audit trail before anyone reads it</h4>
+      <p><code>signoff.yaml</code> hardcodes <code>fp1505</code> in 116 places, so running the driver unmodified grades the old build. Move <code>design-report</code> ahead of the gate assertion so it stops reporting CTS numbers as final, and add the Calibre summaries to what the submission bundle collects — they currently live outside its scope.</p>
+      <div class="meta"><b>Cost</b> half a day · <b>Blocks</b> confidence, not submission</div>
+    </li>
+  </ol>
+</section>
+
+<section>
+  <h2 class="sec">Decisions that are yours <span>not resolvable from the code</span></h2>
+  <div class="decisions">
+    <div class="dec">
+      <h4><span class="q">Q1</span> Do we send an updated preliminary GDS, and from which commit?</h4>
+      <p>The guideline date was 18 August; the hard date is 1 September, so we are two days past a guideline and twelve inside the deadline. The preliminary loop is the only mechanism that produces real cell geometry and a TSMC-side dry run. Recommendation: yes, but re-stream first — a third wasted loop is the schedule risk, not the date.</p>
+    </div>
+    <div class="dec">
+      <h4><span class="q">Q2</span> Who runs the metal fill?</h4>
+      <p>Self-fill costs about 0.19 ns of unrecovered setup and 24% stream growth, and has never been executed with the corner keep-out that now exists. Delegation needs a precondition we do not currently meet. Either way the corner marker should ship, because it is nearly free and needed in both worlds.</p>
+    </div>
+    <div class="dec">
+      <h4><span class="q">Q3</span> Does boundary scan go in?</h4>
+      <p>It works — 7/7, 5,063 checks, 76 bits shifted through real mapped cells with the core held in reset — and it is <b>absent from this stream</b> by a launch point chosen two minutes before the first bscan commit. It is the only instrument that gives pin-continuity testing with a dead core, and there is no internal scan chain to fall back on. Adding it means re-running from a bscan-bearing commit.</p>
+    </div>
+    <div class="dec">
+      <h4><span class="q">Q4</span> Is a timing signoff statement required for this submission?</h4>
+      <p>The foundry manual contains zero timing requirements — setup, hold and WNS return no hits, against density, seal ring and antenna as live controls. If no statement is needed, the −0.746 ns post-route figure is a project-quality question rather than a submission blocker, and the missing setup-optimisation pass can wait behind the physical work.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2 class="sec">Landed today <span>corrections and new measurements</span></h2>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Change</th><th>Where</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Random-init GLS</td><td class="mono">gdsrun_cc</td><td>New measurement: 27/27 pass with <code>+vcs+initreg+random</code>, verified genuinely applied. Closes the named reset-tree and X-propagation gap.</td></tr>
+      <tr><td>Archived the FV model</td><td class="mono">outputs/…_fv.tar.gz</td><td>79 MB of perishable Genus data compressed to 5.6 MB. Any clean would have destroyed the only route to closing the RTL→gate LEC gap.</td></tr>
+      <tr><td>Retracted a fill claim</td><td class="mono">CONVERGENCE_PLAN</td><td>I had written that the corner keep-out was proven honoured by a real fill pass. It landed 08-13, five days after the only three fill runs, whose archived floorplans contain zero occurrences of it.</td></tr>
+      <tr><td>Retracted a DRC claim</td><td class="mono">26-plan-to-submittable</td><td>“Metal fill added zero DRC violations” was wrong on both counts — six runs not two, and it added ~4,012 results against the matched control.</td></tr>
+      <tr><td>Superseded the CDC headline</td><td class="mono">CDC_FINDINGS.md</td><td>Its own commands now return 0 where the document claims 41. Both HAL logs on disk are aborted runs; no rule executed.</td></tr>
+      <tr><td>Made the ROM claim conditional</td><td class="mono">package_submission.sh</td><td>The manifest asserted ROM evidence was not collected. The copy is recursive and the evidence now exists, so the bundle was understating itself.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<hr class="end">
+<p class="foot">
+Every figure above is a measurement taken on 2026-08-19 or 2026-08-20 against the named artefact, not a carry-forward from a summary document.<br>
+Stream <code>b1441d78e08326def9f59ae8eb1539a8</code> · design <code>4ddf4be</code> · toolkit <code>8e23478</code> · Calibre v2023.1_18.8 · Innovus 21.11-s130_1 · Genus 21.15<br>
+Concurrent sessions are committing to this tree — re-probe before quoting.
+</p>
+
+</div>

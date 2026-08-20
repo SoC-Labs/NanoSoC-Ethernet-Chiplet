@@ -219,7 +219,17 @@ M="$STAGE/MANIFEST.txt"
     done
     [ -d "$REP" ] && printf '  %-26s %s\n' "reports/" \
         "$(date -u -r "$REP" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-    echo "  ROM stream verification: NOT COLLECTED — see item 7 below."
+    if [ -d "$STAGE/reports/rom" ]; then
+        printf '  %-26s %s\n' "ROM stream verification:" \
+            "COLLECTED at reports/rom/ - see item 7"
+        for __rj in "$STAGE"/reports/rom/*_gds.json; do
+            [ -e "$__rj" ] || continue
+            printf '    %-24s %s\n' "$(basename "$__rj")" \
+                "$(sed -n 's/.*"verdict"[: ]*"\([a-z]*\)".*/\1/p' "$__rj" | head -1)"
+        done
+    else
+        echo "  ROM stream verification: NOT COLLECTED - see item 7 below."
+    fi
     echo
     echo "contents (sha256):"
     ( cd "$STAGE" && find . -maxdepth 1 -type f ! -name MANIFEST.txt -print0 \
@@ -267,22 +277,27 @@ READ THIS BEFORE SUBMITTING
    GLO-34 unused-logic removal. RTL-to-synthesis LEC is what catches that class;
    post-P&R LEC is what catches anything the place-and-route tool did.
 
-7. ROM STREAM VERIFICATION IS NOT IN THIS BUNDLE.
-   Nothing under build/rom_verify/ is collected. It lives at the REPOSITORY
-   ROOT, not in the build tree this bundle was assembled from, and the run
-   directory's reports/ holds no ROM evidence at all. Read that as a gap, not
-   as a failure -- and do NOT quote that directory as this bundle's proof.
-   build/rom_verify/{eth,cc}_gds.{log,bits} is a SINGLE MUTABLE SLOT with no
-   stream identity in the filename: every run against any stream overwrites it,
-   and the only record of WHICH GDS was measured is on LINE 1 of the .log.
-   last_pass.txt does not close that gap either -- it is written by the
-   `romlibs-verify` target, not by the GDS gate, so it never states which
-   stream was stream-checked. Measured 2026-08-18: that slot held a run against
-   a different, older build for part of the morning while looking exactly like
-   a live result for the current one.
-   If ROM content proof is required, re-run the gate against the stream whose
-   sha256 is recorded under "GDS actually packaged" above, confirm line 1 of
-   the log names that same path, and hand the log over with this bundle.
+7. ROM STREAM VERIFICATION -- READ THE MANIFEST LINE ABOVE, NOT THIS PARAGRAPH.
+     CORRECTED 2026-08-20. This item used to assert unconditionally that no ROM
+     evidence was collected. That is no longer true in general: ASIC/rom_gate.mk
+     writes the GDS-bit gate's output to <run>/reports/rom/, and this script copies
+     reports/ RECURSIVELY, so a bundle built from a run that has been ROM-checked
+     DOES carry {eth,cc}_gds.{log,bits,json} with the measured stream named on
+     line 1 of each .log. The manifest line above states which case this bundle is.
+
+     The original warning still applies to ONE path: the repository-root slot
+     build/rom_verify/{eth,cc}_gds.{log,bits} is a SINGLE MUTABLE SLOT with no
+     stream identity in the filename. Every run against any stream overwrites it,
+     and the only record of WHICH GDS was measured is on line 1 of the .log. It
+     lives outside the build tree and is NEVER collected. Do not quote it as this
+     bundle's proof. last_pass.txt does not close that gap either -- it is written
+     by `romlibs-verify`, not by the GDS gate, so it never states which stream was
+     stream-checked. Measured 2026-08-18: that slot held a run against a different,
+     older build for part of the morning while looking exactly like a live result.
+
+     If the manifest line above says NOT COLLECTED, re-run the gate against the
+     stream whose sha256 is recorded under "GDS actually packaged", confirm line 1
+     of the log names that same path, and hand the log over with this bundle.
 -------------------------------------------------------------------------------
 EOF
 } > "$M"

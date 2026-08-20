@@ -4,6 +4,39 @@ Run `verif/cdc/run.sh` (Cadence HAL 22.03 via `xrun -hal`). This is a **starting
 point** for the physical team's CDC signoff, not a clean bill — see "What this
 pass does NOT cover".
 
+> ## ⚠⚠ SUPERSEDING CORRECTION — 2026-08-20: THE NUMBERS BELOW NO LONGER REPRODUCE
+>
+> **Every MCKDMN figure in this document — 14, 40, 41, "19 files" — describes a log
+> that is not on this machine.** Re-run the document's own commands and they return
+> zero:
+>
+> ```
+> grep -aoE "MCKDMN" verif/cdc/build/xrun_hal.log | wc -l   # doc says 41 -> ACTUAL 0
+> grep -ac '^halstruct:' verif/cdc/build/xrun_hal.log        # ACTUAL 0
+> ```
+>
+> The reason: **both HAL logs on disk are ABORTED runs.** `xrun_hal.log` ends
+> `hal: *E,BLDSTP: Further processing stopped because of synthesizability errors.`
+> preceded by `halsynth: Total errors = 23` (a second log shows 168). Not one of the
+> 27 structural or synchroniser rules executed. There has been **no HAL CDC result
+> for this design since 2026-08-17**.
+>
+> Worse, the wired HAL gate cannot produce one even when healthy: `verif/cdc/run.sh`
+> invokes `xrun -hal` with **no SDC**, so all nine synchroniser rules (CLKDMN CMBCDC
+> INSYNC FLSYNC RSTSYN RSTSCB RSTDMN RSTDAS ACNCPI) report zero regardless of the
+> design. The `ci/signoff.yaml` stage is `gate: report` with no `check:` block, so it
+> cannot go red on any finding.
+>
+> **The real CDC result is SpyGlass, and it is unwired:** 2026-08-17, rc=0,
+> `Unsynchronized clock domain crossings = 139`, `Convergences = 19`, 155 Errors.
+> Nothing in CI knows. And `cdc/nanosoc_eth_chiplet.prj` `stop_module`s
+> `axi_chiplet_controller` — the D2D controller that contains the a2l replay CDC and
+> the recovered-RX-clock domain, i.e. the module the known D2D wedge lives in.
+>
+> Treat everything below as historical until a HAL run completes or the SpyGlass path
+> is promoted.
+>
+
 > ## ⚠ CORRECTION — 2026-08-17
 >
 > **Three claims in the original pass were wrong and have been corrected in place.

@@ -1056,8 +1056,13 @@ LOGO_AP_ONLY    ?= 1
 ## AP-only mark has already dropped everything STRIP_JACK would drop and more.
 LOGO_X          ?= 663.875
 LOGO_Y          ?= 1000.0
-LOGO_SRC        := $(if $(filter 1,$(LOGO_AP_ONLY)),$(OUT_DIR)/logo_aponly.gds,\
-                     $(if $(filter 1,$(LOGO_STRIP_JACK)),$(OUT_DIR)/logo_text.gds,$(LOGO_GDS)))
+## $(strip) ADDED 2026-08-20: the line continuation below indents the else-branch,
+## so at LOGO_AP_ONLY=0 this expanded to " /path/nanosoc_eth_Logo.gds" WITH A
+## LEADING SPACE and the recipe's `-rd logo=$(LOGO_SRC)` split into two klayout
+## arguments. Latent because it can only fire OFF the default path -- which is
+## exactly the path you take to put the 158/0 LOGO marker back in.
+LOGO_SRC        := $(strip $(if $(filter 1,$(LOGO_AP_ONLY)),$(OUT_DIR)/logo_aponly.gds,\
+                     $(if $(filter 1,$(LOGO_STRIP_JACK)),$(OUT_DIR)/logo_text.gds,$(LOGO_GDS))))
 LOGO_GDS_OUT    ?= $(OUT_DIR)/$(BLOCK)_logo.gds
 
 ## make logo                     — merge into the current $(GDS); AP-only by default
