@@ -188,7 +188,49 @@ status") and sets `TRIGGER_POSITION 2048` = the 50% position. `0x21F8` read over
 ### Still NOT PROVEN
 - **Branch C — XHB500 producing no write data — is now the LEADING open branch**, since the stall is
   demonstrably downstream of a healthy W channel.
-- **Throughput cost** of the prevention layer (§3) is unmeasured — measurement in progress
+### ✅ THROUGHPUT MEASURED 2026-08-20 — and it settles the full-vs-narrow question
+
+**First, the magnitude's cause: `s_axi_bvalid` RETURNS ACROSS THE LINK — there is no local early-B.**
+`AXI4ToWlink.v:435` `axi_tgt_b_valid = wlink_axibFC_io_app_l2a_valid` (the link-to-app face); B is its
+own link channel (`data_id 0x82`) with separate TX/RX router ports. `synth_b_pending` is timeout-only
+(2^16 hclk) so it is 0 on a healthy link. Measured B latency **220–234 hclk**, and the fix's cost is
+**224.3 cycles/word** — i.e. **the per-word cost IS one link round trip.**
+
+| arm | cyc/word INCR4 | cyc/word INCR16 | AWLEN | ewr | data |
+|---|---|---|---|---|---|
+| 1 — reverted (posted) | **3.00** | **2.25** | 3 / 15 | True | **CORRUPT** |
+| 2 — **as landed** `[3:2]`→00 | **225.25** | **224.31** | 0 | False | **correct** |
+| 3 — narrow `[2]`-only | 61.25 | 20.88 | 3 / 15 | False | **CORRUPT** |
+| 4 — control `hprot=0` | 225.25 | 224.31 | 0 | False | correct |
+
+**Cost of the fix: 75x (INCR4) / 100x (INCR16)** vs a posted burst ≈ **0.89 MB/s** at this bench's
+50 MHz link config. **Control validated:** arm 4 was bit-identical across all three tie-down states
+(`[901,898,898]` / `[3589,3588,3587]`), so the numbers are not void. Note arm 2 equals the control in
+every cell — the fix behaving exactly as designed.
+
+### 🔴 NEW DEFECT — THE MULTI-BEAT AXI BURST PATH IS BROKEN (corrupts, then wedges)
+The narrow variant amortises as predicted (3.7x / 10.7x) **but is not a usable option**:
+- **The first burst CORRUPTS** — beats 1..N-1 all deliver beat 0's payload (`0x5a000001` repeated):
+  the `cap_done_r` / `d2d_ahb_m_hwdata_q` signature. That fix was validated **for the singles path
+  only**; on the multi-beat path the defect is ALIVE.
+- **The second burst WEDGES permanently** — HREADY never returns.
+- **Arm 1 (fully reverted, posted) shows the SAME corruption and also wedges**, so this is a property
+  of `AWLEN>0`, not of `ewr`.
+
+⇒ The narrow variant does not merely enter untested territory, it enters **measurably broken**
+territory: its 10.7x came from a burst that delivered wrong data and then hung the bus.
+⇒ **This reframes the full tie-down: it is not just the safe choice, it actively forecloses a live
+corruption-then-wedge on the burst path.**
+⇒ A **THIRD precondition**, beyond the two named at the forcing site (revive the EWR guard and Fix-K):
+**the wrapper's write-data hold must be fixed for `AWLEN>0`** before any HPROT relaxation is worth
+pursuing.
+
+**Caveats:** absolute numbers are this bench's link config only (50 MHz hclk); since the cost IS the B
+round trip it tracks real link latency, and the D2D rate is stated three ways across the tree — the
+RATIO is more robust than the absolute. Writes only; no read path. The corruption and wedge were
+characterised, not root-caused.
+
+- **Throughput cost** of the prevention layer (§3) — MEASURED, see above. Previously in progress
   (four arms: posted baseline / landed `[3:2]` / narrow `[2]`-only / an `hprot=0` control that must
   be identical across tie-down states or the run is void).
 - **FPGA != ASIC configuration.** The A/B validates the EDIT on the FPGA vehicle; the tapeout ships
