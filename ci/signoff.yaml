@@ -3171,6 +3171,20 @@ stages:
         #    strobe-proximity and extended-ordering clauses are live, not
         #    decorative, the day the bench declares them.
         - ci/fixtures/gls-netlist/pass-extra-rungs
+      # THESE FIXTURES ARE SELF-CONTAINED, AND THAT IS A MEASUREMENT, NOT A CLAIM.
+      # `prove` mirrors the real repo into each sandbox by symlink and overlays the
+      # fixture on top, so a fixture that omits a file silently reads the LIVE one.
+      # Three cases here carry a secondary tree; as first written they supplied only
+      # verdict.txt, and six of the seven files in the sandbox were symlinks to the
+      # real build. The case went green on the build machine and would not have
+      # elsewhere. `.__exclusive__` plus the files the check reads fixes it.
+      #
+      # The evidence that it IS fixed is not the marker being present. It is that on
+      # 2026-08-20 this whole set ran to 30 cases / 0 problems in a fresh worktree
+      # with NO build/ and NO ASIC/eth-chiplet/build/ at all - there was nothing live
+      # to read. Re-run it that way after touching any fixture here; a green on a
+      # machine that holds the real run proves much less than it appears to.
+      #
       # A KNOWN WEAKNESS IN THIS SET, recorded rather than left to be discovered.
       # Most fail-* fixtures below are 22-row verdicts built before the five CPU0
       # rungs moved into TIER_C. They now fail for their OWN reason AND with five
