@@ -71,23 +71,20 @@ TOPLEVEL = tb_g2_soc_pair
 # runs them. `?=`, so a scoped debug run (`make sim MODULE=test_peer_burst_
 # corruption TESTCASE=...`) still overrides it from the command line.
 #
-# test_peer_burst_corruption and test_peer_burst_adversarial WERE OMITTED FROM
-# THIS LINE, and were untracked in git, until 2026-08-18. They are the only
-# tests in the repository for the peer-write burst-corruption defect, so
-# `regress` reported PASS over 6 testcases while the nine testcases that attack
-# the one open silicon defect never executed and were absent from every clone.
-# A suite is green over what it runs, not over what is in its directory.
+# EVERY test module in this directory must be named here. A suite is green over
+# what it RUNS, not over what sits in its directory: a module missing from this
+# line does not execute, and `regress` still reports PASS.
 #
-# THEY FAIL TODAY, AND THAT IS THE POINT. The defect they test is real and
-# unfixed (src/rtl/nanosoc_eth_chiplet.sv cap_done_r re-arms on ~dph_peer, so a
-# multi-beat peer write presents beat 0 on every beat). 6 of 9 fail; do NOT
-# restore a green by removing them from this line or by weakening what they
-# assert. The green they replaced measured nothing.
+# test_peer_burst_corruption and test_peer_burst_adversarial are the only tests
+# in the repository for the peer-write burst-corruption defect (a multi-beat peer
+# write presenting beat 0's payload on every beat). If they fail, that is a real
+# defect — do NOT restore a green by dropping them from this line or by weakening
+# what they assert.
 #
 # ORDER IS LOAD-BEARING: test_peer_burst_adversarial's a5 (W-backpressure)
 # forces a Wlink ready output and must run last within its module, which
 # cocotb's definition order already gives. Do not reorder the decorators.
-MODULE  ?= test_g2_soc_pair,test_peer_burst_corruption,test_peer_burst_adversarial
+MODULE  ?= test_g2_soc_pair,test_peer_burst_corruption,test_peer_burst_adversarial,test_ewr_tiedown
 
 SKID_BITS ?= 0
 export SKID_BITS
