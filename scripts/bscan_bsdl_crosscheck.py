@@ -1049,7 +1049,14 @@ def check_ports(top, bsdl, pt, rep, netlist_path, bsdl_path, pmap):
         rep.unjudged(C2, "top module not found in the netlist", netlist_path)
         return
 
-    dirmap = {"in": "input", "out": "output", "inout": "inout"}
+    # BSDL `buffer` IS an output. IEEE 1149.1b B.8.14.2(s.3) splits the two-state
+    # output modes on whether a control cell can turn the driver off: `out` can be
+    # disabled and carries a disable spec, `buffer` cannot and must not. Both are
+    # Verilog `output` -- the distinction is about disable capability, not
+    # direction. Omitting it here produced 7 false FAILs the moment the generator
+    # correctly moved the 15 pure-output pads (OEN tied low, no control cell) from
+    # `out` to `buffer`: the gate flagged a real improvement as a disagreement.
+    dirmap = {"in": "input", "out": "output", "buffer": "output", "inout": "inout"}
     pad_ports = set(pt.ports.keys())
 
     for name in pmap.unknown:

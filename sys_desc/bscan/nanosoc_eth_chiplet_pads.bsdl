@@ -39,7 +39,10 @@
 --     JEP106 allocation, so the manufacturer field carries 0x000 -- the one
 --     code JEP106 can never issue. See the note above IDCODE_REGISTER.
 --  4. HIGHZ CANNOT TRI-STATE THE 15 PURE-OUTPUT PADS. Their OEN is tied low in
---     the pad ring and they have no control cell, so they are declared `output2`.
+--     the pad ring and they have no control cell, so they are declared `buffer`
+--     in the port clause and `output2` with no disable spec in the boundary
+--     register -- the pairing B.8.14.2(s.3) prescribes for a two-state driver
+--     that no control cell can turn off.
 --     1149.1 expects HIGHZ to place ALL system outputs in an inactive drive
 --     state; on this die it can only disable the 13 bidir and 2 open-drain
 --     pads, which are the ones that have an output enable at all. Declared here
@@ -54,31 +57,31 @@ entity nanosoc_eth_chiplet_pads is
   generic (PHYSICAL_PIN_MAP : string := "WIREBOND");
 
   port (
-    SE           : in    bit;
-    CLK          : in    bit;
-    TEST         : in    bit;
-    NRST         : in    bit;
-    SWDIO        : inout bit;
-    SWDCK        : in    bit;
-    QSPI_IO      : inout bit_vector(3 downto 0);
-    QSPI_SCLK    : out   bit;
-    QSPI_nCS     : out   bit;
-    HOSTIO4_P1   : inout bit_vector(6 downto 2);
-    HOSTIO4_P1_1 : inout bit;
-    HOSTIO4_P1_0 : inout bit;
-    RMII_REF_CLK : in    bit;
-    RMII_TXD     : out   bit_vector(1 downto 0);
-    RMII_TX_EN   : out   bit;
-    RMII_RXD     : in    bit_vector(1 downto 0);
-    RMII_CRS_DV  : in    bit;
-    RMII_MDIO    : inout bit;
-    RMII_MDC     : out   bit;
-    TL_CLK_TX    : out   bit;
-    TL_TX        : out   bit_vector(7 downto 0);
-    TL_CLK_RX    : in    bit;
-    TL_RX        : in    bit_vector(7 downto 0);
-    I2C_SCL      : inout bit;
-    I2C_SDA      : inout bit
+    SE           : in     bit;
+    CLK          : in     bit;
+    TEST         : in     bit;
+    NRST         : in     bit;
+    SWDIO        : inout  bit;
+    SWDCK        : in     bit;
+    QSPI_IO      : inout  bit_vector(3 downto 0);
+    QSPI_SCLK    : buffer bit;
+    QSPI_nCS     : buffer bit;
+    HOSTIO4_P1   : inout  bit_vector(6 downto 2);
+    HOSTIO4_P1_1 : inout  bit;
+    HOSTIO4_P1_0 : inout  bit;
+    RMII_REF_CLK : in     bit;
+    RMII_TXD     : buffer bit_vector(1 downto 0);
+    RMII_TX_EN   : buffer bit;
+    RMII_RXD     : in     bit_vector(1 downto 0);
+    RMII_CRS_DV  : in     bit;
+    RMII_MDIO    : inout  bit;
+    RMII_MDC     : buffer bit;
+    TL_CLK_TX    : buffer bit;
+    TL_TX        : buffer bit_vector(7 downto 0);
+    TL_CLK_RX    : in     bit;
+    TL_RX        : in     bit_vector(7 downto 0);
+    I2C_SCL      : inout  bit;
+    I2C_SDA      : inout  bit
   );
 
   use STD_1149_1_2001.all;
@@ -254,7 +257,11 @@ entity nanosoc_eth_chiplet_pads is
   --                       control cell that can disable it.
   --    BC_1 / output2  -- a driver with NO control cell. The 15 pure-output pads
   --                       have OEN tied low in the pad ring, so nothing can
-  --                       disable them and `output3` would be a lie.
+  --                       disable them and `output3` would be a lie. Their
+  --                       ports are declared `buffer`, not `out`: B.8.14.2(s.3)
+  --                       reserves `buffer` for exactly this -- a two-state
+  --                       driver no control cell can turn off -- and forbids it
+  --                       a disable spec, which is why these entries carry none.
   --
   --  OPEN-DRAIN (I2C_SCL, I2C_SDA): one ctl cell, ccell pointing at
   --  ITSELF. On these pads .I is a hard tie-low and the DATA is folded onto

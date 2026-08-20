@@ -139,6 +139,11 @@ TAP_TDI_PAD = None
 TAP_TDO_PAD = None
 TAP_EN_PAD = None
 
+# Chip port direction -> BSDL port mode, for every direction whose mode does not
+# depend on the pad. A pure OUTPUT is the exception: BSDL splits it into `out` and
+# `buffer` on a property the direction alone does not carry, so bsdl_port_mode()
+# decides that one from the pads. See bsdl_port_mode() for the rule and its
+# citation.
 BSDL_DIR = {"input": "in", "output": "out", "inout": "inout"}
 
 # The BSDL port clause and the pad -> port-reference map it implies. Both are
@@ -180,6 +185,54 @@ def pin_token(port, idx):
     when it does, the physical pin it maps to must not move.
     """
     return "TBD_%s" % port if idx is None else "TBD_%s_%d" % (port, idx)
+
+
+def bsdl_port_mode(name, spec, port_pads):
+    """The BSDL port mode for one chip port: in / out / buffer / inout.
+
+    WHY `buffer` IS NOT A STYLISTIC ALTERNATIVE TO `out`
+    ---------------------------------------------------
+    BSDL borrows VHDL's port modes but gives `out` and `buffer` distinct meanings,
+    and IEEE 1149.1b B.8.14.2(s.2)/(s.3) draws the line by whether a CONTROL CELL
+    can turn the driver off. The rule is stated most plainly in the semantic check
+    on (s.3.2), which a conforming checker enforces:
+
+        "A two state driver which can be driven to an inactive state (e.g. weak1),
+         should be defined with a pin type of OUT in port statement and have a
+         disable spec defined [in] the BOUNDARY_REGISTER statement. A two state
+         driver which can not be driven to an inactive state from a control cell,
+         should be defined with a pin type of BUFFER in port statement and not
+         have a disable spec defined in the BOUNDARY_REGISTER statement."
+
+    So the pair (port mode, disable spec) is one decision, not two:
+        can be disabled    -> `out`    + an output3 cell WITH a disable spec
+        cannot be disabled -> `buffer` + an output2 cell with NO disable spec
+    B.8.14.2(s.3.3) closes the loop the other way: a `buffer` port may carry
+    exactly one cell and its function must be OUTPUT2.
+
+    The pure outputs on this die have OEN tied low in the pad ring and get no OE
+    cell (see ROLES), so nothing in the boundary register can turn them off and
+    bsdl_cell_entry() emits them as `output2` with no disable spec. `buffer` is
+    the port mode that matches; `out` claims a disable capability the silicon does
+    not have and that the register does not describe.
+
+    THIS IS DERIVED, NOT TABULATED. Whether a driver can be disabled is a property
+    of the PADS, not of the port's direction, so it is read from the same ROLES
+    table that decides whether an OE cell is built at all. That is deliberate: the
+    port mode and the boundary register are then two consumers of one fact and
+    cannot drift apart. A future pure-output pad that DOES get an OE cell becomes
+    `out` here and `output3` there, together, with no edit.
+    """
+    if spec["dir"] != "output":
+        return BSDL_DIR[spec["dir"]]
+
+    disableable = {"oe" in ROLES[p["kind"]] for p in port_pads}
+    assert len(disableable) == 1, \
+        ("output port %s mixes pads that can be disabled with pads that cannot. A "
+         "VHDL port has ONE mode, so such a port cannot be described as either `out` "
+         "or `buffer` without lying about some of its pins; it needs splitting into "
+         "scalars the way bsdl_port_model() splits the TAP pins." % name)
+    return "out" if disableable.pop() else "buffer"
 
 
 def bsdl_port_model(table):
@@ -233,8 +286,12 @@ def bsdl_port_model(table):
                       "pins": [pin_token(port, idx)]})
         refs[(port, idx)] = name
 
+    by_port = {}
+    for p in table["pads"]:
+        by_port.setdefault(p["port"], []).append(p)
+
     for nm, spec in ports.items():
-        direction, width = BSDL_DIR[spec["dir"]], spec["width"]
+        direction, width = bsdl_port_mode(nm, spec, by_port[nm]), spec["width"]
         if width == 1:
             decls.append({"name": nm, "dir": direction, "msb": None, "lsb": None,
                           "pins": [pin_token(nm, None)]})
@@ -900,7 +957,10 @@ def bsdl_cell_entry(cell, cells):
                   description.
       output    : a pure output pad has OEN tied low in the pad ring and no oe
                   cell exists, so there is no control cell to name. It is declared
-                  `output2` (a driver that cannot be disabled), not `output3`.
+                  `output2` (a driver that cannot be disabled), not `output3`, and
+                  carries NO disable spec -- which is what obliges its port to be
+                  `buffer` rather than `out`. bsdl_port_mode() derives that from
+                  the same ROLES entry, so the two halves cannot disagree.
 
     disval is never a literal here: it comes from disable_level(), which reads
     oe_inv out of the pad table.
@@ -973,7 +1033,10 @@ BSDL_BANNER = """\
 --     `linkage bit`.
 --  3. {idcode_headline}
 --  4. HIGHZ CANNOT TRI-STATE THE {nout} PURE-OUTPUT PADS. Their OEN is tied low in
---     the pad ring and they have no control cell, so they are declared `output2`.
+--     the pad ring and they have no control cell, so they are declared `buffer`
+--     in the port clause and `output2` with no disable spec in the boundary
+--     register -- the pairing B.8.14.2(s.3) prescribes for a two-state driver
+--     that no control cell can turn off.
 --     1149.1 expects HIGHZ to place ALL system outputs in an inactive drive
 --     state; on this die it can only disable the {nbi} bidir and {nod} open-drain
 --     pads, which are the ones that have an output enable at all. Declared here
@@ -1062,11 +1125,14 @@ def render_bsdl(table, pads, cells, table_sha):
     # bsdl_port_model() decided this list, including the split that peels the TAP
     # data pins out of their bus. Nothing is recomputed here.
     w = max(len(d["name"]) for d in decls)
+    # The mode column is measured, not fixed at 5: `buffer` is six characters and a
+    # hardcoded width would ragged-edge every type that follows one.
+    dw = max(len(d["dir"]) for d in decls)
     for i, d in enumerate(decls):
         typ = "bit" if d["msb"] is None else \
               "bit_vector(%d downto %d)" % (d["msb"], d["lsb"])
-        L.append("    %-*s : %-5s %s%s"
-                 % (w, d["name"], d["dir"], typ, "" if i == len(decls) - 1 else ";"))
+        L.append("    %-*s : %-*s %s%s"
+                 % (w, d["name"], dw, d["dir"], typ, "" if i == len(decls) - 1 else ";"))
     L.append("  );")
     L.append("")
     L.append("  use STD_1149_1_2001.all;")
@@ -1219,10 +1285,14 @@ def render_bsdl(table, pads, cells, table_sha):
     # 1149.1 wants TCK/TMS/TDI on inputs and TDO on an output. These pads are
     # functional I/O, so some of them are declared inout -- derive WHICH rather
     # than asserting a die-specific list in prose.
+    # TDO's `want` admits both output modes: `out` and `buffer` are equally
+    # unidirectional, and which one a pure-output TAP pin gets is decided by
+    # bsdl_port_mode() on grounds that have nothing to do with the TAP.
     dirs = {d["name"]: d["dir"] for d in decls}
     offdir = [(portref(q), dirs[portref(q)])
-              for q, want in ((tck_p, "in"), (tms_p, "in"), (tdi_p, "in"), (tdo_p, "out"))
-              if dirs[portref(q)] != want]
+              for q, want in ((tck_p, ("in",)), (tms_p, ("in",)), (tdi_p, ("in",)),
+                              (tdo_p, ("out", "buffer")))
+              if dirs[portref(q)] not in want]
     if offdir:
         L += wrap_comment(
             "%s ARE DECLARED %s. 1149.1 expects dedicated, unidirectional TAP pins; "
@@ -1334,7 +1404,11 @@ def render_bsdl(table, pads, cells, table_sha):
         "  --                       control cell that can disable it.",
         "  --    BC_1 / output2  -- a driver with NO control cell. The %d pure-output pads" % n_out,
         "  --                       have OEN tied low in the pad ring, so nothing can",
-        "  --                       disable them and `output3` would be a lie.",
+        "  --                       disable them and `output3` would be a lie. Their",
+        "  --                       ports are declared `buffer`, not `out`: B.8.14.2(s.3)",
+        "  --                       reserves `buffer` for exactly this -- a two-state",
+        "  --                       driver no control cell can turn off -- and forbids it",
+        "  --                       a disable spec, which is why these entries carry none.",
         "  --",
         "  --  OPEN-DRAIN (%s): one ctl cell, ccell pointing at" % ", ".join(portref(p) for p in od),
         "  --  ITSELF. On these pads .I is a hard tie-low and the DATA is folded onto",
