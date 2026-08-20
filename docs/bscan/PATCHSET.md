@@ -1,4 +1,4 @@
-# Patch set — the declared-logic survival gate
+# Patch set — the declared-logic survival gate, and the transitive input fingerprint
 
 **Nothing in `ASIC/asic-toolkit` has been modified.** The submodule is a
 dirty working tree carrying several sessions' work (`flow/innovus/4_route.tcl`,
@@ -8,9 +8,9 @@ scheduling. Every hunk below is stated with enough surrounding context to be
 placed by hand, against **toolkit HEAD as read on 2026-08-20**. Line numbers are
 from that read and will move; the anchor text is the contract.
 
-Apply **Patch A** first and land it on its own. **Patch B** is optional, comes
-later, and is discussed in `DELETION_GUARD_DESIGN.md` under "Does it subsume
-§13a?".
+**Patch A** (gate 1, survival) and **Patch C** (gate 2, provenance closure) are
+independent of each other and can land in either order. **Patch B** is optional,
+comes last, and is discussed in `DELETION_GUARD_DESIGN.md` §2.7.
 
 ---
 
@@ -229,3 +229,127 @@ healthy design either way. Land A, watch 13b fire and pass on a real run, then
 land B. The cost of waiting is one duplicated check on the eth chiplet, whose
 manifest claim 3 covers the pad table's 48 pads while 13a covers the IO file's
 list; see the note in the manifest on why that overlap is worth having anyway.
+
+---
+
+## Patch C — the transitive input fingerprint (gate 2)
+
+Independent of Patch A. Records; does not judge.
+
+### C0. New file: `flow/common/prov_closure.tcl`
+
+Copy `docs/bscan/prov_closure.tcl` verbatim. Loads in bare `tclsh`, calls no
+Genus or Innovus command, and guards against double-loading the same way
+`provenance.tcl` does.
+
+Exercised against the real `ASIC/genus-innovus/inputs/constraints.sdc`: it finds
+the parent and all five sub-SDCs, and produces a stable aggregate digest.
+
+### C1. `flow/common/read_flist.tcl` — record which filelists were visited
+
+`_flist_scan` (pass 1) already visits every flist in the chain exactly once.
+It records the *sources* in `::flist_read` but not the *flists*. Anchor is the
+top of `_flist_scan`, beside the existing globals (~line 100 and ~line 155):
+
+```tcl
+ set ::flist_read    {}    ;# every path handed to the tool, for -y de-duplication
++set ::flist_flists  {}    ;# every FILELIST visited, incl. those reached by -f.
++                          ;# prov_closure_flist hashes these: `-f` includes were
++                          ;# invisible to provenance, and build/chip/flist/*.flist
++                          ;# are regenerated before every synthesis run.
+```
+
+```tcl
+ proc _flist_scan {flist} {
++    if {[lsearch -exact $::flist_flists $flist] < 0} {
++        lappend ::flist_flists $flist
++    }
+```
+
+and in `read_filelist`, beside the other resets:
+
+```tcl
+     set ::flist_read    {}
++    set ::flist_flists  {}
+```
+
+Two lines of behaviour change and no traversal reimplemented — a second
+implementation of a walk is a second thing to be wrong, which is the reasoning
+`provenance.tcl` already applies to ROM hashes.
+
+### C2. `flow/genus/1_synthesis.tcl` — load it beside `read_flist.tcl`
+
+Anchor (currently line 480):
+
+```tcl
+ source $FLOW_DIR/flow/common/read_flist.tcl
++source $FLOW_DIR/flow/common/prov_closure.tcl
+```
+
+### C3. `flow/genus/1_synthesis.tcl` — fingerprint the flist closure AT READ TIME
+
+Immediately after the `read_filelist` call in **§6, READ THE RTL**.
+
+```tcl
++# --- what the filelist actually pulled in ------------------------------------
++# AT READ TIME, not at section 16. build/chip/flist/{soc,tidelink_asic}.flist
++# are regenerated before every synthesis run, so by the time the manifest is
++# written the bytes that were read may no longer exist. flist.sha256 covers the
++# ENTRY POINT only; everything reached by `-f` was invisible.
++prov_collect_closure flist.closure [prov_closure_flist]
+```
+
+### C4. `flow/genus/1_synthesis.tcl` — fingerprint the SDC closure AT READ TIME
+
+**§8, CONSTRAINTS**, immediately after the read loop (currently line 764):
+
+```tcl
+     foreach s $SDC_FILES { read_sdc $s }
++
++    # --- what those SDCs actually sourced -------------------------------------
++    # MEASURED, 2026-08-19 -> 2026-08-20: constraints.sdc was byte-identical
++    # across two runs (44270 B) while bscan_constraints.sdc, which it `source`s,
++    # went 5255 -> 6724 B and restructured the netlist hierarchy. The flow
++    # recorded no input change, and the investigation cost a day.
++    #
++    # AT READ TIME, because there is no snapshot to go back to: on this project
++    # build/<tag>/inputs is a SYMLINK to the live input tree, so an in-place
++    # edit leaves the earlier run's bytes unrecoverable.
++    #
++    # cwd is the work directory because that is where the tool is running and
++    # therefore how Tcl resolves a relative `source` - the scanner tries the
++    # sourcing file's directory as well, and records which one resolved.
++    prov_collect_closure sdc.closure \
++        [prov_closure_sdc $SDC_FILES [flow_env ASIC_WORK_DIR ""]]
+```
+
+### C5. `flow/genus/1_synthesis.tcl` — write the sidecar
+
+Beside the existing `prov_write` (currently line 1292):
+
+```tcl
+             prov_write $REPORT_DIR/syn_provenance.txt
++            # The manifest carries one aggregate digest per closure; THIS is the
++            # file a human diffs to find out WHICH of five sub-SDCs moved.
++            prov_closure_write $REPORT_DIR/syn_inputs.sha256
+```
+
+### C6. The same two hooks in the Innovus stages (optional, later)
+
+`2_place.tcl`, `3_cts.tcl` and `4_route.tcl` read the SDC through the MMMC, so
+the equivalent call belongs after the mmmc is loaded. Left out of this patch
+deliberately: the synthesis stage is where the constraint set determines the
+netlist, and one stage proven beats four unproven.
+
+### C7. Stage tests
+
+`prov_closure.tcl` loads in bare `tclsh`, so `test/stage/run.sh` covers it for
+free once C2 lands. Worth adding to the existing manifest probe near
+`run.sh:594`:
+
+```sh
+# The closure fields must be PRESENT and non-UNVERIFIED on a healthy run: an
+# aggregate that silently reports nothing is the failure this gate exists for.
+grep -q '^sdc\.closure\.count '  "$ASIC_REPORT_DIR/syn_provenance.txt"
+grep -q '^flist\.closure\.count ' "$ASIC_REPORT_DIR/syn_provenance.txt"
+```

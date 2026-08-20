@@ -85,6 +85,66 @@ def match_count(names, pattern):
 # This is the Python mirror of the manifest in
 # docs/bscan/survival_manifest.eth-chiplet.tcl.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# REQUIREMENT: STATEMENT-AWARE, NEVER LINE-ORIENTED
+#
+# This is not a style preference. It is the defect that produced the alarm this
+# whole design answers, and it is reproduced exactly below.
+#
+# `write_hdl` wraps at a column. An instance's cell type and instance name land
+# on the same line only if the NAME IS SHORT ENOUGH -- and name length is
+# exactly what ungrouping changes, because an ungrouped instance carries the
+# dissolved hierarchy's path as a prefix (here, 28 characters of
+# `u_nanosoc_eth_chiplet_bscan_`).
+#
+#     kept, fits on one line:
+#         SDFCNQD1 u_bsc_00_NRST_I_obs_dr_q_reg(.CDN (trst_n), .CP
+#
+#     ungrouped, wrapped past the column:
+#         SDFCNQD1
+#              u_nanosoc_eth_chiplet_bscan_u_bsc_00_NRST_I_obs_dr_q_reg(.CDN
+#
+# A line-oriented scan -- which is what `grep`, and any regex applied per line,
+# performs -- then sees only the handful of cells whose names were short enough
+# to survive the wrap. THE SENSITIVITY OF THE MEASUREMENT BECOMES A FUNCTION OF
+# A TOOL DECISION THAT HAS NOTHING TO DO WITH THE DEFECT.
+#
+# The in-flow gate is immune by construction: it queries DATABASE OBJECTS, which
+# have no line breaks. Every TEXT-based checker in this repository is not, and
+# must normalise whitespace across the whole file before matching.
+# ---------------------------------------------------------------------------
+LINE_ORIENTED = re.compile(r"^\s*(?:S?DF|EDF|QDF)[A-Z0-9]+\s+(\S*u_bsc_\S*?)\s*\(")
+
+
+def wrapping_comparison():
+    print("=" * 78)
+    print("REQUIREMENT CHECK: statement-aware vs line-oriented counting")
+    print("=" * 78)
+    for tag, path in NETLISTS.items():
+        full = os.path.join(REPO, path)
+        if not os.path.isfile(full):
+            continue
+        with open(full, errors="replace") as fh:
+            lines = fh.readlines()
+        per_line = [m.group(1) for m in
+                    (LINE_ORIENTED.match(ln) for ln in lines) if m]
+        names = [n for _, n in scan_instances(full)[0]]
+        stmt = match_count(names, "*u_bsc_*_reg")
+        ungrouped = any(n.startswith("u_nanosoc_eth_chiplet_bscan_") for n in stmt)
+        print("    %-14s hierarchy %-10s line-oriented %3d   statement-aware %3d"
+              % (tag, "UNGROUPED" if ungrouped else "kept", len(per_line), len(stmt)))
+        if len(per_line) != len(stmt):
+            print("                   the %d the line-oriented scan kept are the SHORTEST "
+                  "names only:" % len(per_line))
+            for n in sorted(per_line):
+                print("                     %s" % n)
+    print()
+    print("    A line-oriented scan reports the healthy-but-ungrouped netlist as")
+    print("    catastrophic. That is the origin of the '117 of 119 deleted' alarm.")
+    print()
+
+
 def build_claims(table_path):
     with open(table_path) as fh:
         tbl = json.load(fh)
@@ -103,8 +163,18 @@ def build_claims(table_path):
         kinds.get("output", 0), kinds.get("bidir", 0), kinds.get("opendrain", 0))
 
     claims = [
-        dict(label="boundary-scan shift and update flops",
-             pattern="*u_bsc_*_reg", minimum=boundary + ctl, source=prov),
+        # SPLIT, because a single floor of boundary+ctl FAILS A CORRECT NETLIST.
+        # bscan-probe2 has 115 not 119: four update flops on the TAP-borrowed
+        # pads (SWDIO=TMS, HOST_IO_0=TDI, HOST_IO_1=TDO) are dead by
+        # construction -- the pad ring overrides those pins whenever boundary
+        # scan is on -- so Genus was right to remove them. A gate that reds a
+        # correct result teaches people to waive it.
+        dict(label="boundary-scan shift stages (the chain itself)",
+             pattern="*u_bsc_*_dr_q_reg", minimum=boundary,
+             source=prov + " -- chain length, the number the BSDL promises"),
+        dict(label="boundary-scan update stages",
+             pattern="*u_bsc_*_update_q_reg", minimum=ctl - 4,
+             source=prov + " -- less 4 on TAP-borrowed pads, dead by construction"),
         # Subsumes the pad-ring question for the pads the table names. The
         # count is len(pads), never the literal 48.
         dict(label="pad instances named by the pad table",
@@ -235,9 +305,12 @@ def selftest(verbose=False):
           want_detail="NOT UNGROUP-TOLERANT")
 
     # M4 -- one pad deleted from the table's name list must be caught by name.
+    # Find the name-list claim BY LABEL. Indexing by position broke the moment
+    # claim 0 was split in two -- the exact fragility this file is about.
+    pad_claim = next(c for c in base if c.get("names"))
     probe("M4 a pad the table names but the netlist lacks must NOT pass",
-          dict(base[1], names=base[1]["names"] + ["uPAD_DOES_NOT_EXIST"],
-               minimum=len(base[1]["names"]) + 1), names_good, expect_ok=False)
+          dict(pad_claim, names=pad_claim["names"] + ["uPAD_DOES_NOT_EXIST"],
+               minimum=len(pad_claim["names"]) + 1), names_good, expect_ok=False)
 
     # M5 -- the healthy control. If this fails, every red above is meaningless.
     probe("M5 CONTROL: the real claim on the real intact netlist passes",
@@ -273,14 +346,28 @@ def main():
     print("claims             : %d (no count below is written in this file)" % len(claims))
     print()
 
+    wrapping_comparison()
+
     rc = {tag: run(tag, path, claims, args.verbose) for tag, path in NETLISTS.items()}
 
     print("=" * 78)
-    print("EXPECTED: bscan-probe PASS (rc 0), bscan-probe2 FAIL (rc 1)")
+    # BOTH REAL NETLISTS MUST PASS, and that is the corrected expectation.
+    #
+    # An earlier version of this demo expected bscan-probe2 to FAIL, because the
+    # alarm that started this work claimed it had lost 117 of 119 cells. It had
+    # lost 4, all of them provably dead on the TAP-borrowed pads, and it is the
+    # MORE correct netlist of the two. Using it as the negative control would
+    # have hard-coded the very false alarm this gate exists to prevent.
+    #
+    # Discrimination is proven by --selftest instead, where the mutations are
+    # constructed and known-bad rather than assumed so.
+    print("EXPECTED: both real netlists PASS -- probe2 lost 4 provably dead")
+    print("          flops on TAP-borrowed pads and is CORRECT. Discrimination")
+    print("          is proven by --selftest, not by failing a good netlist.")
     print("ACTUAL  : bscan-probe rc=%d, bscan-probe2 rc=%d" % (rc["bscan-probe"], rc["bscan-probe2"]))
-    good = rc["bscan-probe"] == 0 and rc["bscan-probe2"] == 1
-    print("DEMONSTRATION: %s" % ("the gate discriminates" if good
-                                 else "THE GATE DOES NOT DISCRIMINATE"))
+    good = rc["bscan-probe"] == 0 and rc["bscan-probe2"] == 0
+    print("DEMONSTRATION: %s" % ("both correct netlists accepted -- now run --selftest"
+                                 if good else "A CORRECT NETLIST WAS REJECTED"))
     return 0 if good else 1
 
 

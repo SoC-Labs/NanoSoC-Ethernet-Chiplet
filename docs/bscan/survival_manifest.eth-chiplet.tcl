@@ -113,9 +113,38 @@ set _bs_prov "[file tail $_bs_table]: boundary_length $_bs_len + control cells\
 #   -baseline  whatever existed after mapping must still exist. Needs no number
 #              and names WHICH instances went, which a floor cannot.
 #-----------------------------------------------------------------------------
-survive "IEEE 1149.1 boundary-scan shift and update flops" \
-    -pattern "*u_bsc_*_reg" \
-    -min     $_bs_flops \
+# SPLIT INTO TWO CLAIMS, and the reason matters more than the split.
+#
+# A single claim of 119 FAILS A CORRECT NETLIST. build/bscan-probe2 has 115:
+# four update flops were removed, all of them on the three pads the TAP itself
+# borrows (SWDIO=TMS, HOST_IO_0=TDI, HOST_IO_1=TDO). The pad ring overrides
+# those pins whenever boundary scan is enabled, and `mode` implies `bscan_en`,
+# so no input combination lets those update values reach a pad. Genus deleted
+# provably dead logic and was right to; IEEE 1149.1 clause 10 excludes TAP pins
+# from the boundary register for exactly this reason.
+#
+# A gate that reds a correct result teaches the next person to waive it, and a
+# waived gate catches nothing. So:
+#
+#   SHIFT STAGES are the hard floor. The chain length is what the BSDL promises
+#   a tester; if it moves, the BSDL is wrong about the silicon. It must be 76.
+#
+#   UPDATE STAGES carry a floor reduced by the TAP-borrowed pads, because those
+#   are dead by construction rather than by accident. If MORE than those go, the
+#   drive path is being lost and that is a real defect.
+survive "IEEE 1149.1 boundary-scan shift stages (the chain itself)" \
+    -pattern "*u_bsc_*_dr_q_reg" \
+    -min     $_bs_len \
+    -source  "$_bs_prov -- chain length, the number the BSDL promises" \
+    -baseline \
+    -advice  "The chain length changed. The BSDL's BOUNDARY_LENGTH no longer\
+              describes this netlist, and a tester shifting the declared number\
+              of bits will misalign every cell. Check the register survived and\
+              that scripts/gen_bscan.py --check is clean."
+
+survive "IEEE 1149.1 boundary-scan update stages" \
+    -pattern "*u_bsc_*_update_q_reg" \
+    -min     [expr {$_bs_ctl - 4}] \
     -source  $_bs_prov \
     -baseline \
     -advice  "The register's only stimulus is the TAP, and the TAP's enable is\
