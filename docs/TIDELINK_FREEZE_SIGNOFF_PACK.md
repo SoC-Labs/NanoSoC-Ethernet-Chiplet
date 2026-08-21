@@ -112,7 +112,14 @@ precondition for the freeze. Post-freeze.
 
 ## 4. Simulation gate
 
-    make sim_gate on the frozen pair       result: <TBD>   uniform stamp: <TBD>
+    verif/g2_soc_pair on the frozen pair   result: TESTS=15 PASS=15 FAIL=0 SKIP=0  (SIM_RC=0, 2026-08-21)
+    elab on the frozen pointer             result: PASS -- 213 modules, simv_chiplet linked, ELAB_RC=0
+                                           all 32 xhb500 paths in the flattened flist resolve
+
+NOTE ON `make sim_gate`: that target lives in tidelink/Makefile and is the TIDELINK session's gate.
+Run from this superproject it false-reds (~5 fails) because CHIPLET_HOME/TIDECHART_HOME assume
+tidelink is a sibling, not a child. The tidelink session ran it in its own worktree, where the layout
+is correct. The integration-level gate on THIS side is verif/g2_soc_pair, recorded above.
     known-unrelated failures allowed       tc_pair_smoke / tc_pair_election_datamode (UPIMI-E tidechart-shim skew)
 
 ⚠ Two traps that make this gate LIE: the `a2l_replay_cdc` `dut_src_*.f` churn silently dirties the tree
@@ -126,7 +133,7 @@ citing the 2026-08-20 pre-fold A/B is NOT acceptable here** (decision 3).
 
 | # | Check | Expected | Measured |
 |---|---|---|---|
-| 1 | Bitstream builds from frozen pin | rc=0, setup met (hold red is the known baseline) | `<TBD>` |
+| 1 | Bitstream builds from frozen pin | rc=0, setup met (hold red is the known baseline) | **PASS** — BUILD_RC=0, ~45 min, tidelink.bit 7,797,819 B @ 09:54:38. Setup WNS **+0.247ns**, 0/116678 failing. Hold WHS **-22.273ns**, **8** failing = the documented baseline. WPWS +2.000, 0 failing. |
 | 2 | Link bring-up both dies | `fcsm=4 cal=1` | `<TBD>` |
 | 3 | Instrument answering | `0x4_2E03_21F8` marker `0xB5` | `<TBD>` |
 | 4 | Tie-down in effect | `[4] pipe_hprot_r[2] = 0` | `<TBD>` |
