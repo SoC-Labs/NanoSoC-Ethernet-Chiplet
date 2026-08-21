@@ -46,6 +46,48 @@ Flist checks (RTL present but unlisted is RTL that does not exist):
     git show <pin>:flists/tidelink_top_full_asic_v2.flist | grep -c 'local_overrides/WlinkGenericFCSM'   # MUST be 1 (_6 only) per decision 2
     git show <pin>:flists/tidelink_top_full_asic_v2.flist | grep -nE 'link_clk_div|link_rate_regs'       # MUST be present (divider ships)
 
+## 3b. Build-input provenance — what the SHA CANNOT pin
+
+The frozen SHA does **not** pin the XHB-500 bridge RTL, by construction: `deps/xhb500/generated`
+is generate-on-demand output, produced by `set_env.sh` from `$XHB500_IP_DIR` on first run. It is
+correctly untracked as of the freeze (see the defect note below). So for this dependency,
+"reproducible" means **same SHA _plus_ same release string** — record both:
+
+    XHB500 source: CoreLink XHB-500, generated via
+                   $XHB500_IP_DIR/logical/generate at build time.
+                   Release identified by CONTENT FINGERPRINT, not by name:
+                   md5(xhb500_ahb_to_axi_bridge_chiplet_slv_hazard_list.sv)
+                     = c5b8757ba1b248cfe13b76fc7a22ef40
+
+The release is pinned by fingerprint rather than by its vendor revision string: this repository is
+public and the pre-commit vendor gate rejects revision-coded vendor release names in tracked content
+(same reason the GLS fixtures redact their model lists). The fingerprint is the stronger check in any
+case — it is computed from the generated RTL actually consumed, so it verifies the bytes rather than
+trusting a label. The revision string is recorded off-repo in the licensee's IP records.
+
+Verified 2026-08-20 (read-only probe of the vendor tree):
+
+| check | result |
+|---|---|
+| XHB-500 releases installed on the build host | 2 |
+| Of those, shipping `logical/generate` | **exactly 1** — so the source is unambiguous |
+| Release stamped in our generated RTL | matches the generator-bearing install |
+| Wrong-release failure mode | `set_env.sh` fails on a missing generator — **loud, not silent** |
+
+**Defect fixed at the freeze (found 2026-08-20, pre-push).** Before the fix, `deps/xhb500/generated`
+was tracked as a mode-120000 symlink to an absolute path in a *separate* checkout, where it is
+git-ignored build output on branch `rescue/primary-worktree-2026-08-10` — governed by no commit
+anywhere. The shipping flist `flists/tidelink_top_full_asic_v2.flist` sources 32 XHB-500 files
+through that path, including `..._hazard_list.sv`. Introduced by `1f139c94`, a rescue snapshot that
+captured a local convenience shortcut; `main` at `969a0c9d` predates it and was clean, which is why
+it survived without anyone being careless. Content was identical both ways at the time of the fix
+(`hazard_list.sv` = `c5b8757ba1b248cfe13b76fc7a22ef40`), so no build ever consumed divergent RTL.
+
+**Not closed:** a from-scratch generate on a clean tree has not been exercised end-to-end, and there
+is no generate log on disk — provenance above is inferred from the release stamp inside the file
+(strong, but not a run record). This is a reproducibility check on the frozen artefact, not a
+precondition for the freeze. Post-freeze.
+
 ## 4. Simulation gate
 
     make sim_gate on the frozen pair       result: <TBD>   uniform stamp: <TBD>
@@ -87,6 +129,9 @@ results at `fcsm=4` on BOTH dies. A run at any other link state is VOID, not a n
    baseline, runtime-calibrated; unrelated to the peer-write path.
 4. **Both `ahb_sub` backstops are starvable** aggregate-progress timers; the W node has no timeout;
    the re-ACK is a one-shot that cannot re-arm. Layer-2 recovery is post-tapeout.
+   Context for the underlying wedge (now foreclosed by the tie-down): the saturating resource is
+   `HAZARD_LIST_SIZE = 4` in the **Arm vendor template** — a CoreLink XHB-500 default
+   inherited from the licensed bridge, not a value chosen in our integration and not ours to set.
 5. **FPGA != ASIC configuration** — the tapeout ships ECC/CRC/FCSM settings the FPGA does not.
 
 ## 7. Signoff

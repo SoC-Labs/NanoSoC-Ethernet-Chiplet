@@ -13,6 +13,14 @@ saturate the AHB-to-AXI bridge's outstanding-write hazard list (depth 4) while i
 responses. Once saturated, the bridge holds its AHB ready signal low and the **D2D subordinate port
 stalls permanently**.
 
+The depth-4 hazard list is a **vendor default of the licensed bridge** — `HAZARD_LIST_SIZE = 4` in
+the Arm CoreLink XHB-500 source template, not a value selected in this integration and
+not exposed as a build-time parameter. In that template the neighbouring bus widths *are* generator
+substitution tokens (`<<ADDR_WIDTH>>`, `<<ID_WIDTH>>`) while `HAZARD_LIST_SIZE` is a literal `4`, so
+the depth is fixed by the IP rather than left unset by our configuration. The limitation is therefore
+a property of the licensed IP as delivered, and is mitigated at the integration level (see below)
+rather than by resizing the list.
+
 **There is no automatic recovery.** The port's write-stall backstop is measured to have **never
 fired since reset** during a stall (its status bit is set-only and clears only on reset), and its
 arming condition is defeated two independent ways: the timers are re-zeroed by unrelated bus
