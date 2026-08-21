@@ -389,16 +389,16 @@ place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1637.3100000000 MY  ;## 
 ## next person to nudge a macro for placement reasons gets no warning at all.
 ## That gate is the real fix; this coordinate is the repair.
 place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1505.6000000000 R0  ;## was 1506.12 (shorted), before that 1503.4 (orphan corridor)
-place_macro {*way1_cache_ram_tag_ram_0_i} 911.2000000000 468.6900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way1_cache_ram_tag_ram_0_i} 911.4000000000 468.6900000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 911.2 468.69
 place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 402.0900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
-place_macro {*way0_cache_ram_data_ram_0_word_2_i} 553.8000000000 480.4000000000 R0  ;## MOVED +20 y: QSPI cache stack moves up as one block
-place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 390.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way0_cache_ram_data_ram_0_word_2_i} 554.4000000000 478.4000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 553.8 480.4
+place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 385.9400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 516.6 390.04
 place_macro {*way0_cache_ram_data_ram_0_word_0_i} 702.4000000000 300.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
-place_macro {*way0_cache_ram_data_ram_0_word_1_i} 718.8000000000 345.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
-place_macro {*way1_cache_ram_data_ram_0_word_2_i} 633.6000000000 527.2000000000 R0  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way0_cache_ram_data_ram_0_word_1_i} 718.8000000000 344.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 718.8 345.04
+place_macro {*way1_cache_ram_data_ram_0_word_2_i} 634.2000000000 527.2000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 633.6 527.2
 place_macro {*way1_cache_ram_data_ram_0_word_3_i} 564.4000000000 435.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
-place_macro {*way1_cache_ram_data_ram_0_word_0_i} 708.6000000000 210.0400000000 MX  ;## MOVED +20 y: was 14.96 below the new core bottom
-place_macro {*way1_cache_ram_data_ram_0_word_1_i} 727.8000000000 255.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
+place_macro {*way1_cache_ram_data_ram_0_word_0_i} 709.8000000000 210.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 708.6 210.04
+place_macro {*way1_cache_ram_data_ram_0_word_1_i} 726.6000000000 255.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 727.8 255.04
 place_macro {*u_chip_core*u_region_imem_0*rf_16k*} 1059.2000000000 209.9500000000 R180  ;## MOVED +6 y: was 1.05 below the new core bottom
 place_macro {*u_shared_sram_0*rf_08k*} 1052.4000000000 506.7100000000 R180  ;## MOVED +6 y: follows chip imem rf_16k, keeps the 11.51 gap
 place_macro {*u_chip_core*u_region_dmem_0*rf_08k*} 1050.4000000000 953.6000000000 R0
