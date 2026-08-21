@@ -6,9 +6,9 @@ document until the SHA line below names a real frozen pair.
 
 ## 1. The frozen pair (fill FIRST — everything else is meaningless without it)
 
-    superproject   <TBD sha>   branch <TBD>
-    tidelink pin   <TBD sha>   pushed & fetchable: <TBD yes/no>
-    frozen at      <TBD date/time>
+    superproject   cebb5bb7   branch feat/padring-boundary-scan
+    tidelink pin   5e8bdb5a2141ff5a82103813a326a2c9df2b43ed   pushed & fetchable: YES (origin/main)
+    frozen at      2026-08-21 (tidelink push); pin bumped 2026-08-21
 
 **Gate:** `git ls-tree <superproject-sha> tidelink` MUST equal the tidelink pin, and that pin MUST be
 reachable from a remote (`git branch -r --contains <pin>` non-empty). A pin a clone cannot fetch is
@@ -29,13 +29,15 @@ Run `git grep -c <tok> <pin> -- src/rtl`. Baselines measured 2026-08-20.
 
 | token | pin `e6aaa82f` | main `d0a977aa` | REQUIRED on frozen | measured |
 |---|---|---|---|---|
-| `terminal_timeout` (TL-037) | 0 | 1 | **>=1** | `<TBD>` |
-| `wr_hold_drain_release` (TL-043) | 0 | 2 | **>=2** | `<TBD>` |
-| `read_would_overmint` (N3) | 0 | 7 | **>=7** | `<TBD>` |
-| `AUTO_ANCHOR` | 26 | 26 | **26** | `<TBD>` |
-| `socl_l7_wdog` (TL-033, decision 1) | 111 | 81 | **111** | `<TBD>` |
-| `dbg_a2l_wedged` (debug block, decision 1) | 6 | 0 | **6** | `<TBD>` |
-| `link_clk_div_ratio_i` (divider absorbed) | 12 | 0 | **12** | `<TBD>` |
+| `terminal_timeout` (TL-037) | 0 | 1 | **>=1** | **1** PASS |
+| `wr_hold_drain_release` (TL-043) | 0 | 2 | **>=2** | **2** PASS |
+| `read_would_overmint` (N3) | 0 | 7 | **>=7** | **7** PASS |
+| `AUTO_ANCHOR` | 26 | 26 | **26** | **26** PASS |
+| `socl_l7_wdog` (TL-033, decision 1) | 111 | 81 | **111** | **111** PASS |
+| `dbg_a2l_wedged` (debug block, decision 1) | 6 | 0 | **6** | **6** PASS |
+| `link_clk_div_ratio_i` (divider absorbed) | 12 | 0 | **12** | **12** PASS |
+
+**Census result 2026-08-21: 7 of 7 PASS on the frozen pin.**
 
 Structural check (a name count is not enough):
 
@@ -45,6 +47,15 @@ Flist checks (RTL present but unlisted is RTL that does not exist):
 
     git show <pin>:flists/tidelink_top_full_asic_v2.flist | grep -c 'local_overrides/WlinkGenericFCSM'   # MUST be 1 (_6 only) per decision 2
     git show <pin>:flists/tidelink_top_full_asic_v2.flist | grep -nE 'link_clk_div|link_rate_regs'       # MUST be present (divider ships)
+
+Measured 2026-08-21 on `5e8bdb5a`:
+
+| check | result |
+|---|---|
+| FCSM from `local_overrides/` | **1** (`_6` only; 0-5 from `deps/`) — PASS |
+| Divider ships | `tidelink_link_clk_div.sv` :410, `tidelink_link_rate_regs.sv` :414 — PASS |
+| Per-beat W consumption (structural) | `tidelink_top.sv:638` exact form — PASS |
+| `deps/xhb500/generated` tracked | **untracked** — the SHA no longer pins a pointer — PASS |
 
 ## 3b. Build-input provenance — what the SHA CANNOT pin
 
