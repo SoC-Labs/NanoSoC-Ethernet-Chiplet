@@ -70,6 +70,16 @@ correctly untracked as of the freeze (see the defect note below). So for this de
                    md5(xhb500_ahb_to_axi_bridge_chiplet_slv_hazard_list.sv)
                      = c5b8757ba1b248cfe13b76fc7a22ef40
 
+**Correction, 2026-08-21 — the first scan of this measured the wrong space.** An initial
+`find -maxdepth 4 -iname '*xhb*'` reported 2 installs, exactly 1 with a generator, and concluded the
+source was unambiguous *because it was unique*. That was wrong: the install the build actually uses is
+nested three levels deeper under a different product's release tree, and the scan never saw it. A
+complete scan finds **7** installs, **2** of which bear a generator. The conclusion survives and is now
+stronger for the right reason: both generator-bearing installs are the same release and carry
+**byte-identical** hazard templates, so the generated output is identical whichever one
+`XHB500_IP_DIR` names, and the other 5 cannot be sources at all. Had the two differed, the original
+claim would have asserted provenance from an install no build ever reads.
+
 The release is pinned by fingerprint rather than by its vendor revision string: this repository is
 public and the pre-commit vendor gate rejects revision-coded vendor release names in tracked content
 (same reason the GLS fixtures redact their model lists). The fingerprint is the stronger check in any
@@ -80,9 +90,10 @@ Verified 2026-08-20 (read-only probe of the vendor tree):
 
 | check | result |
 |---|---|
-| XHB-500 releases installed on the build host | 2 |
-| Of those, shipping `logical/generate` | **exactly 1** — so the source is unambiguous |
-| Release stamped in our generated RTL | matches the generator-bearing install |
+| XHB-500 installs on the build host | **7** (a `maxdepth 4` scan finds only 2 — see note) |
+| Of those, shipping `logical/generate` | **2** |
+| Hazard template across both generator-bearing installs | **byte-identical** (`c5eaad36...`) |
+| Release stamped in our generated RTL | matches the generator-bearing installs |
 | Wrong-release failure mode | `set_env.sh` fails on a missing generator — **loud, not silent** |
 
 **Defect fixed at the freeze (found 2026-08-20, pre-push).** Before the fix, `deps/xhb500/generated`
