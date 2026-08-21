@@ -90,7 +90,7 @@ transistors** — that part is real verification.
 - **cell interiors** — boxed leaves are black boxes;
 - **pin-level wiring on boxed leaves** — *conditionally*; see §4, this is the finding;
 - **the pad ring** — its cells are LEF-only; in the streams examined here the bond pads
-  `PAD70GU`/`PAD70NU` are **empty structures (geom=0)**, so there is no pad-ring geometry
+  `PAD70GU_SL`/`PAD70NU_SL` are **empty structures (geom=0)**, so there is no pad-ring geometry
   to verify and pad-ring power connectivity is untested.
 
 Quote results as **"clean modulo black boxes and modulo the pad ring"**. Never "signoff
@@ -244,7 +244,7 @@ ring and short every net reaching a pad.
 
 **Status: fixed in the shipping stream, and the fix is only half-derived.** The shipping
 stream contains **no LEF obstruction at all** — no `90xx` scratch layers, and
-`PAD70GU`/`PAD70NU` are empty structures. So the 34 shorts this trap used to produce are
+`PAD70GU_SL`/`PAD70NU_SL` are empty structures. So the 34 shorts this trap used to produce are
 gone, and the single remaining short (§7) is **not** this trap.
 
 But the map that produced it is stale, and that is a live defect — see §8.
@@ -379,7 +379,7 @@ Total Inst:   325189    325189          0 unmatched       82 unmatched (source)
 
 **Zero unmatched layout objects, zero unmatched nets, zero unmatched ports, and no shorts
 file at all** (no shorts were found). The entire residue is **82 source-side bond pads —
-42 `PAD70GU` + 40 `PAD70NU`** — which is the expected, documented cost of streaming without
+42 `PAD70GU_SL` + 40 `PAD70NU_SL`** — which is the expected, documented cost of streaming without
 pad obstruction, not a new defect.
 
 The banner still reads `INCORRECT`, driven by the two structural residue classes

@@ -209,7 +209,7 @@ LVS_GLOBAL_NETS ?= VDD VDDIO VSSIO
 #           SPICE source fails to READ without an explicit empty .SUBCKT.
 #           Get the names from your bond-pad placement script or the pad LEF.
 #           Empty for any design without flip-chip bumps or wire-bond pads.
-BONDPAD_CELLS ?= PAD70GU PAD70NU
+BONDPAD_CELLS ?= PAD70GU_SL PAD70NU_SL
 
 # [FLOW] Black-box every Front-End-only leaf on BOTH sides, so they compare by
 #        port connectivity. This is the idea the whole flow rests on — see

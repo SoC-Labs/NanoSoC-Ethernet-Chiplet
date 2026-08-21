@@ -323,8 +323,8 @@ from the tool, not noise.
 
 | Row | Cell | Height | Count |
 |---|---|---|---|
-| outer | `PAD70GU` | 86.685 µm | 42 |
-| inner | `PAD70NU` | 171.000 µm | 40 |
+| outer | `PAD70GU_SL` | 86.685 µm | 42 |
+| inner | `PAD70NU_SL` | 171.000 µm | 40 |
 
 Per side: top 9 outer / 8 inner, left 13 / 13, bottom 9 / 8, right 11 / 11. The
 pad name lists at the top of the file are in ring order and are the authoritative
@@ -339,7 +339,7 @@ IO driver cell**, not at an absolute coordinate:
 
 ```tcl
 foreach pads $left_pads_outer {
-    create_inst -cell PAD70GU -inst B$pads -ori R270
+    create_inst -cell PAD70GU_SL -inst B$pads -ori R270
     create_relative_floorplan -place B$pads -orient R270 -ref_type object -ref $pads \
         -horizontal_edge_separate {0 -2.5 0} -vertical_edge_separate {0 0 0}
 }
@@ -369,7 +369,7 @@ semantics are not documented here from first principles, only observed.
 
 ### Why after routing
 
-`PAD70GU` and `PAD70NU` sit on **M8 / M9 / AP**. They do not occupy core rows
+`PAD70GU_SL` and `PAD70NU_SL` sit on **M8 / M9 / AP**. They do not occupy core rows
 and therefore do not compete with standard cells, filler or hold buffers for
 sites. There is no reason to place them before routing, and one good reason not
 to — they are `CLASS BLOCK`, so their `OBS` blockages would constrain the router
@@ -377,7 +377,7 @@ for the whole run. Placing them last is deliberate.
 
 ### The clearance problem they cause
 
-`PAD70NU`'s `OBS` is solid over its entire footprint on both M8 and M9 — and, as
+`PAD70NU_SL`'s `OBS` is solid over its entire footprint on both M8 and M9 — and, as
 [scripts/07 §4.5](scripts/07-filler-and-bondpads.md) records, wider than the cell
 body besides. (Vendor LEF geometry not reproduced here — TSMC licence; source is
 `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`.)
@@ -459,7 +459,7 @@ separate, core-side problem and will not be touched by the pad clearance — see
 | `add_fillers` says `Found no DRC violations to fix` | filler ran before routing | it must be sourced from `place_bondpads.tcl`, not `route_setup.tcl` (§2) |
 | `IMPSP-9082 verifyGeometry needs to be executed` | no `check_drc` before `-fix_drc` | known, §6(a) |
 | `IMPSP-5217 ... followed by eco_route -target` | filler on a post-route DB | expected consequence of correct ordering, §6(b) |
-| Hundreds of M8/M9 shorts to `BuPAD_*` blockages | core ring overlaps `PAD70NU` OBS | raise `CORE_TO_IO`; [04-power-plan.md](04-power-plan.md) |
+| Hundreds of M8/M9 shorts to `BuPAD_*` blockages | core ring overlaps `PAD70NU_SL` OBS | raise `CORE_TO_IO`; [04-power-plan.md](04-power-plan.md) |
 | `create_relative_floorplan` places a pad in the wrong place | wrong `-ref` — the reference is the IO cell, resolved by exact name | check the name lists at the top of `place_bondpads.tcl` |
 
 ---

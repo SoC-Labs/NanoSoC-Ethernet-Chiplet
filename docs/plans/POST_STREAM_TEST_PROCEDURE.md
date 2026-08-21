@@ -88,8 +88,8 @@ python3 <scan the GDS, per-structure geometry census>
 
 | cell | before (08-19) | expected now |
 |---|---|---|
-| `PAD70GU` | 0 shapes | **13** on M8/M9/AP |
-| `PAD70NU` | 0 shapes | **13** on M8/M9/AP |
+| `PAD70GU_SL` | 0 shapes | **13** on M8/M9/AP |
+| `PAD70NU_SL` | 0 shapes | **13** on M8/M9/AP |
 | `PCORNER_G` | 0 shapes | **7** on M1..M7 |
 | `PDDW16DGZ_G` | 33 | **64** (M1..M7 + VIA1,VIA2) |
 
@@ -167,7 +167,7 @@ Do this after the streams land, not before; it competes for Innovus.
 
 | knob | value | effect |
 |---|---|---|
-| `BONDPAD_CELLS` | `PAD70GU PAD70NU` | got LVS to a verdict at all |
+| `BONDPAD_CELLS` | `PAD70GU_SL PAD70NU_SL` | got LVS to a verdict at all |
 | `LVS_POWER/GROUND` | `VDD VDDIO` / `VSS VSSIO` | VDDIO/VSSIO are supplies now |
 | `LVS_GLOBAL_NETS` | `VDD VDDIO VSSIO` | VSS omitted on purpose |
 | `LVS_PG` | **0** | **the coverage gap** |
@@ -175,7 +175,7 @@ Do this after the streams land, not before; it competes for Innovus.
 
 Result on 08-19 after the first two: nets 62,493/62,493 with **0 unmatched both
 sides**, `INCORRECT NETS` 0, `PROPERTY ERRORS` 0, and a residual of exactly **82** —
-42 `PAD70GU` + 40 `PAD70NU`.
+42 `PAD70GU_SL` + 40 `PAD70NU_SL`.
 
 **But 98.5% of instances are boxed with zero pins and 216,632 source nets were deleted
 before the comparison began. No standard-cell routing was checked.** A control run of
@@ -202,7 +202,7 @@ toward ~268k.
 
 ### 7b. What will NOT be fixed, ever, here
 
-The 82 bond pads. `PAD70GU`/`PAD70NU` have **zero `PIN` sections** in their LEF, so
+The 82 bond pads. `PAD70GU_SL`/`PAD70NU_SL` have **zero `PIN` sections** in their LEF, so
 `LEFPIN` text has nothing to label. And TSMC has never released a SPICE netlist for
 TPBN65V — the release note's own kit table shows the `spi` column empty at 200b, 200a,
 140b and 140a. A `_BE` package would deliver GDS, not CDL.

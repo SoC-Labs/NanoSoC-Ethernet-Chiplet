@@ -102,7 +102,7 @@ At `CORE_TO_IO 70` (`floorplan.tcl:79-81`) the die is fixed at 1600 × 2000 µm 
 ```
  die (0,0) ────────────────────────────────────────────── (1600,2000)
   ┌────────────────────────────────────────────────────────────────┐
-  │  staggered bond ring (tpbn65v) — PAD70GU outer / PAD70NU inner │
+  │  staggered bond ring (tpbn65v) — PAD70GU_SL outer / PAD70NU_SL inner │
   │  ┌──────────────────────────────────────────────────────────┐  │
   │  │ IO row, 135 µm tall: 34 supply pads + signal pads +      │  │
   │  │ PFILLER20/10/5/1/05_G spacers        <- pad_ring, L166   │  │
@@ -131,7 +131,7 @@ At `CORE_TO_IO 70` (`floorplan.tcl:79-81`) the die is fixed at 1600 × 2000 µm 
                      =  core_edge+2 .. core_edge+30   (28 µm)
 ```
 
-Ring-band arithmetic and its clearance to `PAD70NU` are owned by
+Ring-band arithmetic and its clearance to `PAD70NU_SL` are owned by
 [03-floorplan §2](../03-floorplan.md#2-why-the-margin-is-70-and-not-50-the-staggered-bond-ring);
 do not re-derive them here.
 
@@ -354,7 +354,7 @@ floorplan."
 | `-center 0` | "whether to center the core rings between the I/O pads and core boundaries. If you do not specify this parameter with a value of 1, you must specify the parameter `-offset`" | offsets are explicit, so centring is off. The two options are a documented either/or |
 | `-threshold 0` | "the least amount of spacing allowed between ring segments of adjacent blocks before the rings are merged"; default 10 µm | 0 disables merging with anything nearby. There are no block rings here, so this is defensive |
 | `-jog_distance 0` | "the least amount of jog allowed (to follow the contour of the referenced object) before a jog is removed"; default is auto-computed from worst tech spacing | 0 means no jog is ever suppressed. The core box is a rectangle, so no jogs arise |
-| `-snap_wire_center_to_grid none` | "Does no snapping of the wires." Default is also no snapping. | explicit no-snap. Relevant because M9's `PITCH` is 4.0 with `OFFSET 0` — snapping a 12 µm ring to that grid would move it, and the ring position is load-bearing against `PAD70NU` |
+| `-snap_wire_center_to_grid none` | "Does no snapping of the wires." Default is also no snapping. | explicit no-snap. Relevant because M9's `PITCH` is 4.0 with `OFFSET 0` — snapping a 12 µm ring to that grid would move it, and the ring position is load-bearing against `PAD70NU_SL` |
 
 ### 3.4 Lines 56–72 — `route_special`, pads to ring
 

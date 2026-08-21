@@ -268,12 +268,12 @@ read dies on the first macro:
 
 ```
 ERROR (IMPSER-513): Failed to create instance 'BuPAD_TL_RX_0'.
-                    Master cell 'PAD70GU' for instance not found in DB.
+                    Master cell 'PAD70GU_SL' for instance not found in DB.
                     One possible reason could be that lef/lib have been
                     modified and this cell is deleted ...
 ```
 
-The suggested cause is wrong. `PAD70GU` is present in the DB's own
+The suggested cause is wrong. `PAD70GU_SL` is present in the DB's own
 the DB's own bond-pad LEF and was read seconds earlier.
 
 **(ii) The `.cdb` noise libraries abort the load.**

@@ -186,8 +186,8 @@ line 119, visible in the geometry, exactly where it should be.
                                  0        135              205
 
   placed LATER by place_bondpads.tcl, on M8/M9/AP, over the driver ring:
-      PAD70GU  30 × 86.685   outer row, 42 insts   inboard edge never reaches the core rings
-      PAD70NU  30 × 171.000  inner row, 40 insts   inboard edge at 171 / 1429 / 171 / 1829
+      PAD70GU_SL  30 × 86.685   outer row, 42 insts   inboard edge never reaches the core rings
+      PAD70NU_SL  30 × 171.000  inner row, 40 insts   inboard edge at 171 / 1429 / 171 / 1829
       core ring stack occupies core_edge+2 .. core_edge+30  ->  175 / 1425 / 175 / 1825
       clearance = 4.00 µm every side.  This is why CORE_TO_IO is 70.  See 03-floorplan §2.
 ```
@@ -722,7 +722,7 @@ hand-written lists (`<side>_pads_outer` / `<side>_pads_inner`) and attaches one 
 driver pad with `create_relative_floorplan`. Those lists are **derived from this file's per-side
 order by strict alternation** — verified mechanically on all four sides:
 
-| Side | `.io` pads | odd positions → `PAD70GU` (outer) | even positions → `PAD70NU` (inner) | alternates? |
+| Side | `.io` pads | odd positions → `PAD70GU_SL` (outer) | even positions → `PAD70NU_SL` (inner) | alternates? |
 |---|---|---|---|---|
 | top | 17 | 9 | 8 | **yes, exactly** |
 | left | 26 | 13 | 13 | **yes, exactly** |
@@ -980,7 +980,7 @@ below.
 |---|---|---|---|
 | 1 | `CORE_TO_IO` | `floorplan.tcl:79` | The one line you actually meant to change. |
 | 2 | **All 21 macro coordinates** | `floorplan.tcl:189–209` | Absolute die coordinates. They do not track the core box, and because the die is anchored at `llcorner` the core's lower-left moves *inward* as the margin grows — so macros near the **bottom and left** fall out even though nothing about them changed. Enlarging the die does not help. |
-| 3 | Ring-to-bond-pad clearance | arithmetic, not a file | `ring_outer = 135 + CORE_TO_IO + 30` (offset 2 + width 12 + spacing 4 + width 12, from `add_rings` at `power_plan.tcl:55`) vs `PAD70NU` inboard at 171 / 1429 / 171 / 1829. Require at least the M9 `SPACING` (read it from the tech LEF — not reproduced here, TSMC licence). At 70 it is 4.00. **This is the number the whole change exists to fix** — re-derive it, do not assume. |
+| 3 | Ring-to-bond-pad clearance | arithmetic, not a file | `ring_outer = 135 + CORE_TO_IO + 30` (offset 2 + width 12 + spacing 4 + width 12, from `add_rings` at `power_plan.tcl:55`) vs `PAD70NU_SL` inboard at 171 / 1429 / 171 / 1829. Require at least the M9 `SPACING` (read it from the tech LEF — not reproduced here, TSMC licence). At 70 it is 4.00. **This is the number the whole change exists to fix** — re-derive it, do not assume. |
 | 4 | The header comment | `floorplan.tcl:1–78` | 78 lines of prose asserting specific values (155/1445, 175/1425, 16.00, 4.00, 580, 318, 102). Wrong prose here is worse than none — it is what the next person will trust. |
 | 5 | `preplace.tcl:7` | `place_global_uniform_density` | Utilisation rises as the core shrinks. It is already used above its documented 70 % ceiling at 80.7 %; a further margin increase pushes it further out. |
 | 6 | Row-sliver arithmetic | §1.2 | Only if you care. 883 rows at margin 70 leaves 0.6 µm; a different margin leaves a different sliver. |

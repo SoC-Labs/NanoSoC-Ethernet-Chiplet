@@ -179,7 +179,7 @@ CALIBRE_HOME` hang that holds a Cadence seat.
 
 - `create_relative_floorplan`'s placement triple is `{ref_edge y_offset obj_edge}`, not
   `{left centre right}`.
-- `PAD70NU`'s obstruction is five shapes spanning −14…+44 µm, not the single
+- `PAD70NU_SL`'s obstruction is five shapes spanning −14…+44 µm, not the single
   `RECT 0 0 30 171` recorded in `floorplan.tcl`.
 - `add_stripes_ignore_block_check`'s documented polarity is the reverse of its name;
   [04-power-plan](../04-power-plan.md) describes it backwards.

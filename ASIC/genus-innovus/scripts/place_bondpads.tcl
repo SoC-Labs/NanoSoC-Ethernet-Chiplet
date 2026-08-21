@@ -137,41 +137,41 @@ uPAD_HOST_IO_6 \
 
 
 foreach pads $left_pads_outer {
-    create_inst -cell PAD70GU -inst B$pads -ori R270
-    create_relative_floorplan -place B$pads -orient R270  -ref_type object -ref $pads -horizontal_edge_separate {0  -2.5  0} -vertical_edge_separate {0  0  0}
+    create_inst -cell PAD70GU_SL -inst B$pads -ori R270
+    create_relative_floorplan -place B$pads -orient R270  -ref_type object -ref $pads -horizontal_edge_separate {0  0  0} -vertical_edge_separate {0  0  0}
 } 
 
 foreach pads $left_pads_inner {
-    create_inst -cell PAD70NU -inst B$pads -ori R270
-    create_relative_floorplan -place B$pads -orient R270  -ref_type object -ref $pads -horizontal_edge_separate {0  -2.5  0} -vertical_edge_separate {0  0  0}
+    create_inst -cell PAD70NU_SL -inst B$pads -ori R270
+    create_relative_floorplan -place B$pads -orient R270  -ref_type object -ref $pads -horizontal_edge_separate {0  0  0} -vertical_edge_separate {0  0  0}
 } 
 
 foreach pads $top_pads_outer {
-    create_inst -cell PAD70GU -inst B$pads -ori R180
-    create_relative_floorplan -place B$pads -orient R180  -ref_type object -ref $pads -horizontal_edge_separate {1  0  1} -vertical_edge_separate {2  2.5  2}
+    create_inst -cell PAD70GU_SL -inst B$pads -ori R180
+    create_relative_floorplan -place B$pads -orient R180  -ref_type object -ref $pads -horizontal_edge_separate {1  0  1} -vertical_edge_separate {2  0  2}
 } 
 
 foreach pads $top_pads_inner {
-    create_inst -cell PAD70NU -inst B$pads -ori R180
-    create_relative_floorplan -place B$pads -orient R180  -ref_type object -ref $pads -horizontal_edge_separate {1  0  1} -vertical_edge_separate {2  2.5  2}
+    create_inst -cell PAD70NU_SL -inst B$pads -ori R180
+    create_relative_floorplan -place B$pads -orient R180  -ref_type object -ref $pads -horizontal_edge_separate {1  0  1} -vertical_edge_separate {2  0  2}
 } 
 
 foreach pads $bottom_pads_outer {
-    create_inst -cell PAD70GU -inst B$pads -ori R0
-    create_relative_floorplan -place B$pads -orient R0  -ref_type object -ref $pads -horizontal_edge_separate {0  0  0} -vertical_edge_separate {0  -2.5  0}
+    create_inst -cell PAD70GU_SL -inst B$pads -ori R0
+    create_relative_floorplan -place B$pads -orient R0  -ref_type object -ref $pads -horizontal_edge_separate {0  0  0} -vertical_edge_separate {0  0  0}
 } 
 
 foreach pads $bottom_pads_inner {
-    create_inst -cell PAD70NU -inst B$pads -ori R0
-    create_relative_floorplan -place B$pads -orient R0  -ref_type object -ref $pads -horizontal_edge_separate {0  0  0} -vertical_edge_separate {0  -2.5  0}
+    create_inst -cell PAD70NU_SL -inst B$pads -ori R0
+    create_relative_floorplan -place B$pads -orient R0  -ref_type object -ref $pads -horizontal_edge_separate {0  0  0} -vertical_edge_separate {0  0  0}
 } 
 
 foreach pads $right_pads_outer {
-    create_inst -cell PAD70GU -inst B$pads -ori R90
-    create_relative_floorplan -place B$pads -orient R90  -ref_type object -ref $pads -horizontal_edge_separate {1 2.5 1} -vertical_edge_separate {2 0 2}
+    create_inst -cell PAD70GU_SL -inst B$pads -ori R90
+    create_relative_floorplan -place B$pads -orient R90  -ref_type object -ref $pads -horizontal_edge_separate {1 0 1} -vertical_edge_separate {2 0 2}
 } 
 
 foreach pads $right_pads_inner {
-    create_inst -cell PAD70NU -inst B$pads -ori R90
-    create_relative_floorplan -place B$pads -orient R90  -ref_type object -ref $pads -horizontal_edge_separate {1 2.5 1} -vertical_edge_separate {2 0 2}
+    create_inst -cell PAD70NU_SL -inst B$pads -ori R90
+    create_relative_floorplan -place B$pads -orient R90  -ref_type object -ref $pads -horizontal_edge_separate {1 0 1} -vertical_edge_separate {2 0 2}
 } 

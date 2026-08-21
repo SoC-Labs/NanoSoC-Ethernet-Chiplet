@@ -172,12 +172,12 @@ array set e10 {total 2 trailer 2 special 2 duplicate 1}
 case "exact duplicate markers" $r10 e10
 
 # 11. Bond pad named by BASE cell, not instance. place_bondpads.tcl instantiates
-#     PAD70NU/PAD70GU; matching only *BuPAD* missed half the population.
-set r11 "SHORT: ( Metal Short ) Regular Wire of Net n3 & Blockage of Cell PAD70GU  ( M8 )
+#     PAD70NU_SL/PAD70GU_SL; matching only *BuPAD* missed half the population.
+set r11 "SHORT: ( Metal Short ) Regular Wire of Net n3 & Blockage of Cell PAD70GU_SL  ( M8 )
 Bounds : ( 1.0, 2.0 ) ( 3.0, 4.0 )
   Total Violations : 1 Viols."
 array set e11 {total 1 trailer 1 bondpad 1 regular 1}
-case "bond pad by base cell (PAD70GU)" $r11 e11
+case "bond pad by base cell (PAD70GU_SL)" $r11 e11
 
 # 12. IO fillers must NOT count as core fill. floorplan.tcl's add_io_fillers uses
 #     -prefix FILLER too, and the two populations are unrelated - the gate arm

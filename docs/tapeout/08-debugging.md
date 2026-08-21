@@ -749,15 +749,15 @@ Looking at the actual geometry, rather than the counts, is what produced the dia
 `floorplan.tcl`:
 
 ```
-PAD70NU's OBS is solid over its whole footprint on M8 AND M9
+PAD70NU_SL's OBS is solid over its whole footprint on M8 AND M9
   (vendor LEF geometry not reproduced -- TSMC licence),
 which are exactly the core-ring layers (add_rings: left/right M8, top/bottom M9).
-    margin 50 -> ring outer edge 155/1445/155/1845 vs PAD70NU at
+    margin 50 -> ring outer edge 155/1445/155/1845 vs PAD70NU_SL at
                  171/1429/171/1829  = 16.00um OVERLAP every side
     margin 70 -> ring outer edge 175/1425/175/1825  =  4.00um clear
 ```
 
-Note the **control** in that analysis: `PAD70GU`, the outer pad, has 32 violations and
+Note the **control** in that analysis: `PAD70GU_SL`, the outer pad, has 32 violations and
 **zero** PG shorts, because its inboard edge never reaches the ring band. A hypothesis that
 explains the failures *and* correctly predicts where there are no failures is much stronger
 than one that only explains the failures. Look for the control.
@@ -828,7 +828,7 @@ source, and they state they were measured):
   as *"Verified by running it"*
 - the 95,568 free-site gap figure (~5.9% of core)
 - the `IsUnMapped` → `IsViewable` `gui_show` observation
-- the PAD70NU/PAD70GU overlap arithmetic in `floorplan.tcl`
+- the PAD70NU_SL/PAD70GU_SL overlap arithmetic in `floorplan.tcl`
 
 **Uncertain:**
 

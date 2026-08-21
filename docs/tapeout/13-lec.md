@@ -84,7 +84,7 @@ nowhere in it.** That file is the one `write_stream` turns into GDS, and P&R put
 | `DEL*` hold-repair delay cells | 0 | **10,555** | +10,555 |
 | `CKBD0` clock buffers | 0 | 22,046 | +22,046 |
 | `TIEH` / `TIEL` tie cells | 0 / 0 | 17 / 28 | +45 |
-| bond pads (`PAD70GU`/`PAD70NU`) | 0 | 42 / 40 | +82 |
+| bond pads (`PAD70GU_SL`/`PAD70NU_SL`) | 0 | 42 / 40 | +82 |
 
 into it. Roughly one instance in five in the shipped netlist was created after the last
 thing anybody checked, and 133 cell types in it appear in no netlist that was.
@@ -330,15 +330,15 @@ only ever prove the model equals itself.
 
 ### Bond pads have no model anywhere
 
-`PAD70GU` (42) and `PAD70NU` (40) are created by `scripts/place_bondpads.tcl` during
+`PAD70GU_SL` (42) and `PAD70NU_SL` (40) are created by `scripts/place_bondpads.tcl` during
 `4_pnr_route` and exist only in `…_pnr.v`. There is **no `.lib` and no Verilog** for them
 anywhere in this PDK install — but the reason is not the one this section used to give, and
 the difference is worth six lines because it also says where the pads come from.
 
 Run `grep -rl PAD70 "$TSMC_65_HOME"` (2026-08-17) and it returns **exactly one file**, a
 **LEF**, in the `Back_End/lef/` subtree of the **bump/pad IO library's `_FE` package** — a
-different library from the IO-driver one `config.tcl` reads. It defines `MACRO PAD70GU`,
-`PAD70GU_SL`, `PAD70NU` and `PAD70NU_SL`.
+different library from the IO-driver one `config.tcl` reads. It defines `MACRO PAD70GU_SL`,
+`PAD70GU_SL`, `PAD70NU_SL` and `PAD70NU_SL`.
 
 So the pads have **a LEF abstract and nothing else**: that package ships only
 `Back_End/{lef,milkyway,volcano}` and its documentation — no Liberty, no Verilog, no GDS.
@@ -353,7 +353,7 @@ That is the evidence for "physical-only", and it is now measured rather than inf
 > argument supports it. If you are re-checking, grep the whole of `$TSMC_65_HOME` rather than
 > the subtree you expect the answer to be in.
 They are physical-only, written by Innovus with an empty connection list
-(`PAD70GU BuPAD_HOST_IO_5 ();`), so they carry zero key points either way. Correct: bond
+(`PAD70GU_SL BuPAD_HOST_IO_5 ();`), so they carry zero key points either way. Correct: bond
 pads are LVS/DRC scope, not equivalence scope.
 
 `scripts/lec/bondpad_stubs.v` declares them as empty modules rather than letting

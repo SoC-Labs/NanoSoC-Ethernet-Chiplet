@@ -34,13 +34,13 @@ edge of the die -- the "padframe" -- are licensed TSMC IP
 family). We do not hold usable rights to redistribute their real transistor
 and metal geometry, so our own GDS deliverable references them **by cell name
 only**: `ASIC/genus-innovus/scripts/place_bondpads.tcl` creates instances
-named e.g. `PAD70GU`/`PAD70NU`, `ASIC/tech_wrappers/tsmc65/
+named e.g. `PAD70GU_SL`/`PAD70NU_SL`, `ASIC/tech_wrappers/tsmc65/
 nanosoc_eth_chiplet_pads.v` instantiates `PDDW16DGZ_G`, `PVDD1DGZ_G`, etc.,
 and the LEF abstracts (pin/obstruction shapes only, no real layout) stand in
 for the cells during our own place-and-route. This is DELIBERATE and BY
 DESIGN, not a bug -- see `ci/signoff.yaml`'s `gds-completeness` waiver, which
 documents that 424 cell masters in the shipped stream have LEF-abstract
-geometry only ("PAD70GU is AP/RDL only").
+geometry only ("PAD70GU_SL is AP/RDL only").
 
 The foundry's own merge tooling is expected to substitute the REAL vendor
 geometry back in by matching cell NAME at import time. That is exactly why
@@ -347,7 +347,7 @@ def parse_io_file(path: Path) -> tuple[list[dict], dict[str, list[str]]]:
 def parse_bondpad_tcl(path: Path) -> dict[str, list[str]]:
     """Return {'<side>_pads_<outer|inner>': [uPAD_* names]} exactly as
     place_bondpads.tcl's own `set ... [list ...]` blocks declare them -- this
-    is what decides PAD70GU (outer ring) vs PAD70NU (inner ring) per pad, and
+    is what decides PAD70GU_SL (outer ring) vs PAD70NU_SL (inner ring) per pad, and
     the instance-naming convention (B<name>), for the staggered bond-pad cell
     the actual TSMC tpbn65v library places on top of/beside each IO cell.
     """
@@ -394,11 +394,11 @@ class Expected:
                     self.cross_check_errors.append(
                         f"{name}: place_bondpads.tcl lists it in BOTH "
                         f"{side}_pads_outer and {side}_pads_inner")
-                    scell = "PAD70GU"
+                    scell = "PAD70GU_SL"
                 elif name in outer:
-                    scell = "PAD70GU"
+                    scell = "PAD70GU_SL"
                 elif name in inner:
-                    scell = "PAD70NU"
+                    scell = "PAD70NU_SL"
                 else:
                     scell = None
                     self.cross_check_errors.append(

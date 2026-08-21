@@ -74,7 +74,7 @@ a die that is already placed and routed. See Part B.
 
 - `ASIC/genus-innovus/scripts/calibre/nanosoc_eth_chiplet_pads.bnd.rules` — a correct,
   well-evidenced project wrapper deck (`#DEFINE PITCH_70_STAGGER`, justified in its own
-  header from the instantiated cell names, `PAD70GU`/`PAD70NU`). It fixed a real,
+  header from the instantiated cell names, `PAD70GU_SL`/`PAD70NU_SL`). It fixed a real,
   previously undiscovered fault: with no pitch switch selected at all, the foundry deck's
   own `PITCH_OPTION.ERROR.1` rulecheck fires and every pad-row-derived layer the deck
   computes falls through to `EMPTY` — measured 2026-08-09
@@ -145,8 +145,8 @@ individual result count:
 
 | Cell | Rule | IMEC | Ours |
 |---|---|---:|---:|
-| `PAD70GU` | `AP.W.2` | 1 (42) | **1 (42)** |
-| `PAD70NU` | `AP.W.2` | 1 (40) | **1 (40)** |
+| `PAD70GU_SL` | `AP.W.2` | 1 (42) | **1 (42)** |
+| `PAD70NU_SL` | `AP.W.2` | 1 (40) | **1 (40)** |
 | top cell | `AP.W.1` | 12 (12) | **12 (12)** |
 | top cell | `AP.S.1` | 4 (4) | **4 (4)** |
 | `CORNER_B` | `PM.W.1` | 26 (104) | 0 (no `CORNER_B` PM content on our side) |
@@ -191,7 +191,7 @@ interchangeable spellings of the same thing — the foundry deck's own switch co
 *"Turn on to use IO cell (>=70um pitch) of the staggered pad ONLY"* for the 70 option and
 *"(>=80um pitch)"* for the 80 option: two mutually exclusive choices on the same axis, and
 the deck's `PITCH_OPTION.ERROR.*` rules reject having both active. Our own wrapper's
-70-pitch choice is evidenced (`PAD70GU`/`PAD70NU` are literally 70 µm-pitch parts); IMEC's
+70-pitch choice is evidenced (`PAD70GU_SL`/`PAD70NU_SL` are literally 70 µm-pitch parts); IMEC's
 80 is unexplained from here. **This is exactly the kind of thing worth sending to the
 broker as a question**, not resolving unilaterally.
 
@@ -478,7 +478,7 @@ $ python3 scripts/ci/imec_rule_diff.py --rules PM.W.1,AP.W.1,AP.W.2,AP.S.1,AP.S.
 |---|---:|---:|---:|---|
 | `PM.W.1` | 0 | 889 (967) | 919 (**1000, now capped**) | DELTA — explained (Part A: no PM geometry locally) |
 | `AP.W.1` | 12 | 12 | 12 | **EXACT_MATCH**, all 3 |
-| `AP.W.2` | 2 (82) | 2 (82) | 2 (82) | **EXACT_MATCH**, all 3, by-cell too (`PAD70GU`=1, `PAD70NU`=1 identically) |
+| `AP.W.2` | 2 (82) | 2 (82) | 2 (82) | **EXACT_MATCH**, all 3, by-cell too (`PAD70GU_SL`=1, `PAD70NU_SL`=1 identically) |
 | `AP.S.1` | 4 | 4 | 4 | **EXACT_MATCH**, all 3 |
 | `AP.S.4` | 0 | 131 (131) | 46 (46) | DELTA — explained (needs the same absent PM/CB2 geometry) |
 

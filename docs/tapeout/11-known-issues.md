@@ -125,11 +125,11 @@ Split by pad type:
 
 | Pad | Violations | of which PG special wire |
 |---|---|---|
-| `PAD70NU` (inner, 171 µm tall) | 366 | **318** |
-| `PAD70GU` (outer, 86.685 µm tall) | 32 | **0** |
+| `PAD70NU_SL` (inner, 171 µm tall) | 366 | **318** |
+| `PAD70GU_SL` (outer, 86.685 µm tall) | 32 | **0** |
 
-**Root cause — measured, not assumed.** `PAD70NU`'s `OBS` is solid over its whole
-footprint on **M8 and M9** — read the `MACRO PAD70NU` `OBS` section of the vendor bond-pad
+**Root cause — measured, not assumed.** `PAD70NU_SL`'s `OBS` is solid over its whole
+footprint on **M8 and M9** — read the `MACRO PAD70NU_SL` `OBS` section of the vendor bond-pad
 LEF, `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef` (geometry not reproduced
 here, TSMC licence). Those are exactly the core-ring layers (`add_rings … -layer {top M9 bottom M9 left M8
 right M8}`). `add_rings` draws geometrically and **does not honour `OBS`**, so at
@@ -139,11 +139,11 @@ sides symmetrically:
 ```
 ring stack occupies  core_edge+2 .. core_edge+30   (offset 2, then 12+4+12)
 CORE_TO_IO 50 -> ring outer edge 155 / 1445 / 155 / 1845
-                 PAD70NU inner edge 171 / 1429 / 171 / 1829   = 16.00 um OVERLAP every side
+                 PAD70NU_SL inner edge 171 / 1429 / 171 / 1829   = 16.00 um OVERLAP every side
 CORE_TO_IO 70 -> ring outer edge 175 / 1425 / 175 / 1825      =  4.00 um CLEAR
 ```
 
-The outer pad is the control: `PAD70GU`'s inboard edge (1513.3 on the right) never reaches
+The outer pad is the control: `PAD70GU_SL`'s inboard edge (1513.3 on the right) never reaches
 the ring band, and it has **zero** PG shorts. That is what makes this a root cause rather
 than a correlation.
 
@@ -190,7 +190,7 @@ reach 36 µm further inboard.
    ```
    **Expected: 318 → 0.** Anything else means the geometry argument above is wrong
    somewhere and should be re-derived from the LEF, not patched.
-2. **Expect ~48 to remain.** The 366 − 318 = **48 non-PG `PAD70NU` violations are signal
+2. **Expect ~48 to remain.** The 366 − 318 = **48 non-PG `PAD70NU_SL` violations are signal
    routing into the same blockages**, and `CORE_TO_IO` does not move signal routes — the
    router is free to go there. **These may not clear.** If they do not, the options are a
    routing blockage over the inner pad footprints, or accepting them and declaring them to

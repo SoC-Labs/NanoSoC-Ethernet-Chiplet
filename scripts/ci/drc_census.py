@@ -363,7 +363,7 @@ def density_windows(rundir, pad_inset):
 
     # The IO row is 135um deep (tphn65lpgv2od3_sl_9lm.lef, SIZE 25 BY 135) but the
     # BOND PADS are deeper: floorplan.tcl:146 records 171um from tpbn65v_9lm.lef,
-    # MACRO PAD70NU, OBS LAYER M8 RECT 0 0 30 171 -- and those pads carry solid M8
+    # MACRO PAD70NU_SL, OBS LAYER M8 RECT 0 0 30 171 -- and those pads carry solid M8
     # plates. So a window 140um in from the edge is core for M1..M7 but still under
     # the pad plate on M8/M9/AP. Using one 135um inset for every layer charged the
     # design 324 M8.DN.2 windows that sit on the bondpad blanket.

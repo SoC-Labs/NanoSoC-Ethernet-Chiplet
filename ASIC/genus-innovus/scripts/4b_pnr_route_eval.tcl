@@ -422,8 +422,8 @@ proc evroute_drc_census {path _c} {
         # FILLER_PD_TOP, never bare FILLER: add_io_fillers in floorplan.tcl uses
         # -prefix FILLER too, and the two populations are unrelated.
         if {[string match {*FILLER_PD_TOP*} $line]} { incr c(filler) }
-        # PAD70* as well as BuPAD*: place_bondpads.tcl instantiates PAD70NU and
-        # PAD70GU, and a violation can name the base cell rather than the
+        # PAD70* as well as BuPAD*: place_bondpads.tcl instantiates PAD70NU_SL and
+        # PAD70GU_SL, and a violation can name the base cell rather than the
         # instance. Matching only BuPAD missed that half of the population.
         if {[string match {*BuPAD*} $line] || [string match {*PAD70*} $line]} {
             incr c(bondpad)

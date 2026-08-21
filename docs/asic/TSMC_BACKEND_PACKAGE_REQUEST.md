@@ -33,7 +33,7 @@ revision, so this is an extension of an existing licence rather than a new one.
 |---|---|---|
 | **`tcbn65lp_<rev>_BE`** | standard-cell GDS + CDL | the 9-track SVT core (`config.tcl` `BASE_LIB = tcbn65lpwc.lib`) |
 | **`tphn65lpgv2od3_sl_<rev>_BE`** | 2.5 V staggered IO driver GDS + CDL | `PDDW16DGZ_G` ×36, `PVSS2DGZ_G` ×12, `PDDW04DGZ_G` ×9, `PVDD2DGZ_G` ×8, `PVDD1DGZ_G` ×6, `PVSS1DGZ_G` ×4, `PVDD2POC_G` ×4, `PDUW16DGZ_G` ×2, `PDUW08DGZ_G` ×1, `PCORNER_G`, `PFILLER{1,5,10,20}_G` |
-| **`tpbn65v_<rev>_BE`** | bond-pad GDS + CDL | `PAD70GU` ×42, `PAD70NU` ×40 |
+| **`tpbn65v_<rev>_BE`** | bond-pad GDS + CDL | `PAD70GU_SL` ×42, `PAD70NU_SL` ×40 |
 
 ### Worth adding to the same request (no marginal effort, avoids a second round)
 
@@ -73,7 +73,7 @@ obstruction shapes — so every cell name resolves and nothing errors:
 | `SDFCNQD1` | 94 polygons, layer `(31,0)` M1 only | full FEOL: NW, OD, PO, CO, M1… |
 | `INVD1` | 8 polygons, M1 only | ditto |
 | `FILL1` | 2 polygons, M1 only | ditto |
-| `PAD70GU` | 13 polygons, AP/RDL only | full pad stack |
+| `PAD70GU_SL` | 13 polygons, AP/RDL only | full pad stack |
 | `rf_32k…` (merged correctly) | 545 polygons across OD/PO/CO/M1…(108,0) | — |
 
 **There is not one transistor in the standard cells, IO drivers or bond pads.**

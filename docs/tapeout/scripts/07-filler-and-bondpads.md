@@ -114,7 +114,7 @@ Both cells used here come from TSMC's `tpbn65v` bond-pad library
 (`config.tcl:134` → `.../iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`). Read
 out of that LEF:
 
-| | `PAD70GU` (outer) | `PAD70NU` (inner) |
+| | `PAD70GU_SL` (outer) | `PAD70NU_SL` (inner) |
 |---|---|---|
 | `CLASS` | `BLOCK` | `BLOCK` |
 | Cell height (the number the floorplan has to clear) | 86.685 µm | 171.000 µm |
@@ -124,8 +124,8 @@ out of that LEF:
 
 > Vendor LEF geometry redacted — TSMC licence forbids reproduction. The AP-opening
 > rectangles, the polygon wings and the full `SIZE`/`OBS` statements are in
-> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, macros `PAD70GU`
-> and `PAD70NU`.
+> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, macros `PAD70GU_SL`
+> and `PAD70NU_SL`.
 
 The two cells carry the **same aluminium opening**; the only difference is where
 along the cell it sits. That 102 µm offset *is* the stagger, and 171 µm is where
@@ -746,7 +746,7 @@ Eight Tcl lists, 82 names total, no comments:
 | | **42** | **40** | **82** |
 
 Confirmed against the shipped netlist:
-`grep -c "PAD70GU\|PAD70NU" baseline_2026-08-06/outputs/nanosoc_eth_chiplet_pads_pnr.v`
+`grep -c "PAD70GU_SL\|PAD70NU_SL" baseline_2026-08-06/outputs/nanosoc_eth_chiplet_pads_pnr.v`
 returns **82**.
 
 **The lists are not arbitrary, and no document in the repo says what they are.
@@ -792,7 +792,7 @@ VDDIO_T_2, VSSIO_T_1` — `place_bondpads.tcl:32-40`, verbatim and in order.
 
 `docs/PIN_MAP.md` is *not* the cross-reference for this. It is marked `Status:
 TEMPLATE`, describes 46 logical pad *cells* rather than 82 bond pads, has `[TEAM
-DECISION]` in every die-side column, and never mentions `PAD70GU`, `PAD70NU`,
+DECISION]` in every die-side column, and never mentions `PAD70GU_SL`, `PAD70NU_SL`,
 `tpbn65v`, `place_bondpads.tcl` or the `.io` file. (`docs/PIN_POLICY.md` is about
 git submodule commit pins and is unrelated to pads despite the name.) The
 authoritative ring record is the `.io` file plus these eight lists.
@@ -803,13 +803,13 @@ All eight loops have the same two-line body:
 
 ```tcl
 139: foreach pads $left_pads_outer {
-140:     create_inst -cell PAD70GU -inst B$pads -ori R270
+140:     create_inst -cell PAD70GU_SL -inst B$pads -ori R270
 141:     create_relative_floorplan -place B$pads -orient R270  -ref_type object -ref $pads -horizontal_edge_separate {0  -2.5  0} -vertical_edge_separate {0  0  0}
 142: }
 ```
 
-**Cell selection is purely by row:** `PAD70GU` for every `*_outer` loop,
-`PAD70NU` for every `*_inner` loop. Nothing about the signal influences the cell.
+**Cell selection is purely by row:** `PAD70GU_SL` for every `*_outer` loop,
+`PAD70NU_SL` for every `*_inner` loop. Nothing about the signal influences the cell.
 
 **Instance naming:** `B$pads`, so IO driver `uPAD_TL_RX_0` gets bond pad
 `BuPAD_TL_RX_0`. That prefix is how you read the DRC report — every pad-clearance
@@ -831,12 +831,12 @@ nothing follows). **Flagged as legacy-UI usage in a Stylus flow.** The
 Stylus-clean form is:
 
 ```tcl
-create_inst -base_cell PAD70GU -name B$pads -orient r270 -physical
+create_inst -base_cell PAD70GU_SL -name B$pads -orient r270 -physical
 ```
 
 `-physical` is worth considering separately: *"Places a physical instance without
 updating the netlist."* Without it, the 82 pads land in the netlist —
-`write_netlist` emits `PAD70NU BuPAD_HOST_IO_6 ();` with an empty port list,
+`write_netlist` emits `PAD70NU_SL BuPAD_HOST_IO_6 ();` with an empty port list,
 82 times (`baseline_2026-08-06/outputs/nanosoc_eth_chiplet_pads_pnr.v:1398677`
 onward). That is 82 instances in `*_pnr.v` that no RTL and no synthesis netlist
 contains, which any downstream LVS or equivalence run has to be told about.
@@ -899,15 +899,15 @@ mechanism.
 
 ### 4.5 The M8/M9/AP blockage, and what it collides with
 
-`PAD70GU` and `PAD70NU` are `CLASS BLOCK` and carry **only `OBS`, no `PIN`**.
-Read the `PAD70NU` `OBS` section of `tpbn65v_9lm.lef` and the shape of the problem
+`PAD70GU_SL` and `PAD70NU_SL` are `CLASS BLOCK` and carry **only `OBS`, no `PIN`**.
+Read the `PAD70NU_SL` `OBS` section of `tpbn65v_9lm.lef` and the shape of the problem
 is immediate: on **M8 and M9 it is the same five-shape figure** — a rectangle
 covering the whole cell body, a rectangle either side of it, and a chamfered
 polygon capping each of those — and on **AP** a single wide rectangle with a
 chamfered polygon at each end. No pins, no routing targets, blockage only.
 
 > Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
-> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`,
+> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU_SL`,
 > the `OBS` section.
 
 > **A second correction.** `floorplan.tcl:18-19` and
@@ -940,14 +940,14 @@ Measured result, from `floorplan.tcl:31-56`:
 | | `CORE_TO_IO 50` | `CORE_TO_IO 70` |
 |---|---:|---:|
 | Ring outer edge (left) | 155 | 175 |
-| `PAD70NU` inboard edge (left) | 171 | 171 |
+| `PAD70NU_SL` inboard edge (left) | 171 | 171 |
 | | **16.00 µm overlap** | **4.00 µm clear** |
 | Total DRC violations | 580 | **102** |
 | Naming a `BuPAD_*` blockage | 398 | **0** |
 | PG-ring vs bond-pad shorts | 318 | **0** |
 | `SHORT` records overall | 379 | **1** |
 
-`PAD70GU` is the control: 32 of its 398, and **zero** of them VDD/VSS special
+`PAD70GU_SL` is the control: 32 of its 398, and **zero** of them VDD/VSS special
 wire, because the shorter outer pad's inboard edge never reaches the ring band.
 Confirmed in the shipped report — `grep -c BuPAD` on the 2026-08-06
 `_imp_drc.rep` returns **0**.
@@ -989,7 +989,7 @@ eventually have to reach these pads.
 
 ### 4.7 Why the pads are created last
 
-`PAD70GU`/`PAD70NU` sit on M8/M9/AP and occupy no core rows, so they never compete
+`PAD70GU_SL`/`PAD70NU_SL` sit on M8/M9/AP and occupy no core rows, so they never compete
 with standard cells, filler or hold buffers for sites. There is no reason to place
 them before routing and one good reason not to: they are `CLASS BLOCK`, so their
 `OBS` would constrain NanoRoute on M8/M9/AP for the whole run. Placing them last
@@ -1217,8 +1217,8 @@ shipped 435 MB stream (`baseline_2026-08-06/outputs/nanosoc_eth_chiplet_pads.gds
 | `FILL64` | 386 | 2 | 31 (M1) only |
 | `ANTENNA` | 41 217 | 5 | 31 (M1) only |
 | `PFILLER20_G` (IO filler) | 156 | 7 | 31–37 (M1–M7) |
-| `PAD70GU` | 42 | 13 | 38, 39, 74 (M8, M9, AP) |
-| `PAD70NU` | 40 | 13 | 38, 39, 74 (M8, M9, AP) |
+| `PAD70GU_SL` | 42 | 13 | 38, 39, 74 (M8, M9, AP) |
+| `PAD70NU_SL` | 40 | 13 | 38, 39, 74 (M8, M9, AP) |
 | `PDDWUWSWCDG_G` (IO driver) | — | **0** | — |
 | `rf_16k` (merged macro) | — | 913 | incl. 6 (OD), 17 (PO) |
 
@@ -1231,7 +1231,7 @@ So, precisely:
   plus `LEFPIN,LEFOBS` on M1–M9/AP/VIA1–8/RV in the map file means every cell
   contributes its pin and obstruction geometry on those layers. `ANTENNA`'s 5
   shapes are its three `PIN I` M1 rects plus the two rail rects — the diode's
-  diffusion is not there. `PAD70GU`/`PAD70NU`'s 13 shapes are their M8/M9/AP `OBS`
+  diffusion is not there. `PAD70GU_SL`/`PAD70NU_SL`'s 13 shapes are their M8/M9/AP `OBS`
   and nothing more.
 - **There are no transistors anywhere except in the merged macros.** The map file
   is 48 lines and contains **only** `DIEAREA`, M1–M9, AP, VIA1–8, RV, their `FILL`
@@ -1317,7 +1317,7 @@ grep -c FILLER_PD_TOP $B/reports/*_imp_drc.rep               # target 0; was 1
 
 # --- pad ring (§4) ---
 grep -c BuPAD $B/reports/*_imp_drc.rep                       # must be 0 at CORE_TO_IO 70
-grep -c "PAD70GU\|PAD70NU" $B/outputs/*_pnr.v                # must be 82
+grep -c "PAD70GU_SL\|PAD70NU_SL" $B/outputs/*_pnr.v                # must be 82
 
 # --- the lists are still the .io ring order (§4.2) ---
 # no automated check exists. If nanosoc_eth_chiplet_pads.io is regenerated,

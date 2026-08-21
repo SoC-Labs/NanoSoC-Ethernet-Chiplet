@@ -103,10 +103,10 @@ if {![file isdirectory $STA_DB]} {
 # netlist read dies on the first macro it meets:
 #
 #   ERROR (IMPSER-513): Failed to create instance 'BuPAD_TL_RX_0'.
-#                       Master cell 'PAD70GU' for instance not found in DB.
+#                       Master cell 'PAD70GU_SL' for instance not found in DB.
 #
 # and the message blames "lef/lib have been modified ... this cell is deleted",
-# which sends you hunting a LEF problem that does not exist — PAD70GU is
+# which sends you hunting a LEF problem that does not exist — PAD70GU_SL is
 # present in the DB's own bond-pad LEF under libs/lef/ and was read seconds
 # earlier. Measured on this design 2026-08-17.
 #

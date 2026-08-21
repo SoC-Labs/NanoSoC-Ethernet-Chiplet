@@ -8,20 +8,20 @@
 ##
 ## Raised 50 -> 70 because the STAGGERED BOND PADS overrun the core rings.
 ##
-## The bond ring is staggered: PAD70GU outer (86.685 tall), PAD70NU inner
+## The bond ring is staggered: PAD70GU_SL outer (86.685 tall), PAD70NU_SL inner
 ## (171.000 tall), placed by place_bondpads.tcl. Both are CLASS BLOCK, not
 ## CLASS PAD, so create_floorplan -core_margins_by io DOES NOT SEE THEM — it
 ## insets the core by the 135um IO driver height only. Nothing in the margin
 ## computation knows the inner bond pads reach 36um further inboard, so the
 ## clearance has to be added here by hand.
 ##
-## PAD70NU's OBS is solid over its whole footprint on M8 AND M9:
+## PAD70NU_SL's OBS is solid over its whole footprint on M8 AND M9:
 ##     OBS LAYER M8 ; RECT 0 0 30 171 ;   LAYER M9 ; RECT 0 0 30 171 ;
 ## which are exactly the core-ring layers (add_rings: left/right M8, top/bottom
 ## M9). add_rings draws geometrically and does not honour OBS, so at 50 the
 ## rings were drawn straight through them, on all four sides symmetrically:
 ##     ring stack occupies core_edge+2 .. core_edge+30 (offset 2, 12+4+12)
-##     margin 50 -> ring outer edge 155/1445/155/1845 vs PAD70NU at
+##     margin 50 -> ring outer edge 155/1445/155/1845 vs PAD70NU_SL at
 ##                  171/1429/171/1829  = 16.00um OVERLAP every side
 ##     margin 70 -> ring outer edge 175/1425/175/1825  =  4.00um clear
 ## 4um clears both wide-metal rules: the worst-case M8 SPACINGTABLE entry and
@@ -35,8 +35,8 @@
 ## (the CORE_TO_IO 50 run) has 580 violations — its own trailer says
 ## `Total Violations : 580 Viols.` — of which 398 are wires shorting to a
 ## bond-pad blockage:
-##     PAD70NU  366 violations, 318 of them VDD/VSS special wire
-##     PAD70GU   32 violations,   0 of them VDD/VSS special wire
+##     PAD70NU_SL  366 violations, 318 of them VDD/VSS special wire
+##     PAD70GU_SL   32 violations,   0 of them VDD/VSS special wire
 ## Zero PG shorts on the OUTER pad is the control — its inboard edge (1513.3 on
 ## the right) never reaches the ring band, and sure enough it is never hit.
 ## Those 318 PG shorts are 54.8% of all DRC on this design and should disappear.
@@ -155,7 +155,7 @@ create_place_halo -halo_deltas {3.6 3.6 3.6 3.6} -all_macros
 create_route_halo -all_blocks -bottom_layer M1 -top_layer M4 -space 1.0
 
 ## BOND-PAD M8/M9/AP KEEP-OUT.
-## place_bondpads.tcl creates the 82 PAD70NU/PAD70GU blocks from the ROUTE stage,
+## place_bondpads.tcl creates the 82 PAD70NU_SL/PAD70GU_SL blocks from the ROUTE stage,
 ## 175 commands after route_design - and after route_eco, the flow's only signal
 ## DRC repair. NanoRoute therefore never sees their OBS (solid M8/M9/AP over the
 ## whole footprint plus 12um wings) and nothing can repair what it lays there.
@@ -165,10 +165,10 @@ create_route_halo -all_blocks -bottom_layer M1 -top_layer M4 -space 1.0
 ## -except_pg_nets: route_special {pad_pin pad_ring} must still cross this band.
 ## Metal fill is unaffected - blockages apply to fill only with -fills, and 35% of
 ## M8 fill legitimately sits in here.
-## 171.0 literal, NOT queried. `[get_db base_cells PAD70NU .size.y]` errors with
+## 171.0 literal, NOT queried. `[get_db base_cells PAD70NU_SL .size.y]` errors with
 ## IMPDBTCL-248 - base_cell has no `size` attribute - and took the flow down on
-## 2026-08-08. The value is a library constant: tpbn65v_9lm.lef, MACRO PAD70NU,
-## OBS LAYER M8, `RECT 0.000 0.000 30.000 171.000`. PAD70GU (the outer staggered
+## 2026-08-08. The value is a library constant: tpbn65v_9lm.lef, MACRO PAD70NU_SL,
+## OBS LAYER M8, `RECT 0.000 0.000 30.000 171.000`. PAD70GU_SL (the outer staggered
 ## pad) is shallower, so 171 covers both rings.
 set _bp_d 171.0
 ## Die box taken from create_floorplan above (-die_size 1600 2000), NOT from

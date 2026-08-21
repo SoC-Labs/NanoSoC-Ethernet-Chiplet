@@ -207,7 +207,7 @@ PAD_RING ?= 1
 # gaps, ~5.9% of the core. See docs/tapeout/06-fill-antenna-bondpads.md.
 POWER_INTENT ?= $(LEGACY_ASIC_DIR)/inputs/$(BLOCK).upf
 
-# The bond-pad ring - 42 PAD70GU outer + 40 PAD70NU inner, created from the route
+# The bond-pad ring - 42 PAD70GU_SL outer + 40 PAD70NU_SL inner, created from the route
 # stage on M8/M9/AP. Consumed unchanged; see overrides/filler.tcl for the
 # ordering collision this creates and how it is resolved.
 BONDPADS_TCL ?= $(LEGACY_ASIC_DIR)/scripts/place_bondpads.tcl
@@ -306,7 +306,7 @@ INNOVUS_CPU_PER_REMOTE ?= 6
 # is 0, the cells are simply absent, and a wire-bond die with no bond pads is
 # scrap.
 #
-#   42 PAD70GU outer + 40 PAD70NU inner = 82 staggered bond pads
+#   42 PAD70GU_SL outer + 40 PAD70NU_SL inner = 82 staggered bond pads
 #   4 PCORNER_G, one per die corner
 #   docs/tapeout/03-floorplan.md, 06-fill-antenna-bondpads.md, 21-physical-audit.md
 #
@@ -315,15 +315,15 @@ INNOVUS_CPU_PER_REMOTE ?= 6
 # 41,176 -> 38,290 between runs of the same design). An exact expectation on a
 # number that moves legitimately trains people to ignore the gate. Both appear in
 # the census output; watch them there.
-GDS_EXPECT ?= PAD70GU=42 PAD70NU=40 PCORNER_G=4
+GDS_EXPECT ?= PAD70GU_SL=42 PAD70NU_SL=40 PCORNER_G=4
 
 ## BONDPAD_CELLS -- SET 2026-08-20. Without this, LVS cannot reach a verdict.
 ##
-## The tpbn65v bond pads (PAD70GU x42, PAD70NU x40) are CLASS BLOCK, pin-less,
+## The tpbn65v bond pads (PAD70GU_SL x42, PAD70NU_SL x40) are CLASS BLOCK, pin-less,
 ## and that library is FRONT-END ONLY on this site -- there is no CDL for them
 ## anywhere. `write_netlist` still emits the instances (`XBuPAD_HOST_IO_6
-## PAD70NU`), so the LVS netlist compiler hits 82 x
-##     Error: No matching ".SUBCKT" statement for "PAD70NU"
+## PAD70NU_SL`), so the LVS netlist compiler hits 82 x
+##     Error: No matching ".SUBCKT" statement for "PAD70NU_SL"
 ## and stops before the comparison. The run then ends "NO VERDICT -- report has a
 ## comparison section but no CORRECT/INCORRECT", which is what every LVS attempt
 ## on this chiplet has produced. MEASURED on gdsrun-20260819: 82 compiler errors,
@@ -334,10 +334,10 @@ GDS_EXPECT ?= PAD70GU=42 PAD70NU=40 PCORNER_G=4
 ## source will not even read" -- and defaults it EMPTY.
 ##
 ## WHY IT LOOKED SET: ASIC/genus-innovus/lvs_project.mk:212 carries
-## `BONDPAD_CELLS ?= PAD70GU PAD70NU`, but that file is included by the LEGACY
+## `BONDPAD_CELLS ?= PAD70GU_SL PAD70NU_SL`, but that file is included by the LEGACY
 ## genus-innovus Makefile only. The toolkit's `lvs-batch` runs from
 ## ASIC/eth-chiplet, which never sees it:
-##     make -C ASIC/genus-innovus  -> [PAD70GU PAD70NU]
+##     make -C ASIC/genus-innovus  -> [PAD70GU_SL PAD70NU_SL]
 ##     make -C ASIC/eth-chiplet    -> []
 ## So the knob was right and unreachable. Setting it here puts it on the live path.
 ##
@@ -349,7 +349,7 @@ GDS_EXPECT ?= PAD70GU=42 PAD70NU=40 PCORNER_G=4
 ## bond pads ship no Verilog either, which is the ONLY reason they alone need a
 ## hand-written empty .SUBCKT. Conclusion unchanged, stated reason was wrong. So
 ## PDDW*/PVDD*/PVSS* are boxed AND modelled. Only the bond pads are model-less.
-BONDPAD_CELLS ?= PAD70GU PAD70NU
+BONDPAD_CELLS ?= PAD70GU_SL PAD70NU_SL
 
 ## LVS SUPPLY NAMES -- SET 2026-08-20, same class of bug as BONDPAD_CELLS above.
 ##
@@ -409,7 +409,7 @@ DRC_FOUNDRY_DECK ?= $(PDK_DRC_DECK)
 DRC_PAD_INSET ?= 135
 
 # The bond pads reach further inboard than the drivers do, and only on the top
-# metals: PAD70NU is 171 um deep with OBS solid over its footprint on M8 and M9.
+# metals: PAD70NU_SL is 171 um deep with OBS solid over its footprint on M8 and M9.
 DRC_DEEP_PAD_INSET  ?= 171
 DRC_DEEP_PAD_LAYERS ?= M8. M9.
 

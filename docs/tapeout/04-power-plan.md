@@ -220,14 +220,14 @@ offset 2  +  VDD 12  +  spacing 4  +  VSS 12   =  core_edge+2 .. core_edge+30
 ```
 
 **This band is what collides with the staggered bond pads.** `add_rings` draws geometrically and does
-not honour the `PAD70NU` `OBS`, so the clearance has to come from the floorplan margin. That is the
+not honour the `PAD70NU_SL` `OBS`, so the clearance has to come from the floorplan margin. That is the
 entire reason `CORE_TO_IO` is 70 rather than 50 — the full analysis lives in
 [03-floorplan §2](03-floorplan.md#2-why-the-margin-is-70-and-not-50-the-staggered-bond-ring).
 
 > **Do not widen the rings.** The 12 µm ring width was chosen against M8's and M9's `MAXWIDTH`
 > limit and there is no room above it — read that rule in the tech LEF before touching `-width`
 > (value not reproduced here, TSMC licence). Any change to `-width`, `-spacing` or `-offset` also moves the
-> ring outer edge and must be re-checked against the `PAD70NU` inboard edge at 171 / 1429 / 171 / 1829.
+> ring outer edge and must be re-checked against the `PAD70NU_SL` inboard edge at 171 / 1429 / 171 / 1829.
 
 Immediately after the rings, two `route_special -connect {pad_pin pad_ring}` passes bring `VDD` and
 `VSS` from the pad pins to the ring, with different pad-pin widths (**1.63** for VDD, **1.5** for VSS)
@@ -395,7 +395,7 @@ where a `PD_TOP` that lacks supply nets would misbehave (§1).
   `update_power_domain` before `end_design` — the patch is applied.
 - The live margin-70 run shows **zero** `IMPPP-136`, `IMPPP-193`, `IMPSP-5110`, `IMPTCM-162` and
   `IMPTCM-165`.
-- Ring band arithmetic (`core_edge+2 .. +30`) and its 4.00 µm clearance to `PAD70NU` — see
+- Ring band arithmetic (`core_edge+2 .. +30`) and its 4.00 µm clearance to `PAD70NU_SL` — see
   [03-floorplan §2.3](03-floorplan.md#23-the-arithmetic).
 
 **Not verified / uncertain:**

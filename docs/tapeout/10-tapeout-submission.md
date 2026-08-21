@@ -167,7 +167,7 @@ Our 8 memory macros are **already merged in** — they must not double-merge the
 memories merged (as shipped) or stripped out so they merge everything themselves? **Also
 ask them to confirm the exact `tpbn65v`/`tphn65lpgv2od3` package+revision their own
 `CompareCells`/`Padringcheck` tooling is keyed against** — our cell names
-(`PDDW16DGZ_G`, `PAD70GU`, `PAD70NU`, `PCORNER_G`, …) come from a specific
+(`PDDW16DGZ_G`, `PAD70GU_SL`, `PAD70NU_SL`, `PCORNER_G`, …) come from a specific
 `tpbn65v_<rev>` / `tphn65lpgv2od3_sl_<rev>` package+revision pair (resolved locally via
 `pdk_paths.sh`, never spelled here — same convention as every other foundry release code
 in this repo), and [52 — Padring GDS check](52-padring-gds-check.md)
@@ -236,8 +236,8 @@ space reserved for one inside the die box.
 
 **Geometry to give them:** die `1600 × 2000 µm`, **pad ring starting at coordinate (0,0)**
 — the die box is `(0,0)–(1600,2000)`. `CORE_TO_IO = 70 µm`, IO cells 135 µm tall, so the
-core box is `(205,205)–(1395,1795)`. The bond ring is **staggered**: `PAD70GU` outer
-(86.685 µm tall), `PAD70NU` inner (171 µm tall).
+core box is `(205,205)–(1395,1795)`. The bond ring is **staggered**: `PAD70GU_SL` outer
+(86.685 µm tall), `PAD70NU_SL` inner (171 µm tall).
 
 **What to ask:** do they add seal ring and scribe outside our 1600 × 2000, or must it come
 out of it? **If it must come out of it, the floorplan changes and everything re-runs** —

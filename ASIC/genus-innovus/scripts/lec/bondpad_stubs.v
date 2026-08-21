@@ -5,20 +5,20 @@
 //
 // Copyright (C) 2026, SoC Labs (www.soclabs.org)
 //-----------------------------------------------------------------------------
-// PAD70GU / PAD70NU are the staggered bond-pad cells that
-// scripts/place_bondpads.tcl instantiates with `create_inst -cell PAD70GU ...`
+// PAD70GU_SL / PAD70NU_SL are the staggered bond-pad cells that
+// scripts/place_bondpads.tcl instantiates with `create_inst -cell PAD70GU_SL ...`
 // during 4_pnr_route. They appear in outputs/<block>_pnr.v (42 + 40 = 82
 // instances) and in NEITHER synthesis netlist -- P&R created them.
 //
 // They are PHYSICAL-ONLY cells. Innovus writes them with an empty connection
 // list:
-//     PAD70GU BuPAD_HOST_IO_5 ();
+//     PAD70GU_SL BuPAD_HOST_IO_5 ();
 // and they carry no logic: they are the RDL/bond openings that the IO driver
 // cells (PDDW*/PVDD*/PVSS*) connect up to through the pad ring geometry.
 //
 // They exist in the LEF (tpbn65v_9lm.lef) only. There is NO liberty and NO
 // Verilog model for them anywhere in this PDK install -- verified: no .lib file
-// exists under $TSMC_65_HOME/iolib at all, and PAD70GU is absent from
+// exists under $TSMC_65_HOME/iolib at all, and PAD70GU_SL is absent from
 // tphn65lpgv2od3_slwc.lib. So Conformal cannot be given a model, only a
 // declaration.
 //
@@ -34,8 +34,8 @@
 // pads are LVS/DRC scope, not logical-equivalence scope.
 //-----------------------------------------------------------------------------
 
-module PAD70GU ();
+module PAD70GU_SL ();
 endmodule
 
-module PAD70NU ();
+module PAD70NU_SL ();
 endmodule

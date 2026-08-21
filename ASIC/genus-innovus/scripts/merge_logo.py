@@ -90,7 +90,7 @@ print("place: centre (%.1f, %.1f) -> bbox (%.1f, %.1f) - (%.1f, %.1f)"
 bad = []
 if x0 < 0 or y0 < 0 or x1 > die_w or y1 > die_h:
     bad.append("logo falls outside the die (0,0)-(%g,%g)" % (die_w, die_h))
-# Pad-ring band. AP is where the bond pads live (PAD70GU/NU stream on 74/0), so
+# Pad-ring band. AP is where the bond pads live (PAD70GU_SL/NU stream on 74/0), so
 # a logo on AP in this band is a real collision, not a cosmetic one.
 if x0 < padband or y0 < padband or x1 > die_w - padband or y1 > die_h - padband:
     bad.append("logo enters the %gum pad-ring band - AP there holds the bond pads"

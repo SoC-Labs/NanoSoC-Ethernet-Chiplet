@@ -137,7 +137,7 @@ def structure(name: str, boundary_layer: int | None = None) -> bytes:
     """A minimal structure definition -- a small square BOUNDARY on
     boundary_layer if given (purely cosmetic, mirrors the real script's
     'geometry content, informational only' census), else empty (like
-    PAD70GU/PAD70NU/PCORNER_G in every real build measured so far -- see
+    PAD70GU_SL/PAD70NU_SL/PCORNER_G in every real build measured so far -- see
     docs/tapeout/52-padring-gds-check.md Section 5)."""
     body = rec_int2(BGNSTR, *ZERO_DATE, *ZERO_DATE) + rec_str(STRNAME, name)
     if boundary_layer is not None:

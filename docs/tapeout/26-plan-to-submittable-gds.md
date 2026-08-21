@@ -373,7 +373,7 @@ standalone deck:* a `-maxdepth 1 -iname '*erc*'` search of the PDK util tree ret
 - **`PO.R.8` is permanently outside ERC's remit** — TSMC's deck changelog records moving
   floating gates to DRC deliberately. Do not expect ERC to clear them.
 **7d. Density against the foundry rule.** `grep -c "75.0um X 75.0um"` on the density report today = 0. Measured minima at the *wrong* window (20×20): M8 **7.60%**, M2 18.60%, M4 18.03%. M8's real floor is 20% @75×75 — roughly a third of it. Either metal fill closes this or the broker's dummy fill does.
-**7e. CB layer.** GDS 76 appears nowhere — as streamed the die has no bond-pad openings. Determine whether `place_bondpads.tcl` should emit it or whether it arrives with the imported `PAD70GU/NU` layouts. [U]
+**7e. CB layer.** GDS 76 appears nowhere — as streamed the die has no bond-pad openings. Determine whether `place_bondpads.tcl` should emit it or whether it arrives with the imported `PAD70GU_SL/NU` layouts. [U]
 **7f. Text and marker layers.** 349,272 text records, 2,498 `108/0` boxes.
 **7g. Waiver dossier.** Per record: GDS extract with net label · macro LEF excerpt showing `OBS` not `PIN` · the `.drc.results` entry · **and LVS proving chip VDD connects to macro VDD — which cannot be produced today** (no CDL). Flag that gap to the broker in advance.
 

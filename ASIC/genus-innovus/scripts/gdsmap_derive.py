@@ -225,7 +225,7 @@ def derive(pdk, layers, with_lefpin_text, with_net_text, with_viafill,
            The mini@sic manual recognises pads by CB. The bond-pad library LEF declares
            NO CB on any of its 34 macros -- only AP, M8 and M9 -- and zero PINs.
            So keeping OBS does not preserve an opening; it emits a SOLID AP PLATE
-           WITH NO OPENING. PAD70GU's OBS also contains RECT 0 0 30 86.685, the
+           WITH NO OPENING. PAD70GU_SL's OBS also contains RECT 0 0 30 86.685, the
            whole cell footprint, i.e. blanket blockage mixed inseparably with
            whatever traces the pad. There is no way to tell them apart without
            the back-end view we do not have.
@@ -245,7 +245,7 @@ def derive(pdk, layers, with_lefpin_text, with_net_text, with_viafill,
         a replacement import, duplicated under a merge import. Empty is correct
         under both.
 
-        MEASURED, on the streams that matter: PAD70GU, PAD70NU and PCORNER_G
+        MEASURED, on the streams that matter: PAD70GU_SL, PAD70NU_SL and PCORNER_G
         carry ZERO own shapes and are instanced 42 / 40 / 4 times. Correctly
         placed, correctly empty.
 

@@ -38,8 +38,8 @@ built against the **`cup` (circuit-under-pad)** branch — the LEF the flow actu
 (`pdk_paths.sh io-pad-lef`) sits under `…/cup/9m/<stack>/…`. Those branches carry **different
 cell names**, so a name-based comparison between them matches nothing:
 
-- `PAD70GU` and `PAD70NU` are both present in the `cup` branch LEF we build against.
-- **Control:** the same library's `fc` branch LEF contains `PAD70GU` **zero** times — proving
+- `PAD70GU_SL` and `PAD70NU_SL` are both present in the `cup` branch LEF we build against.
+- **Control:** the same library's `fc` branch LEF contains `PAD70GU_SL` **zero** times — proving
   that branches of one library genuinely differ in cell names, and that the grep can match
   when the name is there.
 - Our installation carries **only** `cup/` and `fc/`. The `wb/` branch IMEC used does not
@@ -411,7 +411,7 @@ the directory name instead of the file.
    you are running it, then the DRC / ANT / BND decks** — per §1.4(6) and §6.5. Note that a
    preliminary stream cannot meet §7.1's precondition for their fill service, so we expect
    import-then-decks and are content for fill to wait.
-6. **Our pad parts are 70 µm staggered, cup-type** (`PAD70GU`/`PAD70NU`); both previous reports
+6. **Our pad parts are 70 µm staggered, cup-type** (`PAD70GU_SL`/`PAD70NU_SL`); both previous reports
    recorded an 80 µm pitch. Ask them to confirm the pitch and the branch (Q2), and to include
    the `plots/` image so the replacement can be checked visually.
    **Also note the four pad-corner orientations are now fixed** — their 18-Aug padring check

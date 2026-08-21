@@ -51,7 +51,7 @@ NOT waived here -- see the "DELIBERATELY NOT WAIVED" block in
 bnd_waivers.yaml. This is exactly why `bnd` is NOT promoted to a zero-budget
 block gate by this pass; see docs/tapeout/50-bnd-and-logo-checks.md Part A.1.
 
-AP.W.2 (2 results, in PAD70GU/PAD70NU) IS waived: it is the TSMC reference
+AP.W.2 (2 results, in PAD70GU_SL/PAD70NU_SL) IS waived: it is the TSMC reference
 bond-pad cell's own AP redistribution plate, deliberately wider than the
 35um max (it is the bond-wire landing target), and IMEC's real submission
 --- with THEIR OWN independently-added dummy fill and seal ring merged in ---

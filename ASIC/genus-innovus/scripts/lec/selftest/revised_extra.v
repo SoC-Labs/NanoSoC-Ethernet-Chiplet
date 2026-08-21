@@ -50,7 +50,7 @@ module lecmini (a, b, clk, rstn, addr, wdata, y, y2, q, VDD, VSS);
                 .D(wdata), .EMA(3'b011), .EMAW(2'b01), .GWEN(1'b0),
                 .RET1N(1'b1), .VDD(VDD), .VSS(VSS));
 
-  PAD70GU BuPAD_a ();
-  PAD70NU BuPAD_b ();
+  PAD70GU_SL BuPAD_a ();
+  PAD70NU_SL BuPAD_b ();
 
 endmodule

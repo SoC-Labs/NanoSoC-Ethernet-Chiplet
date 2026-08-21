@@ -683,7 +683,7 @@ only, no command, coordinate or value touched**:
 | PG-ring vs bond-pad shorts | 318 | **0** |
 | `SHORT` records | 379 | 1 |
 
-The `PAD70NU 366 / PAD70GU 32 / 318 PG` split already in the comment is **correct** — I
+The `PAD70NU_SL 366 / PAD70GU_SL 32 / 318 PG` split already in the comment is **correct** — I
 re-derived it by joining the DRC records against the bond-pad cell types in the netlist.
 The fix worked.
 

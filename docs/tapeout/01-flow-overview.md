@@ -263,7 +263,7 @@ stage that emits the GDSII.
 9. `source ../scripts/place_bondpads.tcl` → which first sources
    [`scripts/filler.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/filler.tcl) (filler + ANTENNA
    diodes, *after* routing — see [06-fill-antenna-bondpads](06-fill-antenna-bondpads.md)),
-   then creates the `PAD70GU`/`PAD70NU` staggered bond pads
+   then creates the `PAD70GU_SL`/`PAD70NU_SL` staggered bond pads
 10. `check_drc`, `check_filler`, `check_connectivity`, `check_process_antenna` → `reports/`
 11. Timing reports across analysis views
 12. **`write_stream ../outputs/nanosoc_eth_chiplet_pads.gds`** with the TSMC GDS-out map

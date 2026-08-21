@@ -45,12 +45,12 @@
 # nine TSMC IO driver cells and the same 12 memory macros.
 #
 # The one real difference is that the routed netlist also holds 82 bond pads
-# (PAD70GU x42, PAD70NU x40) that P&R inserted and that have no Verilog model
+# (PAD70GU_SL x42, PAD70NU_SL x40) that P&R inserted and that have no Verilog model
 # anywhere in this PDK - LEF only. That is the argument for the synthesis
 # netlist, and it does not survive contact with the file: Innovus writes them
 # with an EMPTY PORT LIST,
 #
-#     PAD70GU BuPAD_HOST_IO_5 ();
+#     PAD70GU_SL BuPAD_HOST_IO_5 ();
 #
 # so they have no electrical connection and an empty-module declaration for them
 # cannot change behaviour. The census checks exactly that rather than taking it
@@ -173,7 +173,7 @@ GLSN_MODELS_N_fp1505_cc  := 10
 GLSN_MODELS_fp1505_cc  := $(STDCELL_V) $(IOCELL_V) $(MEM_V) $(ROM_V)
 
 GLSN_STUBS_fp1505_cc      := $(BONDPAD_STUBS)
-GLSN_STUB_CELLS_fp1505_cc := PAD70GU PAD70NU
+GLSN_STUB_CELLS_fp1505_cc := PAD70GU_SL PAD70NU_SL
 
 # model=content. The runner reads the basename OUT OF the model and stages the
 # content file there; it is not assumed to match the macro name.
@@ -308,7 +308,7 @@ ROM_V_GDSRUN  := $(GDSRUN_ROMLIB)/cc_rom/rom_via.v $(GDSRUN_ROMLIB)/eth_rom/eth_
 # emission side is on the P&R critical path to the stream and this is not.
 #
 # BOTH the models AND the bondpad stubs are passed as authorities. Dropping the
-# stubs from that list leaves PAD70GU/PAD70NU defined twice - once by the netlist
+# stubs from that list leaves PAD70GU_SL/PAD70NU_SL defined twice - once by the netlist
 # and once by bondpad_stubs.v - which is the same collision one layer down.
 GDSRUN_PG_RAW      := $(GDSRUN_ROOT)/outputs/nanosoc_eth_chiplet_pads_pnr_pg.v
 GDSRUN_PG_STRIPPED := $(REPO)/build/gls-netlist/gdsrun_cc/nanosoc_eth_chiplet_pads_pnr_pg_stripped.v
@@ -327,7 +327,7 @@ GLSN_SPEC_gdsrun_cc       := $(THIS_DIR)/bench/eth_chiplet_fp1505_cc.json
 GLSN_MODELS_N_gdsrun_cc   := 10
 GLSN_MODELS_gdsrun_cc     := $(STDCELL_V) $(IOCELL_V) $(MEM_V) $(ROM_V_GDSRUN)
 GLSN_STUBS_gdsrun_cc      := $(BONDPAD_STUBS)
-GLSN_STUB_CELLS_gdsrun_cc := PAD70GU PAD70NU
+GLSN_STUB_CELLS_gdsrun_cc := PAD70GU_SL PAD70NU_SL
 GLSN_CONTENT_gdsrun_cc    := \
     $(GDSRUN_ROMLIB)/cc_rom/rom_via.v=$(GDSRUN_ROMLIB)/cc_rom/rom_via_verilog.rcf \
     $(GDSRUN_ROMLIB)/eth_rom/eth_rom_via.v=$(GDSRUN_ROMLIB)/eth_rom/eth_rom_via_verilog.rcf

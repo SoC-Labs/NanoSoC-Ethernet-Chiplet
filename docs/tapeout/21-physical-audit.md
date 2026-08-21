@@ -577,7 +577,7 @@ outer/inner alternation is exact on all four sides.** Corroborated by the sroute
 `407 pad components: 325 placed, 82 fixed` (325 = 156+61+58+50 fillers, 82 = drivers) plus
 `4 other components: 4 fixed` (the corners).
 
-No overlap risk: `PAD70GU`/`PAD70NU` are 30 µm along the ring direction against a 67 µm
+No overlap risk: `PAD70GU_SL`/`PAD70NU_SL` are 30 µm along the ring direction against a 67 µm
 (left) or 80 µm (other sides) driver pitch.
 
 ---

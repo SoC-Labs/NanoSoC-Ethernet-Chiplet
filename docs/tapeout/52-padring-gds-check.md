@@ -47,7 +47,7 @@ power, LEF abstracts). See
 [`docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md`](../asic/TSMC_BACKEND_PACKAGE_REQUEST.md).
 So our own GDS deliverable references these cells **by name only**:
 [`place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl)
-creates instances named `PAD70GU`/`PAD70NU`, and
+creates instances named `PAD70GU_SL`/`PAD70NU_SL`, and
 [`ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v`](../../ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v)
 instantiates `PDDW16DGZ_G`, `PVDD1DGZ_G`, `PCORNER_G`, and so on. Called a
 **black-box submission**: we submit the *shape* of the design (every cell
@@ -99,7 +99,7 @@ day the source moves). Every run parses the same three files fresh:
 |---|---|
 | [`ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v`](../../ASIC/tech_wrappers/tsmc65/nanosoc_eth_chiplet_pads.v) | instance name to functional cell type, for all 82 IO/power pads |
 | [`ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io`](../../ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.io) | the 4 corner cells, and each side's pad order as the floorplan intends it |
-| [`ASIC/genus-innovus/scripts/place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl) | which pads get `PAD70GU` (outer ring) vs `PAD70NU` (inner ring) |
+| [`ASIC/genus-innovus/scripts/place_bondpads.tcl`](../../ASIC/genus-innovus/scripts/place_bondpads.tcl) | which pads get `PAD70GU_SL` (outer ring) vs `PAD70NU_SL` (inner ring) |
 
 From those three it cross-checks itself first (does every `.io`-listed pad
 exist in `pads.v`? does every `place_bondpads.tcl` name land on the side the
@@ -131,7 +131,7 @@ transform, nothing else — confirmed empirically, not assumed:
 four questions, and only four:
 
 1. **Name + count.** Is every expected structure name (`PCORNER_G`,
-   `PAD70GU`/`PAD70NU`, and the 9 `tphn65lpgv2od3` IO/power cell types)
+   `PAD70GU_SL`/`PAD70NU_SL`, and the 9 `tphn65lpgv2od3` IO/power cell types)
    actually placed under the design's top cell the expected number of times,
    and is a structure by that name actually *defined* somewhere in the
    stream (not a dangling reference)?
@@ -191,8 +191,8 @@ and [06](06-fill-antenna-bondpads.md), which agree exactly):
 | Cell | Family | Expected count |
 |---|---|---:|
 | `PCORNER_G` | corner | 4 |
-| `PAD70GU` | staggered bond pad, outer ring | 42 |
-| `PAD70NU` | staggered bond pad, inner ring | 40 |
+| `PAD70GU_SL` | staggered bond pad, outer ring | 42 |
+| `PAD70NU_SL` | staggered bond pad, inner ring | 40 |
 | `PDDW16DGZ_G` | IO driver | 36 |
 | `PVSS2DGZ_G` | ground pad | 12 |
 | `PDDW04DGZ_G` | IO driver | 9 |
@@ -229,8 +229,8 @@ finds the check was blind to a real defect in it** — read this section as
   cell families checked : 12  (12 name+count OK)
   top-cell placements   : 2338232 total (all cell types, direct children only)
   geometry (informational, not gated): 12 watched structure(s) carry BOUNDARY/PATH/BOX geometry, 0 are entirely empty
-    PAD70GU            13 geometry record(s) on 3 layer(s) [38, 39, 74]
-    PAD70NU            13 geometry record(s) on 3 layer(s) [38, 39, 74]
+    PAD70GU_SL            13 geometry record(s) on 3 layer(s) [38, 39, 74]
+    PAD70NU_SL            13 geometry record(s) on 3 layer(s) [38, 39, 74]
     PCORNER_G           7 geometry record(s) on 7 layer(s) [31, 32, 33, 34, 35, 36, 37]
     PDDW04DGZ_G        64 geometry record(s) on 13 layer(s) [...]
     ...
@@ -253,14 +253,14 @@ against — see
    — specific package/revision variants, resolved locally via `pdk_paths.sh` and never
    spelled here. If IMEC's `CompareCells` diffs
    against a differently-suffixed or differently-revved `tpbn65v.gds`, the
-   names inside it may simply not be `PDDW16DGZ_G`/`PAD70GU`/etc. This is a
+   names inside it may simply not be `PDDW16DGZ_G`/`PAD70GU_SL`/etc. This is a
    question for the broker, not something fixable here — add it to
    [10 Section 4.1](10-tapeout-submission.md#41-who-merges-the-cell-level-gds)'s
    list of things to confirm in writing.
 2. **Geometry-content sensitivity.** Section 4 of [10](10-tapeout-submission.md)
    and the `gds-completeness` entry in [`ci/signoff.yaml`](../../ci/signoff.yaml)
    already document that our streamed cells are LEF-abstract shells, not real
-   layout (`PAD70GU is AP/RDL only` — confirmed again below). If a tool
+   layout (`PAD70GU_SL is AP/RDL only` — confirmed again below). If a tool
    billed as "a pure cell-name diff" is in practice also sensitive to a
    structure being empty or near-empty, that would explain a "no identical
    cells" verdict even with perfectly correct names. This is stated as a
@@ -300,7 +300,7 @@ python3 scripts/check_padring_gds.py --gds ASIC/eth-chiplet/build/full-20260814/
 Both: **clean on names, counts and order** at the time this was first
 checked, same 12/12 result (Section 7 below adds the orientation result for
 fp1505). But the informational geometry census differs from the reference
-build in a way worth flagging: in both current builds, `PAD70GU`, `PAD70NU`
+build in a way worth flagging: in both current builds, `PAD70GU_SL`, `PAD70NU_SL`
 **and** `PCORNER_G` are **completely empty** (no `BOUNDARY`/`PATH`/`BOX`
 geometry at all in their own structure definitions), where the reference GDS
 IMEC saw had at least thin geometry (13 records on 3 layers) for the bond

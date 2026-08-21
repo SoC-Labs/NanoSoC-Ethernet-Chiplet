@@ -1365,7 +1365,7 @@ setup violations on Base & SI Delay." `-hold`: "Corrects hold violations."
 The DB is written **before** fillers and bond pads, then again at line 73 after everything.
 So a crash between the two leaves a routed, optimised, unfilled DB — recoverable.
 
-`place_bondpads.tcl:29` sources `filler.tcl` first, then creates the `PAD70GU`/`PAD70NU`
+`place_bondpads.tcl:29` sources `filler.tcl` first, then creates the `PAD70GU_SL`/`PAD70NU_SL`
 staggered ring. The ordering is load-bearing and both files say so at length: filler must run
 **after** `opt_design -post_route -hold` so that `-check_drc`/`-fix_drc` has real routing and
 the ANTENNA diodes see real antennas, and hold repair is not carving buffers out of already

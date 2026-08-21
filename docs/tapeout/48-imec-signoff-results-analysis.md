@@ -68,12 +68,12 @@ Two hard `[Error]`-level results, not warnings, with two different causes:
 
 - **Padring: "Design does not contain any TSMC IO cells or bondpads."**
   Root cause: **deliberate, by-design black-boxing.** `place_bondpads.tcl` does instantiate real TSMC-named
-  cells (`PAD70GU`/`PAD70NU`, `PVDD1DGZ_G`) matching exactly what IMEC's padring checker looks for, but per
+  cells (`PAD70GU_SL`/`PAD70NU_SL`, `PVDD1DGZ_G`) matching exactly what IMEC's padring checker looks for, but per
   the flow's own documentation these ship as **name references only — no GDS geometry**, because the
   submission is explicitly a black-box one (std cells / IO / bond pads are LEF abstracts). A checker that
   needs actual pad geometry to recognize a cell can't see an empty reference. This explains the same report's
   earlier "No identical cell names found!" in the CompareCells step, and is why the later `bnd`/`custom_drc`
-  by-cell breakdown *does* show violations against `PAD70GU`/`PAD70NU`/`CORNER_B` — that's IMEC's own library
+  by-cell breakdown *does* show violations against `PAD70GU_SL`/`PAD70NU_SL`/`CORNER_B` — that's IMEC's own library
   **replacement** step backfilling real vendor geometry after the fact, not something we submitted.
   **This is not vintage-specific — it's still true of the current toolkit too.** No fix or plan exists to
   ship real pad geometry; whether IMEC's real (non-check-only) flow requires it or accepts black-box + a

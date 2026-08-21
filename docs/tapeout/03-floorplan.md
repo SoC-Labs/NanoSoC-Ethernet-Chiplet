@@ -21,7 +21,7 @@ Prev: [02-innovus-basics](02-innovus-basics.md) · Next: [04-power-plan](04-powe
 | Macros | 21, placed by absolute die coordinates | `place_macro` calls |
 | Total macro area | ≈ 757,805 µm² ≈ 40.1 % of the core | derived from LEF `SIZE` × inventory |
 | Macro halo | 3.6 µm all round, all macros | `create_place_halo -halo_deltas {3.6 3.6 3.6 3.6}` |
-| Bond pads | 42 × `PAD70GU` (outer) + 40 × `PAD70NU` (inner) = 82 | [`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl) |
+| Bond pads | 42 × `PAD70GU_SL` (outer) + 40 × `PAD70NU_SL` (inner) = 82 | [`place_bondpads.tcl`](https://github.com/SoC-Labs/NanoSoC-Ethernet-Chiplet/blob/main/ASIC/genus-innovus/scripts/place_bondpads.tcl) |
 
 ---
 
@@ -71,13 +71,13 @@ The design uses a **staggered** bond pad ring from `tpbn65v`, placed by
 
 | Cell | Role | Height (µm) — the dimension the margin must clear | Count |
 |---|---|---|---|
-| `PAD70GU` | outer row | 86.685 | 42 |
-| `PAD70NU` | inner row | **171.000** | 40 |
+| `PAD70GU_SL` | outer row | 86.685 | 42 |
+| `PAD70NU_SL` | inner row | **171.000** | 40 |
 
 The inner row is 84.3 µm taller, so it reaches **36 µm further inboard** than the driver pads do
 (171 − 135). And here is the trap:
 
-> Both `PAD70GU` and `PAD70NU` are **`CLASS BLOCK`**, not `CLASS PAD`.
+> Both `PAD70GU_SL` and `PAD70NU_SL` are **`CLASS BLOCK`**, not `CLASS PAD`.
 
 Consequence: `create_floorplan -core_margins_by io` **does not see them**. It insets the core by the
 135 µm driver height and stops. Nothing in the margin computation knows the inner bond pads exist,
@@ -85,12 +85,12 @@ let alone that they overhang. The clearance has to be added by hand, which is ex
 `CORE_TO_IO` is doing.
 
 Verified directly in the PDK LEF (read-only, `.../tpbn65v_<rev>/cup/9m/9M_6X1Z1U/lef/tpbn65v_9lm.lef`):
-`MACRO PAD70NU` is declared `CLASS BLOCK`, 171 µm tall — the number the floorplan has to clear.
+`MACRO PAD70NU_SL` is declared `CLASS BLOCK`, 171 µm tall — the number the floorplan has to clear.
 
 > Vendor LEF geometry redacted — TSMC licence forbids reproduction. Source:
-> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU`.
+> `$TSMC_65_HOME/iolib/tpbn65v_<rev>_FE/.../lef/tpbn65v_9lm.lef`, `MACRO PAD70NU_SL`.
 
-### 2.2 `PAD70NU` blocks M8 and M9 solidly — the core-ring layers
+### 2.2 `PAD70NU_SL` blocks M8 and M9 solidly — the core-ring layers
 
 The same macro's `OBS` section blocks **both M8 and M9 solidly over the pad's entire footprint**
 (there are additional "wing" polygons either side, but the body blockage alone is what matters
@@ -103,10 +103,10 @@ through the bond pads, symmetrically on all four sides.
 ### 2.3 The arithmetic
 
 The ring stack occupies `core_edge+2 .. core_edge+30` (offset 2, then 12 wide + 4 spacing + 12 wide).
-Measured from the routed database, `PAD70NU` reaches inboard to **171 / 1429 / 171 / 1829** on
+Measured from the routed database, `PAD70NU_SL` reaches inboard to **171 / 1429 / 171 / 1829** on
 left / right / bottom / top.
 
-| Margin | Ring outer edge (L/R/B/T) | vs `PAD70NU` at 171/1429/171/1829 | Result |
+| Margin | Ring outer edge (L/R/B/T) | vs `PAD70NU_SL` at 171/1429/171/1829 | Result |
 |---|---|---|---|
 | 50 | 155 / 1445 / 155 / 1845 | | **16.00 µm overlap, every side** |
 | **70** | 175 / 1425 / 175 / 1825 | | **4.00 µm clear, every side** |
@@ -129,10 +129,10 @@ This was measured, not assumed. From the 2026-08-05 baseline run
 
 | Cell class | Total DRC records naming its blockage | of which VDD/VSS **special wire** |
 |---|---|---|
-| `PAD70NU` (inner, 40 insts) | 366 | **318** |
-| `PAD70GU` (outer, 42 insts) | 32 | **0** |
+| `PAD70NU_SL` (inner, 40 insts) | 366 | **318** |
+| `PAD70GU_SL` (outer, 42 insts) | 32 | **0** |
 
-**Zero PG shorts on the outer pad is the control.** `PAD70GU`'s inboard edge never reaches the ring
+**Zero PG shorts on the outer pad is the control.** `PAD70GU_SL`'s inboard edge never reaches the ring
 band, and sure enough it is never hit by a power wire. The overlap is specific to the inner,
 taller pad — exactly as the geometry predicts. 398 of the run's bond-pad blockage violations come from
 these two rows combined.
@@ -162,7 +162,7 @@ Four `PCORNER_G` corners, then 17 top / 26 left / 17 bottom / 22 right = 82 sign
 
 Those per-side counts are the reason the bond-pad lists work out:
 
-| Side | `.io` pads | outer (`PAD70GU`) | inner (`PAD70NU`) |
+| Side | `.io` pads | outer (`PAD70GU_SL`) | inner (`PAD70NU_SL`) |
 |---|---|---|---|
 | top | 17 | 9 | 8 |
 | left | 26 | 13 | 13 |
@@ -356,7 +356,7 @@ ring outer edge  =  core_edge + 30
 clearance        =  PAD70NU_inboard_edge - ring_outer_edge
 ```
 
-with `PAD70NU` inboard at **171 / 1429 / 171 / 1829** (L/R/B/T). Require the clearance to meet the
+with `PAD70NU_SL` inboard at **171 / 1429 / 171 / 1829** (L/R/B/T). Require the clearance to meet the
 M9 `SPACING` rule, which is the binding one here — M8's requirement is looser. Read the value from
 `LAYER M9` in the tech LEF; it is not reproduced here, TSMC licence forbids it. At `CORE_TO_IO=70`
 the clearance is 4.00 µm, which clears the rule with room to spare.
@@ -415,13 +415,13 @@ margin change, this is why — it is not a placer regression.
 
 **Verified this week against the real database, the PDK LEFs and the run logs:**
 
-- IO row height 135, `PAD70GU` 86.685 tall, `PAD70NU` 171.000 tall, both `CLASS BLOCK` — read from
+- IO row height 135, `PAD70GU_SL` 86.685 tall, `PAD70NU_SL` 171.000 tall, both `CLASS BLOCK` — read from
   `tpbn65v_9lm.lef`. These three heights are the only vendor dimensions this floorplan depends on.
-- `PAD70NU` `OBS` solid on M8 **and** M9 over its full footprint — read from the same LEF.
+- `PAD70NU_SL` `OBS` solid on M8 **and** M9 over its full footprint — read from the same LEF.
 - M9's flat spacing/area rules and M8's `SPACINGTABLE` were both read from
   `PRTF_EDI_N65_<stack>_RDL.<rev>.tlef`, and 4 µm clears both. (Values not reproduced — TSMC
   licence.)
-- 42 `PAD70GU` + 40 `PAD70NU`, matching the `.io` per-side counts exactly.
+- 42 `PAD70GU_SL` + 40 `PAD70NU_SL`, matching the `.io` per-side counts exactly.
 - 366 / 318 / 32 / **0** DRC breakdown across the two bond-pad rows — independently parsed from the
   baseline DRC report.
 - All 21 `place_macro` patterns resolve to exactly one macro; all 21 macros lie inside the
