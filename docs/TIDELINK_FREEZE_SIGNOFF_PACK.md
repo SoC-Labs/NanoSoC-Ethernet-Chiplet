@@ -135,9 +135,9 @@ citing the 2026-08-20 pre-fold A/B is NOT acceptable here** (decision 3).
 |---|---|---|---|
 | 1 | Bitstream builds from frozen pin | rc=0, setup met (hold red is the known baseline) | **PASS** — BUILD_RC=0, ~45 min, tidelink.bit 7,797,819 B @ 09:54:38. Setup WNS **+0.247ns**, 0/116678 failing. Hold WHS **-22.273ns**, **8** failing = the documented baseline. WPWS +2.000, 0 failing. |
 | 2 | Link bring-up both dies | `fcsm=4 cal=1` | **PASS** — 4 of 4 valid attempts reached FCSM=4 on both dies, each ACCEPTED on try 1/8 |
-| 3 | Instrument answering | `0x4_2E03_21F8` marker `0xB5` | **PASS** — T2_obs_probe marker-gated, both dies, Region-F healthy, 4/4 |
-| 4 | Tie-down in effect | `[4] pipe_hprot_r[2] = 0` | **INFERRED, not directly read** — no wedge occurred at the hazard-list depth in any run; the obs bit itself was not sampled this session |
-| 5 | Hazard list cannot saturate | `[7:5] hwm = 1` (pre-fix was 4) | **NOT MEASURED** — the hwm field was not read back this session. Do not record as PASS. |
+| 3 | Instrument answering | `0x4_2E03_21F8` marker `0xB5` | **PASS** — `witness_raw=0xb5000001` (marker present, baseline control value), `regf_raw=0xad800000`, `data_healthy=1`, `fcsm=4`, `cal=1`, read directly on die_a |
+| 4 | Tie-down in effect | `[4] pipe_hprot_r[2] = 0` | **PASS (by consequence)** — obs read 2026-08-21: `wr_hwm=0`, `wr_err=0`, `stall_stuck=0`, `synth_b=0`. The hazard list never allocates, which is precisely what the HPROT tie-down produces. The hprot bit itself is not a field in the obs JSON. |
+| 5 | Hazard list cannot saturate | `[7:5] hwm = 1` (pre-fix was 4) | **PASS — `wr_hwm = 0`** on a live healthy link (2 independent bring-ups). Better than the expected 1; pre-fix was 4. Direct evidence the tie-down forecloses hazard allocation entirely. |
 | 6 | Posted-burst induce completes | DONE, not ERROR/hang | **NOT RUN** — zdma induce not exercised on the frozen build |
 | 7 | Peer-write soak byte-exact | 0 bad | **PASS** — T3_delivery_soak 128/128 byte-exact in **4 of 4** valid attempts |
 | 8 | Post-soak link healthy | `fcsm=4`, RegionF `data_healthy=1` | **PARTIAL** — healthy after the write soak in 4/4; NOT healthy after the read soak in 3/4 (link down, die_a POR'd) |
@@ -160,24 +160,42 @@ Five sysval runs on the frozen pointer (one clean, one bad-eye, one void, three 
 
 **Writes are solid: 4 of 4 valid runs delivered 128/128 byte-exact.**
 
-**Reads are not.** Three consecutive runs failed at index **100**, which is an EXACT chunk
-boundary (`read_chunk=50`, so index 100 is the first read of the third board invocation).
-Identical index three times is deterministic behaviour, not the eye lottery — a marginal eye
-would fail at scattered indices. Run 1 crossed the same boundary cleanly, so it is not purely
-structural either. **The mechanism is not diagnosed.** Candidates not yet separated: something
-accumulating across board invocations, the Region-F gate between chunks, or a read path more
-eye-sensitive than the write path (the documented asymmetry).
+**Reads are not — but NOT deterministically, and the earlier "deterministic" reading in this
+pack was WRONG.** A chunk-size discriminator run on 2026-08-21 refuted both hypotheses:
+
+| CHUNK | seam predicts | pattern predicts | OBSERVED |
+|---|---|---|---|
+| 50 | fail @100 | fail @100 | ambiguous by construction — 1 PASS, 3 FAIL @100 |
+| **30** | fail @60 | fail @100 | **PASS 128/128** — both refuted |
+| **64** | PASS | fail @100 | **FAIL, Region-F fault AFTER all 128 reads** — both refuted |
+
+The decisive control is the *same* setting twice: at fixed `CHUNK=50` the result is **1 PASS /
+3 FAIL**. So the three identical `@100` failures were a run of correlated draws, not a
+deterministic index. Read reliability across all six frozen-RTL runs is **2 PASS / 4 FAIL**,
+with three different failure signatures (mismatch mid-soak, Region-F fault after completion,
+link down). That is the profile of an unreliable, eye-sensitive path — consistent with the
+documented read/write asymmetry — not a fixed logic fault.
+
+**Cross-die READ is therefore NOT hardware-validated, for a different reason than first
+recorded:** it is intermittent (~33% pass), not broken at a specific offset.
 
 **Consequence for the freeze: cross-die READ must not be described as hardware-validated.**
 Cross-die WRITE is. This corrects run 1 read as evidence in isolation — a single pass against
 three deterministic failures is not a validation.
 
-**T6 endurance is not a regression.** It has never passed: across 37 prior recorded runs the
-best outcomes were SKIPPED (link already down) or FAIL at beat 0, and the documented 08-09 run
-failed at beat 768. Run 1's **1024** is the best figure this test has produced. But it is ONE
-measurement and was never reproduced — the four later attempts never reached T6. Do not write
-"wedges after ~1024 beats" into submission text; the supported claim is "wedges after a variable
-number of sustained beats, once observed at 1024".
+**T6 endurance is not a regression, and beat 1024 is now REPRODUCIBLE.** It has never passed:
+across 37 prior recorded runs the best outcomes were SKIPPED (link already down) or FAIL at
+beat 0, and the documented 08-09 run failed at 768. On the frozen RTL it has now been reached
+twice, in independent bring-ups with different chunk settings:
+
+    run 1  (CHUNK=50)  FAIL  "write wedged at beat 1024"
+    run d1 (CHUNK=30)  FAIL  "Region-F/health fault at beat 1024 (no-obs)"
+
+Same beat, two different failure descriptions, two independent link sessions. **This upgrades
+1024 from a single measurement to a reproducible threshold**, and supersedes this pack's earlier
+instruction to avoid the figure. Submission text MAY now say "sustained peer-writes wedge the
+D2D subordinate port after approximately 1024 beats", noting n=2. A third observation would
+make it solid.
 
 ## 6. Known limitations shipping with this freeze
 
