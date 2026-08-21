@@ -179,6 +179,31 @@ documented read/write asymmetry — not a fixed logic fault.
 **Cross-die READ is therefore NOT hardware-validated, for a different reason than first
 recorded:** it is intermittent (~33% pass), not broken at a specific offset.
 
+**DOES IT TRANSFER TO SILICON? Yes, probably — and the earlier "different PHY" reasoning in
+this pack was FALSE.** It was twice stated here that the rig uses a GPIO PHY while the ASIC uses
+"the real D2D PHY", so rig read behaviour might not transfer. **There is no separate D2D PHY in
+the v1 ship config.** Verified on the frozen SHA — the ASIC ship flist and the FPGA build compile
+the *same* PHY sources:
+
+| file | ASIC v2 flist | FPGA elab flist |
+|---|---|---|
+| `WlinkGPIOPHY_v2.v` | yes | yes |
+| `WavD2DGpioTx.v` | yes | yes |
+| `tidelink_phy_align_calibrator_v2.sv` | yes | yes |
+
+The only `serdes`/`pcs`/`pma` strings in the ship flist are **comment lines** — no such RTL is
+compiled. And the line rate moves the wrong way: **~4.7–25 MHz on the rig, ~100 MHz on the ASIC
+target** (UI = 10 ns). Same PHY architecture, same calibrator, same sync/mask datapath, at
+roughly 4–20x the rate, so the eye is **tighter** on silicon, not more forgiving.
+
+What genuinely does differ: pad cells, delay-cell quantum, flat ASIC clocking versus FPGA fabric
+routing. Those are real and unquantified, and the rig's reliability percentages are explicitly
+NOT the ASIC's numbers. So this is not "read WILL fail on silicon".
+
+**The defensible position for signoff: cross-die read is unvalidated on a PHY architecture that
+silicon shares, at a line rate where the eye is tighter. Treat it as a LIVE SHIPPING RISK, not
+an unknown-transfer rig curiosity.** Credit: the tidelink session caught this premise error.
+
 **Consequence for the freeze: cross-die READ must not be described as hardware-validated.**
 Cross-die WRITE is. This corrects run 1 read as evidence in isolation — a single pass against
 three deterministic failures is not a validation.
