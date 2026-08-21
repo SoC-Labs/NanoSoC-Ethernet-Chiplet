@@ -1040,7 +1040,7 @@ csr-ratchet-selftest:
 ## broker/design-team liaison, NOT something a Calibre run can answer. See
 ## docs/tapeout/50-bnd-and-logo-checks.md for the full writeup before treating
 ## this as unconditionally closed.
-LOGO_GDS        ?= $(DESIGN_DIR)/logos/nanosoc_eth_Logo.gds
+LOGO_GDS        ?= $(DESIGN_DIR)/logos/nanosoc_eth_Logo_APonly_fixed.gds
 LOGO_STRIP_JACK ?= 0
 LOGO_AP_ONLY    ?= 1
 ## PLACEMENT. LOGO_X is the logo's bbox CENTRE, not its left edge — the cell is

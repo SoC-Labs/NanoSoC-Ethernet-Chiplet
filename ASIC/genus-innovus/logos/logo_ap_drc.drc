@@ -1,0 +1,26 @@
+# Standalone AP width/space check for the chip logo.
+#
+#   klayout -b -r logo_ap_drc.lydrc -rd input=<logo>.gds -rd report=logo_drc.lyrdb
+#   klayout <logo>.gds -m logo_drc.lyrdb      # then Tools -> Marker Browser
+#
+# Reproduces the two TSMC65 rules the logo can violate, taken from the signoff
+# deck: AP_W_1 = 3um, AP_S_1 = 2um. Calibre's AP.W.1.WB / AP.S.1.WB carry
+# FW_AP and sealring exclusions that do not apply to a standalone logo, so
+# plain width/space is an exact proxy HERE and only here. Calibre remains the
+# signoff authority -- this is the fast inner loop.
+
+$input  || raise("pass -rd input=<gds>")
+$report || raise("pass -rd report=<lyrdb>")
+
+source($input)
+report("logo AP width/space", $report)
+
+AP_W_1 = 3.0.um
+AP_S_1 = 2.0.um
+
+ap = input(74, 0)
+
+info("AP polygons: #{ap.count}")
+
+ap.width(AP_W_1).output("AP.W.1", "AP width < #{AP_W_1} (AP_W_1)")
+ap.space(AP_S_1).output("AP.S.1", "AP space < #{AP_S_1} (AP_S_1)")
