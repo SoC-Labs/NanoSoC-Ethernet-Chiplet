@@ -382,6 +382,79 @@ LVS_POWER       ?= VDD VDDIO
 LVS_GROUND      ?= VSS VSSIO
 LVS_GLOBAL_NETS ?= VDD VDDIO VSSIO
 
+## THE PG-LABELLED LVS STREAM -- SET 2026-08-21. Fourth and fifth instance of the
+## same unreachable-knob class as BONDPAD_CELLS and LVS_POWER above: all four are
+## set in ../genus-innovus/lvs_project.mk:264-293, which ONLY the legacy
+## genus-innovus Makefile includes. Measured on the live path before this:
+##     make -C ASIC/eth-chiplet lvs-pg-preflight   -> PG PREFLIGHT: FAIL
+##     LVS_PG 0   LVS_PG_PIN_TEXT 0   LVS_PG_MAP_IN (unset)   LVS_PG_MERGE_GDS (empty)
+##
+## THE FOUR ARE NOT ONE DECISION. Two were deliberate, two were missed:
+##   LVS_PG / LVS_PG_PIN_TEXT   deferred on purpose, documented as "the coverage
+##                              gap" in docs/plans/POST_STREAM_TEST_PROCEDURE.md
+##                              7a. Turning them on here makes the covered run the
+##                              DEFAULT rather than an opt-in flag; `?=` keeps the
+##                              per-invocation opt-out that 7a relies on.
+##   LVS_PG_MAP_IN / _MERGE_GDS never spotted (LVS owner, 2026-08-21).
+##
+## WHAT THE TWO ZEROS COST, quoted from lvs_project.mk:288-293 (measured
+## 2026-08-10, NOT re-measured here): "boxed cells extract with ZERO pins so ~633k
+## routed nets are dropped and no standard-cell routing is checked at all. With
+## both on: nets reconciled 62,483 -> 268,171, arbitrary matches 1,014 -> 44."
+## Independently required by IMEC app note FS_AN_017 step 2, which says a boxed
+## cell needs "metal surfaces AND labels" in the layout: ours streamed the metal
+## and no labels, so EP=0 on both sides and boxed leaves matched on NAME AND COUNT
+## ONLY -- a cell census, not a netlist comparison.
+##
+## THE PASS CRITERION IS `nets reconciled`, NEVER THE VERDICT. Coverage arriving
+## makes the verdict WORSE: INCORRECT(82) -> INCORRECT(thousands) is 203 unmatched
+## layout and 16,848 unmatched source nets becoming VISIBLE, not a regression.
+##
+## VERIFY ON A ROUTED TAG. build/default stops at CTS, so its `LVS_PG_DB MISS` is
+## not a config fault and no reconciliation number can be demonstrated there.
+##
+## THE COLON TRAP, if pin text ever lands on a multi-port pin: write_stream
+## appends ':' to the label of any pin owning MULTIPLE PORTS
+## (write_stream_virtual_connection defaults true), and `VDD:` matches no source
+## `VDD`. lvs_pg_emit.tcl measured this library at 855 macros / 5,603 pins / ZERO
+## multi-port, so LEFPIN is clear TODAY -- a regenerated LEF could change that
+## silently. Assert the exact label string, never the count.
+LVS_PG           ?= 1
+LVS_PG_PIN_TEXT  ?= 1
+
+## THE ROUTED DATABASE, AND WHY THE DEFAULT CANNOT FIND IT. lvs.mk:210 defaults
+##     LVS_PG_DB ?= $(LVS_PG_WORK_DIR)/$(LVS_TOP)
+## -- the BARE block name. That is the LEGACY genus-innovus naming, whose stages
+## assert on `work/nanosoc_eth_chiplet_pads`. THIS flow names its databases
+## $(BLOCK)_placed / _cts / _routed (mk/flow.mk:105, and GUI_DB at :604), so the
+## bare name exists in NO run and the preflight MISSes even on a fully routed one.
+## Migration residue, same class as the four knobs above: a default that was right
+## for the flow it was written for and was never adapted when it moved.
+##
+## MEASURED 2026-08-21, and it corrects an earlier reading of mine: I first put
+## the MISS down to build/default stopping at CTS. That was plausible and wrong --
+## full-20260814 is fully routed, holds _routed, and MISSed identically. The
+## symptom had a second cause and the first one explained it away.
+LVS_PG_DB        ?= $(LVS_PG_WORK_DIR)/$(LVS_TOP)_routed
+
+## The foundry GDS-out map -- the SAME one P&R streams with, shared as one value
+## rather than two hand-kept release-coded copies. Resolved by ../common.mk.
+LVS_PG_MAP_IN    ?= $(PDK_GDSMAP)
+
+## Hard-macro layout, one-for-one with MACRO_CDLS: a macro that is NOT boxed
+## compares to real transistors, so an empty frame on the layout side mis-compares
+## its whole interior. $(ROMLIBS_DIR) is re-pointed at $(RUN_DIR)/romlibs below,
+## so this picks up THIS RUN's ROMs, never the shared drop.
+LVS_PG_MERGE_GDS ?= \
+    $(MEM_BASE)/rf_32k/rf_32k.gds2 \
+    $(MEM_BASE)/rf_16k/rf_16k.gds2 \
+    $(MEM_BASE)/rf_08k/rf_08k.gds2 \
+    $(MEM_BASE)/rf_01k/rf_01k.gds2 \
+    $(MEM_BASE)/flash_cache_data/flash_cache_data.gds2 \
+    $(MEM_BASE)/flash_cache_tag/flash_cache_tag.gds2 \
+    $(ROMLIBS_DIR)/cc_rom/rom_via.gds2 \
+    $(ROMLIBS_DIR)/eth_rom/eth_rom_via.gds2
+
 
 # ── 9. SIGNOFF DECLARATIONS ─────────────────────────────────────────────────
 #
@@ -424,10 +497,31 @@ DRC_IOPAD_PREFIXES  ?= PAD PDDW PDUW PVDD PVSS PFILLER PCORNER
 DRC_DESIGN_BUDGET  ?= 0
 DRC_DENSITY_BUDGET ?= 0
 
-# The project's own runners, so `make drc` / `make lvs` here dispatch to the
-# flows that have actually been run rather than to the toolkit's untried ones.
+# The project's own runners, so `make drc` here dispatches to the flow that has
+# actually been run rather than to the toolkit's untried one.
 DRC_SCRIPT ?= $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh
-LVS_SCRIPT ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/lvs-flow/run_lvs.sh
+
+## LVS_SCRIPT IS DELIBERATELY NOT SET -- REMOVED 2026-08-21. It used to name
+## ASIC/lvs-flow/run_lvs.sh, and that made `make lvs` HARD-BROKEN:
+##
+##   mk/flow.mk:761   lvs: $(if $(wildcard $(LVS_SCRIPT)),lvs-project,lvs-batch)
+##   mk/flow.mk:766   $(LVS_SCRIPT) $(GDS) ..._pnr.v $(BLOCK) $(WORK_DIR) $(LOG_DIR)
+##
+## `lvs-project` is the escape hatch for a project shipping the SCAFFOLDED runner,
+## which takes five POSITIONAL arguments and no environment. Ours is not that
+## runner -- it is the same flag-driven one the toolkit ships (run_lvs.sh:81-84
+## accepts only --check | --source-only | --pg-check | --help), so the GDS path
+## arrives as $1, hits the catch-all, and the run dies with usage text and rc=2.
+## It also passes NO environment, so every knob above would be invisible to it
+## even if the argument contract matched.
+##
+## Unset, the wildcard is empty and `make lvs` falls through to `lvs-batch`, which
+## is the target that applies LVS_ENV -- i.e. the one that can actually see
+## LVS_PG, LVS_POWER, BONDPAD_CELLS and the rest. DRC_SCRIPT above stays: drc-project
+## is a real, working, project-side runner and `make drc` depends on it.
+##
+## Do not "restore" this line. If a project-side LVS runner is ever wanted here, it
+## must first accept the five positional arguments mk/flow.mk:766 passes.
 
 # ── THE LVS DECK AND LEAF-CELL INPUTS ───────────────────────────────────────
 # These four must be set here, or the toolkit's LVS path fails honestly with
