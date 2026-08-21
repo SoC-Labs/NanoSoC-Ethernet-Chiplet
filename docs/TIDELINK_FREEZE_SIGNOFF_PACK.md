@@ -134,16 +134,50 @@ citing the 2026-08-20 pre-fold A/B is NOT acceptable here** (decision 3).
 | # | Check | Expected | Measured |
 |---|---|---|---|
 | 1 | Bitstream builds from frozen pin | rc=0, setup met (hold red is the known baseline) | **PASS** — BUILD_RC=0, ~45 min, tidelink.bit 7,797,819 B @ 09:54:38. Setup WNS **+0.247ns**, 0/116678 failing. Hold WHS **-22.273ns**, **8** failing = the documented baseline. WPWS +2.000, 0 failing. |
-| 2 | Link bring-up both dies | `fcsm=4 cal=1` | `<TBD>` |
-| 3 | Instrument answering | `0x4_2E03_21F8` marker `0xB5` | `<TBD>` |
-| 4 | Tie-down in effect | `[4] pipe_hprot_r[2] = 0` | `<TBD>` |
-| 5 | Hazard list cannot saturate | `[7:5] hwm = 1` (pre-fix was 4) | `<TBD>` |
-| 6 | Posted-burst induce completes | DONE, not ERROR/hang | `<TBD>` |
-| 7 | Peer-write soak byte-exact | 0 bad | `<TBD>` |
-| 8 | Post-soak link healthy | `fcsm=4`, RegionF `data_healthy=1` | `<TBD>` |
+| 2 | Link bring-up both dies | `fcsm=4 cal=1` | **PASS** — 4 of 4 valid attempts reached FCSM=4 on both dies, each ACCEPTED on try 1/8 |
+| 3 | Instrument answering | `0x4_2E03_21F8` marker `0xB5` | **PASS** — T2_obs_probe marker-gated, both dies, Region-F healthy, 4/4 |
+| 4 | Tie-down in effect | `[4] pipe_hprot_r[2] = 0` | **INFERRED, not directly read** — no wedge occurred at the hazard-list depth in any run; the obs bit itself was not sampled this session |
+| 5 | Hazard list cannot saturate | `[7:5] hwm = 1` (pre-fix was 4) | **NOT MEASURED** — the hwm field was not read back this session. Do not record as PASS. |
+| 6 | Posted-burst induce completes | DONE, not ERROR/hang | **NOT RUN** — zdma induce not exercised on the frozen build |
+| 7 | Peer-write soak byte-exact | 0 bad | **PASS** — T3_delivery_soak 128/128 byte-exact in **4 of 4** valid attempts |
+| 8 | Post-soak link healthy | `fcsm=4`, RegionF `data_healthy=1` | **PARTIAL** — healthy after the write soak in 4/4; NOT healthy after the read soak in 3/4 (link down, die_a POR'd) |
 
 **Bring-up is a marginal-eye lottery** — it failed several times on 2026-08-20. Only compare or accept
 results at `fcsm=4` on BOTH dies. A run at any other link state is VOID, not a negative result.
+
+### 5b. Cross-die READ is NOT validated — the significant finding of 2026-08-21
+
+Five sysval runs on the frozen pointer (one clean, one bad-eye, one void, three POR-recovered):
+
+| run | bring-up | T2b canary | T3 write soak | T10 read soak | T6 endurance |
+|---|---|---|---|---|---|
+| 1 | try 1/8 | PASS 8/8 | **PASS 128/128** | **PASS 128/128** | FAIL — wedged at beat **1024** |
+| 2 | try 1/8, FCSM=4 | **FAIL — canary wedged** | not reached | not reached | not reached |
+| 3 | EXHAUSTED 8/8 | — | — | — | **VOID** (die_a wedged, deploy rc=255) |
+| 4 | try 1/8 | PASS 8/8 | PASS 128/128 | **FAIL — mismatch @100** | SKIPPED (link down) |
+| 5 | try 1/8 | PASS 8/8 | PASS 128/128 | **FAIL — mismatch @100** | SKIPPED (link down) |
+| 6 | try 1/8 | PASS 8/8 | PASS 128/128 | **FAIL — mismatch @100** | SKIPPED (link down) |
+
+**Writes are solid: 4 of 4 valid runs delivered 128/128 byte-exact.**
+
+**Reads are not.** Three consecutive runs failed at index **100**, which is an EXACT chunk
+boundary (`read_chunk=50`, so index 100 is the first read of the third board invocation).
+Identical index three times is deterministic behaviour, not the eye lottery — a marginal eye
+would fail at scattered indices. Run 1 crossed the same boundary cleanly, so it is not purely
+structural either. **The mechanism is not diagnosed.** Candidates not yet separated: something
+accumulating across board invocations, the Region-F gate between chunks, or a read path more
+eye-sensitive than the write path (the documented asymmetry).
+
+**Consequence for the freeze: cross-die READ must not be described as hardware-validated.**
+Cross-die WRITE is. This corrects run 1 read as evidence in isolation — a single pass against
+three deterministic failures is not a validation.
+
+**T6 endurance is not a regression.** It has never passed: across 37 prior recorded runs the
+best outcomes were SKIPPED (link already down) or FAIL at beat 0, and the documented 08-09 run
+failed at beat 768. Run 1's **1024** is the best figure this test has produced. But it is ONE
+measurement and was never reproduced — the four later attempts never reached T6. Do not write
+"wedges after ~1024 beats" into submission text; the supported claim is "wedges after a variable
+number of sustained beats, once observed at 1024".
 
 ## 6. Known limitations shipping with this freeze
 
