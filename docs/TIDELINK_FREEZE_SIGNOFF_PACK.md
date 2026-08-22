@@ -138,7 +138,7 @@ citing the 2026-08-20 pre-fold A/B is NOT acceptable here** (decision 3).
 | 3 | Instrument answering | `0x4_2E03_21F8` marker `0xB5` | **PASS** — `witness_raw=0xb5000001` (marker present, baseline control value), `regf_raw=0xad800000`, `data_healthy=1`, `fcsm=4`, `cal=1`, read directly on die_a |
 | 4 | Tie-down in effect | `[4] pipe_hprot_r[2] = 0` | **PASS (by consequence)** — obs read 2026-08-21: `wr_hwm=0`, `wr_err=0`, `stall_stuck=0`, `synth_b=0`. The hazard list never allocates, which is precisely what the HPROT tie-down produces. The hprot bit itself is not a field in the obs JSON. |
 | 5 | Hazard list cannot saturate | `[7:5] hwm = 1` (pre-fix was 4) | **PASS — `wr_hwm = 0`** on a live healthy link (2 independent bring-ups). Better than the expected 1; pre-fix was 4. Direct evidence the tie-down forecloses hazard allocation entirely. |
-| 6 | Posted-burst induce completes | DONE, not ERROR/hang | **NOT RUN** — zdma induce not exercised on the frozen build |
+| 6 | Posted-burst induce completes | DONE, not ERROR/hang | **NOT MEASURABLE with current tooling** (attempted 2026-08-22, three independent blockers — see 5c). Partially covered by `wr_hwm=0`, but the DMA-posted case specifically is UNTESTED. |
 | 7 | Peer-write soak byte-exact | 0 bad | **PASS** — T3_delivery_soak 128/128 byte-exact in **4 of 4** valid attempts |
 | 8 | Post-soak link healthy | `fcsm=4`, RegionF `data_healthy=1` | **PARTIAL** — healthy after the write soak in 4/4; NOT healthy after the read soak in 3/4 (link down, die_a POR'd) |
 
@@ -221,6 +221,38 @@ Same beat, two different failure descriptions, two independent link sessions. **
 instruction to avoid the figure. Submission text MAY now say "sustained peer-writes wedge the
 D2D subordinate port after approximately 1024 beats", noting n=2. A third observation would
 make it solid.
+
+### 5c. Matrix row 6 is not measurable — attempted 2026-08-22, three blockers
+
+`zdma_induce` is the only tool that can generate a genuinely POSTED multi-outstanding write
+burst at the peer aperture (a CPU store is a single blocking AXI write and cannot fill the
+window). It cannot be run here:
+
+1. **Its own mandatory safety gate FAILS.** `--selftest` (a plain DDR->DDR copy, which must pass
+   before the tool is allowed to touch a PL aperture) returns
+   `poll -> STALLED  ISR=0x000 STS=0x0 TOTAL_BYTE=0` — the engine never moves a byte. Reproduced
+   on **ADMA ch0, ADMA ch1, and GDMA ch0**, identically. The engine is not acknowledging its own
+   `CTRL2.EN`, which points at clock-gating or reset rather than a programming error; no
+   `zynqmp_dma` driver is bound on the board. Proceeding to `--induce` past a failed gate is
+   explicitly forbidden by the tool's contract: the gate is what proves the physical-address
+   assumption before any DMA write is issued.
+2. **The destination guard cannot reach this target.** It permits only `0x8000_0000-0xBFFF_FFFF`
+   (the pair-onchip PL apertures). The eth-chiplet peer path is reached through the PS backdoor
+   window at `0x4_xxxx_xxxx`, which the guard refuses by design.
+3. Project records independently note there is no DMA on this block design capable of the
+   pattern, and that this selftest has never passed.
+
+**A defect found while attempting it:** the tool prints `SELFTEST FAIL` and **exits 0**. Anything
+scripting it on exit status alone reads a failed gate as green. Worth fixing before this tool is
+used again, independently of row 6.
+
+**What IS covered, and what is not.** `wr_hwm = 0` measured on a live link across a 128-write
+soak and a 1024-beat endurance run shows the hazard list never allocates under sustained
+single-beat non-bufferable traffic — which is the traffic the tie-down produces. It does **not**
+demonstrate the specific case row 6 asks for: a genuinely posted, multi-outstanding DMA burst
+arriving at the choke point and being safely converted. **That case remains untested on
+hardware.** To close it properly: fix the DMA clock-gating/reset on the board, extend the
+destination guard to the backdoor window, then re-run. That is a half-day, not thirty minutes.
 
 ## 6. Known limitations shipping with this freeze
 
