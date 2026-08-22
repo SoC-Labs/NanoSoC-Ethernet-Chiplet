@@ -184,12 +184,21 @@ create_route_halo -all_blocks -bottom_layer M1 -top_layer M4 -space 1.0
 ## -except_pg_nets: route_special {pad_pin pad_ring} must still cross this band.
 ## Metal fill is unaffected - blockages apply to fill only with -fills, and 35% of
 ## M8 fill legitimately sits in here.
-## 171.0 literal, NOT queried. `[get_db base_cells PAD70NU_SL .size.y]` errors with
-## IMPDBTCL-248 - base_cell has no `size` attribute - and took the flow down on
-## 2026-08-08. The value is a library constant: tpbn65v_9lm.lef, MACRO PAD70NU_SL,
-## OBS LAYER M8, `RECT 0.000 0.000 30.000 171.000`. PAD70GU_SL (the outer staggered
-## pad) is shallower, so 171 covers both rings.
-set _bp_d 171.0
+## 173.315 literal, NOT queried. `[get_db base_cells PAD70NU_SL .size.y]` errors
+## with IMPDBTCL-248 - base_cell has no `size` attribute - and took the flow down
+## on 2026-08-08. The value is a library constant: tpbn65v_9lm.lef, MACRO
+## PAD70NU_SL, `SIZE 25.000 BY 173.315`, OBS LAYER M8 `RECT 0.000 0.000 25.000
+## 173.315` (M9 and AP identical). PAD70GU_SL (the outer staggered pad) is
+## 25.000 BY 86.815, i.e. shallower, so 173.315 covers both rings.
+##
+## WAS THE OLD PAD'S DEPTH, AND THE COMMENT THAT DEFENDED IT QUOTED THE WRONG
+## CELL - it cited the obstruction rectangle of PAD70NU, the NON-slim pad this
+## design stopped using at 66a2f69, and both of that rectangle's numbers are the
+## old cell's width and depth. The _SL pad is narrower AND 2.315um deeper,
+## so from 66a2f69 until this line was corrected the keep-out under-covered the
+## pad ring by a 2.315um-deep strip on all four sides - the exact strip the M9
+## clearance failure lives in.
+set _bp_d 173.315
 ## Die box taken from create_floorplan above (-die_size 1600 2000), NOT from
 ## [get_db current_design .bbox]. `.core_bbox` is proven in this flow; `.bbox` is
 ## not, and two unverified attributes already took this flow down today. The
@@ -203,9 +212,29 @@ if {abs($_cx1 - ($_dx1 + $_expect)) > 0.5 || abs($_cy1 - ($_dy1 + $_expect)) > 0
            actual core box [get_db current_design .core_bbox] at CORE_TO_IO\
            $CORE_TO_IO. Update the literals beside create_floorplan."
 }
-if {$_dx1 + $_bp_d > $_cx1 - 30 || $_dy1 + $_bp_d > $_cy1 - 30} {
-    error "bondpad keep-out (depth $_bp_d) would reach the M8/M9 core rings.\
-           CORE_TO_IO is $CORE_TO_IO; raise it or re-derive this band."
+## THE GUARD BELOW USED TO TEST FOR OVERLAP ONLY, AND THAT IS WHY IT DID NOT
+## FIRE. A pad and a ring that do not overlap can still be a DRC violation:
+## 66a2f69 left them 1.685um apart against the flat M9 spacing rule, the guard
+## asked only "do they touch", got "no", and passed. An overlap test cannot see
+## a spacing shortfall - so the clearance the rules actually demand is now part
+## of the test.
+##
+## SECOND COPY WARNING - these two numbers mirror power_plan.tcl's add_rings and
+## nothing keeps them in step:
+##   _ring_depth  offset + width + spacing + width = 2 + 12 + 3 + 12 = 29.0
+##   _ring_clear  the largest ring-layer spacing requirement in the tech LEF.
+##                Ring layers are M9 (top/bottom) and M8 (left/right); the M9
+##                rule is the binding one. Read it from the tech LEF; Innovus
+##                also prints the required value in its own marker text.
+## Change add_rings and change these.
+set _ring_depth 29.0
+set _ring_clear  2.0
+if {$_dx1 + $_bp_d > $_cx1 - $_ring_depth - $_ring_clear ||
+    $_dy1 + $_bp_d > $_cy1 - $_ring_depth - $_ring_clear} {
+    error "bondpad keep-out (depth $_bp_d) leaves less than $_ring_clear um to\
+           the M8/M9 core rings, whose stack is $_ring_depth um deep from the\
+           core row edge. CORE_TO_IO is $CORE_TO_IO. Either raise it, reduce\
+           add_rings -spacing in power_plan.tcl, or re-derive this band."
 }
 create_route_blockage -name BONDPAD_KEEPOUT -layers {M8 M9 AP} -except_pg_nets \
     -rects [list \
@@ -248,7 +277,7 @@ create_route_blockage -name CSR_CORNER_KEEPOUT -fills \
         [list [expr {$_dx2 - $_csr}] $_dy1                  $_dx2                  [expr {$_dy1 + $_csr}]] \
         [list $_dx1                  [expr {$_dy2 - $_csr}] [expr {$_dx1 + $_csr}] $_dy2] \
         [list [expr {$_dx2 - $_csr}] [expr {$_dy2 - $_csr}] $_dx2                  $_dy2]]
-unset _csr _bp_d _dx1 _dy1 _dx2 _dy2 _cx1 _cy1 _cx2 _cy2 _expect
+unset _csr _bp_d _dx1 _dy1 _dx2 _dy2 _cx1 _cy1 _cx2 _cy2 _expect _ring_depth _ring_clear
 
 
 ## Macro placement.

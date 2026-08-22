@@ -1007,11 +1007,35 @@ export PLACE_MAX_PG_FRAGS ?= 3570
 # than a ceiling: the broken database was the quiet one, and a ceiling cannot see
 # quiet.
 #
-# The two are supplies distributed by ABUTMENT through the pad-ring fillers.
-# check_connectivity gives up on a net with no routing at all, so nothing in this
-# flow verifies that bus is continuous - and that has always been true. What is
-# new is that a run which loses them now fails instead of passing.
-export ROUTE_EXPECT_UNROUTED ?= 2
+# The two were VDDIO and VSSIO - supplies distributed by ABUTMENT through the
+# pad-ring fillers. check_connectivity gives up on a net with no routing at all,
+# so nothing in this flow verified that bus was continuous.
+#
+# 2 -> 0, 2026-08-22. THE DESIGN CHANGED UNDER THE EXPECTATION; the expectation
+# did not go stale on its own. c7e488f ("power_plan: route VDDIO/VSSIO, which
+# were registered but never given geometry") added the route_special
+# {pad_pin pad_ring} pass those two nets never had. They now carry real special
+# wires, so they are no longer "no routing at all" and IMPVFC-98 is legitimately
+# 0. Named nets, measured, not inferred:
+#     build/fp1505 (pre-c7e488f)    "Net VDDIO: no routing"  "Net VSSIO: no routing"
+#                                   IMPVFC-98 = 2, VDDIO/VSSIO opens = 0
+#     build/gdsrun-20260822-allfix  12 special-route pieces on each
+#                                   IMPVFC-98 = 0, VDDIO/VSSIO opens = 12 + 12
+# The finding did not disappear, it MOVED: those 24 pieces are per-pad stubs with
+# no VDDIO/VSSIO ring to join, so they now report as IMPVFC-200 opens and are
+# inside conn_opens (51 = VDD 14 + VSS 13 + VDDIO 12 + VSSIO 12). The IO supply
+# buses are still NOT verified continuous - that is now a PG-opens question, not
+# an unrouted-net one.
+#
+# SETTING THIS TO 0 DOES NOT GIVE THE QUIET FAILURE BACK. The mode the equality
+# stood in for - supply pads deleted from the netlist - is checked directly and
+# by name at the place stage by PLACE_EXPECT_PADS (11a below / design.mk:961,
+# 2_place.tcl:1017), which is a hard flow_fail on a per-rail count and is
+# currently passing at VDDIO=12 VSSIO=12 VDD=6 VSS=4. That check is strictly
+# stronger than inferring pad loss from a net count, because it names the rail.
+# If PLACE_EXPECT_PADS is ever unset, put this back to an equality that means
+# something or the pad-loss mode is unguarded again.
+export ROUTE_EXPECT_UNROUTED ?= 0
 
 # ── 11d. PG STRIPES INSIDE MACRO FOOTPRINTS ─────────────────────────────────
 #

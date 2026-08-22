@@ -72,8 +72,47 @@ connect_global_net VSSIO -type pg_pin -pin_base_name VSSPST -inst_base_name *
 set_db add_rings_stacked_via_top_layer M9
 set_db add_rings_stacked_via_bottom_layer M1 
 
-### Adding Rings 
-add_rings -nets {VDD VSS} -type core_rings -follow core -layer {top M9 bottom M9 left M8 right M8} -width {top 12 bottom 12 left 12 right 12} -spacing {top 4 bottom 4 left 4 right 4} -offset {top 2 bottom 2 left 2 right 2} -center 0 -threshold 0 -jog_distance 0 -snap_wire_center_to_grid none
+### Adding Rings
+## RING-TO-RING SPACING 4.0 -> 3.0, 2026-08-22. THIS IS THE BOND-PAD CLEARANCE
+## FIX; it is not a power-grid change dressed up as one.
+##
+## add_rings lays the stack from the CORE ROW AREA outward, innermost ring
+## first: offset(2) + width(12) + spacing + width(12). At spacing 4 that is a
+## 30.0um stack, so the OUTER (VSS) ring's outer edge sits at core_row_edge-30.
+## Measured in build/gdsrun-20260822-halo's own marker database:
+##     VSS bottom ring   y 175.000 .. 187.000   (M9, 12 wide)
+##     VDD bottom ring   y 191.000 .. 203.000   (M9)  -> 4.0 gap = -spacing
+##
+## 66a2f69 swapped the bond pads to PAD70NU_SL/PAD70GU_SL. The _SL inner pad is
+## not only narrower, it is 2.315um DEEPER: tpbn65v_9lm.lef gives
+##     PAD70NU     SIZE 30.000 BY 171.000     OBS M8/M9 RECT 0 0 30 171.000
+##     PAD70NU_SL  SIZE 25.000 BY 173.315     OBS M8/M9 RECT 0 0 25 173.315
+## so the inner pad's M9 obstruction moved from 171.000 to 173.315 and ate
+## 2.315 of the 4.000um clearance that floorplan.tcl's CORE_TO_IO 70 bought.
+## What is left is 1.685um against M9's flat SPACING rule, and check_drc says so
+## in its own words: "Actual: 1.685000  Required: 2.000000".
+##
+## THE TOP EDGE IS THE CONTROL AND IT IS WHY THIS NUMBER IS 3.0. The core row
+## area ends at y=1794.4, not at the core box's 1795.0 (883 rows x 1.8um from
+## 205.0), so the TOP ring stack lands 0.6um lower than nominal and the top
+## pads clear by 2.285um. Zero of the eight top inner pads violate, in three
+## independent builds. 2.285 is therefore MEASURED to be enough; 1.685 is
+## measured not to be. Spacing 3.0 gives every side 2.685um.
+##
+## Why this knob and not CORE_TO_IO or -offset:
+##   -offset  2 -> 1  moves the INNER ring to 1.0um from the core boundary and
+##                    puts it inside the 2.0um M9 rule against core-side M9.
+##   CORE_TO_IO 70->71 costs core area on a die fixed at 1600x2000, raises
+##                    utilisation (see docs/tapeout/16-open-defects.md), and
+##                    floorplan.tcl's macro coordinates are ABSOLUTE - the last
+##                    CORE_TO_IO change pushed five macros outside the core.
+##   -spacing 4 -> 3  moves ONLY the outer ring, inward, by 1.0um. The inner
+##                    ring's relationship to the core is untouched.
+## Rule headroom after the change, from the tech LEF: M9 ring-to-ring 3.0 against
+## a flat 2.0 requirement; M8 ring-to-ring 3.0 against the worst wide-metal
+## SPACINGTABLE entry, which is well under 2.0. Ring WIDTH is unchanged at 12,
+## so EM capacity and the MAXWIDTH argument in floorplan.tcl both still hold.
+add_rings -nets {VDD VSS} -type core_rings -follow core -layer {top M9 bottom M9 left M8 right M8} -width {top 12 bottom 12 left 12 right 12} -spacing {top 3 bottom 3 left 3 right 3} -offset {top 2 bottom 2 left 2 right 2} -center 0 -threshold 0 -jog_distance 0 -snap_wire_center_to_grid none
 route_special -connect {pad_pin pad_ring} \
             -layer_change_range { M1(1) AP(10) } \
             -block_pin_target nearest_target \
