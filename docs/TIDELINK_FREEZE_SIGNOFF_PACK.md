@@ -147,11 +147,11 @@ results at `fcsm=4` on BOTH dies. A run at any other link state is VOID, not a n
 
 ### 5b. Cross-die READ is NOT validated — the significant finding of 2026-08-21
 
-Five sysval runs on the frozen pointer (one clean, one bad-eye, one void, three POR-recovered):
+Six sysval runs on the frozen pointer (one clean, one bad-eye, one void, three POR-recovered):
 
 | run | bring-up | T2b canary | T3 write soak | T10 read soak | T6 endurance |
 |---|---|---|---|---|---|
-| 1 | try 1/8 | PASS 8/8 | **PASS 128/128** | **PASS 128/128** | FAIL — wedged at beat **1024** |
+| 1 | try 1/8 | PASS 8/8 | **PASS 128/128** | **PASS 128/128** | FAIL — 5th of eight 256-beat chunks; see the retraction below — this is a BUCKET [1024,1280), not a beat |
 | 2 | try 1/8, FCSM=4 | **FAIL — canary wedged** | not reached | not reached | not reached |
 | 3 | EXHAUSTED 8/8 | — | — | — | **VOID** (die_a wedged, deploy rc=255) |
 | 4 | try 1/8 | PASS 8/8 | PASS 128/128 | **FAIL — mismatch @100** | SKIPPED (link down) |
@@ -232,8 +232,11 @@ settings". Verified against the harness, that justification is false:
   FC packet number is 8 bits, `HAZARD_LIST_SIZE=4`, `sub_wr_os_ctr` is 3 bits. 1024 = 4 x 256
   fully explains the number as an artefact of the harness.
 
-**The full primary-source corpus (9 sysval JSON artefacts, verified 2026-08-22) is worse for
-the claim than the retraction above assumed. There is n=1, not n=2.**
+**The full primary-source corpus is worse for the claim than the retraction above assumed. There
+is n=1, not n=2.** The corpus is **9 sysval JSON artefacts plus 1 log-only run** (2026-08-09,
+recorded in `run_categoryA_goodeye.log`, which predates JSON output) = **10 recorded runs**. The
+table below counts the 9 JSON runs; the count-based statement further down counts all 10. Stated
+explicitly because these two numbers previously appeared in this document without reconciliation.
 
 | verdict | count | beats |
 |---|---|---|
@@ -271,7 +274,14 @@ artefact.
 
 ## 6. Known limitations shipping with this freeze
 
-1. **Peer-write throughput ~0.89 MB/s** (75x/100x vs a posted burst). Structural: the per-word cost IS
+1. **Peer-write throughput ~0.89 MB/s ON THE BENCH LINK CONFIG (50 MHz hclk) — NOT a silicon
+   figure.** The source measurement carries an explicit caveat that was stripped when the number
+   was carried here: *"absolute numbers are this bench's link config only; the RATIO is more robust
+   than the absolute."* This pack itself records the rig at ~4.7-25 MHz and the ASIC target at
+   ~100 MHz, so 50 MHz is neither. Scaled arithmetically to the ASIC target the figure is
+   **~1.78 MB/s**, and that is a derivation, not a measurement — **no throughput figure in this
+   tree has ever been measured on silicon.** Quote the ratio (75x/100x vs a posted burst), not the
+   absolute. Structural: the per-word cost IS
    the B round trip; `s_axi_bvalid` returns across the link with no local early-B. Not optimisable in
    the wrapper, and pipelining outstanding singles cannot help (non-bufferable is non-posted by
    definition). The lever is link latency. See `TAPEOUT_LIMITATION_D2D_PEER_WRITE.md`.
