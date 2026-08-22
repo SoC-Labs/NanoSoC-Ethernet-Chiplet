@@ -1001,7 +1001,7 @@ csr-ratchet-selftest:
 ## the signoff artefact and the logoed one is the submission artefact, so a DRC
 ## count can never be quoted against the wrong file.
 ##
-## THREE MODES, ONE SOURCE CELL. logos/nanosoc_eth_Logo.gds is the only
+## THREE MODES, ONE SOURCE CELL. $(LOGO_DIR)/nanosoc_eth_Logo.gds (ASIC/logos/) is the only
 ## hand-authored artwork; logo_text.gds (jack dropped) and logo_aponly.gds
 ## (every layer but AP dropped) are both DERIVED from it at merge time by
 ## strip_logo_jack.py / strip_logo_layers.py, never hand-edited copies, so
@@ -1040,7 +1040,11 @@ csr-ratchet-selftest:
 ## broker/design-team liaison, NOT something a Calibre run can answer. See
 ## docs/tapeout/50-bnd-and-logo-checks.md for the full writeup before treating
 ## this as unconditionally closed.
-LOGO_GDS        ?= $(DESIGN_DIR)/logos/nanosoc_eth_Logo_APonly_fixed.gds
+# LOGO_DIR — the logo artwork is PROJECT collateral, not engine collateral, so it
+# lives at ASIC/logos/ rather than inside this engine's directory. Overridable so a
+# different flow (the toolkit engine) can point at the same assets without moving them.
+LOGO_DIR        ?= $(abspath $(DESIGN_DIR)/../logos)
+LOGO_GDS        ?= $(LOGO_DIR)/nanosoc_eth_Logo_APonly_fixed.gds
 LOGO_STRIP_JACK ?= 0
 LOGO_AP_ONLY    ?= 1
 ## PLACEMENT. LOGO_X is the logo's bbox CENTRE, not its left edge — the cell is

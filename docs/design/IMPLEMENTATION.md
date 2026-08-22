@@ -127,7 +127,7 @@ came to mean nothing:
 
 | Rule | Findings in the tree at HEAD | What it is, on inspection |
 |---|---|---|
-| `file.ext` | 3 | the three tracked `ASIC/genus-innovus/logos/*.gds` — **this project's own logo artwork**, caught because `.gds` is collateral by extension. A false positive here, and the clearest candidate for a waiver. |
+| `file.ext` | 3 | the tracked `ASIC/logos/*.gds` — **this project's own logo artwork**, caught because `.gds` is collateral by extension. Moved out of the engine directory 2026-08-22 (it is project collateral, not engine collateral) and allowlisted with a reason rather than waived blindly. |
 | `value.lef` | 46 | a LEF or Liberty keyword standing beside a decimal, concentrated in the two power-grid Tcl scripts and the tapeout notes |
 | `value.lefwin` | 6 | a table keyword within two lines of a multi-significant-figure number |
 | `value.map` | 2 | a GDS layer and datatype pair |

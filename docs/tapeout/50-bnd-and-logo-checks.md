@@ -255,7 +255,7 @@ real chip routing under the mark, not one unlucky macro instance. `strip_logo_la
 already existed as a fourth, untested idea (its own header even claims a measurement:
 *"AP-only measures +20 results, all cosmetic artwork rules, none capped"*) but had never
 actually been run through Calibre — there was no `calibre_runs/drc_logo_aponly*`
-directory, and `logos/nanosoc_eth_Logo_APonly.gds` sat in the tree unused, wired to
+directory, and `ASIC/logos/nanosoc_eth_Logo_APonly.gds` sat in the tree unused, wired to
 nothing.
 
 ### Why moving or shrinking the marked box was never going to reach zero
@@ -280,7 +280,7 @@ keeps only the AP layer from the logo cell and drops everything else — includi
 LOGO marker itself:
 
 ```
-$ klayout -b -r scripts/strip_logo_layers.py -rd inp=logos/nanosoc_eth_Logo.gds -rd out=/tmp/aponly.gds
+$ klayout -b -r scripts/strip_logo_layers.py -rd inp=../logos/nanosoc_eth_Logo.gds -rd out=/tmp/aponly.gds
 kept   : AP
 dropped: 2 dummy-exclude layers (28 shapes each), LOGO marker (28 shapes)
 ```

@@ -113,7 +113,7 @@ POBLK        dummy-fill                  150      21
 # --- IP / library identification (text-only marker layer, not geometry) ---
 IP           ip-marker-text              63       63
 
-# --- chip LOGO artwork (only present once logos/nanosoc_eth_Logo.gds is
+# --- chip LOGO artwork (only present once ASIC/logos/nanosoc_eth_Logo.gds is
 #     merged in - see docs/tapeout/50-bnd-and-logo-checks.md; only observed
 #     in RUN B above, the logo-merged reference stream) ---
 LOGO         logo-artwork                158      0
