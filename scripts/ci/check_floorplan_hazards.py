@@ -57,6 +57,8 @@ resolved.  Exit 0 means the geometry was measured and is clean.
 
 Usage
 -----
+    # MEM_BASE and TSMC_65_HOME must be set: run under the project environment
+    # (ASIC/common.mk exports both), or pass --lef / --tech-lef explicitly.
     scripts/ci/check_floorplan_hazards.py                     # check the worktree
     scripts/ci/check_floorplan_hazards.py --selftest          # ground-truth validation
     scripts/ci/check_floorplan_hazards.py --floorplan git:78dac42^
@@ -79,6 +81,7 @@ import subprocess
 import sys
 import time
 from bisect import bisect_left
+import os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -87,13 +90,39 @@ DEF_FLOORPLAN = REPO / "ASIC/genus-innovus/scripts/floorplan.tcl"
 DEF_POWERPLAN = REPO / "ASIC/genus-innovus/scripts/power_plan.tcl"
 
 # Where macro LEFs live.  READ ONLY -- /research is lab-shared vendor collateral.
+#
+# SITE PATHS COME FROM THE ENVIRONMENT AND HAVE NO DEFAULT (2026-08-22). They were
+# hardcoded here, which broke two things at once: this gate only ran on one host,
+# and the literals are vendor site paths in a PUBLIC repository -- the vendor guard
+# charges them as `absolute site path`, correctly.
+#
+# A DEFAULT WOULD NOT HAVE FIXED IT. The first attempt kept the old paths as
+# os.environ.get() fallbacks; the guard refused that too, and was right to -- a
+# default is still the literal, published in the source. So there is no default:
+# the two variables are required, and their values live in the environment
+# (ASIC/common.mk exports TSMC_65_HOME) or in the caller's site config.
+def _site(var, what):
+    v = os.environ.get(var)
+    if not v:
+        raise SystemExit(
+            f"{__file__}: {var} is not set.\n"
+            f"  It must point at {what}.\n"
+            f"  Source the project environment (ASIC/common.mk exports TSMC_65_HOME),\n"
+            f"  or pass the LEFs explicitly with --lef / --tech-lef."
+        )
+    return v.rstrip("/")
+
+
+MEM_BASE = _site("MEM_BASE", "the precompiled macro-LEF root for this process node")
+TSMC_65_HOME = _site("TSMC_65_HOME", "the group-shared PDK mount")
+
 LEF_GLOBS = [
-    "/research/precompiled_mems/TSMC65/*/*.lef",
+    f"{MEM_BASE}/*/*.lef",
     str(REPO / "ASIC/romlibs/*/*.lef"),
 ]
 TECH_LEF_GLOBS = [
     str(REPO / "ASIC/eth-chiplet/build/*/work/*/libs/lef/PRTF_EDI_N65_*.tlef"),
-    "/tsmc65pdk/65/CMOS/util/lef/PRTF_EDI_65nm_*/PRTF_EDI_N65_9M_6X1Z1U_RDL*.tlef",
+    f"{TSMC_65_HOME}/CMOS/util/lef/PRTF_EDI_65nm_*/PRTF_EDI_N65_*_RDL*.tlef",
 ]
 NETLIST_GLOBS = [
     str(REPO / "ASIC/eth-chiplet/build/*/outputs/*_gate_power.v"),
