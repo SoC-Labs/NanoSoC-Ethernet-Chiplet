@@ -466,7 +466,7 @@ def parse_tech_lef(path: Path) -> dict:
             for r in width_rows:
                 vals = [float(v) for v in r.split()]
                 rows.append((vals[0], vals[1:]))
-            out["m4_spacingtable"] = {"prl": prls, "rows": rows}
+            out["m4_prl_table"] = {"prl": prls, "rows": rows}
             # narrow spacing = the row covering a 0.35um line at long PRL
             def sp_for(width):
                 best = rows[0][1][-1]
@@ -794,7 +794,10 @@ def run(args) -> tuple[int, Report, dict]:
         if tech.get(k) is None:
             raise Vacuous(f"tech LEF {tl}: could not derive {k}")
     R.p(f"  tech LEF    {tl}")
-    R.p(f"              M4 SPACINGTABLE: narrow(0.35um) spacing {tech['m4_narrow_spacing']}, "
+    # The narrow-width threshold is NOT written as a literal here: it is a PDK table
+    # axis value, and this file is published. Everything printed on this line is read
+    # from the licensed tech LEF at run time on a host that has it.
+    R.p(f"              M4 parallel-run table: narrow spacing {tech['m4_narrow_spacing']}, "
         f"wide breakpoint {tech['m4_wide_width']}um -> spacing {tech['m4_wide_spacing']}")
     R.p(f"              SITE core {tech['site_x']} x {tech.get('site_y')}, "
         f"MANUFACTURINGGRID {tech['mfg_grid']}")
