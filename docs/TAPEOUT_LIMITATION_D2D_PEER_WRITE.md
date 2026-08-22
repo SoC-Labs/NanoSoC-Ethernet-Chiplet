@@ -29,34 +29,58 @@ die**, which drops the die-to-die link.
 
 ## Required usage
 
-**Cross-die writes to the peer aperture must be issued non-bufferable (`HPROT[2] = 0`).**
-The non-bufferable path is limited to one outstanding write and cannot reach the condition; it has
-been exercised on silicon and completes cleanly.
+**Peer-path writes are forced non-bufferable in hardware in this revision — software no longer
+selects this.** The integration ties `HPROT[3:2] = 00` at the peer choke point, downstream of the
+bus matrix, so every initiator is covered whatever attributes it presents. The non-bufferable path
+is limited to one outstanding write and cannot reach the condition; it has been exercised on
+silicon and completes cleanly.
 
-⚠ **This is not simply "do not point a DMA at the peer aperture."** On this SoC the Cortex-M0+ cores
-have no MPU fitted, so the ARMv6-M default memory map applies and **an ordinary CPU store to
-`0x2F000000` is bufferable by default**. Software must therefore either avoid direct CPU stores to
-the peer aperture, or route peer writes through a master that presents `HPROT[2] = 0`.
+⚠ **This matters because software could not have solved it.** The Cortex-M0+ cores have **no MPU
+fitted** — `MPU = 0` is a build parameter meaning the unit is not instantiated, not a disabled
+feature — so the ARMv6-M default memory map applies and an ordinary CPU store to `0x2F000000`
+presents `HPROT[3:2] = 11` unconditionally, with no software override available on this silicon.
+The hardware tie-down is therefore not a belt-and-braces addition to a software rule; **it is the
+only mechanism that closes the condition.**
 
 Masters that **cannot** reach the condition by construction (`HPROT[2]` hardwired 0): the Ethernet
 MAC DMA and the debug bridge. Masters that are **safe at reset but can be programmed into it**: the
-DMA-250 (per-channel memory attributes) and the debug access port (CSW). The remote die **cannot**
-reach the peer aperture at all.
+DMA-250 (per-channel memory attributes) and the debug access port (CSW). All of these are now moot
+on this path: the tie-down sanitises every one of them at the choke point.
+
+The remote die **cannot** reach the peer aperture — note this is a *loopback* restriction: inbound
+requests decode only to the shared SRAM and the IPC mailbox, so the remote die can reach this die's
+memory but can never re-enter this die's own link block, and therefore can never be the master that
+triggers the condition.
 
 ## Status and scope
 
 - **Measured** on the FPGA vehicle by inducing the condition with a posted-burst DMA transfer, with
   an onset-bracketed capture establishing the causal order directly.
 - **Reachability on the ASIC** is established by RTL trace, not by silicon reproduction on the ASIC.
-- A one-line RTL change that removes the condition at source (forcing the peer path non-bufferable
-  for all masters) has been validated in simulation and its mechanism confirmed on silicon, but is
-  **not** in this revision.
-- Diagnostic state remains readable over APB during a stall. **Check the register's marker byte
-  before interpreting any value** — an unmarked read means the instrument is not answering and must
-  not be read as data.
+- **The one-line RTL change that removes the condition at source IS in this revision.** (An earlier
+  draft of this document said it was not; that text predated the change landing and was stale.) It
+  forces the peer path non-bufferable for all masters, and it is verified present in the shipping
+  gate netlist, not merely in RTL: at the `tidelink_top` instance `HPROT[3:2]` are constant-
+  propagated away, and the depth-4 hazard list together with the early-write-response path have
+  been **optimised out of the netlist entirely** — the saturating resource does not physically
+  exist in the shipping silicon. Independently corroborated on the FPGA vehicle, where the
+  hazard-list high-water reads **zero** on a live link across a sustained write soak.
+- ⚠ **Diagnostic state is NOT readable during a stall by any on-die master.** An earlier draft of
+  this document claimed it was; that is incorrect. The TideLink APB window and the peer aperture
+  are two leaves of one bus-matrix slave port sharing a single HREADY, so the instrument shares
+  fate with the stalled path. The measurements that produced diagnostic values on the FPGA vehicle
+  came through a PS backdoor that is tied off on the ASIC. The debug access port is the exception —
+  it carries a bounded AHB timeout, so a debugger reads either a valid marker or a bounded bus
+  error rather than hanging. **Check the marker byte before interpreting any value** — an unmarked
+  read means the instrument is not answering and must not be read as data.
 
 ## What is not claimed
 
 - The underlying reason write responses cease has not been isolated to a single component; two
   candidate paths remain open and both lie outside the ASIC-sourced RTL.
 - Multi-beat burst delivery is validated for the **non-bufferable** path only.
+- **No software-reachable recovery exists for this condition.** The chip-level warm-reset request
+  is tied inactive at the boundary, the subsystem reset controller resets only the CPU cores, and
+  the bridge has no reset of its own — every recovery register sits behind the port that stalls.
+  Recovery is a power-on reset of the die, which drops the link. This is stated so that no
+  integrator plans a software recovery path that cannot exist.
