@@ -433,9 +433,15 @@ BSCAN_TABLE    := src/rtl/bscan/pad_table.json
 # driving nothing, which is why it is the enable.
 BSCAN_TAP      := --tap-en uPAD_SE_I --tap-tck uPAD_SWDCK_I --tap-tms uPAD_SWDIO_IO \
                   --tap-tdi uPAD_HOST_IO_0 --tap-tdo uPAD_HOST_IO_1
-# PLACEHOLDER: SoC Labs holds no JEDEC manufacturer ID. Until one is assigned a
-# tester will bind the wrong BSDL to this die.
-BSCAN_IDCODE   := 0x100005A1
+# version 1, part 0x0001 (this die; 0x0002 is reserved for the compute chiplet),
+# manufacturer 0x000, LSB 1. THE MANUFACTURER FIELD IS DELIBERATELY NULL: SoC Labs
+# holds no JEDEC JEP106 allocation, and 0x000 is the one code JEP106 can never issue,
+# so this die announces that it is unidentified instead of impersonating a real
+# company. The previous value 0x100005A1 carried manufacturer 0x2D0, which decodes to
+# JEP106 bank 6 code 0x50 -- assigned to Neterion Inc. gen_bscan.py now REFUSES any
+# non-zero manufacturer field unless the pad table records a real allocation.
+# See docs/bscan/IDCODE_DECISION.md.
+BSCAN_IDCODE   := 0x10001001
 # The commit whose pad ring predates the splice.
 BSCAN_PRISTINE := 458d108
 

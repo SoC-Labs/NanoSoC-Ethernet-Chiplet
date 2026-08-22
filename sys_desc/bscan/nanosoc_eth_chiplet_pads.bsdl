@@ -232,7 +232,7 @@ entity nanosoc_eth_chiplet_pads is
   --  nothing and stop -- which is the correct outcome. An invented-but-valid
   --  field would instead resolve to whoever owns it and could silently select
   --  another part's description.
-  --  See docs/bscan/JEDEC_ID_REQUEST.md for what to change once an ID is held.
+  --  See docs/bscan/IDCODE_DECISION.md for what to change once an ID is held.
   attribute IDCODE_REGISTER of nanosoc_eth_chiplet_pads : entity is
     "0001" &               -- version 0x1
     "0000000000000001" &   -- part number 0x0001

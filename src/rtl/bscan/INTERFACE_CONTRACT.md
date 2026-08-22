@@ -199,7 +199,7 @@ real company. An earlier revision used `0x2D0`, which decodes to JEP106 bank 6 c
 it is the only honest placeholder. `scripts/gen_bscan.py` now refuses to emit a non-zero
 manufacturer field unless the pad table's `design.jedec` block records a real bank and
 code, so this cannot be reintroduced by editing a constant. See
-`docs/bscan/JEDEC_ID_REQUEST.md`.
+`docs/bscan/IDCODE_DECISION.md`.
 
 ---
 

@@ -386,7 +386,7 @@ def check_idcode_manufacturer(idcode, jedec):
             "identity. Either set the manufacturer field to 0 (the value JEP106 can "
             "never issue) or add a `jedec` block to the pad table's `design` section "
             "recording the bank and code actually assigned to you. "
-            "See docs/bscan/JEDEC_ID_REQUEST.md."
+            "See docs/bscan/IDCODE_DECISION.md."
             % (manuf, manuf, (manuf >> 7) & 0xF, manuf & 0x7F))
         return None
 
@@ -436,7 +436,7 @@ def idcode_notes():
             "THE PART NUMBER FIELD IS ALSO A PLACEHOLDER (0x%04X). It does not "
             "distinguish this die from any other, including the compute chiplet sharing "
             "its package. Assign a real part number before release." % part)
-    out.append("See docs/bscan/JEDEC_ID_REQUEST.md for what to change once an ID is held.")
+    out.append("See docs/bscan/IDCODE_DECISION.md for what to change once an ID is held.")
     return out
 
 

@@ -418,11 +418,14 @@ the constant.
   indistinguishable on a shared chain.
 - **The routed netlist is stale with respect to this decision** — §7d.
 - **Six files still point at the old filename.** This document was renamed from
-  `JEDEC_ID_REQUEST.md`; the following still reference the old path and are outside
-  the remit of the change that renamed it:
-  `Makefile:443`, `sys_desc/bscan/nanosoc_eth_chiplet_pads.bsdl:232`,
-  `src/rtl/bscan/nanosoc_eth_chiplet_bscan.sv:109`, `scripts/gen_bscan.py:332`,
-  `scripts/gen_bscan.py:382`, `src/rtl/bscan/INTERFACE_CONTRACT.md:202`.
+  `JEDEC_ID_REQUEST.md`. **RESOLVED 2026-08-23** — all six referrers were
+  repointed at `docs/bscan/IDCODE_DECISION.md` and the two generated artefacts
+  (`nanosoc_eth_chiplet_pads.bsdl`, `nanosoc_eth_chiplet_bscan.sv`) were rebuilt
+  from `gen_bscan.py` rather than hand-patched; `make bscan` regenerates them
+  byte-identically. The list below is kept as the record of what was fixed:
+  `Makefile`, `sys_desc/bscan/nanosoc_eth_chiplet_pads.bsdl`,
+  `src/rtl/bscan/nanosoc_eth_chiplet_bscan.sv`, `scripts/gen_bscan.py` (x2),
+  `src/rtl/bscan/INTERFACE_CONTRACT.md`.
   Four of those six are **generated** — `gen_bscan.py` is the source for the BSDL
   and wrapper strings, so fixing `gen_bscan.py:332` and `:382` and re-running
   `make bscan-gen` closes four of them at once.

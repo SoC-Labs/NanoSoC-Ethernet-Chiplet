@@ -106,7 +106,7 @@ module nanosoc_eth_chiplet_bscan #(
   // nothing and stop -- which is the correct outcome. An invented-but-valid
   // field would instead resolve to whoever owns it and could silently select
   // another part's description.
-  // See docs/bscan/JEDEC_ID_REQUEST.md for what to change once an ID is held.
+  // See docs/bscan/IDCODE_DECISION.md for what to change once an ID is held.
   parameter logic [31:0] IDCODE_VALUE = 32'h1000_1001
 ) (
   // --- test access (contract section 7: muxed onto existing pads by SE) ---
