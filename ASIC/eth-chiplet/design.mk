@@ -1070,6 +1070,52 @@ export ROUTE_EXPECT_UNROUTED ?= 2
 # alias. `PLACE_MAX_MACRO_STRIPES` is retired to its toolkit default; do not
 # ratchet a ceiling now known to have no achievable value.
 #
+# ── SET 2026-08-21, and this closes the "REQUIRED BEFORE THE NEXT CANDIDATE
+# RUN" item recorded below ──────────────────────────────────────────────────
+#
+# The crossings arm fired for the FIRST TIME on 2026-08-21 at 300, not because
+# anything regressed but because the census could not previously count. Both
+# reads in pnr_macro_stripe_census fed a NESTED get_db return straight into a
+# `llength == 4` test (.bbox for the macro, .rect for the wire), so c(wires)
+# was always 0 and this ceiling passed on every run that has ever been made,
+# having examined nothing. Fixed in toolkit 5f0eab1 / a776532.
+#
+# PLACE_MAX_MACRO_STRIPES: 330, i.e. 300 measured + 10% headroom. The analysis
+# below establishes 300 as the mesh built exactly as power_plan.tcl specifies
+# it, and a 0 ceiling as both unachievable and actively harmful. A ceiling
+# still earns its place as a REGRESSION detector - 330 catches a real change in
+# the ladder without flagging the nominal grid.
+export PLACE_MAX_MACRO_STRIPES ?= 330
+#
+# PLACE_MIN_MACRO_PG_GAP: 11d sets 0.155 and notes it had no measured spread to
+# size a margin from. The grounding it wanted is not in this design's arithmetic
+# -- it is in the M5 wide-metal spacing table of the tech LEF (the parallel-run
+# table for that layer). Read it there; those numbers are vendor data and are
+# deliberately not reproduced anywhere in this repository.
+#
+# What that table says, in words: the M5 PG ladder is 1.0um wide
+# (power_plan.tcl:890, -width 1), which selects a wide-metal row rather than the
+# narrow-line row, and a stripe running past a macro has a parallel run long
+# enough to land in the saturated right-hand column of it. The required spacing
+# there is STRICTLY GREATER than the 0.155 this knob is set to.
+#
+# NOTE FOR WHOEVER OWNS 11d: 0.155 is therefore below the manufacturing limit for
+# the case it is meant to guard, and a gap a few nm above 0.155 would pass this
+# gate and still violate M5 spacing. The defensible floor is the table's value
+# for that row and column. Left unchanged here because it is 11d's number and
+# the difference does not fire on this design -- measured min_gap is 0.5000um,
+# more than 3x either candidate. To confirm, read the WIDTH row that 1.0um
+# selects in $(TECH_LEF) and compare its long-parallel-run entry against 0.155.
+#
+# It sits BELOW the 0.5um nominal grid spacing exactly as the note requires, so
+# it does not flag the 300 healthy crossings - the census measures 0.5000um on
+# all 42 macro/net rows. It fires only when two ladders actually close toward
+# the manufacturing limit, which IS the four-short hazard the crossings arm
+# could never see.
+# (NO ASSIGNMENT HERE -- 11d below already sets it. This block is the tech-LEF
+# evidence for that value, nothing more: a duplicate ?= earlier in the file
+# would silently win over 11d's derivation.)
+#
 # THE ORIGINAL HAZARD IS STILL REAL AND IS NOT COVERED BY ANY OF THIS. The
 # crossings arm never would have caught the four shorts - that was a min_gap ->
 # 0 event between two DIFFERENT macros' ladders, not a stripe crossing one
