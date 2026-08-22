@@ -1031,3 +1031,59 @@ route_special -connect {block_pin core_pin floating_stripe} \
     -allow_jogging 1 -power_domains { PD_TOP } -nets { VDD VSS } -allow_layer_change 1
 
 
+
+## ---------------------------------------------------------------------------
+## G.4 / MINSTEP residue on generated special vias  (added 2026-08-22)
+##
+## The two attributes above (extend_out_wire_end false, :977) collected the
+## T-intersection debt: G.4:M4i 275 -> 2, M4.S.2.1 76 -> 28. What survives is a
+## DIFFERENT mechanism and those attributes do not address it.
+##
+## MEASURED, 11 physical sites (25 Calibre G.4 edge records, M5i 13 / M2i 6 /
+## M4i 2 / M6i 2 / M7i 2). Every one is Special Wire of Net VDD or VSS -- zero
+## signal, zero vendor-cell. Each is the union of two same-net same-layer
+## rectangles from SEPARATELY generated vias at one tap, e.g.
+##    M4 @ (851.28, 344.52)  VIA4 riser 0.400 wide vs VIA3 riser 0.350  -> 45nm step
+##    M5 @ (866.49, 291.24)  VIA4 and VIA5 enclosures 0.180 wide, centres 10nm apart
+##    M6 @ (609.27, 431.15)  same width, centres 5nm apart
+## Min width is 0.100 on all these layers, so any such step trips G.4. Where the
+## neck is narrowest it ALSO trips M*.W.1 (min width), M5.A.1 (MAR) and
+## M5.A.2 (min hole) -- 5 sub-minimum-width supply necks and 3 min-area defects
+## that read to a foundry very differently from "cosmetic jogs".
+##
+## generate_special_via_accuracy_effort is already 'high', which is why each via
+## is individually clean: the defect lives in the UNION of two objects and
+## per-via DRC cannot see it.
+##
+## Innovus 21.11, doc/TCRcom/fix_via.html (QUOTED):
+##   "Fixes the following types of violations in special net vias: short, mincut,
+##    and minstep. If the via cannot be replaced, the violation marker is not
+##    removed."
+##   -min_step: "Replaces power vias flagged by a violation marker due to a
+##    violation of the LEF MINIMUMSTEP rule."
+## It acts on MARKERS, so check_drc must run first or it has nothing to do.
+##
+## WHY THIS IS NOT THE POWER-HOLE RISK the block above warns about: that hole
+## (4414 unrouted std-cell power ports) was caused by LAYER RANGES
+## -- -layer_change_range / -core_pin_layer / -block_pin_layer_range /
+## -crossover_via_layer_range. fix_via changes no range, adds and removes no
+## tap; it swaps <=11 of 194,426 generated vias for LEF-compliant equivalents.
+## The hole cannot be re-opened by it.
+##
+## Falsifiable: Innovus MINSTEP 7 -> 0, NSMETAL 7 -> 0, MINHOLE 2 -> 0, MAR 1 -> 0;
+## then Calibre G.4 25 -> 0, M5/M6/M7.W.1 5 -> 0, M5.A.1+A.2 3 -> 0. If MINSTEP
+## does NOT move, the vias are not replaceable and the waiver case is the answer
+## -- but it is then an evidenced waiver, not an unexamined one.
+## Gate on: unrouted std-cell power ports (must NOT regress toward 4414),
+## check_connectivity -type special (337 opens / 1432 dangling baseline),
+## top-cell M4 shape count (387090 baseline).
+if {![info exists ::env(EVP_NO_G4_FIXVIA)] || $::env(EVP_NO_G4_FIXVIA) ne "1"} {
+    puts "POWERPLAN: G.4 residue -- check_drc then fix_via -min_step/-min_cut"
+    check_drc -limit 200000 -out_file $REPORT_DIR/pg_pre_fixvia.rep
+    fix_via -min_step
+    fix_via -min_cut
+    check_drc -limit 200000 -out_file $REPORT_DIR/pg_post_fixvia.rep
+    puts "POWERPLAN: fix_via done -- compare pg_pre_fixvia.rep vs pg_post_fixvia.rep"
+} else {
+    puts "POWERPLAN: EVP_NO_G4_FIXVIA=1 -- skipping the fix_via min_step/min_cut pass"
+}
