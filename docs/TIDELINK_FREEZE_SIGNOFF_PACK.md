@@ -232,12 +232,42 @@ settings". Verified against the harness, that justification is false:
   FC packet number is 8 bits, `HAZARD_LIST_SIZE=4`, `sub_wr_os_ctr` is 3 bits. 1024 = 4 x 256
   fully explains the number as an artefact of the harness.
 
-**Defensible statement, and the only one that should reach submission text:** *a chunked
-peer-write soak failed in the 5th of eight 256-beat chunks in 2 of 2 attempts on the frozen
-build, with two different failure signatures; the failure point is bounded to [1024, 1280) and
-the underlying threshold, if any, is unmeasured.*
+**The full primary-source corpus (9 sysval JSON artefacts, verified 2026-08-22) is worse for
+the claim than the retraction above assumed. There is n=1, not n=2.**
 
-T6 still has never passed, and that part stands.
+| verdict | count | beats |
+|---|---|---|
+| **write-path wedge** | **1** | 1024 |
+| obs-plane fault `(no-obs)` | 3 | **1024, 0, 0** |
+| SKIPPED (link already down after T10) | 5 | — |
+| **PASS** | **0** | — |
+
+Two things this settles:
+
+1. **Only ONE record in the entire corpus is a write-path failure.** The *other* "beat 1024" run
+   took the obs branch at `:215-217`, which means `rc == 0` — **the 1024-1279 write chunk
+   completed successfully** and only the follow-up `obs()` call returned nothing. The pack
+   conflated a write wedge with an observability-plane timeout because both print the same beat
+   number. They are different events.
+2. **The obs-plane faults occur at beats 1024, 0 and 0** — the same code path, including **beat
+   zero twice**. That is not a threshold. (An older 08-09 run failed the same way at 768.)
+
+All obs faults are `(no-obs)`: the diagnostic plane did not answer, so **no Region-F witness
+value has ever been captured for any T6 failure.** Note this interacts with the finding that the
+observability plane shares a matrix port with the wedged path — "no-obs" may be a symptom rather
+than a measurement, and must not be read as data either way.
+
+**Defensible statement, and the only one that should reach submission text:** *a chunked
+peer-write endurance soak has never passed (0 of 10 recorded runs). Of the failures, exactly one
+was a write-path wedge, in the 5th of eight 256-beat chunks; the others were diagnostic-plane
+timeouts at chunk indices 0, 0 and 4. No fixed beat threshold is established.*
+
+**The discriminator that would settle it was designed on 2026-08-09 and has never been run:**
+parameterise the hardcoded `step` at `kr260_sysval.py:208` and sweep chunk geometry across
+independent bring-ups. Rig-only, no rebuild needed.
+
+T6 having never passed is unaffected and is now primary-source verified: 0 PASS across every
+artefact.
 
 ## 6. Known limitations shipping with this freeze
 
