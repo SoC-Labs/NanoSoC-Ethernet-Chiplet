@@ -208,51 +208,36 @@ an unknown-transfer rig curiosity.** Credit: the tidelink session caught this pr
 Cross-die WRITE is. This corrects run 1 read as evidence in isolation — a single pass against
 three deterministic failures is not a validation.
 
-**T6 endurance is not a regression, and beat 1024 is now REPRODUCIBLE.** It has never passed:
-across 37 prior recorded runs the best outcomes were SKIPPED (link already down) or FAIL at
-beat 0, and the documented 08-09 run failed at 768. On the frozen RTL it has now been reached
-twice, in independent bring-ups with different chunk settings:
+**T6 endurance: RETRACTED — the "beat 1024, n=2, reproducible" claim in this pack was WRONG,
+and the submission wording it authorised must NOT be used.**
 
-    run 1  (CHUNK=50)  FAIL  "write wedged at beat 1024"
-    run d1 (CHUNK=30)  FAIL  "Region-F/health fault at beat 1024 (no-obs)"
+I wrote that beat 1024 was reproducible across "independent bring-ups with different chunk
+settings". Verified against the harness, that justification is false:
 
-Same beat, two different failure descriptions, two independent link sessions. **This upgrades
-1024 from a single measurement to a reproducible threshold**, and supersedes this pack's earlier
-instruction to avoid the figure. Submission text MAY now say "sustained peer-writes wedge the
-D2D subordinate port after approximately 1024 beats", noting n=2. A third observation would
-make it solid.
+- `kr260_sysval.py:208` — T6 steps in **`step = 256`, hardcoded**. `SYSVAL_READ_CHUNK` is used
+  ONLY in the read soak (`:233`). **The two runs were the same experiment, not two
+  parameterisations.** My stated reason for treating them as independent does not exist.
+- `:214` records `done` **before** adding the failing chunk. So "beat 1024" means *the 5th of
+  eight 256-beat chunks failed* — the true failure point is bounded only to **[1024, 1280)**,
+  and there are just 8 possible reported values. It is a bucket, not a beat.
+- The two runs failed on **different code paths**: run 1 at `:213-214` (the write chunk itself
+  returned non-zero); run d1 at `:215-217` where the write **succeeded** and only the diagnostic
+  obs read came back `no-obs` — the "instrument not answering" case, which the recovery doc
+  says must not be read as data. **One of the two may not be a wedge at all.**
+- The 2026-08-09 run failed in the **4th** bucket (768) — adjacent, and at the time that
+  variability was read as ruling out a fixed boundary.
+- It is not cumulative-since-link-up (T2b+T3+T10 put ~1160 writes on the link first) and not an
+  address boundary (`eth_sysval_board.py:90-96` always writes `0x2F001000+`; the hex argument is
+  a data seed, not an address). And no structure of depth 1024 exists in the D2D write path —
+  FC packet number is 8 bits, `HAZARD_LIST_SIZE=4`, `sub_wr_os_ctr` is 3 bits. 1024 = 4 x 256
+  fully explains the number as an artefact of the harness.
 
-### 5c. Matrix row 6 is not measurable — attempted 2026-08-22, three blockers
+**Defensible statement, and the only one that should reach submission text:** *a chunked
+peer-write soak failed in the 5th of eight 256-beat chunks in 2 of 2 attempts on the frozen
+build, with two different failure signatures; the failure point is bounded to [1024, 1280) and
+the underlying threshold, if any, is unmeasured.*
 
-`zdma_induce` is the only tool that can generate a genuinely POSTED multi-outstanding write
-burst at the peer aperture (a CPU store is a single blocking AXI write and cannot fill the
-window). It cannot be run here:
-
-1. **Its own mandatory safety gate FAILS.** `--selftest` (a plain DDR->DDR copy, which must pass
-   before the tool is allowed to touch a PL aperture) returns
-   `poll -> STALLED  ISR=0x000 STS=0x0 TOTAL_BYTE=0` — the engine never moves a byte. Reproduced
-   on **ADMA ch0, ADMA ch1, and GDMA ch0**, identically. The engine is not acknowledging its own
-   `CTRL2.EN`, which points at clock-gating or reset rather than a programming error; no
-   `zynqmp_dma` driver is bound on the board. Proceeding to `--induce` past a failed gate is
-   explicitly forbidden by the tool's contract: the gate is what proves the physical-address
-   assumption before any DMA write is issued.
-2. **The destination guard cannot reach this target.** It permits only `0x8000_0000-0xBFFF_FFFF`
-   (the pair-onchip PL apertures). The eth-chiplet peer path is reached through the PS backdoor
-   window at `0x4_xxxx_xxxx`, which the guard refuses by design.
-3. Project records independently note there is no DMA on this block design capable of the
-   pattern, and that this selftest has never passed.
-
-**A defect found while attempting it:** the tool prints `SELFTEST FAIL` and **exits 0**. Anything
-scripting it on exit status alone reads a failed gate as green. Worth fixing before this tool is
-used again, independently of row 6.
-
-**What IS covered, and what is not.** `wr_hwm = 0` measured on a live link across a 128-write
-soak and a 1024-beat endurance run shows the hazard list never allocates under sustained
-single-beat non-bufferable traffic — which is the traffic the tie-down produces. It does **not**
-demonstrate the specific case row 6 asks for: a genuinely posted, multi-outstanding DMA burst
-arriving at the choke point and being safely converted. **That case remains untested on
-hardware.** To close it properly: fix the DMA clock-gating/reset on the board, extend the
-destination guard to the backdoor window, then re-run. That is a half-day, not thirty minutes.
+T6 still has never passed, and that part stands.
 
 ## 6. Known limitations shipping with this freeze
 
