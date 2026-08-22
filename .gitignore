@@ -198,6 +198,25 @@ site/
 # negation names the DIRECTORY, not the files in it: git does not descend into an
 # excluded directory, so `!.../build/rom_verify/eth.json` would re-include
 # nothing — the same trap the /fpga/haps-sx/ comment records.
+
+# ---- added 2026-08-22: rules that SHOULD have caught existing untracked bulk ----
+# The phase-2 (RTL->fv_map) Conformal DB. The existing rule below catches only the
+# sibling *_gatev_db/ produced by the gate leg, and misses this one by name.
+/ASIC/eth-chiplet/rtl_fv_map_db/
+/ASIC/eth-chiplet/*fv_map*_db/
+
+# A non-canonical copy of a run directory. The canonical one under runs/ is already
+# ignored; this sibling path was outside that rule and held a 124 MB .gds.
+ASIC/genus-innovus/*-run/
+
+# Editor/tool backups. *.orig was covered; *.bak* was not.
+*.bak
+*.bak-*
+
+# Generated padring-orientation fixtures. gen_padring_orientation_fixture.py builds
+# them at test time; commit 90b1d88 decided deliberately not to track them.
+/ci/fixtures/padring-orientation/*/corner_test.gds
+
 !/ci/fixtures/**/build/
 # `results.xml` and `results_*.xml` above carry no slash, so they match AT ANY
 # DEPTH — and the regress fixtures are cocotb result files by definition. Here
