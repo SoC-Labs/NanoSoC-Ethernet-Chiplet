@@ -126,6 +126,29 @@ is correct. The integration-level gate on THIS side is verif/g2_soc_pair, record
 mid-run, and **the aggregate can exit 0 while its own summary says FAILURES DETECTED**. Read the
 per-suite table, never the exit code. No summary line means unmeasured, not green.
 
+### 4b. ⚠ THE SIM GATE THAT SHIPPED WITH THIS FREEZE DID NOT RUN ON THE FROZEN LINE
+
+Recorded 2026-08-23. All 59 files in `tidelink/imp/sim_gate/` (56 PASS / 3 XFAIL)
+are stamped **`3620af3328ca-dirty`**. Two problems, both measured:
+
+- **`3620af33` is NOT an ancestor of the frozen pin `5e8bdb5a`.** `git merge-base
+  --is-ancestor` returns false. It is a 2026-08-18 merge commit on a different line.
+- The **`-dirty`** suffix means the worktree carried uncommitted changes when the
+  gate ran, so the results do not correspond to any commit at all.
+
+**So "sim gate green" must not be read as "green on the freeze".** The gate is green
+on a dirty tree at a commit off the frozen line. That is precisely the trap this
+project documented for itself, and it was live at the freeze.
+
+**What this does NOT invalidate.** The frozen pointer has its own independent
+evidence recorded in this pack: `elab` PASS at 213 modules, `verif/g2_soc_pair`
+15/15, and the hardware matrix in section 5 — all run against `5e8bdb5a` directly.
+The sim gate is an additional claim, not the load-bearing one.
+
+**To close it:** re-run `make sim_gate` on a clean checkout of `5e8bdb5a` and
+replace the 59 status files, or strike the sim-gate row from the signoff block.
+Do not sign the pack with this row reading green and unqualified.
+
 ## 5. Hardware re-validation ON THE FROZEN POINTER
 
 Vehicle `kr260-eth-chiplet` (die_a kr260-01, die_b kr260-02 flip). **Rebuilt from the frozen pin —
