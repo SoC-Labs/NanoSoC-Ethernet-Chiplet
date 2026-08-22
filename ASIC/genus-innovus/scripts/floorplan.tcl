@@ -152,6 +152,25 @@ create_place_halo -halo_deltas {3.6 3.6 3.6 3.6} -all_macros
 ## cheap defence against long signal routes over macros. `-all_blocks`, not
 ## `-all_macros`: the latter is create_place_halo's spelling and errors out with
 ## IMPTCM-48, which on 2026-08-08 dropped Innovus to a prompt mid-flow.
+## MEASURED 2026-08-22 AND REVERTED. Widening this 1.0 -> 2.0 was tried in
+## build/gdsrun-20260822-halo to chase the five Regular Wire violations below.
+## IT DOES NOT WORK AND IT MAKES THINGS WORSE: same 58 check_drc, the SAME five
+## records still naming RAMCLD0RDATA/WDATA[123], and SHORT went 1 -> 3 (two new
+## Cut/Metal Shorts on FE_PHN10374_..._RAMCLD0WDATA_123). Structurally it could
+## never have worked -- create_route_halo is a COST PENALTY on long wires and
+## the manual states "straight connections to pins are acceptable"; all five
+## violations sit on way0_word_3's OWN pins, 0.00-0.15um from its edge, two of
+## them strictly inside the footprint. Do not widen this to chase pin-adjacent
+## DRC. The original 1.0 note follows.
+##
+## nx01gSX moved way0_word_3 down 4.10um, its
+## top edge landed at y=422.30 inside a live signal channel, and the router left
+## FIVE Regular Wire violations there including a VIA3 Cut Short -- on a design
+## whose two previous runs had ZERO. All five are VIA3/M3, inside this halo's
+## M1..M4 range, and the M3 one names way0_word_3 as the blockage it hits.
+## The router's own repair pass cleared 23 of 28 and could not place the rest:
+## that is congestion at the macro edge, not a missing repair step, so the fix
+## is to keep signal routing off the edge rather than to repair harder.
 create_route_halo -all_blocks -bottom_layer M1 -top_layer M4 -space 1.0
 
 ## BOND-PAD M8/M9/AP KEEP-OUT.
@@ -322,7 +341,7 @@ set ::PLACED_MACROS {}
 
 place_macro {*ethmac*bd_ram*u_rf} 1053.8000000000 1117.8100000000 R180
 place_macro {*u_network_core*u_region_bootrom_0*rom_via*} 883.5350000000 1538.6000000000 MY
-place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6000000000 1340.4000000000 MY  ;## MOVED -20 y: makes room for eth_scratch_tx below it
+place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6000000000 1339.2500000000 MY  ;## MOVED -20 y: makes room for eth_scratch_tx below it
 place_macro {*region_eth_scratch_rx_0*} 590.2000000000 1338.8000000000 R0
 ## ORPHAN CORRIDORS -- why these two macros moved UP on 2026-08-13
 ##
@@ -388,7 +407,7 @@ place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1637.3100000000 MY  ;## 
 ## check anywhere in this flow that a PG stripe landed inside a macro, so the
 ## next person to nudge a macro for placement reasons gets no warning at all.
 ## That gate is the real fix; this coordinate is the repair.
-place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1505.6000000000 R0  ;## was 1506.12 (shorted), before that 1503.4 (orphan corridor)
+place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1504.5000000000 R0  ;## was 1506.12 (shorted), before that 1503.4 (orphan corridor)
 place_macro {*way1_cache_ram_tag_ram_0_i} 911.4000000000 468.6900000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 911.2 468.69
 place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 402.0900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_data_ram_0_word_2_i} 554.4000000000 478.4000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 553.8 480.4
@@ -397,7 +416,7 @@ place_macro {*way0_cache_ram_data_ram_0_word_0_i} 702.4000000000 300.0400000000 
 place_macro {*way0_cache_ram_data_ram_0_word_1_i} 718.8000000000 344.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 718.8 345.04
 place_macro {*way1_cache_ram_data_ram_0_word_2_i} 634.2000000000 527.2000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 633.6 527.2
 place_macro {*way1_cache_ram_data_ram_0_word_3_i} 564.4000000000 435.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
-place_macro {*way1_cache_ram_data_ram_0_word_0_i} 709.8000000000 210.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 708.6 210.04
+place_macro {*way1_cache_ram_data_ram_0_word_0_i} 709.8000000000 211.7400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 708.6 210.04
 place_macro {*way1_cache_ram_data_ram_0_word_1_i} 726.6000000000 255.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 727.8 255.04
 place_macro {*u_chip_core*u_region_imem_0*rf_16k*} 1059.2000000000 209.9500000000 R180  ;## MOVED +6 y: was 1.05 below the new core bottom
 place_macro {*u_shared_sram_0*rf_08k*} 1052.4000000000 506.7100000000 R180  ;## MOVED +6 y: follows chip imem rf_16k, keeps the 11.51 gap
