@@ -396,13 +396,23 @@ def density_windows(rundir, pad_inset):
             dbu = float(h[1])
 
         first = lines[0].split()
-        is_print = len(first) == 5 and all(
+        # Calibre density PRINT lines are "x1 y1 x2 y2 <density>", but some
+        # checks emit a sixth column (the measured value AND the required one):
+        # M2.DN.4 and M3.DN.4 do, on this deck. Accepting only 5 sent those two
+        # down the RDB branch, where line 3 of M2.DN.4 --
+        #     250 1250 500 1500 0.453929 0.4183
+        # -- was read as "<count> <origcount>" = 250/1250 and reported as
+        # "M2.DN.4 <-- CAPPED" plus "FAIL: density output truncated".  Those are
+        # COORDINATES.  The summary says M2.DN.4 = 3 and the file has 3 lines;
+        # nothing was truncated, and the deck header already carries the
+        # `DRC MAXIMUM RESULTS DENSITY ALL` the failure message asks for.
+        is_print = len(first) in (5, 6) and all(
             re.fullmatch(r"[-+0-9.eE]+", f) for f in first)
         if is_print:
             n = core = 0
             for ln in lines:
                 f = ln.split()
-                if len(f) != 5 or not re.fullmatch(r"[-+0-9.eE]+", f[0]):
+                if len(f) not in (5, 6) or not re.fullmatch(r"[-+0-9.eE]+", f[0]):
                     continue
                 n += 1
                 x1, y1, x2, y2 = (float(v) for v in f[:4])
