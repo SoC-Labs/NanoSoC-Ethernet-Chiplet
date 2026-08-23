@@ -1138,8 +1138,19 @@ if {$_rzko_on} {
             -rects [list [list $_x1 $_y1 $_x2 $_y2]]
         incr _rzn
     }
-    puts "POWER-PLAN: macro M4 keep-out -- $_rzn blockage(s), inset $_rzko um,\
-          $_rzskip exempt, in force for the block_pin connect only"
+    ## _rzn counts CALLS -- one per covered macro, which is what the macro
+    ## accounting just below needs. _rzobj counts the OBJECTS those calls
+    ## actually made, which is what the delete accounting at the far end needs.
+    ## They are equal only because -layers takes one layer:
+    ## create_route_blockage makes one object PER LAYER, so the first person to
+    ## write -layers {M4 M5} would have got a spurious "created 21 but deleted
+    ## 42" from a guard that was comparing two different quantities.
+    set _rzobj 0
+    foreach _b [get_db route_blockages] {
+        if {[string match "MACRO_M4_KEEPOUT_*" [get_db $_b .name]]} { incr _rzobj }
+    }
+    puts "POWER-PLAN: macro M4 keep-out -- $_rzn blockage(s) in $_rzobj object(s),\
+          inset $_rzko um, $_rzskip exempt, in force for the block_pin connect only"
     if {$_rzn + $_rzskip != [llength $::PLACED_MACROS]} {
         puts stderr "WARNING: power_plan: macro M4 keep-out covered $_rzn +\
                    exempted $_rzskip of [llength $::PLACED_MACROS] macros -- an\
@@ -1166,11 +1177,12 @@ if {$_rzko_on} {
         if {[string match "MACRO_M4_KEEPOUT_*" [get_db $_b .name]]} { delete_obj $_b ; incr _rzd }
     }
     puts "POWER-PLAN: macro M4 keep-out -- deleted $_rzd blockage(s)"
-    if {$_rzd != $_rzn} {
-        error "power_plan: macro M4 keep-out created $_rzn blockages but deleted\
-               $_rzd -- refusing to hand a stale PG blockage to the next stage"
+    if {$_rzd != $_rzobj} {
+        error "power_plan: macro M4 keep-out created $_rzobj blockage objects but\
+               deleted $_rzd -- refusing to hand a stale PG blockage to the next\
+               stage"
     }
-    unset _rzd _rzn _rzko _rzskip _rzex
+    unset _rzd _rzn _rzobj _rzko _rzskip _rzex
 }
 unset _rzko_on
 
@@ -1229,3 +1241,392 @@ if {![info exists ::env(EVP_NO_G4_FIXVIA)] || $::env(EVP_NO_G4_FIXVIA) ne "1"} {
 } else {
     puts "POWERPLAN: EVP_NO_G4_FIXVIA=1 -- skipping the fix_via min_step/min_cut pass"
 }
+
+## ---------------------------------------------------------------------------
+## MARKER-DRIVEN PG RESIDUE CLEANUP  (added 2026-08-23)
+##
+## route_special (:1150) leaves behind two kinds of debris that the fix_via
+## pass above cannot touch, because neither of them is a via problem.
+##
+##  A. DEAD PG ISLANDS -- an isolated fragment of supply metal with no via
+##     above it, no via below it and no same-layer metal touching it. It
+##     conducts nothing. Four independent checks on gdsrun-20260823-rzG name
+##     the one such fragment this floorplan produces, an M5 VDD blockwire
+##     0.075 x 0.200 um at (565.425, 477.900)-(565.500, 478.100):
+##
+##       check_drc          MAR + MINWIDTH, both at exactly those bounds
+##                          (reports/pg_post_fixvia.rep, and unchanged in
+##                          reports/nanosoc_eth_chiplet_pads_imp_drc.rep --
+##                          the object survives place/cts/route untouched)
+##       check_power_vias   "Missing orthogonal adjacent via VIA4 ... M4 and
+##                          M5" AND "... VIA5 ... M5 and M6" -- nothing below
+##                          it, nothing above it (2 of the run's 372)
+##       check_connectivity "has special routes with opens at (565.425,
+##                          477.900) (565.500, 478.100)" -- 1 of the 53 opens
+##                          -- plus 2 of the 711 dangling wires
+##       Calibre            M5.W.1 and M5.A.1, one polygon, 2 of the 14
+##                          design-owned results
+##
+##     Deleting it therefore IMPROVES every power-grid metric we measure. It
+##     is not a DRC win bought with PG cost; there is no PG here to lose.
+##
+##  B. SAME-NET SUB-MINIMUM GAPS -- two supply wires of the SAME net left a
+##     few tens of nanometres apart at one block-pin tap. Measured: one, an M4
+##     VDD-to-VDD 0.020 um gap at (850.355, 343.580)-(850.615, 343.600),
+##     which Calibre reports as M4.S.1.
+##
+##     THIS PASS SHIPS DISABLED (EVP_PG_GAP_MAX defaults to 0) BECAUSE IT DOES
+##     NOT PAY. It was built, run and streamed, and Calibre says closing that
+##     gap costs more than it saves:
+##
+##       arm                          M4.S.1   G.4:M4i   design-owned
+##       control                        1         0           14
+##       bridge over the intersection   0         ?           (not streamed)
+##       bridge over the union          0         2           13
+##
+##     Bridging welds the two wires and M4.S.1 does go away, but the bridge's
+##     own corner is then a jog: Calibre G.4:M4i fires twice at
+##     (850.205, 343.580)-(850.240, 343.580) and (850.240, 343.580)-
+##     (850.240, 343.600), two adjacent edges of 0.035 and 0.020 um against a
+##     0.100 um min width. Net +1 result, so the pass is a loss. An earlier
+##     variant that bridged only the two wires' overlap was worse still: it
+##     left the upper wire's 0.125 um overhang with a re-entrant corner
+##     underneath and Innovus went 15 -> 14 markers instead of 15 -> 13,
+##     replacing the spacing violation with a spacing AND a min-step.
+##
+##     The mechanism is kept, off, because it is measured and because the next
+##     floorplan may put the same defect somewhere with room to close it
+##     cleanly. Turning it on means EVP_PG_GAP_MAX=0.050 and re-measuring
+##     G.4 on the stream -- do not turn it on without that.
+##
+## WHY THIS IS DRIVEN BY MARKERS AND NOT BY COORDINATES.
+## A coordinate literal stops matching the moment a macro moves, and it does
+## so SILENTLY -- the run stays green and the defect comes back. Every input
+## here comes from the tool instead: the sites come from check_drc's own
+## violation markers, the size bounds come from the LEF (layer .min_width),
+## and the delete/merge decision comes from an electrical property of the
+## object -- no via on either side, nothing touching it -- not from where it
+## is. Move the floorplan and this block finds the new sites, or finds none.
+##
+## WHAT IT WILL NOT DO.
+##  * It will not delete anything that has a via or a neighbour. The test is
+##    "the only object on this layer within 1 nm of me is me".
+##  * It will not weld anything at all unless EVP_PG_GAP_MAX is set, and it
+##    will never weld a gap wider than that. The two M8.S.3 results in this
+##    run are ALSO same-net VDD-to-VDD, but their gap is 1.495 um: that is a
+##    spacing decision someone made, not a rounding error, and silently
+##    bridging two rings is not a free win. Any value here should stay in the
+##    tens of nanometres.
+##  * It will not run away. EVP_PG_RESIDUE_CAP (default 2) is comfortably
+##    above the one site this floorplan is known to have. Finding more means the power
+##    plan changed and a person should look, so it is an error, not a bulk
+##    edit -- and nothing is changed before the cap is tested.
+##
+## GUARDS. Off with EVP_NO_PG_RESIDUE=1. Counts are printed. Deletions and
+## creations are counted as OBJECTS, measured from the database before and
+## after, never as calls. A check_drc runs on both sides and the block errors
+## if the marker count did not fall.
+##
+## LATENT BUG FIXED ABOVE, same accounting pattern: the macro M4 keep-out
+## compared its DELETED OBJECT count against its CREATE-CALL count. Those are
+## equal only because it passes -layers {M4}. create_route_blockage makes one
+## object PER LAYER, so the first person to write -layers {M4 M5} would have
+## got a spurious "created 21 but deleted 42" error and would have gone
+## looking for a stale-blockage bug that was not there. _rzobj now measures
+## the objects.
+## ---------------------------------------------------------------------------
+
+set _pgr_on 1
+if {[info exists ::env(EVP_NO_PG_RESIDUE)] && $::env(EVP_NO_PG_RESIDUE) eq "1"} {
+    set _pgr_on 0
+    puts "POWERPLAN: EVP_NO_PG_RESIDUE=1 -- skipping the PG residue cleanup"
+}
+
+if {$_pgr_on} {
+
+## Flat 4-element rect from any object attribute that carries one. get_db
+## returns {{x1 y1} {x2 y2}}; every caller here wants {x1 y1 x2 y2}.
+proc _pgr_r4 {o attr} {
+    set v {}
+    if {[catch {set v [concat {*}[get_db $o $attr]]}]} { return {} }
+    if {[llength $v] != 4} { return {} }
+    return $v
+}
+
+## Is this special wire electrically dead? The test is a property, not a
+## place: expand its own rectangle by eps and ask the database what else is on
+## this layer. A live tap has a via, a live strap has metal touching it, a live
+## block-pin riser lands on a macro pin shape. A dead island has none of those,
+## so the metal query returns exactly one object -- itself -- and the via and
+## pin queries return none.
+##
+## Everything here is Stylus. The legacy dbQuery would express this in one
+## call, but it returns nothing under -stylus, which is the mode this flow
+## runs in, and a query that silently returns nothing would read as "isolated"
+## for every wire on the chip. Measured 2026-08-23 on the rzG routed database:
+## dbQuery over the island's own bounding box returned 0 objects, not 1.
+proc _pgr_dead {w eps} {
+    set r [_pgr_r4 $w .rect]
+    if {![llength $r]} { return 0 }
+    lassign $r x1 y1 x2 y2
+    set L [get_db $w .layer.name]
+    set qb [list [list [expr {$x1-$eps}] [expr {$y1-$eps}] \
+                       [expr {$x2+$eps}] [expr {$y2+$eps}]]]
+    ## (a) metal on this layer. The wire itself must come back, or the query is
+    ## not measuring what this block thinks it measures.
+    set m {}
+    if {[catch {set m [get_obj_in_area -areas $qb -layers [list $L] \
+                        -obj_type {special_wire wire patch_wire}]} e]} {
+        error "power_plan: PG residue: area query failed ($e)"
+    }
+    if {![llength $m]} {
+        error "power_plan: PG residue: the metal query around a special wire did\
+               not return the wire itself. A query that cannot see the object it\
+               is centred on would call every wire on the chip isolated --\
+               refusing to delete anything."
+    }
+    if {[llength $m] != 1} { return 0 }
+    ## (b) any via landing on this layer here. -layers matches a via on its
+    ## bottom, cut or top layer, so this catches VIA(n-1) below and VIA(n) above.
+    set v {}
+    catch { set v [get_obj_in_area -areas $qb -layers [list $L] \
+                     -obj_type {special_via via}] }
+    if {[llength $v]} { return 0 }
+    ## (c) a macro or top-level pin shape it might be tapping. pin_shape takes
+    ## the layer filter; where the release does not accept that obj_type, fall
+    ## back to the unfiltered pin query, which can only ever be MORE cautious.
+    set p {}
+    if {[catch {set p [get_obj_in_area -areas $qb -layers [list $L] \
+                        -obj_type {pin_shape}]}]} {
+        catch { set p [get_obj_in_area -areas $qb -obj_type {pg_pin port_shape}] }
+    }
+    if {[llength $p]} { return 0 }
+    return 1
+}
+
+set _pgr_eps 0.001
+
+## 0 disables the weld pass entirely -- see (B) above for why that is the
+## shipped default. Any positive value is an upper bound on the gap it closes.
+set _pgr_gapmax 0.0
+if {[info exists ::env(EVP_PG_GAP_MAX)] && $::env(EVP_PG_GAP_MAX) ne ""} {
+    set _pgr_gapmax [expr {double($::env(EVP_PG_GAP_MAX))}]
+}
+set _pgr_areamax 0.100
+if {[info exists ::env(EVP_PG_ISLAND_MAX_AREA)] && $::env(EVP_PG_ISLAND_MAX_AREA) ne ""} {
+    set _pgr_areamax [expr {double($::env(EVP_PG_ISLAND_MAX_AREA))}]
+}
+set _pgr_cap 2
+if {[info exists ::env(EVP_PG_RESIDUE_CAP)] && $::env(EVP_PG_RESIDUE_CAP) ne ""} {
+    set _pgr_cap [expr {int($::env(EVP_PG_RESIDUE_CAP))}]
+}
+
+## Fresh markers. The fix_via block above leaves its own behind, but this
+## block must not depend on whether that block ran (EVP_NO_G4_FIXVIA=1 skips
+## it), so it makes its own "before" and its own "after" to compare against.
+## A saved routed database carries the ROUTER's marker set -- 795,344 of them
+## on rzG -- so [get_db markers] is not check_drc's answer and must never be
+## used as if it were. The filter below is cross-checked against the report
+## check_drc has just written: if the two disagree, the filter is wrong for
+## this release and the block stops rather than acting on the wrong objects.
+proc _pgr_reptotal {f} {
+    set n -1
+    if {![file readable $f]} { return $n }
+    set fh [open $f r]
+    while {[gets $fh l] >= 0} {
+        if {[regexp {Total Violations *: *([0-9]+)} $l -> v]} { set n $v }
+    }
+    close $fh
+    return $n
+}
+proc _pgr_markers {rep} {
+    set want [_pgr_reptotal $rep]
+    foreach f {{.type == drc && .originator == check} {.type == drc} {}} {
+        set m {}
+        if {[llength $f]} {
+            catch { set m [get_db markers -if $f] }
+        } else {
+            catch { set m [get_db markers] }
+        }
+        if {[llength $m] == $want} {
+            puts "POWERPLAN: PG residue -- marker filter {$f} selects\
+                  [llength $m], matching the report"
+            return $m
+        }
+    }
+    error "power_plan: PG residue: no marker filter reproduced the $want\
+           violation(s) check_drc reported in $rep. This database's marker set\
+           is not what this block assumes -- refusing to act on it."
+}
+
+check_drc -limit 200000 -out_file $REPORT_DIR/pg_pre_residue.rep
+set _pgr_mk [_pgr_markers $REPORT_DIR/pg_pre_residue.rep]
+set _pgr_m0 [llength $_pgr_mk]
+
+set _pgr_pg [get_db pg_nets .name]
+puts "POWERPLAN: PG residue -- $_pgr_m0 marker(s), PG nets: $_pgr_pg"
+puts "POWERPLAN: PG residue -- gap <= $_pgr_gapmax um, island area <=\
+      $_pgr_areamax um2, site cap $_pgr_cap"
+
+set _pgr_kill {}    ;# special wires to delete
+set _pgr_weld {}    ;# {layer net x1 y1 x2 y2} patches to create
+
+foreach _mk $_pgr_mk {
+    set _mb [_pgr_r4 $_mk .bbox]
+    if {![llength $_mb]} { continue }
+    set _ml ""
+    catch { set _ml [get_db $_mk .layer.name] }
+    if {$_ml eq ""} { continue }
+    lassign $_mb _bx1 _by1 _bx2 _by2
+
+    ## ---- A. a dead island lying wholly inside a violation marker ----------
+    set _enc {}
+    catch { set _enc [get_obj_in_area -areas [list $_mb] -layers [list $_ml] \
+                        -obj_type special_wire -enclosed_only] }
+    foreach _w $_enc {
+        if {[lsearch -exact $_pgr_kill $_w] >= 0} { continue }
+        set _wr [_pgr_r4 $_w .rect]
+        if {![llength $_wr]} { continue }
+        lassign $_wr _wx1 _wy1 _wx2 _wy2
+        set _wa [expr {($_wx2-$_wx1)*($_wy2-$_wy1)}]
+        set _wn ""
+        catch { set _wn [get_db $_w .net.name] }
+        if {[lsearch -exact $_pgr_pg $_wn] < 0} { continue }
+        if {$_wa > $_pgr_areamax} { continue }
+        if {![_pgr_dead $_w $_pgr_eps]} { continue }
+        lappend _pgr_kill $_w
+        puts [format "POWERPLAN: PG residue -- DEAD ISLAND %s %s (%.3f %.3f)-(%.3f %.3f) area %.5f um2 shape %s" \
+              $_ml $_wn $_wx1 $_wy1 $_wx2 $_wy2 $_wa [get_db $_w .shape]]
+    }
+
+    ## ---- B. a same-net gap narrower than the merge bound -------------------
+    set _near {}
+    catch { set _near [get_obj_in_area \
+              -areas [list [list [expr {$_bx1-$_pgr_gapmax}] [expr {$_by1-$_pgr_gapmax}] \
+                                 [expr {$_bx2+$_pgr_gapmax}] [expr {$_by2+$_pgr_gapmax}]]] \
+              -layers [list $_ml] -obj_type special_wire] }
+    set _mcx [expr {($_bx1+$_bx2)/2.0}]
+    set _mcy [expr {($_by1+$_by2)/2.0}]
+    set _n [llength $_near]
+    for {set _i 0} {$_i < $_n} {incr _i} {
+      for {set _j [expr {$_i+1}]} {$_j < $_n} {incr _j} {
+        set _a [lindex $_near $_i] ; set _b [lindex $_near $_j]
+        set _ar [_pgr_r4 $_a .rect] ; set _br [_pgr_r4 $_b .rect]
+        if {![llength $_ar] || ![llength $_br]} { continue }
+        set _an "" ; set _bn ""
+        catch { set _an [get_db $_a .net.name] }
+        catch { set _bn [get_db $_b .net.name] }
+        if {$_an eq "" || $_an ne $_bn} { continue }
+        if {[lsearch -exact $_pgr_pg $_an] < 0} { continue }
+        lassign $_ar _ax1 _ay1 _ax2 _ay2
+        lassign $_br _cx1 _cy1 _cx2 _cy2
+        set _ox1 [expr {max($_ax1,$_cx1)}] ; set _ox2 [expr {min($_ax2,$_cx2)}]
+        set _oy1 [expr {max($_ay1,$_cy1)}] ; set _oy2 [expr {min($_ay2,$_cy2)}]
+        ## The bridge spans the UNION of the two wires along the parallel
+        ## axis, not their intersection. MEASURED 2026-08-23 on the rzG routed
+        ## database: a bridge over the intersection only (x 850.355..850.580,
+        ## the two wires being 850.240..850.580 and 850.355..850.705) leaves
+        ## the upper wire's 0.125 um overhang with empty space beneath it, and
+        ## that re-entrant corner is itself a violation -- Innovus went 15 -> 14
+        ## markers, having removed the original M4 spacing result and added an
+        ## M4 spacing AND an M4 min-step at (850.580..850.615, 343.580..343.600).
+        ## Spanning the union leaves a plain step at each end instead of a
+        ## notch. The extra metal is at most EVP_PG_GAP_MAX tall and lies
+        ## directly under (or over) same-net metal that is already there.
+        set _px1 0 ; set _py1 0 ; set _px2 0 ; set _py2 0 ; set _ok 0 ; set _run 0
+        if {$_ox2 - $_ox1 > 0 && $_oy2 - $_oy1 < 0} {
+            set _g [expr {$_oy1 - $_oy2}]
+            if {$_g > 0 && $_g <= $_pgr_gapmax} {
+                set _px1 [expr {min($_ax1,$_cx1)}] ; set _px2 [expr {max($_ax2,$_cx2)}]
+                set _py1 [expr {min($_ay2,$_cy2)}] ; set _py2 [expr {max($_ay1,$_cy1)}]
+                set _run [expr {$_ox2 - $_ox1}]
+                set _ok 1
+            }
+        } elseif {$_oy2 - $_oy1 > 0 && $_ox2 - $_ox1 < 0} {
+            set _g [expr {$_ox1 - $_ox2}]
+            if {$_g > 0 && $_g <= $_pgr_gapmax} {
+                set _py1 [expr {min($_ay1,$_cy1)}] ; set _py2 [expr {max($_ay2,$_cy2)}]
+                set _px1 [expr {min($_ax2,$_cx2)}] ; set _px2 [expr {max($_ax1,$_cx1)}]
+                set _run [expr {$_oy2 - $_oy1}]
+                set _ok 1
+            }
+        }
+        if {!$_ok} { continue }
+        ## the gap THIS marker is about, not some other gap in the window
+        if {$_mcx < $_px1 - $_pgr_eps || $_mcx > $_px2 + $_pgr_eps} { continue }
+        if {$_mcy < $_py1 - $_pgr_eps || $_mcy > $_py2 + $_pgr_eps} { continue }
+        ## the bridge must not itself be a sub-minimum sliver
+        ## _run is the PARALLEL RUN the two wires share -- the length over
+        ## which they actually face each other. It, not the union, is what
+        ## says whether a bridge here is a real join or a sliver.
+        set _mw 0
+        catch { set _mw [get_db [get_db layers $_ml] .min_width] }
+        if {$_mw ne "" && $_mw > 0 && $_run < $_mw} {
+            puts "POWERPLAN: PG residue -- SKIP $_ml $_an gap at ($_mcx $_mcy):\
+                  the two wires overlap by only $_run um, under min width $_mw\
+                  um, so a bridge there would replace one violation with another"
+            continue
+        }
+        set _cand [list $_ml $_an $_px1 $_py1 $_px2 $_py2]
+        if {[lsearch -exact $_pgr_weld $_cand] >= 0} { continue }
+        lappend _pgr_weld $_cand
+        puts [format "POWERPLAN: PG residue -- SAME-NET GAP %s %s %.3f um, bridging (%.3f %.3f)-(%.3f %.3f)" \
+              $_ml $_an [expr {min($_px2-$_px1,$_py2-$_py1)}] $_px1 $_py1 $_px2 $_py2]
+      }
+    }
+}
+
+set _pgr_sites [expr {[llength $_pgr_kill] + [llength $_pgr_weld]}]
+puts "POWERPLAN: PG residue -- [llength $_pgr_kill] dead island(s),\
+      [llength $_pgr_weld] same-net gap(s), $_pgr_sites site(s) total"
+
+if {$_pgr_sites > $_pgr_cap} {
+    error "power_plan: PG residue found $_pgr_sites sites but the cap is\
+           $_pgr_cap. This floorplan is known to produce at most $_pgr_cap;\
+           more means the power plan changed and a person should look at them\
+           before anything is deleted or welded. Nothing has been changed.\
+           Raise EVP_PG_RESIDUE_CAP deliberately, or set EVP_NO_PG_RESIDUE=1."
+}
+
+## Count OBJECTS, before and after, on both sides. Counting CALLS is what
+## makes an accounting guard lie the first time one call touches two objects.
+set _pgr_sw0 0
+foreach _n [get_db pg_nets] { incr _pgr_sw0 [llength [get_db $_n .special_wires]] }
+
+foreach _w $_pgr_kill { delete_obj $_w }
+foreach _c $_pgr_weld {
+    lassign $_c _cl _cn _qx1 _qy1 _qx2 _qy2
+    create_shape -net $_cn -layer $_cl -rect [list $_qx1 $_qy1 $_qx2 $_qy2] \
+        -shape blockwire -status routed
+}
+
+set _pgr_sw1 0
+foreach _n [get_db pg_nets] { incr _pgr_sw1 [llength [get_db $_n .special_wires]] }
+set _pgr_expect [expr {$_pgr_sw0 - [llength $_pgr_kill] + [llength $_pgr_weld]}]
+puts "POWERPLAN: PG residue -- PG special wires $_pgr_sw0 -> $_pgr_sw1\
+      (expected $_pgr_expect)"
+if {$_pgr_sw1 != $_pgr_expect} {
+    error "power_plan: PG residue changed the PG special-wire population from\
+           $_pgr_sw0 to $_pgr_sw1, but deleting [llength $_pgr_kill] and\
+           creating [llength $_pgr_weld] should have given $_pgr_expect. One of\
+           those calls touched more than one object -- refusing to hand an\
+           unaccounted power grid to the next stage."
+}
+
+## Did it work, and did it cost anything? The dead island carries two markers
+## (min width and min area) and each welded gap carries one, so the marker
+## count must fall. It must never rise.
+check_drc -limit 200000 -out_file $REPORT_DIR/pg_post_residue.rep
+set _pgr_m1 [llength [_pgr_markers $REPORT_DIR/pg_post_residue.rep]]
+puts "POWERPLAN: PG residue -- check_drc markers $_pgr_m0 -> $_pgr_m1"
+if {$_pgr_sites > 0 && $_pgr_m1 >= $_pgr_m0} {
+    error "power_plan: PG residue acted on $_pgr_sites site(s) but check_drc\
+           went $_pgr_m0 -> $_pgr_m1. Either the edit did not remove the\
+           violation or it created a new one; compare\
+           $REPORT_DIR/pg_pre_residue.rep with pg_post_residue.rep."
+}
+
+unset _pgr_kill _pgr_weld _pgr_sites _pgr_sw0 _pgr_sw1 _pgr_expect
+unset _pgr_m0 _pgr_m1 _pgr_mk _pgr_pg _pgr_eps _pgr_gapmax _pgr_areamax _pgr_cap
+}
+unset _pgr_on
