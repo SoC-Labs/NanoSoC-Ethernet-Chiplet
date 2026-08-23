@@ -308,9 +308,27 @@ artefact.
    the B round trip; `s_axi_bvalid` returns across the link with no local early-B. Not optimisable in
    the wrapper, and pipelining outstanding singles cannot help (non-bufferable is non-posted by
    definition). The lever is link latency. See `TAPEOUT_LIMITATION_D2D_PEER_WRITE.md`.
-2. **Multi-beat AXI burst path corrupts then wedges** — foreclosed by the tie-down, which forces
-   `AWLEN=0`. A disclosed residual of the burst fix (`BURST_FIX_HARDENING.md` bounded depth-1 to the
-   non-bufferable path), now measured and confirmed. Post-tapeout work.
+2. **Multi-beat AXI bursts are UNAVAILABLE — switched off as collateral of the wedge fix, not
+   because the burst bug is unfixed.** The distinction matters and the earlier wording obscured it.
+
+   The corruption fix (`cap_done_r` / `hwdata_hold_r`) LANDED and gates 14/14, and
+   `BURST_FIX_HARDENING.md` closes two of its three residuals. The one open bound — bufferable/EWR
+   at depth>1, "neither exercised nor claimed" (§3) — sits on a path the tie-down makes
+   unreachable. So nothing about bursts can corrupt in the shipping configuration.
+
+   What ships instead is a capability gap. The tie-down zeroes `HPROT[3:2]`, but the two bits do
+   different jobs in the bridge: **`hprot[2]` gates the wedge** (`core_addr.sv:235`, `hazard_add`)
+   and **`hprot[3]` forces single-beat** (`core_addr.sv:147`, `singles_burst`). Only the first
+   needed to die. Zeroing both is why peer-write throughput is one B round trip per word.
+
+   **A route to recover it is identified and UNTESTED:** pass `hprot[3]`, keep `hprot[2]` low. That
+   would restore multi-beat while leaving `hazard_add` permanently false and the untested EWR
+   residual unreachable. **Do not treat it as a plan yet** — it produces an AXI encoding neither
+   silicon arm exercised: `awcache[1:0] = {hprot[3], hprot[2]}`, so today is `0x0` (COMPLETES on
+   silicon), pre-fix was `0x3` (WEDGES), and the proposal is **`0x2` — Modifiable but not
+   Bufferable, never run**. It also only helps fixed-length bursts, since `singles_burst` fires on
+   undefined-length INCR regardless; and `BURST_FIX_HARDENING.md` §3 bounds depth-1 to `hprot=0`,
+   not `hprot[2]=0`, so the proposal leaves the measured envelope. Post-tapeout, test-first.
 3. **Hold timing red on every FPGA build** (~-22 ns, 8 endpoints, D2D GPIO PHY RX capture). Pre-existing
    baseline, runtime-calibrated; unrelated to the peer-write path.
 4. **Both `ahb_sub` backstops are starvable** aggregate-progress timers; the W node has no timeout;
