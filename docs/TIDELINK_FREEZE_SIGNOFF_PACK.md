@@ -321,14 +321,33 @@ artefact.
    and **`hprot[3]` forces single-beat** (`core_addr.sv:147`, `singles_burst`). Only the first
    needed to die. Zeroing both is why peer-write throughput is one B round trip per word.
 
-   **A route to recover it is identified and UNTESTED:** pass `hprot[3]`, keep `hprot[2]` low. That
-   would restore multi-beat while leaving `hazard_add` permanently false and the untested EWR
-   residual unreachable. **Do not treat it as a plan yet** — it produces an AXI encoding neither
-   silicon arm exercised: `awcache[1:0] = {hprot[3], hprot[2]}`, so today is `0x0` (COMPLETES on
-   silicon), pre-fix was `0x3` (WEDGES), and the proposal is **`0x2` — Modifiable but not
-   Bufferable, never run**. It also only helps fixed-length bursts, since `singles_burst` fires on
-   undefined-length INCR regardless; and `BURST_FIX_HARDENING.md` §3 bounds depth-1 to `hprot=0`,
-   not `hprot[2]=0`, so the proposal leaves the measured envelope. Post-tapeout, test-first.
+   **A recovery route was identified and then MEASURED AS VALUELESS — do not spend build time on
+   it.** The route was: pass `hprot[3]`, keep `hprot[2]` low, restoring multi-beat while leaving
+   `hazard_add` permanently false. Before any RTL was written the gating question was measured —
+   what burst class do the real initiators emit?
+
+   Tree-wide, across **291 files** mentioning `hburst`: **96 assignments, every one to SINGLE**
+   (`3'b000` / `3'b0` / `3'h0`), and **zero** fixed-length (INCR4/8/16) or WRAP drivers anywhere.
+   Against `singles_burst <= ~hprot[3] || hexcl || hburst == BUR_INCR` both live classes give
+   `AWLEN=0` whatever `hprot[3]` does: SINGLE has no burst to preserve, and undefined-length INCR
+   trips the `hburst == BUR_INCR` term independently of the bit. So the split would buy **zero
+   beats** while moving the design onto `awcache = 0x2` — Modifiable-but-not-Bufferable, an
+   encoding neither silicon arm exercised (today `0x0` COMPLETES, pre-fix `0x3` WEDGES). Real risk,
+   no benefit: strictly worse than doing nothing.
+
+   **Which reframes the limitation itself: the tie-down is NOT costing this design burst
+   throughput, because nothing on this design asks for a burst.** The ~1.78 MB/s figure is the B
+   round trip on single-beat traffic and would be that with or without the tie-down. The capability
+   is genuinely absent but currently unexercised. **Revisit only if an initiator emitting
+   fixed-length bursts is ever added** — the bit split is then the candidate, and `awcache=0x2` is
+   the first thing to test.
+
+   *Method note: the first version of this measurement found "zero fixed-length bursts" over 5
+   files — all testbenches, because `git grep` in the superproject does not traverse submodules and
+   the DMAs live in one. The control that caught it was asking whether the search space contained
+   any `hburst` driver at all. A zero from a scan that cannot see the initiators is not a
+   measurement.*
+
 3. **Hold timing red on every FPGA build** (~-22 ns, 8 endpoints, D2D GPIO PHY RX capture). Pre-existing
    baseline, runtime-calibrated; unrelated to the peer-write path.
 4. **Both `ahb_sub` backstops are starvable** aggregate-progress timers; the W node has no timeout;
