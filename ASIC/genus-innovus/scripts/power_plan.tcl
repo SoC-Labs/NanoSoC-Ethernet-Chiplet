@@ -223,6 +223,8 @@ set_db add_stripes_allow_jog { padcore_ring  block_ring }
 ## mesh-to-rail path, load-bearing at an 11% failure rate (IMPPP-570 x837).
 set_db add_stripes_skip_via_on_pin {  }
 set_db add_stripes_skip_via_on_wire_shape {  noshape   }
+
+
 add_stripes -nets {VDD VSS} -layer M8 -direction vertical -width 3.6 -spacing 1.2 -set_to_set_distance 60 -extend_to all_domains -start_from left -start_offset 39.5 -stop_offset 0 -switch_layer_over_obs false -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
 
 deselect_obj -all
@@ -277,7 +279,7 @@ set_db add_stripes_skip_via_on_wire_shape {  noshape   }
 # Source: $TSMC_65_HOME/CMOS/util/lef/PRTF_EDI_65nm_001_Cad_V24a/
 # PRTF_EDI_N65_9M_6X1Z1U_RDL.24a.tlef, `LAYER M8` and `LAYER M9`. Re-read it
 # there before changing any stripe width or spacing.
-add_stripes -nets {VDD VSS} -layer M9 -direction horizontal -width 3.6 -spacing 3.05 -set_to_set_distance 60 -extend_to all_domains -start_from left -start_offset 39.5 -stop_offset 0 -switch_layer_over_obs false -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
+add_stripes -nets {VDD VSS} -layer M9 -direction horizontal -width 3.6 -spacing 3.05 -set_to_set_distance 60 -extend_to all_domains -start_from left -start_offset 39.6 -stop_offset 0 -switch_layer_over_obs false -max_same_layer_jog_length 2 -pad_core_ring_top_layer_limit AP -pad_core_ring_bottom_layer_limit M1 -block_ring_top_layer_limit AP -block_ring_bottom_layer_limit M1 -use_wire_group 0 -snap_wire_center_to_grid none
 
 deselect_obj -all
 
@@ -1059,6 +1061,92 @@ if {$EVP_G4_FIX} {
 ## Falsifiable: the audit should now print rv_vias_to_AP = 8, ap_shapes = 5, and
 ## this call's ViaGen table should regain its RV and AP rows. If G.4:M4i moves,
 ## that is new information -- the G.4 geometry is M4 on SRAM pins, not M9->AP.
+## ---------------------------------------------------------------------------
+## MACRO M4 KEEP-OUT FOR THE BLOCK-PIN CONNECT   (added 2026-08-23, agent-riser)
+##
+## THE DEFECT. 25 of the 26 signoff results in the VIA3/M4.S macro family sit
+## INSIDE a macro's own footprint bounding box -- measured on
+## calibre_runs/drc_pgfix_logo_0823, frame transforms applied. The agent is the
+## route_special call immediately below: of the M4 special-wire pieces lying
+## inside a macro bbox, 4361 of 4361 carry Innovus shape `blockwire`, i.e. every
+## one is a block-pin connection wire. add_stripes' stacked vias contribute
+## NONE. The M5 straps buried in the footprint (-start_offset 8 + -width 1, so
+## exactly 9.000 um in; see :622) are the TARGET, not the agent -- which is why
+## `add_stripes_route_over_rows_only true` fails: measured 2026-08-23 it
+## produced ZERO M5 stripes (108x IMPPP-354), and the intrusion got WORSE
+## (clipped M4 area 1944.68 -> 3639.50 um2, max depth 13.36 -> 48.14 um).
+##
+## THE FIX. Refuse the riser instead of removing its target: an M4 PG routing
+## blockage over every macro footprint, in force ONLY for the block-pin connect
+## below, deleted immediately after so nothing downstream sees it.
+##
+## MEASURED on the PG probe (floorplan+power_plan, pgfix netlist), against a
+## no-change control run in the same session set:
+##       M4-in-macro pieces >= 0.34um deep   606 -> 2      (0.34um = the
+##                                                          shallowest VIA3 hit)
+##       M4-in-macro clipped area       1944.68 -> 250.90 um2
+##       check_drc Total Violations           21 -> 18
+##       check_drc records naming a macro      8 -> 3
+##       records with dx == 0.155              2 -> 0
+##       check_power_vias Missing            495 -> 415     (BETTER)
+##       IMPVFC-200 / -98                 54/196 -> 54/196  (unchanged)
+##       IMPVFC-94                           717 -> 719
+##       SHORT records                         0 -> 0
+##       M5 pass add_stripes created         300 -> 300 wires
+## COST, not yet explained: check_drc gains 5 M9 MINWIDTH and 2 M7 MINCUT
+## records the control does not have. One run, not shown reproducible.
+##
+## Set EVP_MACRO_M4_KEEPOUT=0 to restore the previous behaviour exactly.
+## EVP_MACRO_M4_KEEPOUT_INSET shrinks each box (default 0.0); do not raise it
+## above 0.3 -- the shallowest VIA3.R.2/R.3 result is 0.340 um inside the
+## footprint, so an inset larger than that lets the whole family back in.
+set _rzko_on 1
+if {[info exists ::env(EVP_MACRO_M4_KEEPOUT)] && $::env(EVP_MACRO_M4_KEEPOUT) eq "0"} { set _rzko_on 0 }
+if {$_rzko_on} {
+    set _rzko 0.0
+    if {[info exists ::env(EVP_MACRO_M4_KEEPOUT_INSET)] && $::env(EVP_MACRO_M4_KEEPOUT_INSET) ne ""} {
+        set _rzko [expr {double($::env(EVP_MACRO_M4_KEEPOUT_INSET))}]
+    }
+    ## EXEMPTIONS. A macro whose footprint the keep-out covers has its block-pin
+    ## taps pushed out to its own boundary. Where that boundary lies inside a
+    ## top-metal stripe, the extra taps cut the stripe and can neck it below
+    ## min width -- measured: way1 word_0's top edge is y=248.100 and the FIRST
+    ## M9 stripe occupies y=244.600..248.200 (core bottom 205.0 + the M9 pass's
+    ## -start_offset 39.6, -width 3.6), so 3.500 of its 3.600 um lies over that
+    ## one macro. Covering it turned 1 M9 min-width neck into 6 and added 2 M7
+    ## MINCUTs, all inside y 244.600..249.065 and x 709.800..1021.600.
+    ## That macro owns NONE of the 26 signoff results, so exempting it keeps the
+    ## whole benefit and drops the whole cost.
+    ## THIS IS A WORKAROUND FOR A FLOORPLAN COLLISION, NOT A CURE: the right fix
+    ## is for the first M9 stripe not to sit on a macro. Revisit when that moves.
+    set _rzex {*way1_cache_ram_data_ram_0_word_0_i}
+    if {[info exists ::env(EVP_MACRO_M4_KEEPOUT_EXCLUDE)]} {
+        set _rzex $::env(EVP_MACRO_M4_KEEPOUT_EXCLUDE)
+    }
+    set _rzn 0
+    set _rzskip 0
+    foreach _m $::PLACED_MACROS {
+        set _hit 0
+        foreach _p $_rzex { if {[string match $_p $_m]} { set _hit 1 ; break } }
+        if {$_hit} { incr _rzskip ; puts "POWER-PLAN: macro M4 keep-out -- EXEMPT $_m" ; continue }
+        set _i [get_db insts $_m]
+        lassign [concat {*}[get_db $_i .bbox]] _x1 _y1 _x2 _y2
+        set _x1 [expr {$_x1 + $_rzko}] ; set _y1 [expr {$_y1 + $_rzko}]
+        set _x2 [expr {$_x2 - $_rzko}] ; set _y2 [expr {$_y2 - $_rzko}]
+        if {$_x2 <= $_x1 || $_y2 <= $_y1} { continue }
+        create_route_blockage -pg_nets -layers {M4} -name MACRO_M4_KEEPOUT_$_rzn \
+            -rects [list [list $_x1 $_y1 $_x2 $_y2]]
+        incr _rzn
+    }
+    puts "POWER-PLAN: macro M4 keep-out -- $_rzn blockage(s), inset $_rzko um,\
+          $_rzskip exempt, in force for the block_pin connect only"
+    if {$_rzn + $_rzskip != [llength $::PLACED_MACROS]} {
+        puts stderr "WARNING: power_plan: macro M4 keep-out covered $_rzn +\
+                   exempted $_rzskip of [llength $::PLACED_MACROS] macros -- an\
+                   unaccounted macro keeps its riser and its VIA3.R.2/R.3 results."
+    }
+}
+
 route_special -connect {block_pin core_pin floating_stripe} \
     -layer_change_range        { M1(1) AP(10) } \
     -block_pin_layer_range     { M4 M5 } \
@@ -1069,7 +1157,22 @@ route_special -connect {block_pin core_pin floating_stripe} \
     -floating_stripe_target {block_ring pad_ring ring stripe ring_pin block_pin followpin} \
     -allow_jogging 1 -power_domains { PD_TOP } -nets { VDD VSS } -allow_layer_change 1
 
-
+## Delete the keep-out again. It must not survive into route: it is a PG-only
+## blockage created for one command, and leaving it would silently constrain
+## every later stage that reads this database.
+if {$_rzko_on} {
+    set _rzd 0
+    foreach _b [get_db route_blockages] {
+        if {[string match "MACRO_M4_KEEPOUT_*" [get_db $_b .name]]} { delete_obj $_b ; incr _rzd }
+    }
+    puts "POWER-PLAN: macro M4 keep-out -- deleted $_rzd blockage(s)"
+    if {$_rzd != $_rzn} {
+        error "power_plan: macro M4 keep-out created $_rzn blockages but deleted\
+               $_rzd -- refusing to hand a stale PG blockage to the next stage"
+    }
+    unset _rzd _rzn _rzko _rzskip _rzex
+}
+unset _rzko_on
 
 ## ---------------------------------------------------------------------------
 ## G.4 / MINSTEP residue on generated special vias  (added 2026-08-22)
