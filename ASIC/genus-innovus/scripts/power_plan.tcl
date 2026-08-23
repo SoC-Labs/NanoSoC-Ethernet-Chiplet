@@ -1322,10 +1322,35 @@ if {![info exists ::env(EVP_NO_G4_FIXVIA)] || $::env(EVP_NO_G4_FIXVIA) ne "1"} {
 ##    plan changed and a person should look, so it is an error, not a bulk
 ##    edit -- and nothing is changed before the cap is tested.
 ##
-## GUARDS. Off with EVP_NO_PG_RESIDUE=1. Counts are printed. Deletions and
-## creations are counted as OBJECTS, measured from the database before and
-## after, never as calls. A check_drc runs on both sides and the block errors
-## if the marker count did not fall.
+##  C. MIN-STEP NOTCHES (added 2026-08-23) -- the uncovered corner of the
+##     bounding box of two OVERLAPPING same-net rectangles. Filling it turns
+##     two sub-min-width edges into one flush corner and, because such a corner
+##     butts against one rectangle on one side and the other on the other, the
+##     patch adds no boundary the pair does not already have. Measured:
+##     G.4:M5i 2 -> 0, nothing else in the deck, no PG cost. See case C below.
+##
+##  D. DANGLING STUBS AT A SAME-NET SPACING VIOLATION (added 2026-08-23) --
+##     the same defect class as B, fixed the other way round. Instead of
+##     bridging the gap (B), pull back the party that is dangling until the gap
+##     is legal. Measured: M4.S.1 1 -> 0, nothing else in the deck, no PG cost,
+##     where B's bridge costs G.4:M4i x2. D SUPERSEDES B; B should be deleted
+##     once D has shipped one run. See case D below.
+##
+## WHAT C AND D COST, MEASURED. Calibre, two streams from one Innovus session
+## on gdsrun-20260823-rzG's routed database, control = this block with C and D
+## off:
+##     design-owned Calibre    12 -> 9      (G.4:M5i 2->0, M4.S.1 1->0)
+##     every other rulecheck   unchanged, all 1926 of them
+##     special-route opens     52 -> 52
+##     dangling wires         709 -> 709
+##     missing power vias     344 -> 344
+##
+## GUARDS. Off with EVP_NO_PG_RESIDUE=1; C alone with EVP_PG_STEP_MAX=0; D
+## alone with EVP_PG_TRIM_MAX=0. EVP_PG_RESIDUE_DRYRUN=1 finds and prints the
+## sites without touching anything -- run that first on a new floorplan.
+## Counts are printed. Deletions and creations are counted as OBJECTS, measured
+## from the database before and after, never as calls. A check_drc runs on both
+## sides and the block errors if the marker count did not fall.
 ##
 ## LATENT BUG FIXED ABOVE, same accounting pattern: the macro M4 keep-out
 ## compared its DELETED OBJECT count against its CREATE-CALL count. Those are
@@ -1416,9 +1441,46 @@ set _pgr_areamax 0.100
 if {[info exists ::env(EVP_PG_ISLAND_MAX_AREA)] && $::env(EVP_PG_ISLAND_MAX_AREA) ne ""} {
     set _pgr_areamax [expr {double($::env(EVP_PG_ISLAND_MAX_AREA))}]
 }
-set _pgr_cap 2
+## Cap raised 2 -> 4 when cases C and D were added: this floorplan has three
+## known sites (one dead island, one M5 min-step notch, one M4 stub), so a cap
+## of 2 would abort the run. 4 leaves one slot of headroom; more than that means
+## the power plan changed and a person should look.
+set _pgr_cap 4
 if {[info exists ::env(EVP_PG_RESIDUE_CAP)] && $::env(EVP_PG_RESIDUE_CAP) ne ""} {
     set _pgr_cap [expr {int($::env(EVP_PG_RESIDUE_CAP))}]
+}
+
+## CASE C -- an absolute ceiling on the notch this pass will fill, per side.
+## The REAL bound is the layer's own min width, taken from the LEF per marker,
+## because that is literally what the rule says: G.4 flags "adjacent edges with
+## length less than min width". This number is only a backstop in case a layer
+## reports an implausible min width. Set from measurement: the first version of
+## this pass used a flat 0.050 and SILENTLY MISSED the M5 notch at
+## (876.940, 337.360), whose edges are 0.060 and 0.015 -- one side over the flat
+## bound, both sides under the 0.100 um the rule actually uses. A bound that is
+## not the rule's bound will always find some of the population and not the rest.
+## 0 disables case C.
+set _pgr_stepmax 0.100
+if {[info exists ::env(EVP_PG_STEP_MAX)] && $::env(EVP_PG_STEP_MAX) ne ""} {
+    set _pgr_stepmax [expr {double($::env(EVP_PG_STEP_MAX))}]
+}
+
+## CASE D -- the furthest this pass will pull a dangling stub back to open a
+## same-net spacing violation. The measured site needs 0.080 um; 0.150 allows a
+## little movement in the floorplan without allowing a pass that could shorten a
+## real riser out of reach of its target. 0 disables case D.
+set _pgr_trimmax 0.150
+if {[info exists ::env(EVP_PG_TRIM_MAX)] && $::env(EVP_PG_TRIM_MAX) ne ""} {
+    set _pgr_trimmax [expr {double($::env(EVP_PG_TRIM_MAX))}]
+}
+
+## Find and print the sites, change nothing, and skip the "markers must fall"
+## assertion. For validating the finders against a new floorplan before letting
+## them edit anything.
+set _pgr_dry 0
+if {[info exists ::env(EVP_PG_RESIDUE_DRYRUN)] && $::env(EVP_PG_RESIDUE_DRYRUN) eq "1"} {
+    set _pgr_dry 1
+    puts "POWERPLAN: PG residue -- DRY RUN, nothing will be changed"
 }
 
 ## Fresh markers. The fix_via block above leaves its own behind, but this
@@ -1469,7 +1531,10 @@ puts "POWERPLAN: PG residue -- gap <= $_pgr_gapmax um, island area <=\
       $_pgr_areamax um2, site cap $_pgr_cap"
 
 set _pgr_kill {}    ;# special wires to delete
-set _pgr_weld {}    ;# {layer net x1 y1 x2 y2} patches to create
+set _pgr_weld {}    ;# {layer net x1 y1 x2 y2} patches to create        (case B)
+set _pgr_fill {}    ;# {layer net x1 y1 x2 y2} min-step notches to fill (case C)
+set _pgr_trim {}    ;# {wire layer net x1 y1 x2 y2} stubs to re-create   (case D)
+set _pgr_claim {}   ;# markers case D has taken, so case B leaves them alone
 
 foreach _mk $_pgr_mk {
     set _mb [_pgr_r4 $_mk .bbox]
@@ -1477,6 +1542,13 @@ foreach _mk $_pgr_mk {
     set _ml ""
     catch { set _ml [get_db $_mk .layer.name] }
     if {$_ml eq ""} { continue }
+    ## The subtype is how cases C and D tell a min-step from a spacing marker.
+    ## check_drc's own markers use MinStep / Parallel_Run_Length_Spacing /
+    ## Minimum_Cut / Minimal_Width / Minimal_Area on 21.11; read_markers uses
+    ## MinStep / MinSpacing / MinCuts. Both spellings are matched below so the
+    ## same block works whichever produced the marker.
+    set _msub ""
+    catch { set _msub [get_db $_mk .subtype] }
     lassign $_mb _bx1 _by1 _bx2 _by2
 
     ## ---- A. a dead island lying wholly inside a violation marker ----------
@@ -1499,7 +1571,329 @@ foreach _mk $_pgr_mk {
               $_ml $_wn $_wx1 $_wy1 $_wx2 $_wy2 $_wa [get_db $_w .shape]]
     }
 
+
+    ## ---- C. a MIN-STEP notch between two overlapping same-net wires --------
+    ##
+    ## MEASURED 2026-08-23 on the rzG routed database (Calibre, matched streams
+    ## from one session): this removes G.4:M5i 2 -> 0 and changes NOTHING else
+    ## in the 1926-rulecheck deck -- 52 special-route opens, 709 dangling wires
+    ## and 344 missing power vias are identical on both sides.
+    ##
+    ## THE GEOMETRY. Two same-net same-layer rectangles that OVERLAP, e.g.
+    ##     A = (877.000, 337.025)-(880.725, 337.375)
+    ##     B = (876.940, 337.040)-(880.600, 337.360)
+    ## B reaches 60 nm further left, A is 15 nm taller. The bounding box of
+    ## A u B therefore has a corner that neither covers,
+    ##     (876.940, 337.360)-(877.000, 337.375),
+    ## and the boundary walks two edges of 0.060 and 0.015 um against a 0.100 um
+    ## min width. That is the whole of G.4:M5i.
+    ##
+    ## WHY FILLING IT CANNOT BACKFIRE, which is the part that matters. For two
+    ## overlapping rectangles the uncovered region of their bounding box is at
+    ## most four corner rectangles, and each such corner is flush with the
+    ## bounding box on two sides and butts against A on one and B on the other.
+    ## So a patch that is EXACTLY one of those corners contributes no boundary
+    ## that A u B does not already have: it cannot reduce a clearance to
+    ## anything, on any side. That is asserted below by RECONSTRUCTING the four
+    ## corners from the two rectangles and requiring the marker box to equal
+    ## one of them -- not by trusting the marker box.
+    ##
+    ## The alternative, deleting metal to remove the step, would need to edit a
+    ## generated via array's enclosure; that is a viagen change, not a wire
+    ## edit, and it is why the G.4:M6i sites (whose parties are two via-array
+    ## enclosures and a riser) are NOT reachable from here.
+    if {$_pgr_stepmax > 0 && [string match -nocase "*minstep*" [string map {_ "" - "" " " ""} $_msub]]} {
+      set _cw [expr {$_bx2-$_bx1}] ; set _ch [expr {$_by2-$_by1}]
+      ## The bound is the layer's min width -- the same quantity the rule
+      ## compares against -- capped by EVP_PG_STEP_MAX.
+      set _lmw 0 ; catch { set _lmw [get_db [get_db layers $_ml] .min_width] }
+      set _sbound $_pgr_stepmax
+      if {$_lmw ne "" && $_lmw > 0 && $_lmw < $_sbound} { set _sbound $_lmw }
+      if {$_cw > 0 && $_ch > 0 && $_cw <= $_sbound && $_ch <= $_sbound} {
+        ## Anything of ANOTHER net near the notch and this pass declines: the
+        ## no-new-exposure argument above is only about same-net metal.
+        set _pad [expr {$_pgr_stepmax * 2.0}]
+        set _win [list [list [expr {$_bx1-$_pad}] [expr {$_by1-$_pad}] \
+                             [expr {$_bx2+$_pad}] [expr {$_by2+$_pad}]]]
+        set _all {}
+        catch { set _all [get_obj_in_area -areas $_win -layers [list $_ml] \
+                            -obj_type {special_wire wire patch_wire}] }
+        set _nets {}
+        foreach _o $_all {
+            set _on "" ; catch { set _on [get_db $_o .net.name] }
+            if {$_on ne "" && [lsearch -exact $_nets $_on] < 0} { lappend _nets $_on }
+        }
+        set _foreign 0
+        foreach _on $_nets { if {[lsearch -exact $_pgr_pg $_on] < 0} { set _foreign 1 } }
+        if {$_foreign || [llength $_nets] != 1} {
+            puts "POWERPLAN: PG residue -- SKIP min-step $_ml at ($_bx1 $_by1):\
+                  [llength $_nets] net(s) in the window ($_nets); this pass only\
+                  fills a notch that is same-net on every side"
+        } else {
+          set _hit 0
+          set _n2 [llength $_all]
+          for {set _i 0} {$_i < $_n2 && !$_hit} {incr _i} {
+            for {set _j [expr {$_i+1}]} {$_j < $_n2 && !$_hit} {incr _j} {
+              set _oa [lindex $_all $_i] ; set _ob [lindex $_all $_j]
+              set _ra [_pgr_r4 $_oa .rect] ; set _rb [_pgr_r4 $_ob .rect]
+              if {![llength $_ra] || ![llength $_rb]} { continue }
+              lassign $_ra _ax1 _ay1 _ax2 _ay2
+              lassign $_rb _ex1 _ey1 _ex2 _ey2
+              ## they must genuinely overlap, not merely touch
+              if {min($_ax2,$_ex2) - max($_ax1,$_ex1) <= $_pgr_eps} { continue }
+              if {min($_ay2,$_ey2) - max($_ay1,$_ey1) <= $_pgr_eps} { continue }
+              ## the four corners of bbox(A u B) that neither rectangle covers
+              set _corners {}
+              foreach _sx {0 1} {
+                foreach _sy {0 1} {
+                  ## _sx 0 = the left corner is opened by whichever rect starts
+                  ## further left; 1 = the right corner. Same for _sy / top.
+                  if {$_sx == 0} {
+                      set _cx1 [expr {min($_ax1,$_ex1)}] ; set _cx2 [expr {max($_ax1,$_ex1)}]
+                  } else {
+                      set _cx1 [expr {min($_ax2,$_ex2)}] ; set _cx2 [expr {max($_ax2,$_ex2)}]
+                  }
+                  if {$_sy == 0} {
+                      set _cy1 [expr {min($_ay1,$_ey1)}] ; set _cy2 [expr {max($_ay1,$_ey1)}]
+                  } else {
+                      set _cy1 [expr {min($_ay2,$_ey2)}] ; set _cy2 [expr {max($_ay2,$_ey2)}]
+                  }
+                  if {$_cx2 - $_cx1 <= $_pgr_eps} { continue }
+                  if {$_cy2 - $_cy1 <= $_pgr_eps} { continue }
+                  lappend _corners [list $_cx1 $_cy1 $_cx2 $_cy2]
+                }
+              }
+              foreach _c $_corners {
+                lassign $_c _cx1 _cy1 _cx2 _cy2
+                if {abs($_cx1-$_bx1) > $_pgr_eps} { continue }
+                if {abs($_cy1-$_by1) > $_pgr_eps} { continue }
+                if {abs($_cx2-$_bx2) > $_pgr_eps} { continue }
+                if {abs($_cy2-$_by2) > $_pgr_eps} { continue }
+                ## the corner must really be empty -- neither rectangle covers it
+                set _cov 0
+                foreach _r [list $_ra $_rb] {
+                    lassign $_r _rx1 _ry1 _rx2 _ry2
+                    if {min($_rx2,$_cx2) - max($_rx1,$_cx1) > $_pgr_eps && \
+                        min($_ry2,$_cy2) - max($_ry1,$_cy1) > $_pgr_eps} { set _cov 1 }
+                }
+                if {$_cov} { continue }
+                set _cn3 [get_db $_oa .net.name]
+                set _cand [list $_ml $_cn3 $_cx1 $_cy1 $_cx2 $_cy2]
+                if {[lsearch -exact $_pgr_fill $_cand] >= 0} { set _hit 1 ; break }
+                lappend _pgr_fill $_cand
+                set _hit 1
+                puts [format "POWERPLAN: PG residue -- MIN-STEP NOTCH %s %s (%.3f %.3f)-(%.3f %.3f) %.3f x %.3f um, between (%.3f %.3f)-(%.3f %.3f) and (%.3f %.3f)-(%.3f %.3f)" \
+                      $_ml $_cn3 $_cx1 $_cy1 $_cx2 $_cy2 [expr {$_cx2-$_cx1}] [expr {$_cy2-$_cy1}] \
+                      $_ax1 $_ay1 $_ax2 $_ay2 $_ex1 $_ey1 $_ex2 $_ey2]
+                break
+              }
+            }
+          }
+          if {!$_hit} {
+            puts "POWERPLAN: PG residue -- SKIP min-step $_ml at ($_bx1 $_by1):\
+                  no pair of overlapping same-net wires reconstructs this marker\
+                  box as an uncovered corner. The parties are probably generated\
+                  via enclosures, which this pass cannot edit."
+          }
+        }
+      }
+    }
+
+    ## ---- D. a same-net spacing violation where one party is a dangling stub -
+    ##
+    ## MEASURED 2026-08-23, same session and same Calibre pair as case C:
+    ## M4.S.1 1 -> 0, nothing else in the deck moves, and every power-grid
+    ## metric is unchanged.
+    ##
+    ## THIS SUPERSEDES CASE B. B closes the same 20 nm gap by BRIDGING the two
+    ## wires, and the bridge's own corner then fires G.4:M4i twice -- net +1,
+    ## which is why B ships with EVP_PG_GAP_MAX defaulted to 0. D opens the gap
+    ## instead of closing it, by pulling back the party that is dangling, and
+    ## that costs nothing at all. B should be DELETED in a follow-up commit; it
+    ## is left here only so this change reads as an addition. Until then, D
+    ## claims the marker and B skips it (_pgr_claim).
+    ##
+    ## THE GEOMETRY at the measured site:
+    ##   lower party  M4 VDD blockwire (850.240,336.230)-(850.580,343.580)
+    ##                plus its VIA833 enclosure, top also 343.580
+    ##   upper party  M4 VDD blockwire (850.355,343.600)-(850.705,344.215)
+    ##   gap 0.020 um where M4.S.1 wants 0.100.
+    ## The upper party is a block-pin tap: it overlaps its macro pin
+    ## (flash_cache_dataTOPCAP4 M4 starts at y=344.040) for 0.175 um and then
+    ## overshoots 0.440 um DOWNWARDS into empty space, ending 20 nm short of the
+    ## riser it was reaching for. The bottom 80 nm of it carries no via and
+    ## touches nothing. Pull it back 80 nm and the gap is 0.100.
+    ##
+    ## WHAT IS CHECKED BEFORE ANYTHING MOVES:
+    ##   * the piece being removed contains no via and no pin shape -- so no
+    ##     connection is being cut;
+    ##   * what remains still clears the layer's min width and min area -- so a
+    ##     spacing violation is not being traded for a width or area one;
+    ##   * what remains still has something to hold on to (a via, a pin, or
+    ##     other same-net metal) -- so this cannot manufacture the very dead
+    ##     island that case A exists to delete.
+    ## Any one of those failing skips the site and says why.
+    if {$_pgr_trimmax > 0 && [string match -nocase "*spacing*" [string map {_ "" - "" " " ""} $_msub]]} {
+      set _gw [expr {$_bx2-$_bx1}] ; set _gh [expr {$_by2-$_by1}]
+      ## the gap is measured across the SHORT axis of the marker box; the long
+      ## axis is the parallel run over which the two wires face each other
+      set _vert [expr {$_gh < $_gw}]
+      set _gap  [expr {$_vert ? $_gh : $_gw}]
+      set _need 0
+      catch { set _need [get_db [get_db layers $_ml] .min_spacing] }
+      if {$_need eq "" || $_need <= 0} {
+          catch { set _need [get_db [get_db layers $_ml] .min_width] }
+      }
+      set _delta 0
+      if {$_need ne "" && $_need > 0} { set _delta [expr {$_need - $_gap}] }
+      if {$_delta > $_pgr_eps && $_delta <= $_pgr_trimmax} {
+        set _mw2 0 ; catch { set _mw2 [get_db [get_db layers $_ml] .min_width] }
+        set _ma2 0 ; catch { set _ma2 [get_db [get_db layers $_ml] .area] }
+        set _pad2 [expr {$_need + $_pgr_trimmax}]
+        set _near2 {}
+        catch { set _near2 [get_obj_in_area \
+                  -areas [list [list [expr {$_bx1-$_pad2}] [expr {$_by1-$_pad2}] \
+                                     [expr {$_bx2+$_pad2}] [expr {$_by2+$_pad2}]]] \
+                  -layers [list $_ml] -obj_type special_wire] }
+        set _done 0
+        foreach _w2 $_near2 {
+          if {$_done} { break }
+          set _r2 [_pgr_r4 $_w2 .rect]
+          if {![llength $_r2]} { continue }
+          set _n3 "" ; catch { set _n3 [get_db $_w2 .net.name] }
+          if {$_n3 eq "" || [lsearch -exact $_pgr_pg $_n3] < 0} { continue }
+          lassign $_r2 _wx1 _wy1 _wx2 _wy2
+          ## which edge of this wire is the gap's edge?
+          set _side ""
+          if {$_vert} {
+              if {abs($_wy1 - $_by2) <= $_pgr_eps} { set _side lower_edge_is_top_of_gap }
+              if {abs($_wy2 - $_by1) <= $_pgr_eps} { set _side upper_edge_is_bottom_of_gap }
+          } else {
+              if {abs($_wx1 - $_bx2) <= $_pgr_eps} { set _side left_edge_is_right_of_gap }
+              if {abs($_wx2 - $_bx1) <= $_pgr_eps} { set _side right_edge_is_left_of_gap }
+          }
+          if {$_side eq ""} { continue }
+          ## the strip that would be removed, and what the wire becomes
+          switch -- $_side {
+            lower_edge_is_top_of_gap {
+                set _sx1 $_wx1 ; set _sy1 $_wy1 ; set _sx2 $_wx2 ; set _sy2 [expr {$_wy1+$_delta}]
+                set _kx1 $_wx1 ; set _ky1 [expr {$_wy1+$_delta}] ; set _kx2 $_wx2 ; set _ky2 $_wy2 }
+            upper_edge_is_bottom_of_gap {
+                set _sx1 $_wx1 ; set _sy1 [expr {$_wy2-$_delta}] ; set _sx2 $_wx2 ; set _sy2 $_wy2
+                set _kx1 $_wx1 ; set _ky1 $_wy1 ; set _kx2 $_wx2 ; set _ky2 [expr {$_wy2-$_delta}] }
+            left_edge_is_right_of_gap {
+                set _sx1 $_wx1 ; set _sy1 $_wy1 ; set _sx2 [expr {$_wx1+$_delta}] ; set _sy2 $_wy2
+                set _kx1 [expr {$_wx1+$_delta}] ; set _ky1 $_wy1 ; set _kx2 $_wx2 ; set _ky2 $_wy2 }
+            right_edge_is_left_of_gap {
+                set _sx1 [expr {$_wx2-$_delta}] ; set _sy1 $_wy1 ; set _sx2 $_wx2 ; set _sy2 $_wy2
+                set _kx1 $_wx1 ; set _ky1 $_wy1 ; set _kx2 [expr {$_wx2-$_delta}] ; set _ky2 $_wy2 }
+          }
+          ## (i) nothing lands on the piece being removed
+          set _sv {}
+          if {[catch {set _sv [get_obj_in_area \
+                -areas [list [list [expr {$_sx1-$_pgr_eps}] [expr {$_sy1-$_pgr_eps}] \
+                                   [expr {$_sx2+$_pgr_eps}] [expr {$_sy2+$_pgr_eps}]]] \
+                -layers [list $_ml] -obj_type {special_via via}]} _qe]} {
+              error "power_plan: PG residue: the via query for the trim strip\
+                     failed ($_qe). A query that cannot run must not be read as\
+                     'nothing there' -- refusing to trim."
+          }
+          if {[llength $_sv]} {
+              puts "POWERPLAN: PG residue -- SKIP trim $_ml $_n3 at ($_bx1 $_by1):\
+                    [llength $_sv] via(s) land on the piece that would be removed"
+              continue
+          }
+          set _sp {}
+          set _pq 0
+          if {![catch {set _sp [get_obj_in_area \
+                -areas [list [list $_sx1 $_sy1 $_sx2 $_sy2]] -layers [list $_ml] \
+                -obj_type {pin_shape}]}]} { set _pq 1 }
+          if {!$_pq} {
+              if {![catch {set _sp [get_obj_in_area \
+                    -areas [list [list $_sx1 $_sy1 $_sx2 $_sy2]] \
+                    -obj_type {pg_pin port_shape}]}]} { set _pq 1 }
+          }
+          if {!$_pq} {
+              error "power_plan: PG residue: no pin query this release accepts\
+                     ran for the trim strip -- refusing to trim blind."
+          }
+          if {[llength $_sp]} {
+              puts "POWERPLAN: PG residue -- SKIP trim $_ml $_n3 at ($_bx1 $_by1):\
+                    [llength $_sp] pin shape(s) on the piece that would be removed"
+              continue
+          }
+          ## (ii) what is left is still a legal wire
+          set _kwid [expr {min($_kx2-$_kx1, $_ky2-$_ky1)}]
+          set _kar  [expr {($_kx2-$_kx1)*($_ky2-$_ky1)}]
+          if {$_mw2 ne "" && $_mw2 > 0 && $_kwid < $_mw2 - $_pgr_eps} {
+              puts "POWERPLAN: PG residue -- SKIP trim $_ml $_n3 at ($_bx1 $_by1):\
+                    the remainder would be $_kwid um, under min width $_mw2"
+              continue
+          }
+          if {$_ma2 ne "" && $_ma2 > 0 && $_kar < $_ma2} {
+              puts "POWERPLAN: PG residue -- SKIP trim $_ml $_n3 at ($_bx1 $_by1):\
+                    the remainder would be $_kar um2, under min area $_ma2"
+              continue
+          }
+          ## (iii) the trim must not remove the wire's last connection.
+          ##
+          ## The test is RELATIVE, not absolute, and that matters. Measured
+          ## 2026-08-23 on the rzG routed database: the block-pin tap this case
+          ## exists to trim shows NO via and NO pin_shape over its whole extent
+          ## -- its connection is to a macro PG pin that pin_shape does not
+          ## return in this release. An absolute "the remainder must show a via
+          ## or a pin" therefore rejected a trim that removes nothing, which is
+          ## how the first version of this pass silently declined the one site
+          ## it was written for.
+          ##
+          ## So: count the evidence over the WHOLE wire and over the remainder.
+          ## If the wire had evidence and the remainder has none, the trim would
+          ## cut the wire's only connection -- refuse. If the wire had none
+          ## either, these queries are blind to whatever holds it, the trim
+          ## cannot have removed what they cannot see, and guard (i) has already
+          ## proved the removed strip carries no via -- proceed, and say so.
+          proc _pgr_ev {lay x1 y1 x2 y2 eps} {
+              set n 0
+              set q {}
+              catch { set q [get_obj_in_area -areas [list [list [expr {$x1-$eps}] \
+                        [expr {$y1-$eps}] [expr {$x2+$eps}] [expr {$y2+$eps}]]] \
+                        -layers [list $lay] -obj_type {special_via via}] }
+              incr n [llength $q]
+              set q {}
+              catch { set q [get_obj_in_area -areas [list [list $x1 $y1 $x2 $y2]] \
+                        -obj_type {pin_shape}] }
+              incr n [llength $q]
+              return $n
+          }
+          set _ev0 [_pgr_ev $_ml $_wx1 $_wy1 $_wx2 $_wy2 $_pgr_eps]
+          set _ev1 [_pgr_ev $_ml $_kx1 $_ky1 $_kx2 $_ky2 $_pgr_eps]
+          if {$_ev0 > 0 && $_ev1 == 0} {
+              puts "POWERPLAN: PG residue -- SKIP trim $_ml $_n3 at ($_bx1 $_by1):\
+                    the wire's only via/pin ($_ev0 object(s)) lies in the piece\
+                    that would be removed -- trimming it would leave exactly the\
+                    dead island case A deletes"
+              continue
+          }
+          if {$_ev0 == 0} {
+              puts "POWERPLAN: PG residue -- NOTE trim $_ml $_n3 at ($_bx1 $_by1):\
+                    neither the wire nor the remainder shows a via or a pin to\
+                    these queries, so they are blind to what holds this wire.\
+                    Guard (i) has proved the removed strip carries no via, so the\
+                    trim removes no connection either way."
+          }
+          lappend _pgr_trim [list $_w2 $_ml $_n3 $_kx1 $_ky1 $_kx2 $_ky2]
+          lappend _pgr_claim $_mk
+          set _done 1
+          puts [format "POWERPLAN: PG residue -- STUB TRIM %s %s gap %.3f -> %.3f um, %s (%.3f %.3f)-(%.3f %.3f) becomes (%.3f %.3f)-(%.3f %.3f)" \
+                $_ml $_n3 $_gap $_need $_side $_wx1 $_wy1 $_wx2 $_wy2 $_kx1 $_ky1 $_kx2 $_ky2]
+        }
+      }
+    }
+
     ## ---- B. a same-net gap narrower than the merge bound -------------------
+    ## SUPERSEDED BY CASE D above -- see D's header. If case D trimmed this
+    ## marker, do not also weld it.
+    if {[lsearch -exact $_pgr_claim $_mk] >= 0} { continue }
     set _near {}
     catch { set _near [get_obj_in_area \
               -areas [list [list [expr {$_bx1-$_pgr_gapmax}] [expr {$_by1-$_pgr_gapmax}] \
@@ -1576,9 +1970,11 @@ foreach _mk $_pgr_mk {
     }
 }
 
-set _pgr_sites [expr {[llength $_pgr_kill] + [llength $_pgr_weld]}]
+set _pgr_sites [expr {[llength $_pgr_kill] + [llength $_pgr_weld] \
+                      + [llength $_pgr_fill] + [llength $_pgr_trim]}]
 puts "POWERPLAN: PG residue -- [llength $_pgr_kill] dead island(s),\
-      [llength $_pgr_weld] same-net gap(s), $_pgr_sites site(s) total"
+      [llength $_pgr_weld] same-net gap(s), [llength $_pgr_fill] min-step\
+      notch(es), [llength $_pgr_trim] stub trim(s), $_pgr_sites site(s) total"
 
 if {$_pgr_sites > $_pgr_cap} {
     error "power_plan: PG residue found $_pgr_sites sites but the cap is\
@@ -1587,6 +1983,11 @@ if {$_pgr_sites > $_pgr_cap} {
            before anything is deleted or welded. Nothing has been changed.\
            Raise EVP_PG_RESIDUE_CAP deliberately, or set EVP_NO_PG_RESIDUE=1."
 }
+
+if {$_pgr_dry} {
+    puts "POWERPLAN: PG residue -- DRY RUN, $_pgr_sites site(s) found, nothing\
+          changed. Unset EVP_PG_RESIDUE_DRYRUN to act on them."
+} else {
 
 ## Count OBJECTS, before and after, on both sides. Counting CALLS is what
 ## makes an accounting guard lie the first time one call touches two objects.
@@ -1599,17 +2000,35 @@ foreach _c $_pgr_weld {
     create_shape -net $_cn -layer $_cl -rect [list $_qx1 $_qy1 $_qx2 $_qy2] \
         -shape blockwire -status routed
 }
+## Case C: one new object per notch.
+foreach _c $_pgr_fill {
+    lassign $_c _cl _cn _qx1 _qy1 _qx2 _qy2
+    create_shape -net $_cn -layer $_cl -rect [list $_qx1 $_qy1 $_qx2 $_qy2] \
+        -shape blockwire -status routed
+}
+## Case D: one object out, one object in -- net zero. Delete first, so the
+## re-created shape cannot merge with the original and come back as one object,
+## which would make the accounting below read a phantom leak.
+foreach _c $_pgr_trim {
+    lassign $_c _cw _cl _cn _qx1 _qy1 _qx2 _qy2
+    delete_obj $_cw
+    create_shape -net $_cn -layer $_cl -rect [list $_qx1 $_qy1 $_qx2 $_qy2] \
+        -shape blockwire -status routed
+}
 
 set _pgr_sw1 0
 foreach _n [get_db pg_nets] { incr _pgr_sw1 [llength [get_db $_n .special_wires]] }
-set _pgr_expect [expr {$_pgr_sw0 - [llength $_pgr_kill] + [llength $_pgr_weld]}]
+## kill -1 each, weld +1 each, fill +1 each, trim -1 then +1 = 0 each.
+set _pgr_expect [expr {$_pgr_sw0 - [llength $_pgr_kill] + [llength $_pgr_weld] \
+                       + [llength $_pgr_fill]}]
 puts "POWERPLAN: PG residue -- PG special wires $_pgr_sw0 -> $_pgr_sw1\
       (expected $_pgr_expect)"
 if {$_pgr_sw1 != $_pgr_expect} {
     error "power_plan: PG residue changed the PG special-wire population from\
-           $_pgr_sw0 to $_pgr_sw1, but deleting [llength $_pgr_kill] and\
-           creating [llength $_pgr_weld] should have given $_pgr_expect. One of\
-           those calls touched more than one object -- refusing to hand an\
+           $_pgr_sw0 to $_pgr_sw1, but deleting [llength $_pgr_kill], creating\
+           [llength $_pgr_weld] + [llength $_pgr_fill] and re-creating\
+           [llength $_pgr_trim] should have given $_pgr_expect. One of those\
+           calls touched more than one object -- refusing to hand an\
            unaccounted power grid to the next stage."
 }
 
@@ -1626,7 +2045,10 @@ if {$_pgr_sites > 0 && $_pgr_m1 >= $_pgr_m0} {
            $REPORT_DIR/pg_pre_residue.rep with pg_post_residue.rep."
 }
 
-unset _pgr_kill _pgr_weld _pgr_sites _pgr_sw0 _pgr_sw1 _pgr_expect
-unset _pgr_m0 _pgr_m1 _pgr_mk _pgr_pg _pgr_eps _pgr_gapmax _pgr_areamax _pgr_cap
+unset _pgr_sw0 _pgr_sw1 _pgr_expect _pgr_m1
+}
+unset _pgr_kill _pgr_weld _pgr_fill _pgr_trim _pgr_claim _pgr_sites
+unset _pgr_m0 _pgr_mk _pgr_pg _pgr_eps _pgr_gapmax _pgr_areamax _pgr_cap
+unset _pgr_stepmax _pgr_trimmax _pgr_dry
 }
 unset _pgr_on
