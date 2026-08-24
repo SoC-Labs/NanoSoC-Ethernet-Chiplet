@@ -369,7 +369,7 @@ stages:
     gate: report
     label: soclabs-sim
     description: "HAL structural + CDC (CLKDMN/CMBCDC/RSTSYN/INSYNC/FLSYNC) over the integrated top"
-    # report, not block: docs/CDC_FINDINGS.md calls this "a starting point for
+    # report, not block: docs/verification/CDC_FINDINGS.md calls this "a starting point for
     # the physical team's CDC signoff, not a clean bill". Gating it today would
     # gate on a known-nonzero baseline. Promote to block once triaged.
     run: make cdc
@@ -452,6 +452,121 @@ stages:
       - verif/g2_peer_aperture/results*.xml
       - verif/g2_soc_pair/results*.xml
 
+  # --- Is this whole table still measuring the current build? ------------------
+  # THE STAGE THIS MANIFEST DID NOT HAVE, ADDED 2026-08-24, AND THE ONLY ONE
+  # THAT PREVENTS THE REST GOING STALE AGAIN.
+  #
+  # WHAT WENT WRONG, MEASURED. On 2026-08-24 every stage that graded a physical
+  # artefact was pinned to a superseded build: rom-content and lec to
+  # full-20260814 (8 route runs old), rom-gds/drc/erc/bnd/logo/ir-drop/
+  # padring-gds and half of lec-pnr to fp1505 (7 old). Not one exception. The
+  # pins were set on 2026-08-18 by people who reasoned carefully about each one
+  # — the notes above are long and they are good — and then nothing moved them,
+  # because NOTHING IN THIS PIPELINE COULD SEE BUILD AGE. scripts/ci/signoff.py
+  # stamps every row with `repo_sha` and compares it to git HEAD; it has no
+  # notion of build staleness at all. So a stage pinned to fp1505, re-run
+  # today, renders green and reads as "measured at HEAD" — a true statement
+  # about the source tree and a false impression about the die.
+  #
+  # THAT IS A STRUCTURAL HOLE, NOT AN OVERSIGHT, and it is the reason this stage
+  # is `block`. Every other guard in this file catches a check that cannot fail,
+  # a tool that exits 0 while wrong, or an artefact that does not exist. This one
+  # catches a check that runs perfectly, over real evidence, about the wrong
+  # object — the failure mode with no error message anywhere.
+  #
+  # WHAT "NEWEST" MEANS, AND WHY NOT mtime ON THE DIRECTORY. A build counts only
+  # once it carries reports/route_manifest.txt, which the route stage writes at
+  # its END (date, runtime_s, stage=route, and the provenance block). Ranking
+  # build/*/ by directory mtime would have selected, on the day this was written,
+  # gdsrun-20260824-valid4 — a LIVE run, mid-flight — or gdsrun-20260824-valid7,
+  # which died at placement. Both have work/ databases and neither finished. A
+  # half-written database read by Calibre or Voltus produces a corrupt-DB report
+  # that reads like a design defect; ASIC/sta/run_sta.sh:6-9 already refuses
+  # fp1505 by name for exactly this, and this stage generalises that refusal.
+  # Same doctrine as ir-drop's census selection: NAMED, NEVER RANKED — and where
+  # this one must rank, it refuses a tie rather than breaking it.
+  #
+  # HOW IT FINDS THE PINS. It parses ci/signoff.yaml, and for each stage it
+  # scans the PARSED VALUES — not the file text — for any name that is a real
+  # directory under ASIC/eth-chiplet/build/. Parsing the structure rather than
+  # the text is what drops the YAML comments, which are full of historical build
+  # names by design and pin nothing; the scan additionally drops comment LINES
+  # inside block scalars, because a `#` line in an embedded python or shell
+  # script is prose too. Resolving against the real directory listing rather
+  # than a pattern is what makes it catch every spelling a stage uses — the path
+  # form (ASIC/eth-chiplet/build/<tag>/...), the variable form (RUN_TAG=<tag>,
+  # SYN_RUN_TAG, RAIL_RUN_TAG), the rail form (rail/work/<tag>/), and bare
+  # literals like gls-netlist's SECONDARY tuple, which no pattern I could write
+  # would have caught.
+  #
+  # IT SKIPS ITS OWN STAGE, deliberately and necessarily: the exemption register
+  # below names build tags, and an exemption is not a pin.
+  #
+  # THE EXEMPTIONS SELF-EXPIRE. A waiver list with no expiry is how a gate goes
+  # blind — so each entry below carries an executable predicate, and the stage
+  # FAILS when a predicate stops holding. That is the same ratchet gls-netlist
+  # applies to its KNOWN_OPEN register ("it will be handed back the moment it
+  # starts passing"). An exemption here is a statement that the newest build
+  # CANNOT YET be graded by that stage, and the day it can, this gate says so.
+  - id: build-freshness
+    phase: physical
+    gate: block
+    label: soclabs-sim
+    description: "Every build tag this manifest names is the newest FINISHED route — no stage grades a superseded build"
+    # A GLOB, DELIBERATELY. This is the one place `needs_implementation:` is not
+    # naming a specific build — it cannot, because which build is current is the
+    # question this stage exists to answer. What it asserts is that AT LEAST ONE
+    # finished route exists somewhere to compare against. On a bare CI runner
+    # (build/ is gitignored) nothing matches, and the stage renders UNVERIFIED —
+    # "go and build something", an indictment of the run — rather than FAIL,
+    # which would read as "the manifest is stale" on a host that has no builds
+    # at all to be stale against.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/*/reports/route_manifest.txt
+    # EVIDENCE OF ITS OWN. Same lesson as chip-boundary, which for months had
+    # nothing but its exit status: this writes the inventory it reasoned over —
+    # every build, whether it finished, and which one won — so a reader months
+    # later can see what the verdict was computed FROM without re-running it.
+    pre:
+      - mkdir -p build/freshness
+    run: |
+      python3 scripts/ci/build_freshness.py --inventory > build/freshness/build_inventory.txt
+      cat build/freshness/build_inventory.txt
+    # Re-derives the verdict from the manifest and the build tree rather than
+    # trusting run:'s exit code — the doctrine every block-gated row here
+    # follows. run: writes an inventory; this decides.
+    check: |
+      python3 scripts/ci/build_freshness.py
+    check_proof:
+      must_pass: ci/fixtures/build-freshness/pass
+      must_fail:
+        # THE DEFECT OF RECORD: a stage pinned to a finished-but-superseded
+        # build, exactly the shape every physical row had on 2026-08-24.
+        - ci/fixtures/build-freshness/fail-stale-pin
+        # Pinned to a build that has a work/ database but no route_manifest.txt
+        # — a live or killed run. This is the case that makes "newest by mtime"
+        # wrong, and it must fail even though that directory is the NEWEST thing
+        # on disk.
+        - ci/fixtures/build-freshness/fail-unfinished-pin
+        # A pin naming a build directory that does not exist at all: a typo, or
+        # a build someone deleted. Renders as a dangling pin, not as freshness.
+        - ci/fixtures/build-freshness/fail-dangling-pin
+        # No build anywhere carries a route_manifest.txt. Nothing has finished
+        # routing, so "the newest finished build" has no referent and no pin can
+        # be checked against it. An unanswerable question is not a pass.
+        - ci/fixtures/build-freshness/fail-no-finished-build
+        # THE RATCHET. An exemption is still declared, but the condition that
+        # justified it has lapsed — the newest build now has the artefact the
+        # exempted stage said it lacked. A waiver that outlives its reason is
+        # the mechanism by which gates go blind, so it is a failure here.
+        - ci/fixtures/build-freshness/fail-stale-exemption
+        # Two finished builds share the newest timestamp. REFUSING TO CHOOSE,
+        # same doctrine as ir-drop's census arm: ranking by date is how a gate
+        # silently picks the wrong object.
+        - ci/fixtures/build-freshness/fail-ambiguous-newest
+    artifacts:
+      - build/freshness/build_inventory.txt
+
   # --- Physical phase — srv03335 only (needs ${TSMC_65_HOME} + ASIC/romlibs) -------
   #
   # IMPLEMENTATION IS NOT HERE. syn -> place -> CTS -> route -> GDSII -> bundle
@@ -463,32 +578,53 @@ stages:
   # implementation run in ASIC/genus-innovus/work first. Run order:
   #     asic-signoff (rtl)  ->  asic-gds  ->  asic-signoff (physical)
   #
-  # WHICH BUILD THESE STAGES GRADE, AND HOW FAR THAT PROMOTION REACHES
+  # WHICH BUILD THESE STAGES GRADE
   # ------------------------------------------------------------------
-  # 2026-08-18: rom-gds and drc moved from full-20260814 to fp1505, and lec-pnr
-  # moved its REVISED side only. fp1505 is the promoted place-and-route build —
-  # Innovus check_drc reports 0 rail-to-rail VDD/VSS shorts on it against
-  # full-20260814's 4 (docs/tapeout/43-drc-fp1505.md).
+  # ── 2026-08-24: EVERY PHYSICAL PIN MOVED TO gdsrun-20260823-rzG. ──────────
+  # THE WHOLE TABLE HAD GONE STALE AT ONCE, and not by anyone's decision. The
+  # pins below were set on 2026-08-18 and never moved again, so on 2026-08-24
+  # this manifest graded builds 7 and 8 route runs behind the tip while the
+  # driver stamped every row `repo_sha = <HEAD>`. scripts/ci/signoff.py compares
+  # a row's repo_sha against git HEAD and HAS NO NOTION OF BUILD STALENESS AT
+  # ALL: a stage pinned to fp1505, re-run today, renders green and reads as
+  # "measured at HEAD". Nothing in the pipeline could notice, which is why the
+  # `build-freshness` stage now exists — it is the only thing here that stops
+  # this table silently rotting again. Read its note before repinning anything.
   #
-  # THE PROMOTION IS PHYSICAL ONLY. It does NOT extend to synthesis and it does
-  # NOT extend to timing, and both exclusions are properties of fp1505 rather
-  # than preferences:
+  # WHY rzG, AND WHAT "NEWEST" MEANS. rzG is the newest build carrying
+  # reports/route_manifest.txt, the file the route stage writes at its END.
+  # Newest-by-mtime over build/*/ is NOT the rule and must never become it: on
+  # 2026-08-24 the two newest directories were gdsrun-20260824-valid4 (live,
+  # mid-flight) and -valid7 (died at placement), and neither has a route
+  # manifest. A directory is a candidate when its route FINISHED, not when it
+  # was last touched. Same guard ASIC/sta/run_sta.sh:6-9 applies to fp1505 by
+  # name; build-freshness generalises it.
   #
-  #   * NO SYNTHESIS. build/fp1505/outputs/ holds no _gate.v and no
-  #     _gate_power.v; its work/innovus.log records it reading full-20260814's
-  #     _gate_power.v. So `lec` and lec-pnr's GOLDEN side stay put — the
-  #     synthesised netlist under signoff IS full-20260814's, unchanged.
-  #   * NO CONSTRAINTS OF ITS OWN. build/fp1505/outputs/
-  #     nanosoc_eth_chiplet_pads_syn.sdc is a SYMLINK to full-20260814's; fp1505
-  #     re-ran floorplan and P&R against the older synthesis SDC. AND
-  #     ASIC/sta/run_sta.sh:6-9 REFUSES fp1505 BY NAME ("the live route, netlist
-  #     written 21:33, no route_manifest.txt"), because reading a database that
-  #     is still being written produces a corrupt-DB report that reads like a
-  #     design bug. TREAT THAT REFUSAL AS A CORRECT GUARD. Any timing stage
-  #     added here stays on full-20260814 until fp1505 has its own closed
-  #     synthesis and its own route manifest. There is no STA stage in this
-  #     manifest today (sta-signoff sits in `unsupported` below), so nothing was
-  #     moved on the timing side and nothing needs to be.
+  # THE 2026-08-18 SPLIT IS GONE, AND SO IS ITS REASON. That edit put rom-gds,
+  # drc and lec-pnr's REVISED side on fp1505 while `lec` and lec-pnr's GOLDEN
+  # side stayed on full-20260814, because fp1505 was place-and-route ONLY:
+  # build/fp1505/outputs/ holds no _gate.v, no _gate_power.v, and its _syn.sdc
+  # is a SYMLINK to full-20260814's. That was a true description of fp1505 and
+  # it is NOT a true description of rzG, which carries its own _gate.v,
+  # _gate_power.v, lec.dofile and a real (non-symlink) _syn.sdc. rzG is a
+  # superset, so the split collapses: golden and revised are both rzG now and
+  # every stage below names ONE build.
+  #
+  # THE DESIGN WAS RE-SYNTHESISED ON 2026-08-21, which is why `lec` does NOT
+  # point at rzG. full-20260814's _gate.v is md5 f567c9c0…; every gdsrun from
+  # gdsrun-20260821-slpads onward is a7076071…, rzG included. rzG did not run
+  # its own synthesis — it COPIED slpads' (reports/syn_provenance.txt.seeded-
+  # from-gdsrun-20260821-slpads names slpads' netlist, and the two builds'
+  # _gate.v, _gate_power.v and lec.dofile are byte-identical) — and copying the
+  # outputs did not copy work/fv, the Genus model Conformal needs. So the head
+  # of the CURRENT synthesis lineage that can actually be MEASURED is slpads,
+  # and `lec` points there. See that stage's own note.
+  #
+  # TIMING IS STILL NOT PINNED HERE. There is no STA stage in this manifest
+  # (sta-signoff sits in `unsupported` below), so nothing was moved on the
+  # timing side. Unlike fp1505, rzG does have its own closed synthesis and its
+  # own route manifest, so the 2026-08-18 objection to timing on the promoted
+  # build no longer applies — but no timing stage exists to benefit from that.
 
   # --- Boot ROM contents ------------------------------------------------------
   # THERE WAS A `romlibs` CHECK IN THIS FLOW FOR MONTHS AND IT WAS NOT A CONTENT
@@ -581,14 +717,23 @@ stages:
     # a wiring reason is worse than a green: it trains people to discount the one
     # gate that stands between a firmware change and a dead die.
     #
-    # THE FIX IS NOT "point check: at the other tree". Both halves now name ONE
+    # THE FIX IS NOT "point check: at the other tree". Both halves name ONE
     # tree, spelled out, and it is the tree the netlist under signoff actually
-    # compiled in — build/full-20260814/romlibs, the directory the LEC dofile
-    # itself reads its ROM .libs from. Same doctrine as rom-gds's RUN_TAG and
-    # lec-pnr's two tags: WHEN A BUILD SUPERSEDES THIS ONE, CHANGE THE STRING IN
-    # ALL THREE PLACES BELOW — run:, check: and needs_implementation: — they are
-    # the same string on purpose, so this stage cannot declare one tree and
-    # measure another.
+    # compiled in. Same doctrine as rom-gds's RUN_TAG and lec-pnr's two tags:
+    # WHEN A BUILD SUPERSEDES THIS ONE, CHANGE THE STRING IN ALL THREE PLACES
+    # BELOW — run:, check: and needs_implementation: — they are the same string
+    # on purpose, so this stage cannot declare one tree and measure another.
+    #
+    # MOVED build/full-20260814/romlibs -> build/gdsrun-20260823-rzG/romlibs, 2026-08-24, all
+    # three together. THIS IS A RE-DECLARATION, NOT A RE-MEASUREMENT, and the
+    # distinction is worth stating because it is the opposite of rom-gds's case
+    # directly below. The ROM macros are byte-identical in all three build
+    # trees — md5 of eth_rom/eth_rom_via.memlib is ebda962003f8daf81861e228ffd98d26
+    # and of cc_rom/rom_via.memlib is 5f563b8e8defc2e69e7c8afcf353e06b in
+    # full-20260814, fp1505 AND gdsrun-20260823-rzG — so this move cannot change the verdict
+    # and is not expected to. It is here so that no row of this table names a
+    # retired build: a stage that grades the right bits out of the wrong
+    # directory is one `make clean` away from UNVERIFIED for no design reason.
     #
     # `romlibs-verify`, NOT `rom-run`/`romlibs-check`. Those BUILD the macros
     # before grading them, which is right for `syn` (a firmware change must not
@@ -616,7 +761,7 @@ stages:
     # rather than hard-coded, so it keeps working when the string above moves.
     run: |
       set -uo pipefail
-      ROMTREE="$PWD/ASIC/eth-chiplet/build/full-20260814/romlibs"
+      ROMTREE="$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs"
       make -C ASIC -f common.mk --no-print-directory romlibs-verify \
            ROMLIBS_DIR="$ROMTREE"
       rc=${PIPESTATUS[0]}
@@ -645,7 +790,7 @@ stages:
       import json, os, subprocess, sys
       # THE SAME TREE run: NAMES. Change both together, or this stage grades a
       # directory its own run never touched.
-      ROMTREE = os.path.abspath("ASIC/eth-chiplet/build/full-20260814/romlibs")
+      ROMTREE = os.path.abspath("ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs")
       rows = subprocess.run(["make", "-C", "ASIC", "-f", "common.mk",
                              "--no-print-directory", "rom-vars",
                              "ROMLIBS_DIR=" + ROMTREE],
@@ -718,8 +863,8 @@ stages:
     # bits indicts the DESIGN, and this stage must never report the first as the
     # second. Same string as run: and check: above, on purpose.
     needs_implementation:
-      - ASIC/eth-chiplet/build/full-20260814/romlibs/eth_rom/eth_rom_via.memlib
-      - ASIC/eth-chiplet/build/full-20260814/romlibs/cc_rom/rom_via.memlib
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs/eth_rom/eth_rom_via.memlib
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs/cc_rom/rom_via.memlib
     check_proof:
       must_pass: ci/fixtures/rom-content/pass
       must_fail:
@@ -749,7 +894,7 @@ stages:
     # the same defect class as a check that cannot fail. It is now the exact
     # input `run:` consumes below: absent, the stage is UNVERIFIED, not FAIL.
     needs_implementation:
-      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
     # Content-correct at synthesis does NOT prove the bits reached the mask. The
     # macro is merged into the stream by write_stream from a hand-maintained
     # $gds_merge_list in scripts/config.tcl; a dropped or stale entry produces a
@@ -792,8 +937,21 @@ stages:
     # above -- they are the same string on purpose, so this stage cannot
     # declare one stream and measure another.
     #
-    # MOVED full-20260814 -> fp1505, 2026-08-18, needs_implementation and run:
-    # together. fp1505 is the promoted place-and-route build: Innovus check_drc
+    # MOVED fp1505 -> gdsrun-20260823-rzG, 2026-08-24, needs_implementation and
+    # run: together again. rzG is the newest build with a route_manifest.txt, so
+    # its outputs/nanosoc_eth_chiplet_pads.gds is the stream that would now be
+    # submitted. THE RE-MEASUREMENT ARGUMENT AT THE BOTTOM OF THIS NOTE APPLIES
+    # AGAIN, UNCHANGED AND IN FULL: rzG is a fresh write_stream (308,602,016 B,
+    # written 2026-08-23 19:01), so the 2026-08-18 verification of fp1505's
+    # merged ROMs says nothing about it. Unlike rom-content directly above —
+    # where the macros are byte-identical and the move is bookkeeping — this
+    # stage decodes via programming out of a DIFFERENT STREAM and genuinely
+    # re-measures. A dropped or stale $gds_merge_list entry is exactly the kind
+    # of fault a re-stream introduces, and rzG has never been asked.
+    #
+    # The 2026-08-18 move this note originally recorded, kept for the reasoning:
+    # full-20260814 -> fp1505, needs_implementation and run: together, because
+    # fp1505 was the promoted place-and-route build: Innovus check_drc
     # reports ZERO rail-to-rail VDD/VSS shorts on it against full-20260814's
     # four (docs/tapeout/43-drc-fp1505.md), so fp1505's
     # outputs/nanosoc_eth_chiplet_pads.gds is the stream that would be
@@ -807,7 +965,7 @@ stages:
     # so the 2026-08-17 verification of full-20260814's two boot ROMs says
     # nothing about it; a dropped or stale $gds_merge_list entry is exactly the
     # kind of fault a re-stream introduces.
-    run: make -C ASIC -f common.mk romlibs-verify-gds ROM_GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+    run: make -C ASIC -f common.mk romlibs-verify-gds ROM_GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
     check: |
       python3 - <<'EOF'
       import os, subprocess, sys
@@ -866,30 +1024,71 @@ stages:
     # the gate netlist, and Genus's own fv model, which lives in work/ and which
     # `make clean` destroys.
     #
-    # DELIBERATELY NOT MOVED TO fp1505, 2026-08-18 -- DO NOT "FIX" THIS.
-    # rom-gds, drc and the REVISED half of lec-pnr all moved to fp1505 in that
-    # edit; this stage did not, and the reason is a property of fp1505 rather
-    # than a preference:
+    # ── 2026-08-24: THE JUSTIFICATION THAT STOOD HERE IS NOW FALSE. ─────────
     #
-    #   * build/fp1505/outputs/ contains NO nanosoc_eth_chiplet_pads_gate.v and
-    #     no _gate_power.v. It is a place-and-route-only build -- its outputs
-    #     are the GDS, the SDF, _pnr.v, and a SYMLINK to full-20260814's
-    #     _syn.sdc. There is no synthesis in it to compare RTL against.
-    #   * build/fp1505/work/innovus.log records the run READING
-    #     full-20260814/outputs/nanosoc_eth_chiplet_pads_gate_power.v as its
-    #     input netlist.
+    # It read, emphatically and in capitals, "DELIBERATELY NOT MOVED TO fp1505
+    # -- DO NOT 'FIX' THIS", and its load-bearing sentence was:
     #
-    # So the synthesised netlist under signoff IS full-20260814's, unchanged, and
-    # RTL-vs-gate equivalence proved against it carries over to fp1505 verbatim.
-    # Pointing this stage at fp1505 would not re-measure anything: it would make
-    # all three inputs below absent, and the stage would render UNVERIFIED --
-    # which is precisely the state it was rescued from on 2026-08-18. The same
-    # argument is what keeps lec-pnr's GOLDEN side on full-20260814 while its
-    # REVISED side moves; read the split note there.
+    #     "So the synthesised netlist under signoff IS full-20260814's,
+    #      unchanged, and RTL-vs-gate equivalence proved against it carries
+    #      over to fp1505 verbatim."
+    #
+    # THAT SENTENCE WAS TRUE WHEN WRITTEN AND IS NOT TRUE NOW. It rested on
+    # fp1505 having no synthesis of its own and reading full-20260814's netlist
+    # -- correct, and irrelevant since 2026-08-21, when the design was
+    # RE-SYNTHESISED. Measured 2026-08-24, md5 of
+    # outputs/nanosoc_eth_chiplet_pads_gate.v:
+    #
+    #     full-20260814           f567c9c0e2c4…
+    #     gdsrun-20260821-slpads  a7076071823c…   <- the current lineage starts
+    #     gdsrun-20260822-halo    a7076071823c…
+    #     gdsrun-20260822-allfix  a7076071823c…
+    #     gdsrun-20260823-pgfix   a7076071823c…
+    #     gdsrun-20260823-armA    a7076071823c…
+    #     gdsrun-20260823-armA2   a7076071823c…
+    #     gdsrun-20260823-rzG     a7076071823c…   <- the shipping build
+    #
+    # So this stage was proving RTL equivalence against a netlist NOTHING
+    # SHIPS. A comment that forbids its own correction is the most expensive
+    # kind of stale comment, because it survives exactly the review that would
+    # have caught it. It is reproduced above rather than deleted so the next
+    # reader can see what went wrong and why the prohibition carried no weight.
+    #
+    # WHY slpads AND NOT gdsrun-20260823-rzG, THE BUILD EVERY OTHER PHYSICAL
+    # STAGE NOW NAMES. rzG did not synthesise. It COPIED slpads' synthesis
+    # outputs -- reports/syn_provenance.txt.seeded-from-gdsrun-20260821-slpads
+    # records prov.netlist.path as slpads' _gate_power.v, and measured, the two
+    # builds' outputs are byte-identical:
+    #
+    #     lec.dofile        39fbecdde240a60d1c79c8ffdddacdcc   (both)
+    #     _gate_power.v     c02841669168a6777fe16e539b955140   (both)
+    #     _gate.v           a7076071823c…                      (both)
+    #
+    # but COPYING outputs/ did not copy work/fv, the Genus fv model Conformal
+    # reads, and rzG has no reports/lec/syn either. Pointing this stage at rzG
+    # would make the third input below absent and render the stage UNVERIFIED --
+    # the exact failure the 2026-08-18 note was right to warn about, arriving by
+    # a different route. slpads is the head of the current synthesis lineage
+    # that can actually BE measured, and because its netlist is byte-identical
+    # to rzG's, measuring slpads IS measuring the shipping netlist. That is a
+    # hash identity, not an inference.
+    #
+    # EXPECT THIS STAGE TO GO RED, AND DO NOT REPOINT IT TO RESTORE A GREEN.
+    # gdsrun-20260821-slpads/reports/lec/syn/verdict.txt records RESULT=FAIL:
+    # 5433 of 5433 points equivalent, but 96 unmapped extra golden flops (all
+    # root_port_cursor_r_reg[*] in u_tidechart/u_tidechart_controller/u_enum),
+    # asymmetric unreachables (446 golden / 319 revised) and tool exit code 40.
+    # Whether that FAIL is benign is being investigated separately; it is NOT
+    # settled here and must not be pre-judged by this manifest. What IS settled
+    # is that a red row measuring the shipping netlist beats a green row
+    # measuring a netlist nothing ships. Note also that the OLD pin was not
+    # green either -- full-20260814/reports/lec/syn/verdict.txt reads RESULT=FAIL
+    # with 18,326 NON-EQUIVALENT points -- so this move does not turn a green
+    # red; it moves a red onto the right subject.
     needs_implementation:
-      - ASIC/eth-chiplet/build/full-20260814/outputs/lec.dofile
-      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate.v
-      - ASIC/eth-chiplet/build/full-20260814/work/fv
+      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/outputs/lec.dofile
+      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/outputs/nanosoc_eth_chiplet_pads_gate.v
+      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/work/fv
     # NOTE this compares RTL -> SYNTHESISED netlist (via Genus's fv_map). It
     # does NOT read outputs/*_pnr.v — there is no post-P&R LEC anywhere in the
     # repo, despite package_submission.sh's MANIFEST claiming otherwise.
@@ -903,7 +1102,7 @@ stages:
     # paths, refuses a dofile that has lost its `set_dofile_abort exit`, and ends
     # with the same computed verdict the gate and pnr legs get -- and it is the
     # leg that has actually been run here.
-    run: make -C ASIC/eth-chiplet lec-syn RUN_TAG=full-20260814
+    run: make -C ASIC/eth-chiplet lec-syn RUN_TAG=gdsrun-20260821-slpads
     # `exit -f` DOES return a nonzero bit-flag status on non-equivalence
     # (-Force only suppresses the confirmation prompt; see Conformal's
     # `<COMMAND> EXIT` help and the exit-status bit table in LEC_debug.html).
@@ -1001,7 +1200,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import re, sys
-      B   = "ASIC/eth-chiplet/build/full-20260814"
+      B   = "ASIC/eth-chiplet/build/gdsrun-20260821-slpads"
       LOG = B + "/logs/lec_syn.log"
       VER = B + "/reports/lec/syn/verdict.txt"
 
@@ -1124,6 +1323,17 @@ stages:
       sys.exit(1 if bad else 0)
       EOF
     check_proof:
+      # FIXTURES MOVED 2026-08-24, full-20260814 -> gdsrun-20260821-slpads, all
+      # seven cases together with check: above. Their CONTENT is unchanged and
+      # its provenance note below still stands — the section grammar and the
+      # LEC-VERDICT blocks were cut from full-20260814's real transcripts and
+      # that is still where those bytes came from. Only the PATH moved, because
+      # a fixture that does not supply the path check: reads is not a fixture:
+      # the sandbox symlinks the real tree in and the case grades the working
+      # copy. Plain `mv`, not `git mv` — see the drc stage's note on why the
+      # rename is left unstaged. Verified: `signoff.py prove lec` is ok in both
+      # directions after the move.
+      #
       # NO REAL PASSING syn TRANSCRIPT EXISTS TO DERIVE A FIXTURE FROM — that is
       # the finding this stage now reports, so must_pass is necessarily a
       # construction and says so in its own first lines. Its section grammar and
@@ -1156,8 +1366,8 @@ stages:
         - ci/fixtures/lec/fail-no-verdict-line
         - ci/fixtures/lec/fail-empty-log
     artifacts:
-      - ASIC/eth-chiplet/build/full-20260814/logs/lec_syn.log*
-      - ASIC/eth-chiplet/build/full-20260814/reports/lec/syn/**
+      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/logs/lec_syn.log*
+      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/reports/lec/syn/**
 
   - id: lec-selftest
     phase: physical
@@ -1315,31 +1525,49 @@ stages:
     # the toolkit's build tree and a real post-P&R LEC passed over them
     # (reports/lec/pnr/verdict.txt: 61674 compare points, 0 non-equivalent).
     #
-    # SPLIT ACROSS TWO BUILDS, 2026-08-18, and the split IS the measurement.
+    # ── 2026-08-24: THE SPLIT IS COLLAPSED. BOTH SIDES ARE NOW rzG. ────────
     #
-    #   GOLDEN  stays on full-20260814/outputs/*_gate_power.v, because that is
-    #           the netlist place-and-route actually consumed: fp1505 has no
-    #           _gate_power.v of its own, and build/fp1505/work/innovus.log
-    #           records it reading full-20260814's.
-    #   REVISED moves to fp1505/outputs/*_pnr.v, because fp1505 is the routed
-    #           database being promoted (0 rail-to-rail VDD/VSS shorts against
-    #           full-20260814's 4) and its _pnr.v is what write_stream turned
-    #           into the stream rom-gds and drc now grade.
+    # From 2026-08-18 this stage deliberately straddled two builds:
     #
-    # Pointing BOTH at fp1505 would fail on an absent golden; leaving both on
-    # full-20260814 would prove nothing about the netlist being shipped. The
-    # toolkit supports exactly this split already and it is not a workaround:
-    # ASIC/asic-toolkit/mk/flow.mk:222 drives SYN_OUT_DIR from SYN_RUN_TAG while
-    # :215-218 drive OUT_DIR / LOG_DIR / REPORT_DIR from RUN_TAG, and
-    # flow.mk:832-850 takes golden from $(SYN_OUT_DIR) and revised from
-    # $(OUT_DIR). Measured with `make -C ASIC/eth-chiplet env RUN_TAG=fp1505
-    # SYN_RUN_TAG=full-20260814`: SYN_OUT_DIR -> build/full-20260814/outputs,
-    # RUN_DIR -> build/fp1505. The log and the reports follow RUN_TAG, which is
-    # why check: and artifacts: below name fp1505 alone while
-    # needs_implementation names both.
+    #   GOLDEN  full-20260814/outputs/*_gate_power.v, "because that is the
+    #           netlist place-and-route actually consumed: fp1505 has no
+    #           _gate_power.v of its own".
+    #   REVISED fp1505/outputs/*_pnr.v, the routed database being promoted.
+    #
+    # THAT SPLIT WAS NOT A DESIGN CHOICE, IT WAS A WORKAROUND FOR ONE MISSING
+    # FILE, and the note above said so plainly: "Pointing BOTH at fp1505 would
+    # fail on an absent golden". gdsrun-20260823-rzG has that file. Measured
+    # 2026-08-24, build/gdsrun-20260823-rzG/outputs/ holds _gate.v,
+    # _gate_power.v, lec.dofile, _pnr.v AND a real (non-symlink) _syn.sdc, and
+    # rzG/work/innovus.log:6664 records the route reading rzG's OWN
+    # _gate_power.v ("PLACE: ok: …/gdsrun-20260823-rzG/outputs/
+    # nanosoc_eth_chiplet_pads_gate_power.v (40933745 bytes)"). So golden and
+    # revised are two files from ONE build, which is what this comparison
+    # always wanted to be: it asks what place/CTS/route did to the logic, and
+    # that question is cleanest when both sides come from the same run.
+    #
+    # (rzG's _gate_power.v is byte-identical to gdsrun-20260821-slpads' —
+    # md5 c02841669168a6777fe16e539b955140 — because rzG reused slpads'
+    # synthesis rather than running its own. Naming rzG on both sides is still
+    # the right call: it makes this stage's inputs, its log and its reports all
+    # land in one directory, and it means no future reader has to re-derive a
+    # two-build provenance argument to know what was compared.)
+    #
+    # The toolkit's two-tag mechanism (flow.mk:222 drives SYN_OUT_DIR from
+    # SYN_RUN_TAG; :215-218 drive OUT_DIR / LOG_DIR / REPORT_DIR from RUN_TAG;
+    # :832-850 take golden from $(SYN_OUT_DIR) and revised from $(OUT_DIR)) is
+    # unchanged and still exercised — both tags are still spelled out on run:
+    # below, deliberately, so that this stage keeps saying which build each side
+    # came from even now that the answer is the same twice. If a future build
+    # again routes a netlist it did not synthesise, the split comes back and the
+    # two tags are already there to express it.
+    #
+    # EVIDENCE ALREADY ON DISK: rzG/reports/lec/pnr/verdict.txt reads
+    # RESULT=PASS — 61,599 compare points, 61,599 equivalent, 0 non-equivalent,
+    # 0 abort, 0 not-compared, golden and revised both named as rzG's own files.
     needs_implementation:
-      - ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads_gate_power.v
-      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads_pnr.v
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads_gate_power.v
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads_pnr.v
     timeout_s: 21600
     # Closes the gap this manifest previously declared under `unsupported`.
     # Golden is outputs/*_gate_power.v — the exact netlist 2_pnr_setup.tcl hands
@@ -1359,7 +1587,7 @@ stages:
     # run and measure another. Omitting SYN_RUN_TAG would silently look for the
     # golden in build/fp1505/outputs/, where it does not exist, and flow.mk:833
     # would refuse in seconds -- a visible failure, but the wrong one.
-    run: make -C ASIC/eth-chiplet lec-pnr RUN_TAG=fp1505 SYN_RUN_TAG=full-20260814
+    run: make -C ASIC/eth-chiplet lec-pnr RUN_TAG=gdsrun-20260823-rzG SYN_RUN_TAG=gdsrun-20260823-rzG
     # SAME TOOL, SAME GRAMMAR, SAME CHECK AS `lec` — deliberately, and read the
     # note there for the measurement behind it. This stage held a Conformal seat
     # for up to six hours and then reported on an exit status the Makefile recipe
@@ -1370,7 +1598,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import re, sys
-      L = "ASIC/eth-chiplet/build/fp1505/logs/lec_pnr.log"
+      L = "ASIC/eth-chiplet/build/gdsrun-20260823-rzG/logs/lec_pnr.log"
       try:
           t = open(L, errors="replace").read()
       except OSError:
@@ -1399,6 +1627,18 @@ stages:
           print("lec-pnr: FAIL —", b)
       sys.exit(1 if bad else 0)
       EOF
+    #
+    # ── FIXTURES MOVED AGAIN 2026-08-24, fp1505 -> gdsrun-20260823-rzG, and
+    # the 2026-08-18 lesson below is exactly why they had to move WITH check:.
+    # A fixture directory embeds the build tag in its own path, so repointing
+    # `check:` alone would have left every case reading a path the fixture does
+    # not supply — the sandbox then symlinks the REAL tree in, and each case's
+    # verdict becomes whatever the working tree happens to say that day. That is
+    # the failure recorded below, in the other direction. Done with plain `mv`
+    # rather than `git mv`: concurrent sessions commit in this repo, and a bare
+    # `git commit` takes the whole shared index, so the rename is left unstaged
+    # in the working tree. Verified after the move: `signoff.py prove` reports
+    # every case of this stage ok in both directions.
     #
     # FIXTURES MOVED 2026-08-18 — check_proof DISCRIMINATES AGAIN. The note below
     # is kept because it is the only record of how a green proof went hollow, and
@@ -1430,8 +1670,8 @@ stages:
     # describes this comparison; that directory holds the older
     # full-20260814-vs-full-20260814 run and would misattribute if collected.
     artifacts:
-      - ASIC/eth-chiplet/build/fp1505/logs/lec_pnr*.log
-      - ASIC/eth-chiplet/build/fp1505/reports/lec/pnr/**
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/logs/lec_pnr*.log
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/reports/lec/pnr/**
 
   - id: lvs-preflight
     phase: physical
@@ -1459,7 +1699,7 @@ stages:
     # the TSMC _BE procurement blocker was resolved. It was not.
     #   legacy  = transistor-level LVS. Needs the _BE packages (CDL + cell GDS)
     #             for standard cells, IO and pads. Still unlicensed. Still a
-    #             procurement blocker: docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+    #             procurement blocker: docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md.
     #   toolkit = Front-End methodology. run_lvs.sh states it in its own output:
     #             this flow does NOT require the _BE packages; FE simulation
     #             Verilog is sufficient, because leaf cells are BLACK-BOXED.
@@ -1486,13 +1726,13 @@ stages:
     # build/default, which has no GDS, no netlist and no romlibs and exits 2
     # naming each — right for a human, wrong for a gate that must name its
     # build.
-    run: make -C ASIC/eth-chiplet lvs-preflight RUN_TAG=full-20260814
+    run: make -C ASIC/eth-chiplet lvs-preflight RUN_TAG=gdsrun-20260823-rzG
     # The preflight launches no tool and writes no log of its own, so there is
     # nothing here that it produces. LVS_RUNDIR is where the FULL run would
     # write; globbed rather than named so an empty directory collects nothing
     # instead of failing the stage.
     artifacts:
-      - ASIC/eth-chiplet/build/full-20260814/work/lvs_run/**
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/lvs_run/**
 
   - id: drc
     phase: physical
@@ -1510,8 +1750,23 @@ stages:
     # the entry point alone would have left it running one tree and grading
     # another, which is worse than not running.
     #
-    # MOVED full-20260814 -> fp1505, 2026-08-18, all four keys together again
-    # and for the reason stated directly above. fp1505 is the promoted
+    # MOVED fp1505 -> gdsrun-20260823-rzG, 2026-08-24, all four keys together
+    # again — needs_implementation:, run:, check: and artifacts:. rzG is the
+    # newest build carrying reports/route_manifest.txt; see the physical-phase
+    # preamble for why that file, and not mtime, is what "newest" means here.
+    #
+    # THE NUMBERS BELOW ARE fp1505's AND HAVE NOT BEEN RE-MEASURED ON rzG. The
+    # 837 raw results / 691 waived / 6159 density windows quoted further down
+    # are a 2026-08-18 census of build/fp1505/work/drc_run. rzG has no drc_run
+    # at all yet, so the first `make -C ASIC/eth-chiplet drc RUN_TAG=rzG` will
+    # produce a genuinely new census and those figures should be read as the
+    # PREVIOUS build's, not as a prediction. What does NOT change is the
+    # verdict's direction: this stage stays red on any design-owned result, and
+    # nothing in the move manufactures a green.
+    #
+    # The 2026-08-18 move this note originally recorded, kept for the reasoning:
+    # full-20260814 -> fp1505, all four keys together, because fp1505 was the
+    # promoted
     # place-and-route build -- Innovus check_drc reports 0 SHORT on it against
     # full-20260814's 4 rail-to-rail VDD/VSS shorts (docs/tapeout/43-drc-fp1505.md
     # §3) -- so fp1505's stream is the one that would be submitted, and grading
@@ -1552,14 +1807,14 @@ stages:
     # Innovus check_drc result. Anyone reading a still-red drc row after this
     # move is reading it correctly.
     needs_implementation:
-      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre DRC on the routed GDS (signoff-grade ruledeck)"
     # NOT `make asic-drc`, for the reason spelled out in rom-gds and lec-pnr: that
     # root forwarder now reaches the toolkit, but it carries no run tag, so it
     # resolves to RUN_TAG=default — a different build directory from the one
     # needs_implementation declares and check: reads. A stage must not declare
     # one run and measure another.
-    run: make -C ASIC/eth-chiplet drc RUN_TAG=fp1505
+    run: make -C ASIC/eth-chiplet drc RUN_TAG=gdsrun-20260823-rzG
     # Calibre exits 0 whether or not it found violations, and the Makefile does
     # not parse the result. Count them here or this stage means nothing.
     #
@@ -1590,12 +1845,24 @@ stages:
     # in code — and it FAILS the gate if it goes stale or if any waived count
     # moves. See the fail-waiver-stale fixture below.
     check: |
-      python3 scripts/ci/drc_census.py ASIC/eth-chiplet/build/fp1505/work/drc_run
+      python3 scripts/ci/drc_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_run
     # NOTE these fixtures are also a live test of DRC_DESIGN_BUDGET /
     # DRC_DENSITY_BUDGET: fail-design-results carries 7 design-owned results, so
     # if the environment has raised the budget past 7 the must-fail case PASSES
     # and `prove` goes red. That is the intended behaviour — a budget set high
     # enough to swallow real violations has made the gate blind.
+    #
+    # ── FIXTURES MOVED AGAIN 2026-08-24, fp1505 -> gdsrun-20260823-rzG, and
+    # the 2026-08-18 lesson below is exactly why they had to move WITH check:.
+    # A fixture directory embeds the build tag in its own path, so repointing
+    # `check:` alone would have left every case reading a path the fixture does
+    # not supply — the sandbox then symlinks the REAL tree in, and each case's
+    # verdict becomes whatever the working tree happens to say that day. That is
+    # the failure recorded below, in the other direction. Done with plain `mv`
+    # rather than `git mv`: concurrent sessions commit in this repo, and a bare
+    # `git commit` takes the whole shared index, so the rename is left unstaged
+    # in the working tree. Verified after the move: `signoff.py prove` reports
+    # every case of this stage ok in both directions.
     #
     # FIXTURES MOVED 2026-08-18 — check_proof DISCRIMINATES AGAIN. The note below
     # is kept because it is the only record of how a green proof went hollow, and
@@ -1651,14 +1918,14 @@ stages:
     # report's `artifacts_missing` list, which trains a reader to skim that list
     # instead of reading it.
     artifacts:
-      - ASIC/eth-chiplet/build/fp1505/work/drc_run/**
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_run/**
 
   - id: erc
     phase: physical
     gate: report
     label: soclabs-pdk
     needs_implementation:
-      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre ERC — does the routed GDS carry power/ground TEXT LABELS?"
     # ADDED 2026-08-18, IN RESPONSE TO A REAL FOUNDRY SIGNOFF ERROR. IMEC's own
     # ERC run against a GDS we sent them (2026-08-17/18) returned one hard
@@ -1700,7 +1967,21 @@ stages:
     #   * calibrated against the EXACT GDS IMEC checked (md5
     #     7f6214965501c911bd65069378ae911d) — reproduces IMEC's finding exactly,
     #     both via Calibre's own ERC and an independent klayout structural scan.
-    #   * fp1505 (this stage's target, same build `drc` above grades): the
+    #   * MOVED fp1505 -> gdsrun-20260823-rzG, 2026-08-24, all five keys
+    #     together (needs_implementation:, the mkdir, ERC_GDS, ERC_RUNDIR, the
+    #     tee, check: and artifacts:). THE PARTIAL VERDICT RECORDED BELOW IS
+    #     fp1505's AND HAS NOT BEEN RE-MEASURED. That matters more here than
+    #     anywhere else in this file, because the promotion bar stated above is
+    #     precisely "promote once fp1505 (OR ITS SUCCESSOR) is rebuilt from
+    #     `place` onward with this power_plan.tcl and a fresh `make erc` on THAT
+    #     build reads OK". rzG is that successor and this stage has never been
+    #     run against it, so whether the VDDIO/VSSIO fix reached the shipped
+    #     stream is now an OPEN, ANSWERABLE question rather than a known
+    #     negative. Run it before quoting either answer. It stays gate: report
+    #     until it has read OK across several builds in a row, exactly as
+    #     written above — one green run on rzG would not be that.
+    #
+    #   * fp1505 (the PREVIOUS target, same build `drc` then graded): the
     #     SPNET stream-map fix (ASIC/asic-toolkit/tech/tsmc65/derive.tcl,
     #     gdsmap_derive) DOES label VDD/VSS — Calibre resolves both and the
     #     klayout scan finds real text on the M9 text/SPNET layer. It does NOT label
@@ -1715,12 +1996,12 @@ stages:
     # its execution — after preflight, before the Calibre invocation — which is
     # too late for a `| tee` sitting outside the script.
     run: |
-      mkdir -p ASIC/eth-chiplet/build/fp1505/work/erc_run
+      mkdir -p ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run
       make -C ASIC/genus-innovus erc \
-        ERC_GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
-        ERC_RUNDIR=$PWD/ASIC/eth-chiplet/build/fp1505/work/erc_run \
+        ERC_GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds \
+        ERC_RUNDIR=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run \
         BLOCK=nanosoc_eth_chiplet_pads \
-        2>&1 | tee ASIC/eth-chiplet/build/fp1505/work/erc_run/run_erc.log
+        2>&1 | tee ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run/run_erc.log
     # run_erc.sh prints its OVERALL verdict to ITS OWN stdout — it is not
     # written into calibre_erc.sum or any other Calibre artefact — so the tee
     # above is what gives erc_census.py something repo-relative to read. See
@@ -1729,7 +2010,7 @@ stages:
     # deliberately not fatal to the STANDALONE tool, see its own header) and
     # only NOT SIGNED OFF is RC_NOPG.
     check: |
-      python3 scripts/ci/erc_census.py ASIC/eth-chiplet/build/fp1505/work/erc_run
+      python3 scripts/ci/erc_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run
     check_proof:
       must_pass: ci/fixtures/erc/pass
       must_fail:
@@ -1737,7 +2018,7 @@ stages:
         - ci/fixtures/erc/fail-not-signed-off
         - ci/fixtures/erc/fail-no-output
     artifacts:
-      - ASIC/eth-chiplet/build/fp1505/work/erc_run/**
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run/**
 
   - id: bnd
     phase: physical
@@ -1746,11 +2027,11 @@ stages:
     description: "Calibre BND (bond-pad / seal-ring BEOL) — separate foundry deck from `drc`"
     run: |
       make -C ASIC/genus-innovus bnd \
-        BND_GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
-        BND_RUNDIR=$PWD/ASIC/eth-chiplet/build/fp1505/work/bnd_run \
+        BND_GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds \
+        BND_RUNDIR=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/bnd_run \
         BLOCK=nanosoc_eth_chiplet_pads
     check: |
-      python3 scripts/ci/bnd_census.py ASIC/eth-chiplet/build/fp1505/work/bnd_run
+      python3 scripts/ci/bnd_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/bnd_run
     check_proof:
       must_pass: ci/fixtures/bnd/pass
       must_fail:
@@ -1763,9 +2044,9 @@ stages:
         # widens that entry to a rule-scoped suppression, this stops failing.
         - ci/fixtures/bnd/fail-waiver-stale
     needs_implementation:
-      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
     artifacts:
-      - ASIC/eth-chiplet/build/fp1505/work/bnd_run/**
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/bnd_run/**
 
   # --- LOGO keep-out (AP-only fix) — same promotion-order row as `bnd`, kept
   # a SEPARATE stage rather than folded in, because its promotion evidence is
@@ -1803,19 +2084,19 @@ stages:
     # ASIC/genus-innovus/Makefile (`drc-logo` target).
     run: |
       make -C ASIC/genus-innovus drc-logo-check \
-        GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds \
-        DRC_LOGO_RUNDIR=$PWD/ASIC/eth-chiplet/build/fp1505/work/drc_logo_run
+        GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds \
+        DRC_LOGO_RUNDIR=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_logo_run
     check: |
-      python3 scripts/ci/logo_census.py ASIC/eth-chiplet/build/fp1505/work/drc_logo_run
+      python3 scripts/ci/logo_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_logo_run
     check_proof:
       must_pass: ci/fixtures/logo/pass
       must_fail:
         - ci/fixtures/logo/fail-nonzero-true
         - ci/fixtures/logo/fail-no-summary
     needs_implementation:
-      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
     artifacts:
-      - ASIC/eth-chiplet/build/fp1505/work/drc_logo_run/**
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_logo_run/**
 
   - id: padring-power-domain
     phase: physical
@@ -1922,18 +2203,77 @@ stages:
   #   * EM current density must be ANALYSED. In static mode, with no -em_models
   #     and no -process_techgen_em_rules, the tool DISABLES current-density
   #     analysis and the run still succeeds with the EM report simply absent.
-  #     At --tier signoff the gate treats that as a hard failure, which is why
-  #     this row runs at --tier report until models are wired in.
-  # Promoting is a one-word edit here plus RAIL_TIER=signoff. Do not promote by
-  # relaxing a budget: every threshold in rail_budgets.txt carries a provenance
-  # string and the gate refuses to load a file whose provenance is a measurement.
+  #     rail_run.tcl now passes -process_techgen_em_rules true with an
+  #     -ict_em_models file and DIES rather than solving without one, so this
+  #     clears on the next RUN of the stage and not by an edit here. Every run
+  #     on disk predates that change and still reads NOT_ANALYSED.
+  #
+  # PROMOTING IS NOW A ONE-WORD EDIT HERE AND NOTHING ELSE. This note used to
+  # read "a one-word edit here plus RAIL_TIER=signoff", and the second half was
+  # fiction: --tier moved em.current_density between HARD and ADVISORY and
+  # changed no exit code. The flag is REMOVED as of 2026-08-24 — the gate
+  # computes one verdict and one exit code, this `gate:` field is the whole
+  # blocking decision, and whether EM is required is `em.required` in
+  # rail_budgets.txt. Do not promote by relaxing a budget: every threshold there
+  # carries a provenance string and the gate refuses to load a file whose
+  # provenance is a measurement. `em.required false` would be exactly that move.
+  #
+  # EXIT CODES the check: below can return — 0 PASS, 1 a budget exceeded, 2 a
+  # hard failure, 3 the gate REFUSED to judge (a ratcheted budget file, or a
+  # census declaring itself a negative control), and 4 PASS_DEGRADED: nothing
+  # wrong with the design, and something could not be measured. 4 is
+  # deliberately non-zero — a check that did not run must not exit like one
+  # that passed, which is the defect this whole stage is about.
   - id: ir-drop
     phase: physical
     gate: report
     label: soclabs-pdk
     description: "Static rail analysis (Voltus rail commands under Innovus): measured IR drop on the routed database, gated on the completeness assertions that decide whether the millivolts mean anything"
-    # RAIL_RUN_TAG SPELLED OUT, 2026-08-18, though fp1505 is already
-    # rail_project.mk:54's default. The tag is what binds this line to the census
+    # ADDED 2026-08-24. THIS WAS THE ONLY PHYSICAL STAGE WITH NO
+    # needs_implementation:, AND THE OMISSION CHANGED THE VERDICT'S MEANING.
+    # Every other physical row declares the artefacts an implementation run must
+    # have produced, so a build that was never run — or was cleaned away —
+    # renders UNVERIFIED: an indictment of the RUN. With this key absent, an
+    # absent build fell through to `check:`, whose "no rail census" arm exits 1,
+    # and the stage rendered FAIL: an indictment of the DESIGN. "Nobody has
+    # routed this build yet" and "this die's power delivery is out of budget"
+    # are different findings and were rendering as the same colour.
+    #
+    # TWO PATHS, AND THE SECOND IS THE LOAD-BEARING ONE:
+    #   * work/<block>_routed is the database rail_project.mk:57 actually opens
+    #     ($(RAIL_BUILD_ROOT)/$(RAIL_RUN_TAG)/work/$(BLOCK)_$(RAIL_DB_STAGE)).
+    #     Its presence means a route was STARTED in this build.
+    #   * reports/route_manifest.txt is written at the END of the route stage —
+    #     it records date, runtime_s, stage=route and the provenance block — so
+    #     its presence is the proof the route FINISHED. A half-written database
+    #     from a live or killed run has the first and not the second, and
+    #     Voltus opening one produces a corrupt-DB report that reads like a
+    #     design defect. That is the same guard ASIC/sta/run_sta.sh:6-9 applies
+    #     by name, generalised: measured 2026-08-24, gdsrun-20260824-valid4
+    #     (mid-flight) and -valid7 (died at placement) both have work/ and
+    #     neither has a route_manifest.txt.
+    # Same string as run:, check: and artifacts: below, on purpose.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/nanosoc_eth_chiplet_pads_routed
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/reports/route_manifest.txt
+    # The rzG rail solve took 6m40s wall (stage.started 2026-08-24T10:11:25,
+    # census written 10:18:05). Budgeted generously at 4x that: this stage runs
+    # Voltus over a 103-macro routed database and a slower host, a colder file
+    # cache or a re-solve of the PG view can multiply it. Without a timeout a
+    # wedged rail solve holds the runner indefinitely; with one set too tight,
+    # a healthy run is killed and rendered as a design result.
+    timeout_s: 1800
+    # RAIL_RUN_TAG SPELLED OUT — AND IT IS NO LONGER THE DEFAULT, 2026-08-24.
+    # When this note was written the spelled-out tag happened to match
+    # rail_project.mk:54's `RAIL_RUN_TAG ?= fp1505`, so the discipline was
+    # costing nothing and proving nothing. It is now load-bearing: this stage
+    # names gdsrun-20260823-rzG and the makefile default is still fp1505, so
+    # dropping the tag from run: would silently analyse a build seven route runs
+    # old while check: below graded rzG's census — one build implemented,
+    # another graded, the exact defect this file keeps naming. Do not "tidy" it
+    # away, and if you update rail_project.mk's default, update it BECAUSE the
+    # default is wrong, not to make this line redundant. The tag is what binds
+    # this line to the census
     # path check: below pins; leaving it implicit means a one-word edit to the
     # default in another file silently makes run: analyse one build while check:
     # grades another, and both would still be green-looking.
@@ -1950,7 +2290,7 @@ stages:
     # worktree. ir-drop-selftest's `rail-selftest` is unreachable for the
     # identical reason. THE FIX IS TO COMMIT THAT INCLUDE, in
     # ASIC/genus-innovus/Makefile — not to change anything here.
-    run: make -C ASIC/genus-innovus rail RAIL_RUN_TAG=fp1505
+    run: make -C ASIC/genus-innovus rail RAIL_RUN_TAG=gdsrun-20260823-rzG
     # THE CHECK NEVER CONSULTS AN EXIT CODE — not the tool's and not the stage
     # script's. report_rail, report_resistance and set_power_pads have all been
     # observed printing `**ERROR` and returning SUCCESS on this design, so the
@@ -2016,7 +2356,7 @@ stages:
       set -u
       # -- 1 -- WHICH CENSUS. Named, never ranked. --------------------------
       RAIL_WORK=ASIC/genus-innovus/rail/work
-      PINNED=$RAIL_WORK/fp1505/census.txt
+      PINNED=$RAIL_WORK/gdsrun-20260823-rzG/census.txt
       CEN="${RAIL_CENSUS:-}"
       case "$CEN" in
         *'*'*|*'?'*|*'['*)
@@ -2079,10 +2419,25 @@ stages:
         echo "  judges a fragment of a run and reports on it as though it were the run."
         exit 1
       fi
+      # --tier DROPPED 2026-08-24, ON THE TOOL'S OWN INSTRUCTION. rail_gate.py
+      # removed the flag and now REFUSES TO JUDGE when it is passed, exiting 3
+      # with "Drop the flag; the verdict and the exit code are unchanged by it."
+      # Its reasoning: `signoff` and `report` differed in exactly one way —
+      # whether em.current_density was HARD or ADVISORY — while three files
+      # described it as the blocking/non-blocking switch, so it could neither
+      # change the verdict on a run whose EM was analysed nor stop one that was
+      # broken. Blocking vs non-blocking is the `gate:` field on this row (it is
+      # `report`); whether EM is required is `em.required` in rail_budgets.txt.
+      #
+      # UNTIL THIS LINE WAS REMOVED THIS GATE COULD NOT PASS AT ALL — measured,
+      # `signoff.py prove ir-drop` reported must_pass BROKEN, rc=3, "the check
+      # REJECTED good evidence". That is the shape of a stage that renders red
+      # for a wiring reason on a design nobody has measured, which this file
+      # calls out by name in rom-content's note: a red for a wiring reason is
+      # worse than a green, because it trains people to discount the gate.
       python3 ASIC/genus-innovus/rail/rail_gate.py \
           --census  "$CEN" \
-          --budgets ASIC/genus-innovus/rail/rail_budgets.txt \
-          --tier    "${RAIL_TIER:-report}"
+          --budgets ASIC/genus-innovus/rail/rail_budgets.txt
     # Both directions, and each must-fail case is a way this project has ALREADY
     # been misled — not an invented mutation. The fixtures are cut down from the
     # real artefacts of the fp1505 run, so the shapes are the tool's own.
@@ -2102,15 +2457,15 @@ stages:
     # a verdict computed from exactly one of them — which is how a reader ends up
     # attributing a millivolt number to the wrong build.
     artifacts:
-      - ASIC/genus-innovus/rail/work/fp1505/census.txt
-      - ASIC/genus-innovus/rail/work/fp1505/verdict.json
-      - ASIC/genus-innovus/rail/work/fp1505/results/*/Reports/*/*.main.rpt
-      - ASIC/genus-innovus/rail/work/fp1505/results/*/Reports/*/*.layerbased_ir.rpt
-      - ASIC/genus-innovus/rail/work/fp1505/results/*/*/*_vsrcs.rpt
+      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/census.txt
+      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/verdict.json
+      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/Reports/*/*.main.rpt
+      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/Reports/*/*.layerbased_ir.rpt
+      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/*/*_vsrcs.rpt
 
   # --- Can the IR-drop gate actually FAIL? ------------------------------------
   # Same doctrine as rom-selftest and lec-selftest, and runs before the row it
-  # guards. Twenty mutations of a rail run, each broken in one specific way this
+  # guards. Forty-odd mutations of a rail run, each broken in one specific way this
   # project has been misled by: zero voltage sources reported as "6/6 (100.00%)",
   # a source on every via of a layer, an ERA method that would bridge the PG
   # opens, a stream-derived grid, the 1.20-vs-1.08 divisor, a demand file that
@@ -2121,7 +2476,7 @@ stages:
     phase: rtl
     gate: block
     label: soclabs-sim
-    description: "Mutation-test the IR-drop gate itself — 20 cases, both directions, plus two anti-ratchet refusals"
+    description: "Mutation-test the IR-drop gate itself — 45+ cases, both directions, plus two anti-ratchet refusals and the removed --tier flag"
     run: make -C ASIC/genus-innovus rail-selftest
     # The COUNT is asserted, not just the exit status: a selftest that quietly
     # stops running cases still exits 0. This is the same hole rom-selftest's
@@ -3316,13 +3671,25 @@ stages:
     # and docs/tapeout/52-padring-gds-check.md for what running it against the
     # exact GDS IMEC saw found.
     needs_implementation:
-      - ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
-    # fp1505, named explicitly -- same "declare one build, run and grade that
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+    # MOVED fp1505 -> gdsrun-20260823-rzG, 2026-08-24, needs_implementation:
+    # and run: together. THE CORNER-ORIENTATION FINDING ABOVE IS fp1505's AND
+    # HAS NOT BEEN RE-MEASURED ON rzG, and this is the one stage in the file
+    # where the move might legitimately flip a red to a green: the note above
+    # says the .io source was hand-fixed at commit d93331f and that clearing the
+    # defect "needs a new Innovus place/route run, which has not happened on
+    # this site since the fix". Several have happened since — rzG among them —
+    # so rzG's stream MAY carry the corrected corners. MAY. Nobody has run the
+    # checker against it. Do not report this row as fixed until `make -C
+    # ASIC/genus-innovus padring-gds` has been run on rzG's GDS and the JSON
+    # shows all four corners resolved with 0 problems.
+    #
+    # Named explicitly -- same "declare one build, run and grade that
     # SAME build" discipline as drc/rom-gds above (this file's own comment
     # block ahead of the physical-phase stages explains why: a bare
     # `make asic-padring-gds` resolves GDS against the LEGACY outputs/ dir,
     # which holds no GDS at all).
-    run: make -C ASIC/genus-innovus padring-gds GDS=$PWD/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads.gds
+    run: make -C ASIC/genus-innovus padring-gds GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
     # Re-read the JSON report rather than trusting the tool's own exit code --
     # same doctrine as every other block-gated stage in this file. The script's
     # own rc (EXIT_MISMATCH on any non-empty `problems`) is ALREADY an honest
@@ -3415,6 +3782,54 @@ stages:
 #   day it landed, which is the argument for having it.
 # -----------------------------------------------------------------------------
 unsupported:
+  - id: d2d-tx-clock-boundary-untimed
+    # RATIFIED 2026-08-19 (David). This entry exists because the status quo was
+    # defensible only as ONE specific claim, and the SDC states a different one.
+    #
+    # constraints.sdc:392-407 places D2D_TX_CLK_0 and D2D_TX_WORD_CLK_0..7 in
+    # their own group of `set_clock_groups -asynchronous -name eth_chiplet_cdc`.
+    # THAT IS NOT TRUE OF THE NETLIST. Synthesis resolves them as GENERATED from
+    # `clk`: "Using master clock 'clk' for generated clock 'D2D_TX_CLK_0'" and
+    # the same for _WORD_CLK_0..7, through pads.v:137,266 (user_ref_clk aliased
+    # onto the sys_fclk pad) -> tidelink_top.sv:2483 -> Wlink.v:2105 ->
+    # WlinkGPIOPHY_v2.v:357 -> WavD2DGpio_v2.v:2088. The contrast with receive
+    # proves it is not a misreading: D2D_RX_CLK_0 is a create_clock on a real pad
+    # and its word clocks correctly resolve to it.
+    #
+    # WHAT IS RATIFIED, in one sentence: this design deliberately does not time
+    # the boundary between `clk` and the D2D transmit clocks, because the RTL
+    # synchronises it - accepting a false path on ~1184 endpoints (~2k flops of
+    # boundary), and accepting that `-asynchronous` is not a true description of
+    # the netlist. The gap is quantified and accepted, not overlooked.
+    #
+    # WHY NOT FIXED IN THIS CYCLE. Option A (merge the TX group into `clk`)
+    # cannot be landed correctly inside one flow: its own acceptance criteria
+    # require a first run to NAME ~200 endpoints before the exceptions for them
+    # can be written, so folding it in re-creates the blocker it removes. It
+    # would also now need the tidelink link-clock divider declared as a
+    # create_generated_clock, or the SDC is wrong on ~1.5k flops at any ratio
+    # other than /1 and would not say so. Option B (bond user_ref_clk to its own
+    # pad) makes this constraint TRUE with zero new exceptions, but it is a
+    # hardware and board change. Both remain open; see
+    # docs/asic/C2_TRANSMIT_GROUP_OPTIONS.md.
+    #
+    # C2's set_max_delay attempt was reverted at c94306c and read_sdc is clean at
+    # HEAD - this entry records the INTENT, not a broken constraint.
+    reason: >
+      The clk <-> D2D transmit clock boundary is deliberately not timed. The TX
+      clocks are declared asynchronous to clk in constraints.sdc, but synthesis
+      resolves them as generated FROM clk, so every path across that boundary is
+      false-pathed by a declaration that is not true of the netlist. ~1184
+      endpoints are exempted this way. Accepted for this tapeout on the grounds
+      that the RTL synchronises the crossing; NOT accepted as a description of
+      the hardware.
+    # Refuted the day the TX group stops being declared asynchronous - i.e. when
+    # Option A merges it into clk, or Option B gives it a genuinely independent
+    # pad and the declaration becomes true. Fixed-string match on the -group
+    # clause itself, so a rename of the variable does not silently refute it.
+    refuted_by: |
+      ! grep -qF -- '-group [get_clocks $_tx_grp]' \
+        ASIC/genus-innovus/inputs/constraints.sdc
   - id: sta-signoff
     reason: "No Tempus or PrimeTime installed. Timing evidence is limited to Genus/Innovus in-tool reports, which is not signoff STA"
     refuted_by: "command -v tempus >/dev/null || command -v pt_shell >/dev/null || command -v primetime >/dev/null"
@@ -3453,8 +3868,8 @@ unsupported:
       INTERNAL geometry cannot fire, because that geometry is not in the stream,
       so "design == 0" means "clean in the layers we actually have" and never
       "clean". Results are therefore waived on the record with that limit stated
-      — see docs/DRC_WAIVER_INVENTORY.md, which supersedes the status section of
-      docs/TSMC_BACKEND_PACKAGE_REQUEST.md.
+      — see docs/asic/DRC_WAIVER_INVENTORY.md, which supersedes the status section of
+      docs/asic/TSMC_BACKEND_PACKAGE_REQUEST.md.
     # The reason names its own root cause — "no *_BE directory exists anywhere on
     # the system" — so that is the clause to test. ${TSMC_65_HOME} holds only *_FE
     # (Front-End packages only; no Back-End package is present), measured 2026-08-17.
@@ -3475,7 +3890,7 @@ unsupported:
       arrives only in the Back-End packages and those will not be obtained, so
       full-chip LVS is not a deferred task on this project — it will not run
       here at all. What IS available and should be used instead is black-box
-      LVS, which works on this site today. See docs/DRC_WAIVER_INVENTORY.md § 7.
+      LVS, which works on this site today. See docs/asic/DRC_WAIVER_INVENTORY.md § 7.
     # "there is no CDL ... (one 92-byte unit.cdl in the whole PDK)" is the
     # testable half. -size +1k excludes that stub, so this fires only on a real
     # netlist. Scoped to ${TSMC_65_HOME} deliberately: an unbounded search of every
@@ -3539,14 +3954,35 @@ unsupported:
     # -em_models is not supplied and -process_techgen_em_rules is not true,
     # current-density analysis is DISABLED. The run still succeeds and the EM
     # report is simply absent — so this gap is invisible unless it is declared.
-    # The gate records em_status=NOT_ANALYSED and treats it as a hard failure at
-    # --tier signoff, which is why the ir-drop row runs at --tier report.
+    # The gate records em_status=NOT_ANALYSED and treats it as a hard failure
+    # whenever rail_budgets.txt says em.required true, which it does. (That key
+    # used to be half of the decision; --tier was the other half and is gone.)
+    #
+    # WIRED IN 2026-08-24, NOT YET RUN. rail_run.tcl now passes
+    # -process_techgen_em_rules true with an -ict_em_models file built by
+    # rail/gen_em_ict.py out of the tech LEF's own DCCURRENTDENSITY tables, and
+    # refuses to solve without one. The standing claim that TSMC ships no EM
+    # rules for this stack was true only of the volcano directory. This entry
+    # stays until a RUN records current density — flags in a script are not a
+    # measurement, which is why refuted_by below reads a census and a report
+    # instead of grepping the script.
     reason: "PG electromigration is NOT analysed by the ir-drop stage: no -em_models and no -process_techgen_em_rules are supplied, so Voltus disables current-density analysis and completes successfully without it. The licence-free pg_capacity step computes a DC-average capacity margin from the tech LEF instead, which assumes perfect current sharing across every via on a plane and is not the same check. EM limits are the one genuinely foundry-defined number in this area"
     # Refuted the day the rail stage passes EM models and a run records that it
     # analysed current density.
-    refuted_by: >
-      grep -rqE 'em_models|process_techgen_em_rules'
-      ASIC/genus-innovus/rail/rail_run.tcl 2>/dev/null
+    # WAS a grep of rail_run.tcl for the flag names. That now MATCHES, and it
+    # would have declared this gap closed the moment the flags were typed —
+    # before any run had used them. The refutation is a rail run whose census
+    # names the model file it was given AND whose report carries a J/Jmax
+    # number: both halves, because either alone has already been produced here
+    # without the other.
+    refuted_by: |
+      for c in ASIC/genus-innovus/rail/work/*/census.txt; do
+        [ -f "$c" ] || continue
+        grep -qE '^method\.em_ict=.+' "$c" || continue
+        grep -rqE 'Maximum J/Jmax:[[:space:]]*[0-9]' \
+             "$(dirname "$c")"/results/*/Reports/*/*.main.rpt 2>/dev/null && exit 0
+      done
+      exit 1
   # `full-design-lint` used to sit here reading "make lint covers 3 authored
   # files of 598 compiled; the rest is linted only in component repos, if at
   # all". REMOVED 2026-08-17: verif/lint/full/run.sh exists and does exactly the

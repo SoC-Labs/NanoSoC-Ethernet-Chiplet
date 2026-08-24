@@ -1,0 +1,18 @@
+# drc is pinned at a build with a work/ database and NO
+# reports/route_manifest.txt — a run still in flight, or one that died.
+# It is the NEWEST directory on disk, which is exactly why 'newest by
+# mtime' is the wrong rule and this case exists to pin that.
+# FIXTURE, not the real ci/signoff.yaml — see ci/fixtures/README.md.
+# SYNTHETIC BY CONSTRUCTION and it has to be: this gate's subject IS the
+# manifest, so a fixture for it is a manifest. The stage ids below are the real
+# ones (drc, lec) because scripts/ci/build_freshness.py's exemption register is
+# keyed on (stage id, build tag) — a fixture using invented ids could not
+# exercise an exemption at all, which is half of what this gate does.
+design: fixture
+top: fixture
+stages:
+  - id: drc
+    description: "fixture stage"
+    run: make drc RUN_TAG=gdsrun-20260824-valid4
+    needs_implementation:
+      - ASIC/eth-chiplet/build/gdsrun-20260824-valid4/outputs/nanosoc_eth_chiplet_pads.gds

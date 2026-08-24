@@ -1,0 +1,19 @@
+# THE RATCHET. lec is still pinned to the older build under the
+# exemption granted because the newest build had no work/fv — and the
+# newest build now HAS one, so lec could be repointed and the exemption
+# has lapsed. A waiver that outlives its reason is how a gate goes
+# blind, so it fails here rather than quietly persisting.
+# FIXTURE, not the real ci/signoff.yaml — see ci/fixtures/README.md.
+# SYNTHETIC BY CONSTRUCTION and it has to be: this gate's subject IS the
+# manifest, so a fixture for it is a manifest. The stage ids below are the real
+# ones (drc, lec) because scripts/ci/build_freshness.py's exemption register is
+# keyed on (stage id, build tag) — a fixture using invented ids could not
+# exercise an exemption at all, which is half of what this gate does.
+design: fixture
+top: fixture
+stages:
+  - id: lec
+    description: "fixture stage"
+    run: make lec-syn RUN_TAG=gdsrun-20260821-slpads
+    needs_implementation:
+      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/outputs/lec.dofile
