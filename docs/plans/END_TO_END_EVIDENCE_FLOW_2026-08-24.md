@@ -1,6 +1,10 @@
 # End-to-end evidence flow: from `make all` to one signed report
 
-    status   DRAFT, written 2026-08-24 evening, updated in place as work lands
+    status   LANDED 2026-08-24 night. Written as a DRAFT that evening; section 0,
+             E.4 and all five of E.5 are now built, proven both directions, and
+             committed. Section F at the foot records what was measured while
+             building it, INCLUDING THREE PLACES WHERE THIS DOCUMENT WAS WRONG.
+             Read F before quoting anything above it.
     owner    flow + report (a sibling session owns repo/worktree hygiene)
     premise  "correctness and evidence over runtime" — the owner's words, verbatim:
              "I don't care if the flow takes an extra couple of hours to run, it's
@@ -723,9 +727,9 @@ passing on, since untracked means not published *yet*:
 (absolute site path), and `verif/lint/netlist/run.sh:72-74` (revision-coded
 vendor names and site paths).
 
-### E.4 To land
-
-Nothing is committed. To land what exists:
+### E.4 To land  — **DONE.** `route_message_census.py` landed in `1ef68f1`; the
+fixtures it needs landed in `a20ce4e` (the script had been committed without
+them, so `--selftest` could not have run in a clean clone). Original text:
 
     git add scripts/ci/route_message_census.py \
             ci/fixtures/route-message-census/ \
@@ -734,7 +738,8 @@ Nothing is committed. To land what exists:
 Run `python3 scripts/ci/route_message_census.py --selftest` first; it must print
 `selftest: OK`.
 
-### E.5 Next, in value order
+### E.5 Next, in value order — **ALL FIVE DONE.** See section F for what each
+one actually took, and for the two that could not be done as written.
 
 1. **Wire gate 1 into `4_route.tcl`'s final gate** as a `hard` entry, over every
    session log the build produced — not only the route one, because
@@ -747,3 +752,176 @@ Run `python3 scripts/ci/route_message_census.py --selftest` first; it must print
    HTML from it.
 5. **Move `lvs` out of `unsupported:`** and in as `gate: block` on the
    sub-top-level missing-connection assertion, with the coverage control.
+
+
+---
+
+## F. WHAT LANDED, AND WHERE THIS DOCUMENT WAS WRONG
+
+Written 2026-08-24 night, after building everything above. Everything in this
+section is MEASURED on this host unless it says otherwise.
+
+### F.1 The one command, and its wall clock
+
+    make evidence RUN_TAG=pinfix-20260824                    6m27s  measured, cold
+    make evidence RUN_TAG=pinfix-20260824 EVIDENCE_PUBLISH=1  +51s  measured
+    make evidence-selftest                                    ~90s  no licence, no PDK
+
+`ASIC/evidence.mk` is the entry point. `design.mk` sets `ROUTE_POST_TARGETS =
+evidence`, and the toolkit's `route:` recipe calls it through a new generic
+`post_stage_targets` hook — after the stage EXITS and `route_gate.txt` has been
+written and parsed, which is the seam section C.1 argued for. The hook never
+probes for a target's existence, because `make -n` and `make -q` both RUN
+`$(MAKE)` recipe lines; the project names the target in a variable instead.
+
+Of the 6m27s, **6 minutes is the macro-pin GDS walk** — 2.6M PATHs and 2.3M
+SREFs over a 302 MB stream. Everything else together is under 30 seconds. A
+stamped cache re-uses a walk only when it records the same stream md5.
+
+### F.2 Section 0's LEAD, and the two defects found while wiring it
+
+The gate is `pnr_utils.tcl` section 8b, called from `4_route.tcl` section 16
+over every session log the build produced. 32 unit cases, 10 mutation cases,
+10/10 rejected, full toolkit suite 519/519. It is cross-checked against
+`route_message_census.py` over all 10 fixture arms on every `make
+evidence-selftest`: two implementations of one spec is a duplication risk, and
+the automated agreement check is what makes it a proof instead.
+
+**The strongest single result:** `gdsrun-20260824-valid4` — the base run of the
+CURRENT submission candidate — fails this gate on the same net family that
+shipped in rzG, while its own `route_gate.txt` line 9 reads `HARD FAILURES:
+none`. Section 0 argued this from historical logs; it is true of the live
+candidate's lineage.
+
+**Two defects in the gate as this document described it**, both found by running
+it over real logs rather than fixtures:
+
+1. **The `@file` echo.** Innovus prints the script's own source back into the
+   log, prefixed `@file <n>: `. `arm_orig.tcl`'s header comment QUOTES the
+   open-nets decline verbatim to explain why the arm exists — and the gate read
+   the comment as a finding, scoring **two arms of the submission candidate**
+   (`eco.log`, `blkg.log`) as FAIL. Real findings never carry the prefix: the
+   two in the rzG route log are bare, in a file with 5,827 `@file` lines. Fixed
+   in both implementations, with a fixture arm built from the real echoed text.
+
+2. **A vacuity control was suppressing a finding.** The marker control was
+   evaluated first and `continue`d, so a real unrouted net in a marker-less ECO
+   log reported NOT-MEASURED and the net name was dropped. A control governs an
+   ABSENCE; it must never suppress evidence that is PRESENT. Findings are now
+   evaluated first.
+
+**And one thing this document did not anticipate at all.** Section D.2 says to
+run gate 1 over every session log. Done naively that makes EVERY build
+NOT-MEASURED, because `2_place.tcl` reaches no routing section while emitting
+up to 14 router messages — which is exactly the shape of an aborted route, and
+no content test separates them. Measured per stage:
+
+    2_place.tcl   markers 0      router messages 0-14
+    3_cts.tcl     markers 3      router messages 1
+    4_route.tcl   markers 16-24  router messages 31-37
+    hold_eco.tcl  markers 11     router messages 46
+
+The stage now names its OWN log as the one that must be measurable; every other
+log is still scanned and a FINDING in one is still a FAIL, but its SILENCE is
+advisory. `.logv` variants are excluded outright — their per-line timestamps
+stop the `^`-anchored parser matching anything, and 6 of 6 on the rzG lineage
+read NOT-MEASURED.
+
+### F.3 Where this document was WRONG — three places
+
+**(a) E.5.5 is wrong on the facts. The `lvs` gap stays.** This document says to
+move `lvs` out of `unsupported:` because "the premise filed there has been
+disproved twice". Measured with `TSMC_65_HOME` set to the real PDK root, its
+`refuted_by` still exits 1: there is still no CDL, so transistor-level LVS
+still cannot run here. What has been disproved is a *different* claim — that no
+LVS evidence exists at all. The gap keeps its place and gains a SCOPE
+paragraph; the assertion E.5.5 actually wanted is now a blocking stage beside
+it. Deleting a real gap to satisfy a sentence would have been the worse error.
+
+**(b) B.4 predicts `route-message-census PASS` for the current candidate. It is
+FAIL.** The base run's route log carries 1 net with no global route and a
+4-open-net decline. The pinfix ORIG arm then restored the pre-repair routing
+from DEF — so the defect IS fixed, and the macro-pin gate proves it on the
+streamed bytes — but the census is a LOG-level gate and its honest verdict over
+this lineage is FAIL, not PASS. The report says so rather than laundering it.
+
+**(c) B.4 predicts `macro-pin-connected PASS, 0 bare of 748`, and at that scope
+it is exactly right — but the gate does not run at that scope by default.** At
+`--all-macros` it reports 20 further bare pins, on `rom_via` and `eth_rom_via`.
+Measured on BOTH streams: rzG 23 bare, pinfix 20 bare, delta exactly the 3
+cache pins. A constant that does not move across a known defect and its repair
+is a standing background, not a finding — an unused ROM output legitimately has
+no route. The report now carries TWO rows: the proven cache scope (blocking,
+PASS, 0 of 748) and the wider sweep (NOT-MEASURED, named, non-blocking).
+Folding them into one FAIL would have made the blocking row permanently red,
+which is the failure D.1 warns about, one section away.
+
+### F.4 The store: three Pro-only walls, not one
+
+Section C.2 names `?list&deep=1`. There are more, and the second one changes
+the design:
+
+  * `api/storage/<repo>?list&deep=1` — Pro only, returns an `errors` body.
+  * **`PUT /api/storage/<repo>/<path>?properties=` — ALSO Pro only.** So
+    properties can be set **only at DEPLOY time**, as matrix parameters on the
+    PUT url. An artefact already in the store cannot acquire one without being
+    RE-SENT. That is why the four hand-published candidates carry none, and it
+    is not fixable with a metadata call.
+  * AQL's `.include()` **deduplicates**: `include("name")` reports 2 where the
+    repo holds 5 files. A count from a projected query is not a file count —
+    the same trap as `?list&deep=1`, one layer down.
+
+All three are encoded in `scripts/ci/artifactory.py`, whose selftest proves the
+Pro endpoints REFUSE and that an errors body raises rather than reading as
+zero. 10 live checks including two negative controls.
+
+**Gate 5 now passes**, verified by reading the property back over HTTP:
+
+    asic-candidate/ethchip/nanosoc_eth_chiplet_pads/pinfix-20260824/stream/
+      pnr.raw_md5  3215cbe15fa373b4112fb6631b2c660d   what a foundry cites
+      actual_md5   a491cc2398943ff5de17cf706cdd37f4   the .zst; can never match
+
+25 artefacts bind to that md5. The gate also reports the other half: the same
+bytes sit in `asic-candidate` under a SECOND run tag, hand-published, with no
+identity at all. Not tidied — deleting another session's artefact is not this
+program's call — but named in the report.
+
+### F.5 The real report, and what it says
+
+`build/evidence/pinfix-20260824/evidence_report.{json,html}`, and in the store
+under `asic-record/ethchip/nanosoc_eth_chiplet_pads/pinfix-20260824/`.
+
+    NOT SIGNED OFF.  gates: 5 PASS, 1 FAIL, 8 NOT-MEASURED, 0 KNOWN-BAD
+
+The DRC four-tuple reproduces mechanically from the Calibre run whose
+`Layout Path` md5 IS the submitted stream: **738 / 47 / 14 / 1**, limit 1000,
+nothing saturated. "Real geometry" had no implementation anywhere before this —
+the number was right and the mechanism did not exist — so the exclusion set
+(dummy-fill `DM*`/`DOD`/`DPO`/`DRM`/`DNW`/`DPW` plus `ESD.WARN.1`) is now
+declared in code where it can be argued with.
+
+### F.6 Still NOT covered
+
+  * **No LVS report grades the shipped bytes.** The gate is built and proven on
+    12 arms; every LVS report on disk grades a different build, and the two most
+    recent compared NOTHING (`Error: Nothing in source`) and are correctly
+    NOT-MEASURED. Running LVS on this stream is the single highest-value thing
+    left.
+  * **STA.** Tempus 21.11 IS installed and HAS run six times — against
+    `full-20260814`, a superseded build, with `step.write_parasitics FAILED`.
+    Nothing gates on any of it. The `sta-signoff` gap's stated reason ("No
+    Tempus or PrimeTime installed") is FALSE; its `refuted_by` exits 1 only
+    because tempus is not on `PATH`. Both should be corrected.
+  * **Antenna (foundry deck), IR drop, LEC, PO.R.8 post-merge** — declared
+    NOT-MEASURED with reasons, unchanged from section 6.
+  * **The 20 wider-scope bare macro pins** are unadjudicated. Somebody should
+    read them once and either waive them with a reason or fix them.
+  * **`asic-flow-publish` still sets no properties.** The evidence flow
+    publishes through `scripts/ci/artifactory.py` instead. The toolkit script's
+    refusal to publish a tree with no `route_manifest.txt` is CORRECT and was
+    left alone; the evidence flow is the clearly-labelled other path for
+    experiment trees, and it publishes a report rather than a bare stream.
+  * **`asic-flow-ingest-foundry` still has no AQL fallback.** `find_local_by_md5`
+    still searches local disk only. The store can now answer the query — that is
+    what `artifactory.py findmd5` does — but the two are not joined up, so
+    `_unbound/` will keep filling until they are.
