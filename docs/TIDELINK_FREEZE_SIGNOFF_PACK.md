@@ -321,32 +321,40 @@ artefact.
    and **`hprot[3]` forces single-beat** (`core_addr.sv:147`, `singles_burst`). Only the first
    needed to die. Zeroing both is why peer-write throughput is one B round trip per word.
 
-   **A recovery route was identified and then MEASURED AS VALUELESS — do not spend build time on
-   it.** The route was: pass `hprot[3]`, keep `hprot[2]` low, restoring multi-beat while leaving
-   `hazard_add` permanently false. Before any RTL was written the gating question was measured —
-   what burst class do the real initiators emit?
+   **A recovery route is identified and its premise is LIVE — capability established, occurrence
+   unmeasured.** The route: pass `hprot[3]`, keep `hprot[2]` low, restoring multi-beat while
+   leaving `hazard_add` permanently false.
 
-   Tree-wide, across **291 files** mentioning `hburst`: **96 assignments, every one to SINGLE**
-   (`3'b000` / `3'b0` / `3'h0`), and **zero** fixed-length (INCR4/8/16) or WRAP drivers anywhere.
-   Against `singles_burst <= ~hprot[3] || hexcl || hburst == BUR_INCR` both live classes give
-   `AWLEN=0` whatever `hprot[3]` does: SINGLE has no burst to preserve, and undefined-length INCR
-   trips the `hburst == BUR_INCR` term independently of the bit. So the split would buy **zero
-   beats** while moving the design onto `awcache = 0x2` — Modifiable-but-not-Bufferable, an
-   encoding neither silicon arm exercised (today `0x0` COMPLETES, pre-fix `0x3` WEDGES). Real risk,
-   no benefit: strictly worse than doing nothing.
+   *This entry previously read "measured as valueless". That was wrong and is retracted.* The
+   measurement behind it — 291 files, 96 `hburst` assignments, all SINGLE, no fixed-length drivers
+   — counted **constants in wrappers and testbenches**. The DMA-250 does not assign a constant, so
+   the scan established "nothing hardcodes a burst", which was then reported as "nothing can emit
+   one". Different claims; the stronger one was not what was measured.
 
-   **Which reframes the limitation itself: the tie-down is NOT costing this design burst
-   throughput, because nothing on this design asks for a burst.** The ~1.78 MB/s figure is the B
-   round trip on single-beat traffic and would be that with or without the tie-down. The capability
-   is genuinely absent but currently unexercised. **Revisit only if an initiator emitting
-   fixed-length bursts is ever added** — the bit split is then the candidate, and `awcache=0x2` is
-   the first thing to test.
+   **The DMA-250 as rendered CAN emit fixed-length INCR.** Verified:
+   `dma250_biu_CFG_MIN.sv:557` `assign hburst = xfer_ax_payload_dst.xfer_burst;` with explicit
+   beat-counting for SINGLE/INCR4/INCR8/INCR16 at `:304-307`;
+   `dma250_pch_rw_ctrl_CFG_MIN.sv:825-829` renders all four arms of the burst-type case, selected
+   by `blen_tran_xfer = burst_len_t'(blen >> bsize)` (`:485`) where `blen` is an internal register
+   loaded from the channel command path, not a render constant; and
+   `dma250_pch_ctrl_fsm_CFG_MIN.sv:294/305/316` emits INCR4/INCR8 unconditionally in specific FSM
+   states.
 
-   *Method note: the first version of this measurement found "zero fixed-length bursts" over 5
-   files — all testbenches, because `git grep` in the superproject does not traverse submodules and
-   the DMAs live in one. The control that caught it was asking whether the search space contained
-   any `hburst` driver at all. A zero from a scan that cannot see the initiators is not a
-   measurement.*
+   **What is still open: does our traffic actually do it?** Nobody has shown that the deployed
+   configuration programs a channel such that `blen >> bsize` lands on 4/8/16, nor that such a
+   burst survives the path to TideLink's `ahb_sub` port. **The item is neither closed nor
+   justified** — it sits behind one measurement: an AHB monitor on `hburst` at the D2D bridge
+   during a real DMA run, counting non-`000`/`001` encodings. That is a measurement, not a patch,
+   and it decides the item.
+
+   If it fires, the bit split is the candidate — and `awcache = 0x2` (Modifiable-but-not-Bufferable,
+   an encoding neither silicon arm exercised: today `0x0` COMPLETES, pre-fix `0x3` WEDGES) is the
+   first thing to test.
+
+   **Keep this distinct from the burst CORRUPTION fix**, which is closed and on the freeze
+   (`d0a977aa`, per-beat W-consumption strobe, 14/14 on `g2_soc_pair`). The two are conflated
+   easily: corruption is FIXED; multi-beat *performance* is switched off and its recovery is
+   unquantified.
 
 3. **Hold timing red on every FPGA build** (~-22 ns, 8 endpoints, D2D GPIO PHY RX capture). Pre-existing
    baseline, runtime-calibrated; unrelated to the peer-write path.
