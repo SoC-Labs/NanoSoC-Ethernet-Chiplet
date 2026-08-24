@@ -81,7 +81,14 @@ moved.
 
     Calibre signoff   calibre_runs/drc_pinfix_orig_logo_0824/
         total 738 / reported 47 / non-density 14 / REAL GEOMETRY 1
-        LOGO.S.1, LOGO.O.1, LOGO.R.4 = 0, real zeros (not capped)
+        LOGO.S.1, LOGO.O.1, LOGO.R.4 = 0 -- **VACUOUS, NOT A PASS**. The same
+        summary reports `LAYER LOGO ... TOTAL Original Geometry Count = 0`:
+        the merged logo is AP-only, the 158/0 recognition marker is absent, so
+        all three rulechecks ran over an empty layer. The wrapper prints
+        "real zero (not capped)", which rules out TRUNCATION and says nothing
+        about EMPTINESS -- I read the narrower claim as the broader one.
+        **LOGO clearance remains OPEN.** (The field discriminates: SRAMDMY_4
+        reads 46 on this same report.)
         Calibre delta vs matched control: ZERO
 
     Macro pin gate    scripts/ci/gds_macro_pin_connected.py
@@ -163,6 +170,16 @@ All toolkit commits are pushed to `origin/fix/tcl-parse-gate-both-directions`.
     legal in isolation, illegal only because our PG pad sits 0.440 um below it.
     Every lever measured closed. **Waiver, as vendor-macro context.**
   - The pin-escape corridor (section 2) is unwidened.
+  - **LOGO clearance is not cleared**, see section 4 -- the three LOGO zeros are
+    over an empty layer. imec's own `IM.LOGO.R.1:WARN` says the same thing from
+    their side.
+  - **The pin gate's 748/10 PASS covers the flash_cache pair only.**
+    `--all-macros` is a DISJOINT set (2 boot ROMs, 204 pins) and reports 20 bare
+    pins -- IDENTICAL on rzG and pinfix, so not a regression from this fix, but
+    an unvalidated open question nobody has looked at.
+  - **LVS ran on pin-text derivatives**, not on the submitted bytes -- that is
+    what `LVS_PG_PIN_TEXT=1` produces. The comparison is sound; the artefact
+    hashed is not `3215cbe1`.
 
 ## 8. Evidence index
 
