@@ -1464,12 +1464,15 @@ proc _pgr_dead {w eps} {
     catch { set v [get_obj_in_area -areas $qb -layers [list $L] \
                      -obj_type {special_via via}] }
     if {[llength $v]} { return 0 }
-    ## (c) a macro or top-level pin shape it might be tapping. pin_shape takes
-    ## the layer filter; where the release does not accept that obj_type, fall
-    ## back to the unfiltered pin query, which can only ever be MORE cautious.
+    ## (c) a macro or top-level pin shape it might be tapping.
+    ## `pin_shape` is NOT a valid -obj_type in Innovus 21.11 (IMPTCM-23; the
+    ## allowed set is listed in the error). Every call using it errored and
+    ## returned nothing, so this guard has only ever run its fallback -- and
+    ## the errors tripped the place stage's strict unexpected-error gate.
+    ## Query the valid enums directly. Unfiltered by layer, which can only
+    ## ever be MORE cautious.
     set p {}
-    if {[catch {set p [get_obj_in_area -areas $qb -layers [list $L] \
-                        -obj_type {pin_shape}]}]} {
+    if {1} {
         catch { set p [get_obj_in_area -areas $qb -obj_type {pg_pin port_shape}] }
     }
     if {[llength $p]} { return 0 }
@@ -1931,9 +1934,8 @@ foreach _mk $_pgr_mk {
           }
           set _sp {}
           set _pq 0
-          if {![catch {set _sp [get_obj_in_area \
-                -areas [list [list $_sx1 $_sy1 $_sx2 $_sy2]] -layers [list $_ml] \
-                -obj_type {pin_shape}]}]} { set _pq 1 }
+          ## `pin_shape` is not a valid -obj_type here (IMPTCM-23) -- go
+          ## straight to the enums the release accepts.
           if {!$_pq} {
               if {![catch {set _sp [get_obj_in_area \
                     -areas [list [list $_sx1 $_sy1 $_sx2 $_sy2]] \
@@ -1986,8 +1988,11 @@ foreach _mk $_pgr_mk {
                         -layers [list $lay] -obj_type {special_via via}] }
               incr n [llength $q]
               set q {}
+              ## was -obj_type {pin_shape}, which is invalid (IMPTCM-23) and
+              ## returned nothing on every call -- so this evidence term was
+              ## always 0. Now queries the enums the release accepts.
               catch { set q [get_obj_in_area -areas [list [list $x1 $y1 $x2 $y2]] \
-                        -obj_type {pin_shape}] }
+                        -obj_type {pg_pin port_shape}] }
               incr n [llength $q]
               return $n
           }
