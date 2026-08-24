@@ -126,10 +126,28 @@ v2lvs.log
 # own write clock so two streams of identical layout never hash the same. What
 # IS tracked is the .md provenance note beside each one, which is the part a
 # reader needs and the part git can usefully diff.
-ASIC/submissions/*.gds
-ASIC/submissions/*.gds.gz
-ASIC/submissions/*.oas
-!ASIC/submissions/*.md
+# `**/` matches ZERO OR MORE directories, so one rule covers both the streams
+# written straight into ASIC/submissions/ and the ones written into a per-run
+# subdirectory beside its records (ASIC/submissions/<run>/*.gds). The old rules
+# were ASIC/submissions/*.gds and matched only the first of those; a stream one
+# level down was invisible to every rule in this file, and this repository is
+# PUBLIC.
+ASIC/submissions/**/*.gds
+ASIC/submissions/**/*.gds.gz
+ASIC/submissions/**/*.gds2
+ASIC/submissions/**/*.gdsii
+ASIC/submissions/**/*.oas
+ASIC/submissions/**/*.oas.gz
+# Only the STREAM extensions are listed above, never a directory, so git still
+# descends into ASIC/submissions/<run>/ and the small per-run records written
+# beside the stream stay trackable: the .md provenance note (stream md5, the
+# causal chain of fixes, the vacuity ledger), and the .json/.csv/.txt/.def/.io
+# a build record emits. Those are the part a reader needs and the part git can
+# usefully diff.
+#
+# The .md negation is defensive - no rule above ignores a .md today - and is
+# spelled with `**/` for the same depth reason as the rules it guards against.
+!ASIC/submissions/**/*.md
 # Pre-repair backups of the logo stream, written beside the original by
 # repair_logo_seam.py. The repaired .gds IS tracked; the backup is recoverable
 # by re-running the script and is not a second source of truth.
