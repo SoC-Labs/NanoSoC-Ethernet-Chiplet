@@ -1,0 +1,87 @@
+{
+  "schema": "soclabs.evidence-report/1",
+  "generated_at": "2026-08-24T22:00:00Z",
+  "generator": "fixture",
+  "wall_clock_s": 1.0,
+  "identity": {
+    "design": "nanosoc_eth_chiplet_pads",
+    "run_tag": "fixture",
+    "stream_path": "s.gds",
+    "stream_md5": "00000000000000000000000000000000",
+    "stream_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "stream_bytes": 1,
+    "build_host": "fixture",
+    "supersedes": "",
+    "layout_canonical_hash": "NOT-MEASURED: gds-canonical-not-implemented",
+    "layout_note": "",
+    "binds": {}
+  },
+  "provenance": {
+    "links": [],
+    "disagreements": []
+  },
+  "drc_tiers": null,
+  "known_bad": [],
+  "not_measured": [],
+  "notes": [],
+  "gates": [
+    {
+      "id": "route-message-census",
+      "verdict": "PASS",
+      "asserts": "a",
+      "got": "0",
+      "required": "0",
+      "measured_over": "748 pins over 10 instances",
+      "why": "",
+      "cites": [],
+      "detail": [],
+      "blocking": true
+    },
+    {
+      "id": "macro-pin-connected",
+      "verdict": "PASS",
+      "asserts": "a",
+      "got": "0",
+      "required": "0",
+      "measured_over": "748 pins over 10 instances",
+      "why": "",
+      "cites": [],
+      "detail": [],
+      "blocking": true
+    },
+    {
+      "id": "drc-tiers",
+      "verdict": "PASS",
+      "asserts": "a",
+      "got": "0",
+      "required": "0",
+      "measured_over": "748 pins over 10 instances",
+      "why": "",
+      "cites": [],
+      "detail": [],
+      "blocking": true
+    },
+    {
+      "id": "evidence-completeness",
+      "verdict": "PASS",
+      "asserts": "a",
+      "got": "0",
+      "required": "0",
+      "measured_over": "748 pins over 10 instances",
+      "why": "",
+      "cites": [],
+      "detail": [],
+      "blocking": true
+    }
+  ],
+  "verdict": {
+    "line": "SIGNED OFF.  gates: 4 PASS, 0 FAIL, 0 NOT-MEASURED, 0 KNOWN-BAD",
+    "signed_off": true,
+    "counts": {
+      "PASS": 4,
+      "FAIL": 0,
+      "NOT-MEASURED": 0,
+      "KNOWN-BAD": 0
+    }
+  }
+}

@@ -3753,6 +3753,103 @@ stages:
     artifacts:
       - ASIC/genus-innovus/reports/padring_gds_report.json
 
+  # ---------------------------------------------------------------------------
+  # THE EVIDENCE FLOW. Three stages: two tool proofs that cost nothing and run
+  # on any host, and one stage that grades the report a real build produced.
+  #
+  # WHY ARTEFACTS ARE COLLECTED FROM THE BUNDLE AND NOT FROM build/**.
+  # Every other physical stanza in this file globs a gitignored build path, and
+  # in the `lvs-preflight` case that glob was measured EMPTY — with a comment
+  # three lines above saying so deliberately, "so an empty directory collects
+  # nothing instead of failing the stage". Defensible for a preflight, and it
+  # generalises into the failure the evidence flow exists to stop: an absent
+  # artefact and a clean artefact rendered identically. The bundle is assembled
+  # by a generator that REFUSES TO EMIT a report citing a file it cannot find,
+  # so a missing artefact is caught where it can still be named.
+  # ---------------------------------------------------------------------------
+
+  - id: route-message-census
+    phase: rtl
+    gate: block
+    description: "The router's own NR* message family, which the flow's own message census cannot see"
+    # THE DEFECT THIS EXISTS FOR. pnr_msg_census is two-sourced and both
+    # sources are blind to NanoRoute: report_messages -warnings returns no NR*
+    # IDs, and the log-parse fallback wants `**SEVERITY: (ID):` while NanoRoute
+    # writes `#SEVERITY (ID)`. Measured over 33 build trees: not one
+    # pnr_messages_route.rep contains the string NRDR. The route log of the
+    # stream the foundry graded named the defective net one day early and
+    # reached no report, no manifest and no gate.
+    run: python3 scripts/ci/route_message_census.py --selftest
+    check: python3 scripts/ci/route_message_census.py --selftest
+    # THE must_fail ARM IS AN ABSENCE, and that is the point. `--selftest`
+    # refuses to treat a missing fixture as a skip, so removing one arm's log
+    # turns the proof red instead of quietly shrinking it. A fixture CANNOT
+    # express absence by omission — the prove sandbox symlinks the real repo in
+    # — so `.__absent__` is the only thing that tests it.
+    check_proof:
+      must_pass: ci/fixtures/signoff/route-message-census-proof/pass
+      must_fail:
+        - ci/fixtures/signoff/route-message-census-proof/fail-fixture-vanished
+    artifacts:
+      - ci/fixtures/route-message-census/PROVENANCE.md
+
+  - id: lvs-missing-connection
+    phase: rtl
+    gate: block
+    description: "LVS graded on its DISCREPANCY LIST — zero missing connections below the top level — never on the LVS verdict"
+    # The LVS verdict is permanently INCORRECT for reasons that are understood
+    # and not changing: `.GLOBAL VSS` floods ~17,233 unmatched source nets and
+    # the pad ring has no LEF PINs. A gate on the verdict is therefore
+    # permanently red, and a gate that is always red teaches its reader to skip
+    # it — which is exactly how, on 23 August, the reader skipped the one line
+    # that mattered. Of every missing-connection entry in that report, exactly
+    # one reached into the SoC core, and it was the defect.
+    #
+    # The stage asserts its own COVERAGE. A run that parsed nothing has zero
+    # sub-top discrepancies; the control is the `u_cache_subsystem` mention
+    # count, 388 on rzG and 384 on the fixed stream.
+    run: python3 scripts/ci/lvs_missing_connection.py --selftest
+    check: python3 scripts/ci/lvs_missing_connection.py --selftest
+    check_proof:
+      must_pass: ci/fixtures/signoff/lvs-missing-connection-proof/pass
+      must_fail:
+        - ci/fixtures/signoff/lvs-missing-connection-proof/fail-fixture-vanished
+    artifacts:
+      - ci/fixtures/lvs-missing-connection/PROVENANCE.md
+
+  - id: evidence-report
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    description: "One report per build: every gate with the artefact it was read from, and NOT-MEASURED counted as its own verdict"
+    # needs_implementation, not a glob that shrugs. Both of these live in
+    # gitignored trees, so on a clone this stage is UNVERIFIED — which
+    # signoff.py counts as a failure and never as a pass — rather than green
+    # over nothing.
+    needs_implementation:
+      - ASIC/submissions/nanosoc_eth_chiplet_pads_DRYRUN_20260824_pinfix.gds
+      - ASIC/eth-chiplet/build/gdsrun-20260824-valid4/reports/route_gate.txt
+    run: make -C ASIC/eth-chiplet evidence RUN_TAG=pinfix-20260824 || true
+    # `|| true` on the run and the verdict taken from the CHECK. The run exits
+    # 5 when the report is real and does not say signed off; that is a working
+    # flow reporting an honest verdict, and conflating it with "the flow broke"
+    # is what makes people stop running it. The check is what grades.
+    check: python3 scripts/ci/evidence_gate.py build/evidence/pinfix-20260824/evidence_report.json
+    check_proof:
+      must_pass: ci/fixtures/evidence-report-stage/pass
+      must_fail:
+        # Four shapes, and the last two are the ones a naive grader passes.
+        - ci/fixtures/evidence-report-stage/fail-a-gate
+        - ci/fixtures/evidence-report-stage/fail-not-measured
+        - ci/fixtures/evidence-report-stage/vacuous-no-gates
+        - ci/fixtures/evidence-report-stage/absent
+    timeout_s: 3600
+    artifacts:
+      - build/evidence/pinfix-20260824/evidence_report.json
+      - build/evidence/pinfix-20260824/evidence_report.html
+      - build/evidence/pinfix-20260824/evidence/**
+      - build/evidence/pinfix-20260824/NOT-PUBLISHED.txt
+
 # -----------------------------------------------------------------------------
 # Checks a complete ASIC signoff would include that this pipeline does NOT do.
 # Listed so the report states its own limits — a signoff report that only shows
@@ -3891,6 +3988,17 @@ unsupported:
       full-chip LVS is not a deferred task on this project — it will not run
       here at all. What IS available and should be used instead is black-box
       LVS, which works on this site today. See docs/asic/DRC_WAIVER_INVENTORY.md § 7.
+      SCOPE, re-measured 2026-08-24, because this entry was being read as "no
+      LVS evidence exists" and that is not what it says. It is about
+      TRANSISTOR-LEVEL LVS, and it still stands: with TSMC_65_HOME set to the
+      real PDK root the refuted_by below still exits 1, so there is still no
+      CDL. But LVS-shaped runs DO happen and DO produce a gradable discrepancy
+      list, and the `lvs-missing-connection` STAGE now blocks on the one
+      assertion in it that is small, stable and meaningful — zero missing
+      connections on nets below the top level. That stage is where the 23
+      August defect would have been caught; this gap is why the VERDICT beside
+      it will stay INCORRECT for the foreseeable future. Do not read either as
+      the other.
     # "there is no CDL ... (one 92-byte unit.cdl in the whole PDK)" is the
     # testable half. -size +1k excludes that stub, so this fires only on a real
     # netlist. Scoped to ${TSMC_65_HOME} deliberately: an unbounded search of every

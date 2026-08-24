@@ -66,6 +66,14 @@ EVIDENCE_OUT    ?= $(REPO_ROOT)/build/evidence/$(notdir $(basename $(EVIDENCE_SP
 # push 300 MB to a store nobody has looked at yet; and a publish is a claim.
 EVIDENCE_PUBLISH ?=
 
+# EVIDENCE_FORCE=1 overwrites a run tag that is ALREADY published. The refusal
+# it lifts is correct and fired in testing: a run tag names ONE build, and
+# re-publishing different bytes under the same tag makes every record citing
+# that tag wrong. Use it only to replace a bundle whose STREAM is unchanged --
+# a corrected report over the same md5 -- and never to publish a new stream
+# under an old name.
+EVIDENCE_FORCE ?=
+
 .PHONY: evidence evidence-collect evidence-render evidence-publish \
         evidence-selftest evidence-vars
 
@@ -80,7 +88,7 @@ evidence:
 	    echo "      point at one:  make evidence EVIDENCE_SPEC=<file>"; \
 	    exit 1; }
 	python3 $(EVIDENCE_FLOW) run --spec $(EVIDENCE_SPEC) --out $(EVIDENCE_OUT) \
-	    $(if $(EVIDENCE_PUBLISH),--publish,)
+	    $(if $(EVIDENCE_PUBLISH),--publish,) $(if $(EVIDENCE_FORCE),--force,)
 
 ## Gates and bundle only; no HTML, no publish.
 evidence-collect:

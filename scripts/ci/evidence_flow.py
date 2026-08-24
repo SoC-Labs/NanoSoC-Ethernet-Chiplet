@@ -429,16 +429,36 @@ def gate_lvs(spec, bundle):
     rep = spec.get("lvs_report")
     tool = os.path.join(HERE, "lvs_missing_connection.py")
     if not rep or not os.path.isfile(os.path.join(ROOT, rep)):
+        # NAME THE NEAR MISSES. An LVS report for a DIFFERENT build of the same
+        # design is the single most dangerous artefact in this directory tree:
+        # it parses, it is recent, it carries the right top-cell name, and it
+        # describes other bytes. Four green verdicts in one day on this project
+        # were read off the wrong stream. So the row says what exists and why
+        # it was NOT used, rather than only saying nothing exists.
+        near = sorted(glob.glob(os.path.join(ROOT, spec.get("base_run", ""),
+                                             "work", "**", "*.lvs.rep"),
+                                recursive=True))
+        near_txt = ("\n".join("  %s" % rel(n) for n in near)
+                    if near else "  (none)")
         return Gate(id="lvs-missing-connection", verdict=NOT_MEASURED,
                     asserts="zero missing-connection discrepancies on sub-top nets",
-                    why="no LVS report is on disk for this stream (spec: %r). The "
-                        "report that found the 23 August defect lived in an "
-                        "ephemeral scratchpad and is gone; nothing has graded "
-                        "THIS stream." % (rep or "not named"),
+                    why="no LVS report grades THESE bytes (spec.lvs_report=%r). "
+                        "%d report(s) for the BASE build exist and were "
+                        "deliberately NOT used: the base is a different stream, "
+                        "and a report that parses cleanly against other bytes is "
+                        "the most dangerous artefact here. The report that found "
+                        "the 23 August defect lived in an ephemeral scratchpad "
+                        "and is gone."
+                        % (rep, len(near)),
                     cites=[bundle.write("lvs_absent.txt",
-                                        "spec.lvs_report = %r\nresolved: %s\n"
-                                        "No LVS run on disk grades this stream.\n"
-                                        % (rep, os.path.join(ROOT, rep) if rep else "-"))])
+                        "spec.lvs_report = %r\n\n"
+                        "No LVS run on disk grades the stream this report is about\n"
+                        "  %s\n  md5 %s\n\n"
+                        "LVS reports that DO exist, for the BASE build (%s).\n"
+                        "They grade DIFFERENT BYTES and were not used:\n%s\n"
+                        % (rep, spec["stream"],
+                           md5_of(os.path.join(ROOT, spec["stream"])),
+                           spec.get("base_run", "-"), near_txt))])
     if not os.path.isfile(tool):
         c = bundle.add(os.path.join(ROOT, rep), "lvs/%s" % os.path.basename(rep))
         return Gate(id="lvs-missing-connection", verdict=NOT_MEASURED,

@@ -164,9 +164,10 @@ labels the DERIVED arms.
               -> exit 1.                             VERIFIED 2026-08-24.
 
   MUST PASS   .../prev_work/lvs_run_pintext/nanosoc_eth_chiplet_pads.lvs.rep
-              (20,030 lines) 65 discrepancies, 1,155 missing-connection rows,
-              EVERY ONE on a top-level net. Coverage control 408. The 1,155
-              rows are the control that makes the zero a measured zero.
+              (20,030 lines) 268 net discrepancies, 65 of them carrying
+              missing-connection rows, 1,155 rows in all and EVERY ONE on a
+              top-level net. Coverage control 408. The 1,155 rows are the
+              control that makes the zero a measured zero.
               -> exit 0.                             VERIFIED 2026-08-24.
 
   MUST BE     ASIC/genus-innovus/erc_runs/erc_allfix_logo/
@@ -215,7 +216,7 @@ Each mutation is a COPY of this file with one anchor broken, run with
                                                     fail-beats-vacuity
     M2 coverage control (N5) removed                not-measured-no-coverage
     M3 completeness check (N4) removed              not-measured-truncated
-    M4 NOT COMPARED accepted as a comparison (N3)   not-measured-not-compared
+    M4 NOT COMPARED accepted as a comparison (N3)   not-measured-not-compared-only
     M5 parser-liveness (N6) removed                 not-measured-blind-parser
     M6 discrepancy-list saturation (N7) removed     not-measured-disc-list-saturated
     M7 FAIL downgraded to PASS                      all three fail arms
@@ -223,7 +224,14 @@ Each mutation is a COPY of this file with one anchor broken, run with
     M9 classification keyed on the LAYOUT name      pass-observed-toplevel-only
        instead of the SOURCE name                   (17 false findings)
 
-M9 is the one worth reading. The layout column and the source column disagree
+ROUND 1 FOUND A REAL WEAKNESS, which is the only reason this list is worth
+reading. M4 SURVIVED: the only OBSERVED `NOT COMPARED` report on this site (the
+ERC run) also has zero coverage, so it trips N5 at the same moment and the two
+rules were being proven together rather than either one alone. The arm
+`not-measured-not-compared-only` exists because of that round, not because it
+was designed in.
+
+M9 is the other one worth reading. The layout column and the source column disagree
 on 17 of the 65 discrepancies in a report that is clean, and keying on the
 wrong one produces a confident, precise, wrong FAIL. That is the failure this
 gate is most likely to have shipped with, and the pass arm is what stops it.
@@ -763,6 +771,9 @@ def selftest(fixtures=None):
          "finding wins"),
         ("not-measured-not-compared", NOT_MEASURED, 1,
          "EXTRACT erc_allfix_logo: NOT COMPARED, zero coverage"),
+        ("not-measured-not-compared-only", NOT_MEASURED, 1,
+         "DERIVED: NOT COMPARED with coverage established — N3 alone. Exists "
+         "because M4 SURVIVED round 1"),
         ("not-measured-truncated", NOT_MEASURED, 1,
          "DERIVED: the pass arm cut before its SUMMARY"),
         ("not-measured-no-coverage", NOT_MEASURED, 1,
