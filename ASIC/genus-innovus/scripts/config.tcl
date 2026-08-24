@@ -335,8 +335,26 @@ set gds_merge_list [list \
 # conductor. That is the "phantom metal" defect: 68.8% of the metal in the
 # 2026-08-07 tapeout stream, and the measured source of the 1,549 antenna
 # results and the M*.W.3 blankets. scripts/gdsmap_derive.py moves LEFOBS to
-# <layer>+9000 instead (keeping the geometry, off every mask layer), except on
-# M8/M9/AP where OBS is the bond pads' real pad metal and must stay.
+# <layer>+9000 instead (keeping the geometry, off every mask layer).
+#
+# THERE IS NO M8/M9/AP EXCEPTION. This comment used to claim one, on the theory
+# that bond-pad OBS is the pad's real metal and its AP opening. REFUTED
+# 2026-08-17 and OBS_KEEP_ON_MASK emptied the same day; the reasoning is kept in
+# full at gdsmap_derive.py obs_stays(). In short: the passivation opening is CB,
+# not AP, and the bond-pad LEF declares no CB on any of its 34 macros -- so
+# keeping OBS there does not preserve an opening, it emits a SOLID AP PLATE WITH
+# NO OPENING, 13 abstraction polygons per pad across 82 pads, on a tape-out
+# layer.
+#
+# AND NOTE THIS FILE IS NOT WHAT SHIPS. The shipping GDS comes from the toolkit,
+# whose asic-toolkit/tech/tsmc65/derive.tcl DROPS LEFOBS outright rather than
+# moving it -- one unconditional `regsub {LEFPIN,LEFOBS} -> {LEFPIN}` over every
+# row. Verified in the stream map the shipping run actually used,
+# build/gdsrun-20260823-rzG/work/tech/gdsout.stream.map: zero LEFOBS rows, and a
+# layer census of the submitted GDS finds nothing at or above 9000. So on the
+# shipping path there is no obstruction geometry to strip and
+# scripts/ci/strip_obs_layers.py has nothing to do -- which is why it is wired
+# into no target.
 #
 # DERIVED FROM THE READ-ONLY PDK, NOT COMMITTED — a BUILD PRODUCT, exactly like
 # IO_PAD_DRIVER_LEF above, and for the same licence reason. Produce it with:
