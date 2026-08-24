@@ -53,3 +53,5 @@ solve.currentnote.0=Note: 201 current sources are disconnected.
 solve.currentnote.1=Note: 79 current sources are disconnected.
 stage.finished=2026-08-17T23:50:31
 result.completed=true
+artefact.layer_vdd=VDD.layerbased_ir.rpt
+artefact.layer_vss=VSS.layerbased_ir.rpt

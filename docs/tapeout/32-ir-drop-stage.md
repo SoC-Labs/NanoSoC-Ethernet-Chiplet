@@ -492,7 +492,7 @@ happened on this design.
 | `coverage.nets` | A domain run that solved VDD and quietly skipped VSS must not yield a VSS verdict. |
 | `parity.parser_vs_tool` | The worst drop recomputed from the per-instance report against the tool's own summary, within 1 mV. Disagreement means trust neither. |
 | `pg.disconnected` | Instances with **no path to a supply rail**. Not a margin — those cells do not power up. |
-| `em.current_density` | In static mode, with no `-em_models` and no `-process_techgen_em_rules`, the tool **disables** current-density analysis and the run still succeeds with the report simply absent. Recorded as `NOT_ANALYSED`; hard at `--tier signoff`. |
+| `em.current_density` | In static mode, with no `-em_models` and no `-process_techgen_em_rules`, the tool **disables** current-density analysis and the run still succeeds with the report simply absent. Recorded as `NOT_ANALYSED`; HARD whenever `em.required` in `rail_budgets.txt` is true, which it is. `--tier` was removed on 2026-08-24 — it was advertised as the blocking switch and in fact moved only this one check between HARD and ADVISORY. |
 | `spatial.classification` | Over-budget instances spread across many tiles are grid inadequacy, which no local repair addresses. Promoted from BUDGET. An exceedance with **no coordinates** is treated as distributed: an unprovable "it is only a hotspot" is not a mitigation. |
 
 ### BUDGET — measured, and over a threshold

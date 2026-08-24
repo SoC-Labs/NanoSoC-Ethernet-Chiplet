@@ -60,6 +60,14 @@ cov.current_ratio_hi_source    charge conservation: see cov.current_ratio_lo.
 cov.parser_tool_agree_mv        1.0
 cov.parser_tool_agree_mv_source cross-implementation check: the worst drop recomputed from the per-instance report must agree with the tool's own summary. The tool's summary is printed to 3 decimal places, so 1 mV is the resolution of the comparison, not a tolerance for disagreement. Same idiom as the existing drc_trailer != drc_total check.
 
+# The SAME idiom against the per-layer breakdown, and it gets its own number
+# because the two files it compares are printed far more finely than the main
+# summary is. A shared 1 mV would make this check blind to the thing it is best
+# placed to catch: one build's layer report sitting beside another build's
+# per-instance report. The two builds on disk differ by 0.39 mV on VDD.
+cov.layer_iv_agree_mv        0.05
+cov.layer_iv_agree_mv_source cross-implementation check at the finest resolution the two files support: the per-instance report carries five decimals of a volt (0.01 mV) and the layer breakdown three significant figures (0.01 mV at these magnitudes), so 0.05 mV is five print steps and is not an allowance for disagreement. It is deliberately much tighter than cov.parser_tool_agree_mv, which has to absorb the main summary's 3-decimal-volt printing.
+
 # ---- PG OPENS. Instances with NO PATH to a supply -----------------------------
 # Zero, and not because zero was measured - because an instance with no path to
 # a supply RAIL DOES NOT POWER UP. This is a functional defect, not a margin, so
@@ -70,6 +78,31 @@ cov.parser_tool_agree_mv_source cross-implementation check: the worst drop recom
 # among 976 informational messages without ever placing them on the die.
 cov.disconnected_max         0
 cov.disconnected_max_source  functional requirement: an instance with no path to VDD or VSS does not power up. No non-zero value is defensible, so this one is not a budget at all.
+
+# ---- PAD CURRENT BALANCE -----------------------------------------------------
+# The one electrical statement anything here makes about the PAD RING itself.
+# Everything else counts pads or checks where they sit; a pad that is present,
+# placed, counted, and barely conducting - a via stack that did not land under
+# it, or a set_power_pads pattern that matched a subset - passes every one of
+# those and shows up ONLY as the other pads carrying its share.
+#
+# WHERE THE NUMBER COMES FROM. It is derived from the pad count, not from any
+# result. N nominally identical parallel supply pads exist so that each carries
+# 1/N of the load, and the requirement is that the ring must never deliver as
+# though one of the N were absent. Write the imbalance as s = (max - min) / mean
+# about the mean; the hottest pad then carries mean*(1 + s/2), so the effective
+# pad count -- total current divided by the hottest pad's share -- is
+# N / (1 + s/2). Requiring that to stay above N-1 gives s <= 2/(N-1). This
+# floorplan has SIX VDD pads (s <= 40%) and FOUR VSS pads (s <= 67%), and the
+# single flat limit below is the tighter of the two.
+#
+# IT IS A STRUCTURAL CHECK AND IS DELIBERATELY NOT TIGHT. Positional asymmetry
+# in a ring whose pads all sit on the top and bottom edges is expected and is
+# not a defect; one pad not conducting is. A limit sized for the first would
+# reject this floorplan for its shape, which is a padring decision and not a
+# threshold's to make.
+pad.current_spread_max          40
+pad.current_spread_max_source   design requirement derived from the pad count, not from any run: N parallel supply pads must not deliver as though one of them were absent. With imbalance s = (max-min)/mean, the hottest pad carries mean*(1+s/2) and the effective pad count is N/(1+s/2); holding that above N-1 gives s <= 2/(N-1), i.e. 40% at six VDD pads and 67% at four VSS pads. The tighter of the two is taken. Sized to catch a pad whose via stack did not land, not to police positional asymmetry.
 
 # ---- THE HOTSPOT / GRID SPLIT ------------------------------------------------
 # One number cannot tell a single hot instance from a grid that sags everywhere,
@@ -87,5 +120,14 @@ cls.localised_tile_max_source geometry: an exceedance touching more than four 50
 # given and -process_techgen_em_rules is not true, current-density analysis is
 # DISABLED - the run still succeeds and the EM report is simply absent. So an
 # absent EM result is recorded as NOT_ANALYSED and never as a pass.
-em.required_at_signoff         true
-em.required_at_signoff_source  completeness requirement: an unmeasured signoff criterion is not a pass. EM limits are the one genuinely foundry-defined number in this whole file.
+#
+# THIS LINE IS NOW THE WHOLE DECISION. It used to be half of one: the gate also
+# took a `--tier` flag whose only effect was to move this same check between
+# HARD and ADVISORY, so the same question had two answers in two files and the
+# command line quietly won. The flag is gone. Blocking or not blocking is the
+# `gate:` field on the ci/signoff.yaml row; whether EM must have been ANALYSED
+# is here, beside every other threshold, under the same anti-ratchet rule.
+# Renamed from em.required_at_signoff for that reason - there is no longer a
+# tier for it to be qualified by.
+em.required                    true
+em.required_source             completeness requirement: an unmeasured signoff criterion is not a pass. EM limits are the one genuinely foundry-defined number in this whole file. Setting this false to obtain a green verdict is the move ci/signoff.yaml's own note forbids; the way to satisfy it is to supply -ict_em_models, which rail_run.tcl now does.

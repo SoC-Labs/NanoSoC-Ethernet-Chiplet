@@ -150,6 +150,111 @@ set ::RAIL(vss_pad_master) [::rail::opt_env RAIL_VSS_PAD PVSS1DGZ_G]
 # deliberately empty and the coverage denominator is every placed instance.
 set ::RAIL(cpu) [::rail::opt_env RAIL_CPU 4]
 
+# ---- ELECTROMIGRATION MODELS -------------------------------------------------
+# The ICT-EM file report_rail needs before it will compute current density at
+# all. Everything here is LAZY - resolved by ::rail::ensure_em_ict when a stage
+# asks for it, never at source time - because reff.tcl, pgcap.tcl, padgeom.tcl
+# and recon.tcl all source this file and none of them wants EM inputs. Making it
+# eager would break four working scripts to enable a fifth.
+#
+# WHY IT IS BUILT AND NOT SHIPPED. Its contents reproduce TSMC current-density
+# values verbatim, so .gitignore:108 ignores rail/inputs/*.ict for the same
+# reason rail/work/ is ignored. The GENERATOR is tracked; the output is rebuilt
+# on demand from the PDK the site already has.
+set ::RAIL(em_ict) [::rail::opt_env RAIL_EM_ICT \
+    $::RAIL(raildir)/inputs/n65_9m_6x1z1u_em.ict]
+
+proc ::rail::ensure_em_ict {} {
+    set out $::RAIL(em_ict)
+    if {[file readable $out] && [file size $out] > 0} {
+        ::rail::em_provenance
+        return $out
+    }
+
+    # THE LIMITS come from the tech LEF for exactly this stack - 19
+    # DCCURRENTDENSITY AVERAGE tables covering the full stack including M8, M9,
+    # VIA8, RV and AP. The standing project claim that TSMC ships no EM rules
+    # for 6X1Z1U was true only of the volcano directory; the same numbers are in
+    # the LEF, proven by exact identity. The last path component is a vendor
+    # release code, so it is globbed rather than written down.
+    set lef [::rail::opt_env RAIL_EM_LEF ""]
+    if {$lef eq ""} {
+        set lef [::rail::glob_one \
+            $::RAIL(pdk)/CMOS/util/lef/*/PRTF_EDI_N65_9M_6X1Z1U_RDL.*.tlef \
+            "the 9M 6X1Z1U tech LEF"]
+    }
+
+    # THE DERATE CURVE comes from the 6X2Z volcano ruleset, which DOES ship, as
+    # ratio(T)/ratio(110C). It is a property of the METALLURGY and not of the
+    # stack, which is the entire justification for transferring it - and the
+    # generator REFUSES to run if M1, M8 and M9 disagree, so the assumption is
+    # enforced rather than asserted.
+    #
+    # FOUR CANDIDATES MATCH AND glob_one WOULD REFUSE ALL FOUR. They are the
+    # per-library copies (lp / lphvt / lpcg / lpcghvt) and they are NOT
+    # byte-identical to each other. Checked 2026-08-24: generating the model
+    # from each of the four in turn gives BYTE-IDENTICAL output once the header
+    # comment naming the source is discarded, and gen_em_ict.py --selftest
+    # passes 6/6 against every one of them. The ambiguity is therefore
+    # immaterial to this file's contents, so one is taken deterministically
+    # (sorted first) rather than refusing to proceed - and the one actually used
+    # is written into the census, so the choice is auditable rather than lost.
+    set vol [::rail::opt_env RAIL_EM_VOLCANO ""]
+    if {$vol eq ""} {
+        set c [lsort [glob -nocomplain \
+            $::RAIL(pdk)/CMOS/LP/stclib/9-track/*/*/TSMCHOME/digital/Back_End/volcano/*/techfiles/*_9lm6X2ZAlRDL_em.rules]]
+        if {[llength $c] == 0} {
+            puts "RAILENV-FATAL no volcano EM ruleset matched under \$TSMC_65_HOME."
+            puts "RAILENV-FATAL   Set RAIL_EM_VOLCANO, or RAIL_EM_ICT to a prebuilt model."
+            return ""
+        }
+        set vol [lindex $c 0]
+    }
+
+    set gen $::RAIL(raildir)/gen_em_ict.py
+    file mkdir [file dirname $out]
+    puts "RAILENV em      : building $out"
+    if {[catch {exec python3 $gen --lef $lef --volcano $vol --out $out} e]} {
+        puts "RAILENV-FATAL gen_em_ict.py failed: $e"
+        return ""
+    }
+    if {![file readable $out] || [file size $out] == 0} {
+        puts "RAILENV-FATAL gen_em_ict.py returned success and wrote nothing to $out."
+        return ""
+    }
+    ::rail::em_provenance
+    return $out
+}
+
+# WHERE THE MODEL'S NUMBERS CAME FROM, read back out of the model file itself
+# rather than remembered from the build. On the REUSE path - the common one,
+# since the file survives between runs - nothing globs anything and the two
+# source paths are not otherwise in hand, so a census that recorded them only
+# when the file happened to be rebuilt would carry the provenance on the first
+# run and lose it on every one after. gen_em_ict.py writes both into its header
+# for exactly this purpose.
+#
+# The PDK mount is folded back to $TSMC_65_HOME on the way in, the same
+# discipline ::rail::banner already follows: a resolved site path written into
+# an artefact is a second copy of a constant this repository keeps in one place.
+proc ::rail::em_provenance {} {
+    set ::RAIL(em_lef) "" ; set ::RAIL(em_volcano) ""
+    if {![file readable $::RAIL(em_ict)]} { return }
+    set fh [open $::RAIL(em_ict) r]
+    while {[gets $fh line] >= 0} {
+        if {![string match ";*" $line]} { break }
+        foreach {pat key} {{;   limits  from *} em_lef {;   derate  from *} em_volcano} {
+            if {[string match $pat $line]} {
+                set p [string trim [string range $line [string length \
+                        [string range $pat 0 end-1]] end]]
+                set p [lindex [split $p " ("] 0]
+                set ::RAIL($key) [string map [list $::RAIL(pdk) {$TSMC_65_HOME}] $p]
+            }
+        }
+    }
+    close $fh
+}
+
 proc ::rail::banner {} {
     puts "RAILENV db      : $::RAIL(db)"
     puts "RAILENV qrc     : \$TSMC_65_HOME/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile"

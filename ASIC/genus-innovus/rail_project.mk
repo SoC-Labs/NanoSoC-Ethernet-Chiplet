@@ -24,7 +24,7 @@
 # WHY `?=` EVERYWHERE: so every value can be overridden on the command line
 # without editing the file —
 #     make rail RAIL_RUN_TAG=full-20260814
-#     make rail-gate RAIL_TIER=report
+#     make rail-gate RAIL_RUN_TAG=full-20260814
 #
 # LICENCE POOLS. The solve runs UNDER INNOVUS, not under the `voltus` binary:
 # that binary aborts on this database with IMPESI-3490 ("cdB based analysis is
@@ -76,13 +76,35 @@ RAIL_CPU        ?= 4
 RAIL_VCORE      ?= 1.08
 RAIL_TEMP       ?= 125
 
-# [FLOW] signoff = blocking, and EM must have been analysed. report = measure
-# and print.
-RAIL_TIER       ?= report
+# RAIL_TIER IS GONE - 2026-08-24. It read `signoff = blocking, report = measure
+# and print`, and it did neither: the only thing it changed was whether
+# em.current_density was HARD or ADVISORY, so `report` could not stop a broken
+# run and `signoff` could not change the verdict on a run whose EM was analysed.
+# Three files described it as the blocking switch, including ci/signoff.yaml's
+# note that promoting the row is "a one-word edit plus RAIL_TIER=signoff" - an
+# edit that would have changed no exit code.
+#
+# Where the two real decisions live now:
+#   * BLOCKING or not is the `gate:` field on the ci/signoff.yaml row, which is
+#     where the pipeline already read it.
+#   * WHETHER EM IS REQUIRED is `em.required` in rail_budgets.txt, beside every
+#     other threshold and under the same anti-ratchet rule.
+# rail_gate.py still ACCEPTS --tier, and refuses with an explanation and exit 3
+# rather than judging - because the string will outlive this file in somebody's
+# shell history. Passing RAIL_TIER=... on the make command line is now simply an
+# unused variable and is harmless.
+
+# [PROJECT] The ICT-EM model file report_rail needs before it computes current
+# density AT ALL. Empty means "use rail_env.tcl's default under rail/inputs/,
+# building it with gen_em_ict.py if it is not there" - the file is GITIGNORED
+# because its contents reproduce TSMC current-density values verbatim, so it is
+# rebuilt rather than shipped. Set this to point at a prebuilt model.
+RAIL_EM_ICT     ?=
 
 RAIL_ENV = TSMC_65_HOME=$(TSMC_65_HOME) \
            RAIL_DB=$(RAIL_DB) RAIL_WORK=$(RAIL_WORK) RAIL_TAG=$(RAIL_TAG) \
-           RAIL_VCORE=$(RAIL_VCORE) RAIL_TEMP=$(RAIL_TEMP) RAIL_CPU=$(RAIL_CPU)
+           RAIL_VCORE=$(RAIL_VCORE) RAIL_TEMP=$(RAIL_TEMP) RAIL_CPU=$(RAIL_CPU) \
+           RAIL_EM_ICT=$(RAIL_EM_ICT)
 
 .PHONY: rail rail-gate rail-selftest rail-status rail-clean
 
@@ -121,7 +143,6 @@ rail-gate:
 	@python3 $(RAIL_DIR)/rail_gate.py \
 	    --census  $(RAIL_OUT)/census.txt \
 	    --budgets $(RAIL_BUDGETS) \
-	    --tier    $(RAIL_TIER) \
 	    --json    $(RAIL_OUT)/verdict.json
 
 ## rail-selftest: can the gate actually FAIL? A mutation battery of runs that
@@ -135,7 +156,7 @@ rail-status:
 	@echo "rail db      : $(RAIL_DB)"
 	@echo "rail out     : $(RAIL_OUT)"
 	@echo "rail budgets : $(RAIL_BUDGETS)"
-	@echo "rail tier    : $(RAIL_TIER)"
+	@echo "rail em ict  : $(RAIL_EM_ICT)"
 	@for d in $(RAIL_WORK)/*/census.txt; do \
 	  [ -f "$$d" ] || continue; \
 	  printf '  %-28s %s\n' "$$(basename $$(dirname $$d))" \

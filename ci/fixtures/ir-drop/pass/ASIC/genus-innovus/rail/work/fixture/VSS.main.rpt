@@ -32,7 +32,7 @@ Total Number of Current Taps: 356578
 IR DROP ANALYSIS
 ==============================
 Layer based IR Drop Report: See Report
-Minimum, Average, Maximum IR drop: 0.000V 7.215mV 8.893mV
+Minimum, Average, Maximum IR drop: 0.000V 4.470mV 5.510mV
     Please refer to ../VSS/ir_linear.gif for more details
 Total Static Current Loaded: 0.050527976825833321A
 Number of Violations: 0

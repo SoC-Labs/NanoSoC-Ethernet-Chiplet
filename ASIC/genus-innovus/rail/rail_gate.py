@@ -34,18 +34,30 @@ None of those looked wrong in the output. All of them are caught here.
 
 TIERS. HARD means the run is broken or unverified: the numbers may not be
 quoted at all, whatever they say. BUDGET means measured, and over a threshold.
-The distinction matters because they have different remedies - a HARD failure
-is re-run the analysis, a BUDGET failure is change the design.
+ADVISORY means a check that could not be run, or one with no defensible
+threshold. The distinction matters because they have different remedies - a
+HARD failure is re-run the analysis, a BUDGET failure is change the design, and
+a failing ADVISORY is "nobody has looked".
 
-REFUSAL is a third outcome and not a third tier, because it is not a statement
-about the design at all. The gate refuses when it has been handed something it
-must not judge - a ratcheted budget file, or a census that DECLARES itself a
-negative control. A refusal prints no VERDICT line, writes no verdict.json and
-exits 3, so it cannot be mistaken for either a PASS or a FAIL of this design.
+REFUSAL is a fourth outcome and not a tier, because it is not a statement about
+the design at all. The gate refuses when it has been handed something it must
+not judge - a ratcheted budget file, or a census that DECLARES itself a negative
+control. A refusal prints no VERDICT line, writes no verdict.json and exits 3,
+so it cannot be mistaken for either a PASS or a FAIL of this design.
+
+THERE IS NO --tier. There used to be, advertised in three files as the
+blocking/non-blocking switch, and it never changed a single exit code that way:
+all it did was move `em.current_density` between HARD and ADVISORY. A knob whose
+name and whose behaviour disagree is worse than no knob, and the blocking
+decision already has a home - the `gate:` field on the ci/signoff.yaml row,
+which is where the pipeline reads it. So the gate now computes ONE verdict and
+ONE exit code, always, and CI decides what to do with it. Whether EM is required
+is a single provenance-carrying line in rail_budgets.txt (`em.required`), not a
+second switch on the command line. See main() for the exit codes.
 
 USAGE
   rail_gate.py --census <dir-or-census.txt> [--budgets rail_budgets.txt]
-               [--json verdict.json] [--tier signoff|report]
+               [--json verdict.json]
   rail_gate.py --selftest        # mutation battery; needs no licence, no run
 """
 
@@ -58,6 +70,15 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Cell masters that carry no logic and no clock. Used ONLY to split the
+# disconnected population - never to exclude anything from the solve or from
+# coverage. Anchored at the start of the master name, case-insensitive, because
+# TSMC's fill family is FILL*/GFILL*, the antenna diodes are ANTENNA*, the decap
+# is DCAP*, and the well taps are TAP*. A master not matched here is treated as
+# FUNCTIONAL, which is the safe direction: an unrecognised cell is gated, not
+# waved through.
+FILLER_RE = re.compile(r"(FILL|GFILL|ANTENNA|DCAP|TAP)", re.I)
 
 # A budget whose provenance is the last run cannot fail. It is a record of what
 # happened wearing the costume of a requirement, and this project has written
@@ -262,9 +283,40 @@ def parse_iv(path):
             f = line[2:].split()
             if len(f) < 3:
                 continue
+            # The NA classification below indexes f[1..3] and f[-1]. A row too
+            # short to carry them cannot be classified, and silently dropping it
+            # would understate the count - so it is counted as FUNCTIONAL and
+            # unclassified rather than discarded.
+            if "NA" in f[1:-1] and len(f) < 5:
+                disconnected.append({"inst": f[0], "cell": "", "filler": False,
+                                     "floating": False})
+                continue
             inst = f[0]
             if "NA" in f[1:-1]:
-                disconnected.append(inst)
+                # WHICH KIND OF DISCONNECTED, AND ON WHAT. Counting every NA row
+                # as "no path to a supply rail" was wrong in both halves, and it
+                # is the reason this check reported a functional emergency that
+                # was mostly dummy metal.
+                #
+                #   * On fp1505, 275 of 330 were FILL/ANTENNA/DCAP. An unconnected
+                #     filler is not a cell that fails to power up; an orphaned
+                #     DCAP4 is lost decoupling. On rzG 18 of 18 are fillers and
+                #     ZERO are functional, so the old text described a clean
+                #     design as having a functional defect.
+                #   * 176 of fp1505's 330 had a live PWR column and only their
+                #     GND open. "No path to a supply rail" is false for those:
+                #     they reach one rail and not the other, which is a different
+                #     defect with a different fix.
+                #
+                # The tool's own legend also warns that NA means disconnected OR
+                # "does not have timing/switching window", so this column can
+                # never carry more than a structural claim.
+                cell = f[-1] if len(f) >= 5 else ""
+                d_na, p_na, g_na = f[1] == "NA", f[2] == "NA", f[3] == "NA"
+                rec = {"inst": inst, "cell": cell,
+                       "filler": bool(FILLER_RE.match(cell)),
+                       "floating": d_na and p_na and g_na}
+                disconnected.append(rec)
                 continue
             try:
                 if cols and "GND_IVB" in cols:
@@ -274,12 +326,20 @@ def parse_iv(path):
             except (ValueError, IndexError):
                 continue
             rows.append((inst, divd, pwr, gnd))
+    func = [d for d in disconnected if not d["filler"]]
     return {
         "header": hdr,
         "rows": rows,
         "disconnected": disconnected,
         "n_rows": len(rows),
         "n_disconnected": len(disconnected),
+        # The population that decides the verdict. Fillers are counted and
+        # reported, never gated on: they carry no logic and no clock.
+        "n_disconnected_functional": len(func),
+        "n_disconnected_filler": len(disconnected) - len(func),
+        "n_floating": sum(1 for d in disconnected if d["floating"]),
+        "n_single_rail_open": sum(1 for d in disconnected if not d["floating"]),
+        "functional_cells": sorted({d["cell"] for d in func}),
         "columns": cols,
     }
 
@@ -297,15 +357,60 @@ def parse_main_rpt(path):
     m = re.search(r"Threshold:\s*([0-9.]+)", txt)
     if m:
         out["threshold"] = float(m.group(1))
+    # UNIT-AWARE. The old regex demanded `...V` three times, so it parsed
+    # VDD (`1.074V 1.075V 1.080V`) and SILENTLY FAILED on VSS
+    # (`0.000V 7.215mV 8.893mV`) - the `m` broke the match. The consequence was
+    # that the LARGER half of the collapse, and the half driving the failing
+    # mean, had no parser-vs-tool cross-check at all while the gate reported one.
     m = re.search(
-        r"Minimum, Average, Maximum IR drop:\s*([0-9.eE+-]+)V\s+([0-9.eE+-]+)V\s+([0-9.eE+-]+)V",
+        r"Minimum, Average, Maximum IR drop:\s*"
+        r"([0-9.eE+-]+)\s*(m?)V\s+([0-9.eE+-]+)\s*(m?)V\s+([0-9.eE+-]+)\s*(m?)V",
         txt,
     )
     if m:
-        out["ir_min"], out["ir_avg"], out["ir_max"] = (float(g) for g in m.groups())
+        g = m.groups()
+        out["ir_min"], out["ir_avg"], out["ir_max"] = (
+            float(g[i]) * (1e-3 if g[i + 1] == "m" else 1.0) for i in (0, 2, 4)
+        )
     m = re.search(r"Total Static Current Loaded:\s*(-?[0-9.eE+-]+)A", txt)
     if m:
         out["total_current_a"] = abs(float(m.group(1)))
+    # THE PER-SOURCE CURRENTS, and they are worth more than they look. Two
+    # numbers on this line are the whole of defect D2's fix:
+    #
+    #   Total Static Current Loaded / average Vsrc Current  ==  the number of
+    #   voltage sources ON THIS NET, reconstructed from the solver's own
+    #   arithmetic rather than from the query that placed them.
+    #
+    # It comes out at 6.000000 and 4.000000 on this design because an average
+    # IS a total over a count; there is no tolerance being spent. That matters
+    # because `pads.expect_vsrc` and the .padcell file handed to set_power_pads
+    # descend from the SAME `get_db` selector, so a pad master matching a subset
+    # agrees with itself and passes with full marks. This side of the comparison
+    # is downstream of the solve and cannot see that selector at all.
+    #
+    # The VDD figures are NEGATIVE (current leaves the source into the die) and
+    # "Minimum" is the most negative, i.e. the LARGEST magnitude. Magnitudes are
+    # taken and then re-ordered, because a min/max read off the signed values
+    # gets the hottest pad and the coldest pad the wrong way round on VDD and
+    # the right way round on VSS - which would silently halve this check.
+    m = re.search(
+        r"Minimum, Average, Maximum Vsrc Current:\s*"
+        r"(-?[0-9.eE+-]+)\s*A\s*,\s*(-?[0-9.eE+-]+)\s*A\s*,\s*(-?[0-9.eE+-]+)\s*A",
+        txt,
+    )
+    if m:
+        a, b, c = (abs(float(x)) for x in m.groups())
+        out["vsrc_i_min_a"], out["vsrc_i_avg_a"], out["vsrc_i_max_a"] = \
+            min(a, c), b, max(a, c)
+    # EFFECTIVE RESISTANCE. Recorded, not gated. `Reff: NA, NA, NA` is what this
+    # site's runs print because rail_run.tcl omitted -enable_reff_analysis; the
+    # flag is now there, so a future run carries ohms. Reff is the ONLY
+    # activity-independent measurement available here (no SAIF, no VCD anywhere),
+    # which is why it is worth naming in the verdict even without a threshold.
+    m = re.search(r"Minimum, Average, Maximum Reff:[ \t]*([^\n]*)", txt)
+    out["reff_raw"] = m.group(1).strip() if m else ""
+    out["reff_analysed"] = bool(re.search(r"[0-9]", out["reff_raw"]))
     m = re.search(r"IR DROP ANALYSIS.*?Number of Violations:\s*(\d+)", txt, re.S)
     if m:
         out["violations"] = int(m.group(1))
@@ -343,6 +448,86 @@ def parse_vsrcs(path):
                      "x": float(m.group(3)), "y": float(m.group(4))}
                 )
     return out
+
+
+def layer_rank(name):
+    """Stack order, top first. `metalN` -> N; anything else sorts above the
+    metals in the order the tool printed it, because AP/RV names are not
+    numbered and guessing a number for them would be worse than admitting it."""
+    m = re.match(r"^metal(\d+)$", name, re.I)
+    return int(m.group(1)) if m else 10 ** 6
+
+
+def parse_layerbased_ir(path):
+    """`<layer> | <IR drop V> | <lo> -> <hi> | <elements>`.
+
+    THIS FILE IS THE MOST ACTIONABLE THING THE RUN PRODUCES AND THE GATE USED TO
+    RECORD ONLY ITS PATH. It is what tells you that on this design 97.6% of the
+    VDD droop is already spent by the time the current reaches metal7, that
+    metal7 through metal3 are one equipotential node to five decimal places, and
+    therefore that the several hundred missing M3-M7 power vias cannot recover a
+    millivolt no matter how many of them are fixed. A verdict computed without
+    it can rank a via count as if it were a voltage.
+
+    WHAT THE `IR drop` COLUMN IS, stated carefully because it decides what may
+    be claimed from it. It is the SPAN on that layer - `hi - lo` of the range
+    printed beside it, verified on both nets of both runs on disk. On this
+    design the deepest layer's span equals the worst per-instance droop/rise
+    EXACTLY (VDD metal1 0.00593 V against 5.93 mV; VSS metal1 0.00835 V against
+    8.35 mV), and the spans increase monotonically down the stack, so the
+    successive differences read as the per-leg contribution of each descent and
+    telescope back to the total. That reconciliation is what the check asserts.
+
+    ONE CAVEAT THAT MUST TRAVEL WITH THE LEG NUMBERS. The VDD range is printed
+    to two decimals - every VDD row reads `1.08 -> 1.07` whatever the layer -
+    so the range column can corroborate nothing on that net, and a layer that
+    is a dead-end STUB rather than a series stage of the descent cannot be told
+    from the spans alone. VSS metal10 is exactly that: 13 elements, 0.69 mV,
+    the AP plane hanging off metal9 rather than carrying current in series with
+    it (the voltage sources sit on metal7, below AP - see the plan's section 4).
+    So the element count is carried alongside every leg, and a leg with a
+    handful of elements is to be read together with the one below it rather
+    than as a stage of its own.
+    """
+    rows = []
+    with open(path) as fh:
+        for line in fh:
+            m = re.match(
+                r"^\s*(\w+)\s*\|\s*([0-9.eE+-]+)\s*\|\s*"
+                r"([0-9.eE+-]+)\s*->\s*([0-9.eE+-]+)\s*\|\s*(\d+)\s*$", line)
+            if not m:
+                continue
+            try:
+                rows.append({"layer": m.group(1),
+                             "drop_v": float(m.group(2)),
+                             "lo": float(m.group(3)),
+                             "hi": float(m.group(4)),
+                             "elements": int(m.group(5))})
+            except ValueError:
+                continue
+    rows.sort(key=lambda r: -layer_rank(r["layer"]))
+    return rows
+
+
+def layer_legs(rows):
+    """Difference the stack top-down into per-leg contributions, in mV.
+
+    The first leg is measured from the source, which the report gives no node
+    for, so it is the topmost layer's own span. Every layer is included and
+    nothing is judged to be off-path here: the legs telescope to the deepest
+    layer's value by construction, so the reconciliation the gate actually
+    asserts does not depend on this decomposition being read one way. A
+    NEGATIVE leg would mean the spans are not a monotone descent and the whole
+    reading is wrong - it is reported as it comes out rather than clamped,
+    because a negative millivolt in this table is a finding.
+
+    Returns [(from, to, mV, elements_at_to), ...]."""
+    legs, prev, prev_name = [], 0.0, "source"
+    for r in rows:
+        legs.append((prev_name, r["layer"], (r["drop_v"] - prev) * 1000.0,
+                     r["elements"]))
+        prev, prev_name = r["drop_v"], r["layer"]
+    return legs
 
 
 def resolve(path, base):
@@ -452,8 +637,7 @@ def classify(over_xy, tile_um, localised_tile_max):
 # the gate
 # ----------------------------------------------------------------------------
 class Verdict:
-    def __init__(self, tier):
-        self.tier = tier           # "signoff" (blocking) or "report"
+    def __init__(self):
         self.checks = []
         self.metrics = {}
 
@@ -471,15 +655,35 @@ class Verdict:
         return [c for c in self.checks if c["level"] == "BUDGET" and not c["ok"]]
 
     @property
+    def advisory_failures(self):
+        return [c for c in self.checks if c["level"] == "ADVISORY" and not c["ok"]]
+
+    @property
     def status(self):
+        # PASS_DEGRADED IS NOT A COURTESY. Before it existed, emit() printed
+        #     [FAIL] ADVISORY coverage.demand_vs_flow_power  ... Skipped, which
+        #     is not the same as passed.
+        # and then, four lines further down, `VERDICT: PASS`. Two statements in
+        # one report, the second overriding the first, and only the second gets
+        # quoted. Every ADVISORY here is a check that COULD NOT BE RUN - the
+        # demand cross-check with no implementation power report beside the
+        # database, the layer reconciliation with no layer report - and "nobody
+        # looked" must not render as "looked and it was fine". That is this
+        # stage's entire subject applied to the stage's own output.
+        #
+        # It ranks below BUDGET because it says nothing about the design; it
+        # ranks above PASS because it says something is missing. Its exit code
+        # is NON-ZERO for the same reason.
         if self.hard_failures:
             return "FAIL_HARD"
         if self.budget_failures:
             return "FAIL_BUDGET"
+        if self.advisory_failures:
+            return "PASS_DEGRADED"
         return "PASS"
 
 
-def run_gate(census_path, budget_path, tier="signoff"):
+def run_gate(census_path, budget_path):
     if os.path.isdir(census_path):
         census_path = os.path.join(census_path, "census.txt")
     if not os.path.exists(census_path):
@@ -497,13 +701,30 @@ def run_gate(census_path, budget_path, tier="signoff"):
     for k in list(cen):
         if k.startswith("artefact.") or k == "inst_xy":
             cen[k] = resolve(cen[k], base)
-    v = Verdict(tier)
+    v = Verdict()
     M = v.metrics
 
     M["census"] = census_path
     M["db"] = cen.get("db.path", "")
     M["design"] = cen.get("design.name", "")
-    M["tier"] = tier
+
+    # The tool's own per-net summary, read ONCE per net. Four sections below
+    # want fields out of it (the divisor's third witness, the loaded current,
+    # the IR parity pair, the per-source currents) and each used to re-open the
+    # file with its own existence test, three of which differed.
+    _main = {}
+
+    def main_of(key):
+        if key not in _main:
+            p = cen.get(key, "")
+            d = {}
+            if p and os.path.isfile(p) and os.path.getsize(p) > 0:
+                try:
+                    d = parse_main_rpt(p)
+                except OSError:
+                    d = {}
+            _main[key] = d
+        return _main[key]
 
     # ---- 0. THE RUN COMPLETED ------------------------------------------------
     v.add("run.completed", "HARD", cen.get("result.completed") == "true",
@@ -535,9 +756,30 @@ def run_gate(census_path, budget_path, tier="signoff"):
     vnom = float(cen.get("power.configured_voltage") or cen.get("power.rail_voltage") or 0)
     M["nominal_v"] = vnom
     M["nominal_v_source"] = "report_power's own rail table, re-read in the solving session"
-    v.add("divisor.agrees", "HARD", cen.get("power.voltage_agrees") == "true",
-          f"configured {cen.get('power.configured_voltage')} V vs report_power's "
-          f"own rail table {cen.get('power.rail_voltage')} V")
+    # RECOMPUTED, NOT READ. This check used to be
+    #     cen.get("power.voltage_agrees") == "true"
+    # which is a verdict the RUN wrote about ITSELF, while both raw numbers sat
+    # two lines above unused. A census carrying a stale RAIL_VCORE and a
+    # mis-written stamp passes it, and every percentage is then scaled by the
+    # 1.08-vs-1.20 ratio - 11%, wider than any band here. Fixture-proven: the
+    # same millivolts flip FAIL_BUDGET to PASS on the stamp alone.
+    v_conf = cen.get("power.configured_voltage")
+    v_rail = cen.get("power.rail_voltage")
+    try:
+        agree = abs(float(v_conf) - float(v_rail)) <= 1e-3
+    except (TypeError, ValueError):
+        agree = False
+    # The tool's own `Voltage:` field is a THIRD witness, independent of the
+    # census: it tracks set_pg_nets -voltage inside the solving session. Parsed
+    # here rather than reused from section 12, which runs later.
+    tool_v = main_of("artefact.main_vdd").get("voltage")
+    if tool_v is not None and agree:
+        agree = abs(tool_v - float(v_conf)) <= 1e-3
+    v.add("divisor.agrees", "HARD", agree,
+          f"configured {v_conf} V vs report_power's own rail table {v_rail} V"
+          + (f" vs the tool's own summary {tool_v} V" if tool_v is not None else
+             " (no tool summary voltage to cross-check)")
+          + "; recomputed here, not read from the run's own stamp")
     v.add("divisor.nonzero", "HARD", vnom > 0,
           f"nominal = {vnom} V - every percentage is a division by this")
 
@@ -558,7 +800,63 @@ def run_gate(census_path, budget_path, tier="signoff"):
           f"the database. Too few starves the grid; too many (auto-creation on a "
           f"via layer) lets current enter the die anywhere and reports a grid "
           f"better than the one that exists. 'Added 6/6 (100.00%)' is printed on "
-          f"runs that end with NONE.")
+          f"runs that end with NONE. NOTE this check cannot see a pad master "
+          f"matching a SUBSET - both sides of it descend from the same get_db "
+          f"selector; vsrc.count_per_net below is the independent one.")
+
+    # ---- 3b. THE SOURCE COUNT, RECONSTRUCTED PER NET ------------------------
+    # D2. The check above compares a number the run wrote against a number the
+    # run wrote, and the .padcell file the solver was handed came from the SAME
+    # `get_db` query as `pads.expect_vsrc`. So a pad master that matches six of
+    # ten pads agrees with itself and scores 10/10 - the exact state the check
+    # above claims to catch and cannot produce. It also SUMS ACROSS NETS, so
+    # 9 VDD + 1 VSS is indistinguishable from 6 + 4.
+    #
+    # The fix costs one regex and no new artefact. The tool prints, per net,
+    # both the total current it loaded and the AVERAGE current per voltage
+    # source; an average is a total over a count, so
+    #
+    #     Total Static Current Loaded / average Vsrc Current  ==  sources on
+    #                                                             THIS net
+    #
+    # exactly - 6.000000 for VDD and 4.000000 for VSS on this design, and
+    # likewise on the 08-17 build. It is downstream of the solve, it is
+    # per-net, and it cannot see the selector, so it is a genuinely independent
+    # witness of the thing the census only asserts.
+    per_net = {}
+    for net, key, cenkey in (("VDD", "artefact.main_vdd", "pads.vdd_count"),
+                             ("VSS", "artefact.main_vss", "pads.vss_count")):
+        d = main_of(key)
+        tot, avg = d.get("total_current_a"), d.get("vsrc_i_avg_a")
+        try:
+            want = int(cen[cenkey])
+        except (KeyError, ValueError):
+            want = -1
+        n = (tot / avg) if (tot and avg) else None
+        per_net[net] = {"n": n, "want": want, "total_a": tot, "avg_a": avg}
+        if n is not None:
+            M[f"vsrc_n_{net.lower()}_reconstructed"] = round(n, 6)
+        M[f"vsrc_n_{net.lower()}_pads_in_db"] = want
+    ok_pn = all(
+        r["n"] is not None and r["want"] > 0
+        and abs(r["n"] - round(r["n"])) <= 0.01
+        and int(round(r["n"])) == r["want"]
+        for r in per_net.values()
+    )
+    have_pn = all(r["n"] is not None for r in per_net.values())
+    shown = ", ".join(
+        f"{net}: {r['total_a']} A / {r['avg_a']} A = "
+        f"{r['n']:.6f} sources against {r['want']} pads in the database"
+        if r["n"] is not None else
+        f"{net}: the tool's summary carries no per-source current line"
+        for net, r in per_net.items())
+    v.add("vsrc.count_per_net", "HARD" if have_pn else "ADVISORY", ok_pn,
+          f"source count per net, reconstructed from the solver's own "
+          f"arithmetic (total loaded current / average per-source current) and "
+          f"compared against the pad census: {shown}. Independent of the get_db "
+          f"selector that both sides of vsrc.count descend from, and per-net, so "
+          f"9+1 cannot pass as 6+4."
+          + ("" if have_pn else " NOT RUN - recorded, never counted as passed."))
 
     # locations: sources must sit on the pads, not spread over the die
     vs_pts = []
@@ -605,11 +903,7 @@ def run_gate(census_path, budget_path, tier="signoff"):
     # Catches an empty, truncated or mis-scaled demand file. Note this is a
     # CONSISTENCY check between two numbers from the same power estimate: it
     # catches a broken file, never a wrong activity assumption.
-    solver_a = None
-    for key in ("artefact.main_vdd",):
-        p = cen.get(key, "")
-        if p and os.path.exists(p):
-            solver_a = parse_main_rpt(p).get("total_current_a")
+    solver_a = main_of("artefact.main_vdd").get("total_current_a")
     try:
         demand_ma = float(cen.get("demand.core_ma", "nan"))
     except ValueError:
@@ -716,9 +1010,8 @@ def run_gate(census_path, budget_path, tier="signoff"):
     # ---- 9. PARSER vs TOOL ---------------------------------------------------
     tol_mv = num(bud, "cov.parser_tool_agree_mv")
     agree_detail, agree_ok = "no tool summary to compare against", False
-    p = cen.get("artefact.main_vdd", "")
-    if p and os.path.exists(p):
-        main = parse_main_rpt(p)
+    main = main_of("artefact.main_vdd")
+    if main:
         if "ir_min" in main and "voltage" in main:
             tool_worst_mv = (main["voltage"] - main["ir_min"]) * 1000.0
             mine_mv = M["vdd_droop_worst_mv"] or 0.0
@@ -732,30 +1025,205 @@ def run_gate(census_path, budget_path, tier="signoff"):
                 f"disagreement allowance)"
             )
             M["tool_worst_vdd_mv"] = round(tool_worst_mv, 4)
-            M["em_analysed"] = main.get("em_analysed", False)
-            M["em_raw"] = main.get("em_jjmax_raw", "")
-            M["tool_violations"] = main.get("violations")
+        M["em_analysed"] = main.get("em_analysed", False)
+        M["em_raw"] = main.get("em_jjmax_raw", "")
+        M["tool_violations"] = main.get("violations")
+        M["reff_status"] = "analysed" if main.get("reff_analysed") else "NA"
+        M["reff_raw"] = main.get("reff_raw", "")
     v.add("parity.parser_vs_tool", "HARD", agree_ok, agree_detail)
+
+    # THE SAME CHECK ON VSS, which never had one. Until the regex above became
+    # unit-aware it could not even parse `0.000V 7.215mV 8.893mV`, so the LARGER
+    # half of the collapse - and the half that drives the failing mean on this
+    # design - was cross-checked against nothing while `coverage.nets` asserted
+    # only that the file was non-empty.
+    #
+    # The two nets are read differently, and that asymmetry is the tool's, not
+    # a convenience: VDD reports absolute potentials falling from the supply, so
+    # the droop is `voltage - ir_min`. VSS reports the rise directly against a
+    # `Voltage: 0.000` rail, so the rise is `ir_max`.
+    vss_detail, vss_ok = "no VSS tool summary to compare against", False
+    mvss = main_of("artefact.main_vss")
+    if mvss:
+        if "ir_max" in mvss:
+            tool_rise_mv = (mvss["ir_max"] - mvss.get("voltage", 0.0)) * 1000.0
+            mine_mv = M.get("vss_rise_worst_mv") or 0.0
+            delta = abs(tool_rise_mv - mine_mv)
+            vss_ok = delta <= tol_mv
+            vss_detail = (
+                f"worst VSS rise: {mine_mv:.3f} mV recomputed from the "
+                f"per-instance report vs {tool_rise_mv:.3f} mV in the tool's own "
+                f"summary (delta {delta:.3f} mV, tolerance {tol_mv} mV)"
+            )
+            M["tool_worst_vss_mv"] = round(tool_rise_mv, 4)
+    v.add("parity.parser_vs_tool_vss", "HARD", vss_ok, vss_detail)
+
+    # ---- 9b. PAD CURRENT BALANCE --------------------------------------------
+    # G2, and it comes free out of the same line D2's source count came from.
+    # The point of N nominally identical parallel supply pads is that each
+    # carries 1/N of the load; a pad whose via stack did not connect, or a
+    # set_power_pads pattern that matched a subset, shows up here as the
+    # survivors carrying more. It is worth a check of its own because NOTHING
+    # ELSE IN THIS GATE LOOKS AT THE PADS ELECTRICALLY - vsrc.count counts them
+    # and the location scan checks they are not spread over the die, but a pad
+    # that is present, placed, counted and barely conducting passes both.
+    #
+    # What it says about this design, recorded whether or not it trips: each
+    # VSS pad carries about 1.5x what a VDD pad carries, because the ring has
+    # six VDD pads against four VSS, and the worst VSS rise is about 1.4x the
+    # worst VDD droop. Those two ratios agreeing is the pad-count story in two
+    # independent numbers.
+    spreads, pad_bits = {}, []
+    for net, key in (("VDD", "artefact.main_vdd"), ("VSS", "artefact.main_vss")):
+        d = main_of(key)
+        lo, av, hi = (d.get("vsrc_i_min_a"), d.get("vsrc_i_avg_a"),
+                      d.get("vsrc_i_max_a"))
+        if not (lo and av and hi):
+            continue
+        sp = 100.0 * (hi - lo) / av
+        spreads[net] = sp
+        n = net.lower()
+        M[f"pad_i_{n}_min_ma"] = round(lo * 1e3, 4)
+        M[f"pad_i_{n}_avg_ma"] = round(av * 1e3, 4)
+        M[f"pad_i_{n}_max_ma"] = round(hi * 1e3, 4)
+        M[f"pad_i_{n}_spread_pct"] = round(sp, 3)
+        pad_bits.append(f"{net} {lo*1e3:.3f}/{av*1e3:.3f}/{hi*1e3:.3f} mA "
+                        f"min/avg/max, spread {sp:.2f}% of the mean")
+    if "VDD" in spreads and "VSS" in spreads:
+        a_vdd = main_of("artefact.main_vdd").get("vsrc_i_avg_a")
+        a_vss = main_of("artefact.main_vss").get("vsrc_i_avg_a")
+        if a_vdd:
+            M["pad_i_vss_per_vdd"] = round(a_vss / a_vdd, 4)
+        if M.get("vdd_droop_worst_mv"):
+            M["vss_rise_per_vdd_droop"] = round(
+                (M.get("vss_rise_worst_mv") or 0.0) / M["vdd_droop_worst_mv"], 4)
+    if spreads:
+        limit = num(bud, "pad.current_spread_max")
+        worst_net = max(spreads, key=lambda k: spreads[k])
+        M["pad_i_spread_worst_pct"] = round(spreads[worst_net], 3)
+        M["pad_i_spread_worst_net"] = worst_net
+        v.add("budget.pad_current_spread", "BUDGET",
+              spreads[worst_net] <= limit,
+              f"{'; '.join(pad_bits)}. Worst {worst_net} at "
+              f"{spreads[worst_net]:.2f}% against a {limit}% limit "
+              f"[{src.get('pad.current_spread_max', 'NO SOURCE')[:90]}]"
+              + (f". Each VSS pad carries {M['pad_i_vss_per_vdd']}x a VDD pad"
+                 if "pad_i_vss_per_vdd" in M else "")
+              + (f", and the worst VSS rise is {M['vss_rise_per_vdd_droop']}x "
+                 f"the worst VDD droop" if "vss_rise_per_vdd_droop" in M else ""))
+    else:
+        v.add("budget.pad_current_spread", "ADVISORY", False,
+              "no per-source current line in either tool summary, so pad "
+              "current balance has NOT been checked. Recorded, not passed.")
+
+    # ---- 9c. THE PER-LAYER BREAKDOWN, RECONCILED ----------------------------
+    # G3. The census has named these two reports since the stage was written and
+    # the gate has never opened either of them. They are the most actionable
+    # content the run produces - they are what says the core mesh from metal7
+    # down is ONE NODE to five decimal places, and therefore that the several
+    # hundred missing M3-M7 power vias cannot recover a millivolt however many
+    # are fixed. Recording a path is not reading a file.
+    #
+    # AND IT IS A REAL CROSS-CHECK, not just a pretty table. The layer report
+    # and the per-instance .iv are two different reductions of the same solve,
+    # written by different code: one sums over grid ELEMENTS by layer, the other
+    # over INSTANCES. They reconcile exactly here (VDD 5.93 mV, VSS 8.35 mV,
+    # delta 0.000), which is a much stronger statement than either alone. A
+    # disagreement would mean the .iv and the grid solution describe different
+    # runs - the same class of event parity.parser_vs_tool exists to catch, on
+    # the other axis.
+    ltol_mv = num(bud, "cov.layer_iv_agree_mv")
+    for net, key, worst_key in (("VDD", "artefact.layer_vdd", "vdd_droop_worst_mv"),
+                                ("VSS", "artefact.layer_vss", "vss_rise_worst_mv")):
+        n = net.lower()
+        lp = cen.get(key, "")
+        rows = []
+        if lp and os.path.isfile(lp) and os.path.getsize(lp) > 0:
+            try:
+                rows = parse_layerbased_ir(lp)
+            except OSError:
+                rows = []
+        if not rows:
+            where = lp if lp else f"the census carries no {key}"
+            v.add(f"parity.layer_vs_iv_{n}", "ADVISORY", False,
+                  f"no readable per-layer IR breakdown for {net} ({where}), so "
+                  f"the grid-element solution has NOT been reconciled against "
+                  f"the per-instance one. Skipped, which is not passed.")
+            continue
+        M[f"layer_ir_{n}_mv"] = {r["layer"]: round(r["drop_v"] * 1000, 4)
+                                 for r in rows}
+        M[f"layer_elements_{n}"] = {r["layer"]: r["elements"] for r in rows}
+        legs = layer_legs(rows)
+        M[f"layer_leg_{n}_mv"] = {f"{a}->{b}": round(mv, 4) for a, b, mv, _ in legs}
+        deepest = rows[-1]
+        layer_worst_mv = max(r["drop_v"] for r in rows) * 1000.0
+        M[f"layer_worst_{n}_mv"] = round(layer_worst_mv, 4)
+        # The headline the plan's section 2 is made of: how much of the drop is
+        # already spent by the time the current reaches metal7, i.e. above the
+        # entire core mesh. Anything below that layer is unreachable by a via or
+        # open fix, because there is no gradient there to recover.
+        m7 = next((r for r in rows if r["layer"].lower() == "metal7"), None)
+        if m7 and layer_worst_mv > 0:
+            M[f"layer_{n}_frac_at_metal7"] = round(
+                m7["drop_v"] * 1000.0 / layer_worst_mv, 4)
+        mine = M.get(worst_key)
+        delta = abs(layer_worst_mv - mine) if mine is not None else float("inf")
+        top3 = "; ".join(f"{a}->{b} {mv:.2f} mV ({el} elements)"
+                         for a, b, mv, el in
+                         sorted(legs, key=lambda t: -t[2])[:3])
+        v.add(f"parity.layer_vs_iv_{n}", "HARD", delta <= ltol_mv,
+              f"worst {net} collapse: {layer_worst_mv:.3f} mV summed down the "
+              f"layer stack (deepest layer {deepest['layer']}) vs "
+              f"{mine} mV from the per-instance report (delta {delta:.3f} mV, "
+              f"tolerance {ltol_mv} mV). Two independent reductions of the same "
+              f"solve - grid elements by layer, and instances. Largest legs: "
+              f"{top3}."
+              + (f" {M[f'layer_{n}_frac_at_metal7']:.1%} of it is already spent "
+                 f"at metal7, above the whole core mesh."
+                 if f"layer_{n}_frac_at_metal7" in M else ""))
 
     # ---- 10. PG OPENS --------------------------------------------------------
     # Not a margin. An instance with no path to a supply does not power up.
     dmax = num(bud, "cov.disconnected_max")
-    v.add("pg.disconnected", "HARD", iv["n_disconnected"] <= dmax,
-          f"{iv['n_disconnected']} instances have NO PATH to a supply rail "
-          f"(limit {int(dmax)}). This is a functional defect, not a margin: those "
-          f"cells do not power up. The flow's own check_connectivity sees the "
-          f"same opens but reports them among hundreds of informational lines.")
+    nf = iv["n_disconnected_functional"]
+    cells = ", ".join(iv["functional_cells"][:6]) or "-"
+    if len(iv["functional_cells"]) > 6:
+        cells += f", +{len(iv['functional_cells']) - 6} more"
+    M["iv_disconnected_functional"] = nf
+    M["iv_disconnected_filler"] = iv["n_disconnected_filler"]
+    M["iv_floating"] = iv["n_floating"]
+    M["iv_single_rail_open"] = iv["n_single_rail_open"]
+    # GATED ON FUNCTIONAL LOGIC ONLY. See parse_iv for why the raw count is not
+    # the verdict: it mixes dummy fill with logic, and cells that reach one rail
+    # with cells that reach neither.
+    v.add("pg.disconnected", "HARD", nf <= dmax,
+          f"{nf} FUNCTIONAL instances have no path to a supply rail "
+          f"(limit {int(dmax)}); masters: {cells}. This is a functional defect, "
+          f"not a margin: those cells do not power up. "
+          f"{iv['n_disconnected_filler']} further FILL/ANTENNA/DCAP instances are "
+          f"disconnected and are NOT gated - orphaned fill carries no logic, "
+          f"though orphaned decap is lost decoupling. Of all "
+          f"{iv['n_disconnected']}: {iv['n_floating']} reach NEITHER rail, "
+          f"{iv['n_single_rail_open']} reach one and not the other.")
+    # Reported, never gated: no defensible threshold exists for orphaned fill,
+    # and a silent count is how the functional half hid inside it for a week.
+    v.add("pg.disconnected_filler", "ADVISORY", True,
+          f"{iv['n_disconnected_filler']} FILL/ANTENNA/DCAP instances disconnected "
+          f"(not gated; recorded so the split cannot be lost again)")
 
     # ---- 11. ELECTROMIGRATION ------------------------------------------------
     # In static mode, without -em_models and without -process_techgen_em_rules,
     # current-density analysis is DISABLED and the run still succeeds with the
     # EM report simply absent. An unmeasured signoff criterion is not a pass.
     em_ok = bool(M.get("em_analysed"))
-    em_required = str(bud.get("em.required_at_signoff", "true")).lower() == "true"
+    # ONE SWITCH, AND IT CARRIES PROVENANCE. This used to be the budget key AND
+    # `--tier`, so the same question had two answers in two files and the
+    # command-line one silently won. The tier is gone; this line is the whole
+    # decision, it lives beside every other threshold, and it is subject to the
+    # same anti-ratchet rule they are.
+    em_required = str(bud.get("em.required", "true")).lower() == "true"
     M["em_status"] = "analysed" if em_ok else "NOT_ANALYSED"
-    v.add("em.current_density",
-          "HARD" if (em_required and tier == "signoff") else "ADVISORY",
-          em_ok,
+    v.add("em.current_density", "HARD" if em_required else "ADVISORY", em_ok,
           (f"EM current density: analysed, J/Jmax = {M.get('em_raw')}"
            if em_ok else
            "EM current density: NOT_ANALYSED. The report's J/Jmax field is "
@@ -763,6 +1231,38 @@ def run_gate(census_path, budget_path, tier="signoff"):
            "no -em_models and no -process_techgen_em_rules: the tool disables "
            "current-density analysis and completes successfully without it. "
            "An unmeasured signoff criterion is not a pass."))
+
+    # ---- 11b. WHAT THE EM NUMBERS WERE COMPUTED FROM ------------------------
+    # The Voltus reference is explicit that -process_techgen_em_rules WITHOUT
+    # -ict_em_models falls back to the qrcTechFile, and this stack's qrcTechFile
+    # carries ZERO EM rules. That combination is the one way to obtain an EM
+    # verdict on this site that means nothing at all - populated fields, a
+    # `Number of Violations: 0`, and no ruleset behind either. rail_run.tcl now
+    # declares what it passed; this asserts the two are consistent, so a J/Jmax
+    # number can never be quoted without a named model file behind it.
+    em_rules = cen.get("method.em_rules", "")
+    em_ict = cen.get("method.em_ict", "")
+    M["em_rules"] = em_rules
+    M["em_ict_model"] = em_ict
+    M["em_temperature"] = cen.get("method.em_temperature", "")
+    declared = bool(em_ict) and em_ict.lower() not in ("none", "")
+    trap = (em_rules.lower() == "techgen" and not declared)
+    models_ok = (not trap) and (declared or not em_ok)
+    v.add("method.em_models", "HARD", models_ok,
+          (f"EM rules '{em_rules or '(not declared)'}' with model file "
+           f"'{em_ict or '(not declared)'}'. "
+           + ("-process_techgen_em_rules is on with NO -ict_em_models: the tool "
+              "falls back to the qrcTechFile, which carries zero EM rules for "
+              "this stack, and would report current density against nothing."
+              if trap else
+              "current density was analysed but the run declares no ICT-EM "
+              "model file, so the ruleset behind the J/Jmax numbers is unknown "
+              "and they must not be quoted."
+              if (em_ok and not declared) else
+              "the model file is named, so the J/Jmax numbers have a ruleset "
+              "behind them." if declared else
+              "EM was not analysed, so there is nothing to corroborate - "
+              "em.current_density above is the check that owns that.")))
 
     # ---- 12. THE BUDGETS -----------------------------------------------------
     for key, metric, label in (
@@ -829,7 +1329,7 @@ def run_gate(census_path, budget_path, tier="signoff"):
 # ----------------------------------------------------------------------------
 def emit(v, fh=sys.stdout):
     print("=" * 78, file=fh)
-    print(f"RAIL GATE  ({v.tier})   {v.metrics.get('design', '?')}", file=fh)
+    print(f"RAIL GATE   {v.metrics.get('design', '?')}", file=fh)
     print(f"  database : {v.metrics.get('db', '?')}", file=fh)
     print("=" * 78, file=fh)
     for c in v.checks:
@@ -839,11 +1339,27 @@ def emit(v, fh=sys.stdout):
     for k in ("eff_worst_mv", "eff_worst_pct", "eff_p99_pct", "eff_mean_pct",
               "vdd_droop_worst_mv", "vss_rise_worst_mv", "naive_sum_of_maxima_mv",
               "instance_coverage_frac", "current_ratio", "iv_disconnected",
-              "classification", "em_status", "coverage_power_attributed_frac"):
+              "classification", "em_status", "reff_status",
+              "coverage_power_attributed_frac",
+              "vsrc_n_vdd_reconstructed", "vsrc_n_vss_reconstructed",
+              "pad_i_vdd_min_ma", "pad_i_vdd_avg_ma", "pad_i_vdd_max_ma",
+              "pad_i_vss_min_ma", "pad_i_vss_avg_ma", "pad_i_vss_max_ma",
+              "pad_i_spread_worst_pct", "pad_i_vss_per_vdd",
+              "vss_rise_per_vdd_droop",
+              "layer_leg_vdd_mv", "layer_leg_vss_mv",
+              "layer_vdd_frac_at_metal7", "layer_vss_frac_at_metal7"):
         if k in v.metrics:
             print(f"  {k:34s} {v.metrics[k]}", file=fh)
     print("-" * 78, file=fh)
     print(f"  SCOPE: {v.metrics.get('scope_note', '')}", file=fh)
+    # A failing ADVISORY is named on its own line, not left to be spotted in a
+    # 25-row table. It is the outcome most easily read as a pass, so it is the
+    # one that has to be hardest to miss.
+    if v.advisory_failures:
+        print(f"  NOT MEASURED ({len(v.advisory_failures)}): "
+              + ", ".join(c["name"] for c in v.advisory_failures), file=fh)
+        print("    Each of those is a check that COULD NOT BE RUN. Skipped is "
+              "not passed, which is why the verdict below is not PASS.", file=fh)
     print(f"  VERDICT: {v.status}", file=fh)
     return v.status
 
@@ -864,6 +1380,23 @@ INST_NAME DIVD PWR_IVD GND_IVB CELL_NAME
 BEGIN
 """
 
+# EVERY FIELD BELOW IS CUT FROM A REAL REPORT, and the two that were added on
+# 2026-08-24 came out of
+#   rail/work/gdsrun-20260823-rzG/results/PD_TOP_125C_avg_1/Reports/{VDD,VSS}/*.main.rpt
+# rather than from what the format was believed to be. That distinction has
+# already cost this battery twice: a `\\s*` on the J/Jmax line matched a NEWLINE
+# and read the next line's number as an EM result, and the VSS report was
+# written with VDD's shape so a parser that could not read millivolts at all
+# went unnoticed for a week.
+#
+#   `Minimum, Average, Maximum Vsrc Current: <min>A, <avg>A, <max>A`
+#       comma-separated, each with a trailing A, and NEGATIVE on VDD - the tool
+#       signs current leaving the source, so its "Minimum" is the LARGEST
+#       magnitude. Both facts are load-bearing for what reads this line.
+#   `Minimum, Average, Maximum Reff: NA, NA, NA`
+#       the shape a comma-separated triple takes when the analysis did not run,
+#       and the shape the J/Jmax line will take too if -ict_em_models is ever
+#       passed without the rules flag. `NA, NA, NA` must not read as analysed.
 MAIN_RPT = """POWER NET REPORT
 Power Net: VDD
 Voltage: {v:.3f}
@@ -872,9 +1405,27 @@ IR DROP ANALYSIS
 Minimum, Average, Maximum IR drop: {vmin:.3f}V {vavg:.3f}V {v:.3f}V
 Total Static Current Loaded: -{cur}A
 Number of Violations: 0
+Minimum, Average, Maximum Vsrc Current: -{vsmax}A, -{vsavg}A, -{vsmin}A
+EFFECTIVE RESISTANCE ANALYSIS
+Minimum, Average, Maximum Reff: {reff}
 CURRENT DENSITY ANALYSIS
 Minimum, Average, Maximum J/Jmax:{em}
 Number of Violations: 0
+"""
+
+# The per-layer IR breakdown, cut from the same run's
+#   results/PD_TOP_125C_avg_1/Reports/VDD/VDD.layerbased_ir.rpt
+# down to the rows that carry the argument: the entry leg, the via descent, the
+# equipotential core mesh, and metal1. {t} is the cumulative total in volts and
+# it MUST equal the worst per-instance value, because that identity is the whole
+# point of the check reading this file.
+LAYER_RPT = """Layer                | IR drop (volt) | IR drop range (volt) | Elements
+---------------------|----------------|----------------------|---------
+metal9               | {l9:<14.5g} | 1.08     -> 1.07     | 4773
+metal8               | {l8:<14.5g} | 1.08     -> 1.07     | 17428
+metal7               | {l7:<14.5g} | 1.08     -> 1.07     | 76253
+metal3               | {l7:<14.5g} | 1.08     -> 1.07     | 37905
+metal1               | {t:<14.5g} | 1.08     -> 1.07     | 388294
 """
 
 
@@ -893,12 +1444,26 @@ VDD                      1.08         37       17.22      0.3697    {vdd:8.4g}  
 
 
 def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
-                 insts=1010, current_a=0.0505, demand_ma=50.7, em="",
+                 insts=1010, current_a=0.0505, demand_ma=50.7,
+                 # EM DEFAULTS TO ANALYSED as of 2026-08-24, because
+                 # `em.required` in the budget file is now the single switch
+                 # and there is no --tier to soften it. The J/Jmax values are
+                 # this fixture's own; what is cut from a real report is the
+                 # SHAPE of the line - a comma-separated triple on the field's
+                 # own line, the same shape `Reff:` and `I/Idsat (pi):` print.
+                 # `em=""` reproduces the EMPTY field every real run on this
+                 # site has so far written, and is a case below, not a default.
+                 em=" 0.01, 0.20, 0.83",
                  method="static", era="false", stream="none",
                  vconf="1.08", vrail="1.08", vagree="true", n_dc=0,
-                 iv_present=True, spread=False, completed="true",
+                 iv_present=True, spread=False, completed="true", dc_cell="DFCNQD1",
+                 dc_filler_extra=0,
                  tool_vmin=None, floor_frac=0.33,
-                 flow_vdd_mw=None, demand_mw=54.5906, negative_control=None):
+                 flow_vdd_mw=54.59, demand_mw=54.5906, negative_control=None,
+                 vdd_pads=6, vss_pads=4, vsrc_n_vdd=6, vsrc_n_vss=4,
+                 pad_spread=0.128, reff="NA, NA, NA",
+                 layer_present=True, layer_total_scale=1.0,
+                 em_rules="techgen", em_ict="inputs/n65_9m_6x1z1u_em.ict"):
     """A synthetic run directory. Ranks the drops so the distribution is a real
     one rather than a single value, and places instances so the spatial
     classification has something to work on.
@@ -921,7 +1486,27 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
     either direction. The rail table is cut from the real fp1505 imp_power.rep,
     per the fixtures' own rule: a fixture derived from a real artefact is
     evidence, one derived from what we believe the tool prints is a second copy
-    of our belief.
+    of our belief. IT DEFAULTS TO PRESENT as of 2026-08-24: since a failing
+    ADVISORY now produces PASS_DEGRADED rather than being swallowed, a fixture
+    with no imp_power.rep beside it is a fixture testing the degraded path, and
+    that has to be an explicit choice rather than every case's accident.
+
+    `vsrc_n_vdd` / `vsrc_n_vss` set the per-net source count the TOOL SUMMARY
+    implies, via total-current / average-per-source. They are deliberately
+    separate from `vdd_pads` / `vss_pads`, which set what the census counted in
+    the database - because the whole of defect D2 was that those two numbers
+    came from one query and could not disagree. A fixture in which they cannot
+    disagree either would test nothing.
+
+    `pad_spread` is the pad current imbalance as a fraction of the mean; the
+    min and max are placed symmetrically about the average so that
+    (max-min)/mean is exactly this value. 0.128 is the shape of the real ring.
+
+    `layer_total_scale` scales the per-layer breakdown AWAY from the
+    per-instance worst, which is the only way to exercise the failing arm of
+    the layer reconciliation: on a real run the two agree to 0.000 mV, so a
+    fixture that only ever writes agreeing numbers proves the check can pass
+    and nothing else.
 
     `negative_control` stamps the three `stage.*` keys exactly as
     rail_negative_control.tcl writes them, whatever the value - so the FALSE
@@ -951,20 +1536,79 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
                 p_i = d_i * vdd_share
                 g_i = d_i - p_i
                 fh.write(f"- inst{i} {d_i:.5f} {p_i:.5f} {g_i:.5f} DFCNQD1\n")
+            # `dc_cell` decides whether the disconnected population is
+            # FUNCTIONAL or FILL. It exists because the gate stopped counting
+            # raw NA rows and started gating on the functional subset, and a
+            # split no fixture can exercise is not a split.
             for i in range(n_dc):
-                fh.write(f"- dcinst{i} NA NA NA DFCNQD1\n")
+                fh.write(f"- dcinst{i} NA NA NA {dc_cell}\n")
+            # A second, always-filler population. The real artefacts are MIXED -
+            # fp1505 was 275 fill against 55 logic, rzG 18 fill against 0 - and
+            # the gate must find the logic underneath the fill rather than being
+            # swamped by it or excused by it.
+            for i in range(dc_filler_extra):
+                fh.write(f"- fillinst{i} NA NA NA FILL64\n")
     with open(xyp, "w") as fh:
-        for i in range(n + n_dc):
+        for i in range(n + n_dc + dc_filler_extra):
             if spread:
                 x, y = (i * 137) % 1200 + 200, (i * 91) % 1500 + 200
             else:
                 x, y = 300 + (i % 40), 300 + (i % 40)
             fh.write(f"inst{i} {x} {y}\n")
     vmin = tool_vmin if tool_vmin is not None else 1.08 - worst * vdd_share
-    for pth, net in ((mvp, "VDD"), (msp, "VSS")):
-        with open(pth, "w") as fh:
-            fh.write(MAIN_RPT.format(v=1.08, vmin=vmin, vavg=vmin, cur=current_a, em=em)
-                     .replace("Power Net: VDD", f"Power Net: {net}"))
+    # VDD and VSS DO NOT HAVE THE SAME SHAPE, and writing them as if they did
+    # is why a parser that could not read VSS at all went unnoticed. The real
+    # reports differ in two ways that both matter:
+    #   VDD: `Voltage: 1.080` and absolute volts   -> `1.074V 1.075V 1.080V`
+    #   VSS: `Voltage: 0.000` and MILLIVOLTS       -> `0.000V 7.215mV 8.893mV`
+    # The `m` broke the old regex, so VSS silently produced no ir_* values while
+    # the gate reported a parity check over "both nets".
+
+    # THE PER-SOURCE CURRENTS. `current_a` is the whole net's load; splitting it
+    # by `vsrc_n_*` is what makes total/average reconstruct that count, exactly
+    # as the tool's own arithmetic does. The min and max straddle the average by
+    # +/- pad_spread/2 so that (max-min)/avg is `pad_spread` on the nose.
+    def vsrc_fields(nsrc):
+        avg = current_a / nsrc if nsrc else 0.0
+        return {"vsmin": repr(avg * (1.0 - pad_spread / 2.0)),
+                "vsavg": repr(avg),
+                "vsmax": repr(avg * (1.0 + pad_spread / 2.0))}
+
+    with open(mvp, "w") as fh:
+        fh.write(MAIN_RPT.format(v=1.08, vmin=vmin, vavg=vmin, cur=current_a,
+                                 em=em, reff=reff, **vsrc_fields(vsrc_n_vdd)))
+    vss_worst_mv = worst * (1.0 - vdd_share) * 1e3
+    with open(msp, "w") as fh:
+        fh.write(MAIN_RPT.format(v=1.08, vmin=vmin, vavg=vmin, cur=current_a,
+                                 em=em, reff=reff, **vsrc_fields(vsrc_n_vss))
+                 .replace("Power Net: VDD", "Power Net: VSS")
+                 .replace("Voltage: 1.080", "Voltage: 0.000")
+                 # VSS current is POSITIVE in the real report (it returns into
+                 # the source) while VDD's is negative. Stripping the minus
+                 # signs here is not cosmetic: it is the asymmetry that made a
+                 # signed min/max read the hottest pad as the coldest on one
+                 # net and not the other.
+                 .replace("Vsrc Current: -", "Vsrc Current: ")
+                 .replace("A, -", "A, ")
+                 .replace(
+                     f"Minimum, Average, Maximum IR drop: {vmin:.3f}V {vmin:.3f}V {1.08:.3f}V",
+                     "Minimum, Average, Maximum IR drop: 0.000V "
+                     f"{vss_worst_mv * 0.81:.3f}mV {vss_worst_mv:.3f}mV"))
+
+    # The per-layer breakdown, written so that metal1's cumulative value is the
+    # worst per-instance droop / rise for that net - which is the identity the
+    # reconciliation asserts, and the identity both real runs on disk satisfy to
+    # 0.000 mV. `layer_total_scale` is what breaks it on purpose.
+    lvp = os.path.join(d, "VDD.layerbased_ir.rpt")
+    lsp = os.path.join(d, "VSS.layerbased_ir.rpt")
+    if layer_present:
+        for path, tot_v in ((lvp, worst * vdd_share),
+                            (lsp, worst * (1.0 - vdd_share))):
+            t = tot_v * layer_total_scale
+            with open(path, "w") as fh:
+                fh.write(LAYER_RPT.format(l9=t * 0.60, l8=t * 0.61,
+                                          l7=t * 0.976, t=t))
+
     cen = {
         "result.completed": completed,
         "design.name": "selftest",
@@ -977,6 +1621,9 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
         "power.configured_voltage": vconf, "power.rail_voltage": vrail,
         "power.voltage_agrees": vagree,
         "pads.expect_vsrc": pads, "solve.voltage_sources": vsrc,
+        "pads.vdd_count": vdd_pads, "pads.vss_count": vss_pads,
+        "method.em_rules": em_rules, "method.em_ict": em_ict,
+        "method.em_temperature": 125,
         "demand.core_ma": demand_ma,
         "coverage.nets_excluded": "VDDIO VSSIO",
         "coverage.power_attributed_frac": "0.694",
@@ -984,6 +1631,9 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
         "artefact.main_vdd": mvp, "artefact.main_vss": msp,
         "inst_xy": xyp,
     }
+    if layer_present:
+        cen["artefact.layer_vdd"] = lvp
+        cen["artefact.layer_vss"] = lsp
     if negative_control is not None:
         cen["stage.script"] = "rail_negative_control.tcl"
         cen["stage.negative_control"] = negative_control
@@ -1047,7 +1697,24 @@ def selftest():
          "the tool's summary and the per-instance report describe different runs",
          tool_vmin=1.020)
     case("disconnected_instances", "FAIL_HARD",
-         "255 cells with no path to a supply - they do not power up", n_dc=255)
+         "255 FUNCTIONAL cells with no path to a supply - they do not power up",
+         n_dc=255, dc_cell="DFCNQD1")
+    # --- the split, both directions. Measured on real artefacts 2026-08-24:
+    # fp1505 was 275 fill + 55 logic, rzG 18 fill + 0 logic. Gating on the raw
+    # count called rzG a functional emergency when every one of its 18 is fill.
+    case("disconnected_all_filler", "PASS",
+         "300 disconnected FILL/ANTENNA/DCAP and no logic: orphaned fill carries "
+         "no logic and no clock, so it must NOT block. This is the rzG shape, and "
+         "gating the raw count reported it as 18 cells that 'do not power up'",
+         n_dc=0, dc_filler_extra=300)
+    case("disconnected_functional_under_filler", "FAIL_HARD",
+         "25 clock buffers disconnected UNDERNEATH 275 fillers: the fp1505 shape. "
+         "The logic must be found under the fill - neither swamped by it nor "
+         "excused by it", n_dc=25, dc_cell="CKBD1", dc_filler_extra=275)
+    case("disconnected_unknown_master", "FAIL_HARD",
+         "a master the filler pattern does not recognise is gated, not waved "
+         "through: an unrecognised cell must fail in the SAFE direction",
+         n_dc=40, dc_cell="XYZZY_NEWCELL")
     case("run_did_not_complete", "FAIL_HARD",
          "the stage aborted; a partial artefact set must not yield a verdict",
          completed="false")
@@ -1101,22 +1768,147 @@ def selftest():
          fails=("coverage.demand_vs_flow_power",),
          passes=("coverage.current",),
          flow_vdd_mw=54.59, demand_mw=76.4)
-    # --- EM, at the tier where it is required. The `em=""` default reproduces
-    # the real report's EMPTY J/Jmax field, which a `\\s*` regex read as the NEXT
-    # line and reported as ANALYSED on the first real artefact this gate saw.
-    case("em_not_analysed_at_signoff", "FAIL_HARD",
+    # --- EM. `em.required` in the budget file is now the ONLY switch: --tier
+    # is gone, so these cases no longer depend on how the gate was invoked.
+    # `em=""` reproduces the real report's EMPTY J/Jmax field, which a `\\s*`
+    # regex read as the NEXT line and reported as ANALYSED on the first real
+    # artefact this gate ever saw.
+    case("em_not_analysed", "FAIL_HARD",
          "an empty J/Jmax field read as a populated one: EM disabled by default "
-         "in static mode, the run succeeding, and the gate calling it analysed",
-         tier="signoff")
-    case("em_analysed_at_signoff", "PASS",
-         "the same run WITH em models: the field carries numbers and signoff is "
-         "satisfied. Without this case the one above passes for any parser that "
-         "always says NOT_ANALYSED",
-         tier="signoff", em=" 0.01, 0.20, 0.83")
+         "in static mode, the run succeeding, and the gate calling it analysed. "
+         "This is the rzG and fp1505 shape - no run on this site has yet "
+         "produced an EM number",
+         fails=("em.current_density",), em="")
+    case("em_analysed", "PASS",
+         "the same run WITH em models: the field carries numbers and the "
+         "criterion is satisfied. Without this case the one above passes for "
+         "any parser that always says NOT_ANALYSED",
+         passes=("em.current_density", "method.em_models"),
+         em=" 0.01, 0.20, 0.83")
+    case("em_na_triple", "FAIL_HARD",
+         "`NA, NA, NA` in the J/Jmax field - the exact shape the Reff and "
+         "I/Idsat lines beside it print when their analysis did not run. A "
+         "populated-looking field with no number in it must not read as "
+         "analysed",
+         fails=("em.current_density",), em=" NA, NA, NA")
+    case("em_rules_without_models", "FAIL_HARD",
+         "-process_techgen_em_rules true with NO -ict_em_models: the Voltus "
+         "reference says the tool then reads the qrcTechFile, which carries "
+         "ZERO EM rules for this stack. Populated J/Jmax, `Number of "
+         "Violations: 0`, and no ruleset behind either - the one way to get an "
+         "EM verdict here that means nothing at all",
+         fails=("method.em_models",), passes=("em.current_density",),
+         em_rules="techgen", em_ict="none")
+    case("em_numbers_from_undeclared_models", "FAIL_HARD",
+         "J/Jmax numbers on a run that declares no model file: whatever "
+         "produced them cannot be named, so they cannot be quoted. The "
+         "positive control for this is em_analysed above, which declares one",
+         fails=("method.em_models",),
+         em_rules="", em_ict="")
     case("vss_worse_than_vdd", "FAIL_BUDGET",
          "four VSS pads against six VDD: the ground net breaks its own half of "
          "the budget while the combined figure still looks fine",
          worst=0.0290, vdd_share=0.15)
+
+    # --- D2: THE SOURCE COUNT, PER NET, FROM THE SOLVER'S OWN ARITHMETIC -----
+    # The check these stand behind exists because `pads.expect_vsrc` and the
+    # .padcell handed to set_power_pads came from ONE `get_db` query, so the
+    # old vsrc.count compared a number to itself. Every case here holds
+    # `vsrc`/`pads` at 10/10 so the OLD check passes: if the new one did not
+    # exist, all three would render green.
+    case("vsrc_subset_master_vdd", "FAIL_HARD",
+         "the state the old check's own text claimed to catch and the Tcl "
+         "could not produce: a pad master matching four of six VDD pads. The "
+         "census still says 10 pads and the solve still says 10 sources - both "
+         "sides of that agreement descend from the same selector - but the "
+         "solver loaded its current through FOUR",
+         fails=("vsrc.count_per_net",), passes=("vsrc.count",),
+         vsrc_n_vdd=4)
+    case("vsrc_net_swap_9_plus_1", "FAIL_HARD",
+         "nine sources on VDD and one on VSS. The old check SUMMED ACROSS NETS "
+         "and 9+1 is 10, so a ground net fed through a single pad was "
+         "indistinguishable from the intended 6+4",
+         fails=("vsrc.count_per_net",), passes=("vsrc.count",),
+         vsrc_n_vdd=9, vsrc_n_vss=1)
+    case("vsrc_per_net_agrees", "PASS",
+         "the positive control: 6 and 4 reconstructed against 6 and 4 counted "
+         "in the database. Without it the two cases above are satisfied by any "
+         "check that rejects every run",
+         passes=("vsrc.count_per_net",))
+
+    # --- G2: PAD CURRENT BALANCE ---------------------------------------------
+    case("pad_current_starved", "FAIL_BUDGET",
+         "one supply pad whose via stack did not land: it is present, placed, "
+         "counted and barely conducting, so vsrc.count, the source-count "
+         "reconstruction and the location scan all pass. It shows up ONLY as "
+         "the other pads carrying its share",
+         fails=("budget.pad_current_spread",),
+         passes=("vsrc.count", "vsrc.count_per_net"),
+         pad_spread=0.62)
+    case("pad_current_balanced", "PASS",
+         "the ring as it is: about 13% spread on VDD and 10% on VSS, which is "
+         "positional asymmetry in a ring whose pads are all on two edges and "
+         "is NOT a defect. A limit that rejected this would be rejecting the "
+         "floorplan's shape, which is a padring decision and not a "
+         "threshold's to make",
+         passes=("budget.pad_current_spread",))
+
+    # --- G3: THE PER-LAYER BREAKDOWN, RECONCILED -----------------------------
+    # Until now the gate recorded the path to these two reports and never
+    # opened either. They are two different reductions of the same solve - grid
+    # elements by layer against instances - and on both real runs they agree to
+    # 0.000 mV, which is a far stronger statement than either alone.
+    case("layer_disagrees_with_iv", "FAIL_HARD",
+         "the layer breakdown and the per-instance report describe different "
+         "solves: 10% apart. Same class of event as parity.parser_vs_tool, on "
+         "the other axis, and invisible while the file was only ever a path in "
+         "the census",
+         fails=("parity.layer_vs_iv_vdd", "parity.layer_vs_iv_vss"),
+         passes=("parity.parser_vs_tool",),
+         layer_total_scale=1.10)
+    case("layer_from_a_different_build", "FAIL_HARD",
+         "the failure this check is best placed to catch and the one a shared "
+         "1 mV tolerance would miss: one build's layer report left beside "
+         "another build's per-instance report. The two builds on disk are "
+         "0.39 mV apart on VDD, well inside cov.parser_tool_agree_mv, which is "
+         "why cov.layer_iv_agree_mv is a separate and much tighter number",
+         fails=("parity.layer_vs_iv_vdd",),
+         passes=("parity.parser_vs_tool", "parity.parser_vs_tool_vss"),
+         layer_total_scale=6.32 / 5.93)
+    case("layer_reconciles", "PASS",
+         "the real shape: the stack sums to the per-instance worst exactly, "
+         "and 97.6% of it is already spent at metal7. That second number is "
+         "the whole engineering answer on this design - it is why several "
+         "hundred missing M3-M7 power vias cannot recover a millivolt",
+         passes=("parity.layer_vs_iv_vdd", "parity.layer_vs_iv_vss"))
+
+    # --- D3: A FAILING ADVISORY MUST NOT RENDER AS A PASS --------------------
+    # emit() printed `[FAIL] ADVISORY ...` and then `VERDICT: PASS` four lines
+    # below it, and only the second gets quoted. Both cases below are runs with
+    # NOTHING wrong with the design - which is exactly why the distinction
+    # matters: the correct answer is not PASS and not FAIL.
+    case("layer_report_absent", "PASS_DEGRADED",
+         "an archived run whose layer reports did not travel with it. Nothing "
+         "is wrong with the design and nothing has been checked either; a "
+         "verdict of PASS would claim the second thing was done",
+         fails=("parity.layer_vs_iv_vdd", "parity.layer_vs_iv_vss"),
+         passes=("parity.parser_vs_tool",),
+         layer_present=False)
+    case("flow_power_report_absent", "PASS_DEGRADED",
+         "the demand file's only INDEPENDENT cross-check skipped because the "
+         "implementation power report is not beside the database. This is the "
+         "case D3 was reported on: `[FAIL] ADVISORY ... Skipped, which is not "
+         "the same as passed` followed by `VERDICT: PASS`",
+         fails=("coverage.demand_vs_flow_power",),
+         passes=("coverage.current",),
+         flow_vdd_mw=None)
+    case("advisory_failure_does_not_mask_a_budget_failure", "FAIL_BUDGET",
+         "a degraded run that ALSO breaks a budget must report the budget "
+         "failure: PASS_DEGRADED ranks below FAIL_BUDGET because it says "
+         "nothing about the design, and a new outcome that swallowed a real "
+         "one would be worse than the defect it fixes",
+         fails=("budget.eff_worst_pct", "parity.layer_vs_iv_vdd"),
+         worst=0.050, layer_present=False)
 
     # --- THE CONTROL INTERLOCK, both ways. ci/signoff.yaml picks a census by
     # newest mtime, which resolved to work/fp1505-negctl - a run built to be
@@ -1149,11 +1941,10 @@ def selftest():
     print("=" * 78)
     for name, expect, why, must_fail, must_pass, kw in cases:
         d = os.path.join(tmp, name)
-        tier = kw.pop("tier", "report")
         cp = make_fixture(d, **kw)
         why_bad = []
         try:
-            v = run_gate(cp, budgets, tier=tier)
+            v = run_gate(cp, budgets)
             got = v.status
             note = ""
             seen = {c["name"]: c["ok"] for c in v.checks}
@@ -1193,7 +1984,7 @@ def selftest():
     d = os.path.join(tmp, "ratchet")
     cp = make_fixture(d)
     try:
-        run_gate(cp, rb, tier="report")
+        run_gate(cp, rb)
         print("  [FAIL] anti_ratchet                expect GATE_ERROR  got PASS")
         nfail += 1
     except GateError:
@@ -1207,13 +1998,33 @@ def selftest():
         fh.write("\n".join(l for l in txt.splitlines()
                            if not l.startswith("ir.eff_collapse_pct_max_source")))
     try:
-        run_gate(make_fixture(os.path.join(tmp, "noprov")), nb, tier="report")
+        run_gate(make_fixture(os.path.join(tmp, "noprov")), nb)
         print("  [FAIL] missing_provenance          expect GATE_ERROR  got PASS")
         nfail += 1
     except GateError:
         print("  [ok  ] missing_provenance          expect GATE_ERROR  got GATE_ERROR")
         print("           stands for: an undocumented threshold is an unreviewable one")
         npass += 1
+
+    # --- the REMOVED --tier flag refuses rather than being ignored -----------
+    # A knob deleted quietly is the same defect as a knob that does nothing:
+    # ci/signoff.yaml, rail_project.mk and this file's own docstring all
+    # advertised --tier as the blocking switch, and those strings will outlive
+    # the change in somebody's shell history. Passing it must produce an
+    # EXPLANATION and exit 3 (the gate declined to judge), never a verdict.
+    import subprocess
+    r = subprocess.run(
+        [sys.executable, os.path.abspath(__file__), "--census",
+         make_fixture(os.path.join(tmp, "tierflag")), "--budgets", budgets,
+         "--tier", "signoff"],
+        capture_output=True, text=True)
+    tier_ok = (r.returncode == 3 and "REMOVED" in r.stderr
+               and "VERDICT:" not in r.stdout)
+    print(f"  [{'ok  ' if tier_ok else 'FAIL'}] removed_tier_flag           "
+          f"expect exit 3      got exit {r.returncode}")
+    print("           stands for: a deleted knob must refuse and say why, not be ignored")
+    npass += tier_ok
+    nfail += (not tier_ok)
 
     print("=" * 78)
     print(f"  {npass} passed, {nfail} failed   (fixtures under {tmp})")
@@ -1226,9 +2037,33 @@ def main():
     ap.add_argument("--census", help="run directory, or its census.txt")
     ap.add_argument("--budgets", default=os.path.join(HERE, "rail_budgets.txt"))
     ap.add_argument("--json", help="write the full census and verdict here")
-    ap.add_argument("--tier", default="signoff", choices=("signoff", "report"))
+    # REMOVED, and accepted only so that a caller still passing it is TOLD.
+    # argparse's own "unrecognized arguments: --tier report" is technically
+    # correct and explains nothing, and the three files that advertised this
+    # knob as the blocking switch will outlive this change in someone's shell
+    # history. Declared here, refused in the body, with the reason.
+    ap.add_argument("--tier", help="REMOVED - the gate now computes one verdict "
+                                   "and one exit code; blocking is the CI row's "
+                                   "gate: field. See the module docstring.")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
+
+    if a.tier is not None:
+        print(
+            "RAIL GATE REFUSED TO JUDGE: --tier has been REMOVED.\n"
+            f"  you passed  : --tier {a.tier}\n"
+            "  it never did what its name said. `signoff` and `report` differed\n"
+            "  in exactly one way - whether em.current_density was HARD or\n"
+            "  ADVISORY - while three files described it as the blocking /\n"
+            "  non-blocking switch. It could not change a verdict on a run whose\n"
+            "  EM was analysed, and it could not stop one that was broken.\n"
+            "  * blocking vs non-blocking is the `gate:` field on the CI row.\n"
+            "  * whether EM is required is `em.required` in rail_budgets.txt,\n"
+            "    which carries provenance and is subject to the anti-ratchet\n"
+            "    rule like every other threshold there.\n"
+            "  Drop the flag; the verdict and the exit code are unchanged by it.",
+            file=sys.stderr)
+        return 3
 
     if a.selftest:
         return selftest()
@@ -1236,7 +2071,7 @@ def main():
         ap.error("--census is required (or use --selftest)")
 
     try:
-        v = run_gate(a.census, a.budgets, tier=a.tier)
+        v = run_gate(a.census, a.budgets)
     except GateError as e:
         print(f"RAIL GATE REFUSED TO JUDGE: {e}", file=sys.stderr)
         return 3
@@ -1244,15 +2079,17 @@ def main():
     status = emit(v)
     if a.json:
         with open(a.json, "w") as fh:
-            json.dump({"status": status, "tier": v.tier,
-                       "checks": v.checks, "metrics": v.metrics}, fh, indent=2)
+            json.dump({"status": status, "checks": v.checks,
+                       "metrics": v.metrics}, fh, indent=2)
         print(f"  json: {a.json}")
-    # 0 pass, 1 budget exceeded, 2 hard failure - and 3, above, when the gate
-    # REFUSED to judge (ratcheted budget, or a declared negative control). A
-    # caller that only checks "non-zero" still does the right thing; one that
-    # reports WHY should distinguish 3, because it is the one code that says
-    # nothing whatever about this design.
-    return {"PASS": 0, "FAIL_BUDGET": 1, "FAIL_HARD": 2}[status]
+    # 0 pass, 1 budget exceeded, 2 hard failure, 4 passed but something could
+    # not be measured - and 3, above, when the gate REFUSED to judge (ratcheted
+    # budget, declared negative control, or a removed flag). A caller that only
+    # checks "non-zero" still does the right thing on every one of them, which
+    # is why 4 is not 0: an unrun check must not exit like a passed one. A
+    # caller that reports WHY should distinguish 3, because it is the one code
+    # that says nothing whatever about this design.
+    return {"PASS": 0, "FAIL_BUDGET": 1, "FAIL_HARD": 2, "PASS_DEGRADED": 4}[status]
 
 
 if __name__ == "__main__":

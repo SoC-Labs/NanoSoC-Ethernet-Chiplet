@@ -308,12 +308,81 @@ if {$n_in == 0} {
 ########################################################################
 set RSTATE $OUT/state
 set RTMP   $OUT/tmp
+
+# ---- ELECTROMIGRATION MODELS, resolved BEFORE the mode is set ---------------
+# The Voltus reference for set_rail_analysis_mode is explicit:
+#
+#   "In the static mode, if -em_models is not specified, or if
+#    -process_techgen_em_rules is not set to true, current density (RJ)
+#    analysis will be disabled due to lack of EM models."
+#
+# The run still SUCCEEDS. It prints an EMPTY `Minimum, Average, Maximum J/Jmax:`
+# field followed by `Number of Violations: 0`, and every rail run this project
+# has made reads exactly that way. A zero violation count with no ruleset behind
+# it is the flattering failure this whole stage exists to refuse.
+#
+# NEVER THE FIRST FLAG WITHOUT THE SECOND. -process_techgen_em_rules "processes
+# the EM rules defined in the extraction technology file", and this stack's
+# qrcTechFile carries ZERO EM rules - so on its own it produces the same empty
+# result by a longer route, or worse, a populated one from an unknown source.
+# -ict_em_models is what supplies the ruleset: its own reference page says the
+# tool will use it "even if there are embedded EM rules in the Quantus QRC tech
+# file". So the model file is resolved FIRST and the run DIES HERE if it cannot
+# be had. That is deliberate: continuing without it is how every run this
+# project has made produced an EM section that looked answered.
+#
+# AND -ict_em_models IS NOT -em_models. The reference says -em_models and
+# -process_techgen_em_rules are MUTUALLY EXCLUSIVE; -ict_em_models is a separate
+# option and is not. Anyone shortening the name here to match the prose in the
+# doc's warning would make the two flags below conflict. -em_models is also the
+# wrong format for this site regardless: it carries no jmax_factor, so the LEF's
+# 110 C data would be applied unchanged to a 125 C run, where copper derates
+# x0.358 - the same 2.8x error pg_capacity.tcl already publishes.
+set EMICT [::rail::ensure_em_ict]
+if {$EMICT eq "" || ![file readable $EMICT]} {
+    puts "RAIL-FAIL no ICT-EM model file, and this stage will not run without one."
+    puts "RAIL-FAIL   Without -ict_em_models the tool DISABLES current-density"
+    puts "RAIL-FAIL   analysis, completes successfully, and prints an empty J/Jmax"
+    puts "RAIL-FAIL   with 'Number of Violations: 0'. That is not a pass, and a"
+    puts "RAIL-FAIL   run that produced it would be quoted as one."
+    puts "RAIL-FAIL   Build it:  gen_em_ict.py --lef <tlef> --volcano <em.rules> \\"
+    puts "RAIL-FAIL                            --out $::RAIL(em_ict)"
+    puts "RAIL-FAIL   Or point RAIL_EM_ICT at a prebuilt model."
+    cen result.fatal no_em_models
+    close $fcen
+    exit 1
+}
+cen method.em_rules       techgen
+cen method.em_ict         $EMICT
+cen method.em_ict_bytes   [file size $EMICT]
+cen method.em_temperature $::RAIL(temp)
+if {[info exists ::RAIL(em_lef)] && $::RAIL(em_lef) ne ""} {
+    cen method.em_lef $::RAIL(em_lef)
+}
+if {[info exists ::RAIL(em_volcano)] && $::RAIL(em_volcano) ne ""} {
+    cen method.em_volcano $::RAIL(em_volcano)
+}
+
+# -enable_reff_analysis IS THE ONLY ACTIVITY-INDEPENDENT NUMBER THIS SITE CAN
+# PRODUCE. Every millivolt above inherits report_power's default switching
+# assumption, because there is no SAIF and no VCD anywhere in this flow, and no
+# amount of care in the solve changes that. EFFECTIVE RESISTANCE is a property
+# of the drawn metal alone: one flag turns an unfalsifiable millivolt into an
+# ohm that any future activity assumption can be re-priced against without
+# re-solving. It was omitted here and present in reff.tcl:111, which is why
+# every main report on disk says `Reff: NA, NA, NA` - the analysis was never
+# asked for, not unavailable.
+cen method.reff true
 set_rail_analysis_mode \
     -method static \
     -accuracy hd \
     -power_grid_libraries $cl \
     -extraction_tech_file $::RAIL(qrc) \
     -temperature $::RAIL(temp) \
+    -enable_reff_analysis true \
+    -process_techgen_em_rules true \
+    -ict_em_models $EMICT \
+    -em_temperature $::RAIL(temp) \
     -report_voltage_drop true \
     -verbosity true \
     -work_directory_name $RSTATE \

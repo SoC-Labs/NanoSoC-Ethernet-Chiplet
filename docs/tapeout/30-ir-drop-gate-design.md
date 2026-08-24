@@ -79,6 +79,16 @@ run is broken or unverified — always fatal) and **BUDGET** (measured, and over
 a threshold — fatal at signoff, reported early). The verdict is computed from
 artifacts. Exit codes are never consulted.
 
+> **Updated 2026-08-24.** There is a third level, **ADVISORY** — a check that
+> could not be run — and a failing one now yields `PASS_DEGRADED` and exit 4
+> rather than being swallowed. It exists because `emit()` used to print
+> `[FAIL] ADVISORY …` and then `VERDICT: PASS` four lines below it, and only
+> the second gets quoted. There is also no longer a `--tier`: it was advertised
+> in three files as the blocking/non-blocking switch and moved exactly one
+> check (`em.current_density`) between HARD and ADVISORY. Blocking is the
+> `gate:` field on the `ci/signoff.yaml` row; whether EM is required is
+> `em.required` in `rail_budgets.txt`.
+
 ### 3.1 Coverage — asserted before any voltage is believed
 
 This is the part that matters most, because the failure mode it defends against
