@@ -1,0 +1,104 @@
+# DERIVED FIXTURE — one guard in isolation
+#
+# *** THIS FIXTURE IS DERIVED, NOT OBSERVED. ***
+# No Calibre run on this site has produced this exact file. It is assembled from
+# the real report format so that ONE guard can be proven on its own.
+# 
+# EXPECTED VERDICT: NOT-MEASURED (control N5, the population control).
+# Identical to the pass arm except that the connection lines naming the cache
+# subsystem are gone. Zero findings, zero coverage: a report that never reached
+# the block has no findings in it for free. RECORDED REAL VALUES for this token:
+# 388 on rzG, 384 on the fixed stream, and 360 / 408 / 482 / 482 on the four
+# full reports surviving here.
+#
+# source: the pass-observed-toplevel-only arm with the coverage-token lines removed
+# transform: absolute site paths -> ${CHIPLET_HOME} / ${SITE_PATH_WITHHELD}; USER NAME -> ${USER};
+#            lines the gate does not read are dropped, so line numbers here are
+#            NOT the source's line numbers. See ci/fixtures/lvs-missing-connection/PROVENANCE.md
+#
+
+
+
+                  ##################################################
+                  ##                                              ##
+                  ##         C A L I B R E    S Y S T E M         ##
+                  ##                                              ##
+                  ##             L V S   R E P O R T              ##
+                  ##                                              ##
+                  ##################################################
+
+
+
+REPORT FILE NAME:         ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext/nanosoc_eth_chiplet_pads.lvs.rep
+LAYOUT NAME:              svdb/nanosoc_eth_chiplet_pads.sp ('nanosoc_eth_chiplet_pads')
+SOURCE NAME:              ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext/nanosoc_eth_chiplet_pads_lvs_src.cdl ('nanosoc_eth_chiplet_pads')
+RULE FILE:                ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext/nanosoc_eth_chiplet_pads_calibre_lvs.deck
+CREATION TIME:            Mon Aug 10 23:00:33 2026
+CURRENT DIRECTORY:        ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext
+USER NAME:                ${USER}
+CALIBRE VERSION:          v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+
+
+
+                               OVERALL COMPARISON RESULTS
+
+
+
+                  #   #         #####################  
+                   # #          #                   #  
+                    #           #     INCORRECT     #  
+                   # #          #                   #  
+                  #   #         #####################  
+
+
+  Error:    Components with non-identical signal pins.
+  Error:    Different numbers of ports.
+  Error:    Different numbers of nets.
+  Error:    Different numbers of instances.
+  Error:    Connectivity errors.
+  Error:    Cells with non-floating extra pins.
+  Warning:  Unbalanced smashed mosfets were matched.
+  Warning:  Ambiguity points were found and resolved arbitrarily.
+
+
+
+**************************************************************************************************************
+                                      LVS PARAMETERS
+**************************************************************************************************************
+
+   LVS REPORT MAXIMUM                     1000
+
+**************************************************************************************************************
+                                   INCORRECT NETS
+
+DISC#  LAYOUT NAME                                               SOURCE NAME
+**************************************************************************************************************
+
+  1    Net VDD                                                   VDD
+       --- 314595 Connections On This Net ---                    --- 314676 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xg88914:VDD
+       ** missing connection **                                  Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xg88966:VDD
+       ** missing connection **                                  Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xg88653:VDD
+       ** missing connection **                                  Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xg88310:VDD
+
+--------------------------------------------------------------------------------------------------------------
+
+  3    Net 40798                                                 soc_hostio4_p1_in[3]
+       --- 4 Connections On This Net ---                         --- 5 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  XuPAD_HOST_IO_3:C
+
+--------------------------------------------------------------------------------------------------------------
+
+
+
+
+**************************************************************************************************************
+                                         SUMMARY
+**************************************************************************************************************
+
+Total CPU Time:      104 sec
+Total Elapsed Time:  113 sec

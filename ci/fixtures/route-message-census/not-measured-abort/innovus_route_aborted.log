@@ -1,0 +1,61 @@
+# FIXTURE — extract of a real Innovus session log, scrubbed of
+# absolute site paths. See PROVENANCE.md. A route session that
+# ABORTED in tech_load before routing began: zero routing markers,
+# zero router messages, and therefore zero unrouted nets. A naive
+# grep scores this CLEAN. It must score NOT-MEASURED.
+Options:	-stylus -files ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl 
+**WARN: (IMPSYT-1507):	The display is invalid and will start in no window mode
+Create and set the environment variable TMPDIR to /tmpdir/innovus_temp_2062452_srv03335_dam1n19_MVW3uZ.
+**INFO:  MMMC transition support version v31-84 
+#@ Begin verbose source (pre): source ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl
+#@ Begin verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/common/flow_utils.tcl (pre)
+@file 403: # tech pack and the project's design configuration, and creates the output
+@file 419: #   process_node                       from the tech pack, for convenience
+    # --- tech pack ------------------------------------------------------------
+    # The engine's ONLY coupling to a tech pack is three commands: tech_load,
+    say "tech pack: [tech name] ([tech node_nm] nm) from $TECH_DIR"
+    # --- collateral: tech pack first, then the project's own ------------------
+        die "the tech pack does not declare '$key'." \
+@file 620: # --- Collateral: tech pack first, project second -------------------------------
+@file 628: #                         is the tech pack's responsibility - hence tech first
+    # empty because the tech pack contributes to it. The "nothing to map to"
+#@ End verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/common/flow_utils.tcl
+#@ Begin verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/common/procs.tcl (pre)
+                error "environment variable $varname is not set, and '$str'\
+#@ End verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/common/procs.tcl
+#@ Begin verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tech_api.tcl (pre)
+            error "tech_get: '$key' is not set by tech pack '[tech_pack_name]'.\
+        error "tech_get: '$key' is not set by tech pack '[tech_pack_name]'.\
+        error "tech pack '[tech_pack_name]': cannot derive from '$what'.\
+             \n  Its path is unresolved because a site environment variable is\
+    error "tech pack '[tech_pack_name]': cannot read the file it derives '$what'\
+        error "tech pack '[tech_pack_name]': nowhere to write derived\
+@file 722: # Resolve a site-specific environment variable with an error that names the
+    error "tech pack '[tech_pack_name]': environment variable $name is not set.\
+        error "tech_load: no tech pack '$spec'.\
+        error "tech_load: tech pack '$spec' failed to load.\
+        set msg "tech pack '[tech_pack_name]' is INCOMPLETE or INCONSISTENT -\
+        set msg "tech pack '[tech_pack_name]' does not supply what '$who' needs.\n"
+    set msg "tech pack '[tech_pack_name]': [llength $missing] file(s) named by the\
+                \n  still be wrong for the machine: check the environment variables\
+#@ End verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tech_api.tcl
+#@ Begin verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tsmc65/tech.tcl (pre)
+#@ Begin verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tsmc65/derive.tcl (pre)
+@file 53: # and a tech pack that spells one into twenty paths is exactly that list.
+    error "tech pack '[tech_pack_name]': cannot find the LEF parser.\
+        error "tech pack '[tech_pack_name]': could not read the LEF.\
+        error "tech pack '[tech_pack_name]': the vendor stream-out map is not\
+#@ End verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tsmc65/derive.tcl
+@file 54: # arm_tech package, which is a separate deliverable installed separately, in a
+    "ARM's cln65lp arm_tech package - the RC cap tables under\
+**ERROR: (IMPSE-110):	File '${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tsmc65/tech.tcl' line 59: tech pack 'tsmc65': environment variable ARM_CLN65LP_TECH is not set. 
+  It locates: ARM's cln65lp arm_tech package - the RC cap tables under cadence_captable/. It is a separate deliverable from the PDK and is usually installed in a shared, read-only IP tree; point this at the revision your site holds. Never write into that tree. 
+#@ End verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tsmc65/tech.tcl
+**ERROR: (IMPSE-110):	File '${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl' line 94: tech_load: tech pack '${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tsmc65' failed to load. 
+  error: tech pack 'tsmc65': environment variable ARM_CLN65LP_TECH is not set. 
+  It locates: ARM's cln65lp arm_tech package - the RC cap tables under cadence_captable/. It is a separate deliverable from the PDK and is usually installed in a shared, read-only IP tree; point this at the revision your site holds. Never write into that tree. 
+#@ End verbose source ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl
+**ERROR: (IMPSYT-6692):	Invalid return code while executing '${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl' was returned and script processing was stopped. Review the following error in '${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl' then restart.
+**ERROR: (IMPSYT-6693):	Error message: ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl: tech_load: tech pack '${CHIPLET_HOME}/ASIC/asic-toolkit/tech/tsmc65' failed to load. 
+  error: tech pack 'tsmc65': environment variable ARM_CLN65LP_TECH is not set. 
+  It locates: ARM's cln65lp arm_tech package - the RC cap tables under cadence_captable/. It is a separate deliverable from the PDK and is usually installed in a shared, read-only IP tree; point this at the revision your site holds. Never write into that tree. 

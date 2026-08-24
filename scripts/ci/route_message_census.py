@@ -180,6 +180,21 @@ RE_NOT_GLOBAL = re.compile(r"Net\s+(\S+?)\s+is not globally routed")
 # HARD finding 2: the router declining nets and saying how many.
 RE_OPEN_NETS = re.compile(r"There were\s+(\d+)\s+open nets")
 
+# INNOVUS ECHOES ITS OWN TCL SOURCE INTO THE LOG, prefixed `@file <n>: `, and
+# a script whose COMMENTS quote a router message therefore puts that message in
+# the log without the tool ever having emitted it. Measured 2026-08-24: this
+# gate scored `pinfix-20260824/logs/eco.log` and `blkg.log` as FAIL purely on
+# `arm_orig.tcl`'s header comment, which quotes the open-nets decline verbatim
+# to explain why the arm exists. Both were FALSE POSITIVES, on the arms of the
+# submission candidate itself.
+#
+# Real findings never carry the prefix: the two in the rzG route log
+# (innovus.log2:25195 and :25199) are bare, in a file with 5,827 `@file` lines.
+# So the whole line is dropped before any rule looks at it -- findings, router
+# messages AND routing markers, since an echoed marker would falsely arm the
+# vacuity control just as surely.
+RE_ECHOED_SOURCE = re.compile(r"^@file\s+\d+:")
+
 # Positive evidence that a routing section actually executed. Any one of these
 # is enough; they are separate phases, so a log that reaches only the first
 # still proves routing was entered.
@@ -202,6 +217,7 @@ def scan(path):
         "route_markers": 0,
         "router_messages": 0,
         "router_ids": {},
+        "echoed_source_lines": 0,
         "unrouted_nets": [],
         "open_net_declines": [],
         "stage_script": None,
@@ -215,6 +231,12 @@ def scan(path):
     with fh:
         for line in fh:
             r["lines"] += 1
+            # The tool quoting the script back at itself is not the tool
+            # speaking. Dropped before every rule below, and COUNTED, so a
+            # reader can see how much of the log was echo.
+            if RE_ECHOED_SOURCE.match(line):
+                r["echoed_source_lines"] += 1
+                continue
             if r["stage_script"] is None and ".tcl" in line and "Options:" in line:
                 m = re.search(r"([\w.]+\.tcl)", line)
                 if m:
@@ -237,13 +259,91 @@ def scan(path):
     return r
 
 
-def judge(results):
-    """-> (rc, [reason strings]). NOT MEASURED dominates nothing; FAIL wins."""
+def _findings(r, tag):
+    """The two hard rules, as a list of reason strings. Empty means neither
+    fired. Extracted so `judge` can evaluate findings BEFORE the vacuity
+    controls without duplicating the wording."""
+    out = []
+    if r["unrouted_nets"]:
+        out.append(
+            f"{tag}: {len(r['unrouted_nets'])} NET(S) WITH NO GLOBAL ROUTE — "
+            f"their pins are bare and the foundry will find them as floating "
+            f"gates after library merge: " + ", ".join(r["unrouted_nets"][:20])
+        )
+    if r["open_net_declines"]:
+        out.append(
+            f"{tag}: the router DECLINED open nets and said so "
+            f"({'; '.join(str(n) + ' open nets' for n in r['open_net_declines'])}). "
+            f"`route_eco -fix_drc` skips open nets by design; if nothing "
+            f"re-routed them with `route_eco -target` they stayed deleted, "
+            f"and a deleted net carries no DRC marker."
+        )
+    return out
+
+
+def judge(results, required=None):
+    """-> (rc, [reason strings]). NOT MEASURED dominates nothing; FAIL wins.
+
+    `required` NAMES THE LOGS THAT MUST BE MEASURABLE, by path or basename, and
+    defaults to all of them. Measured 2026-08-24, per stage, over four builds:
+
+        2_place.tcl   markers 0      router messages 0-14
+        3_cts.tcl     markers 3      router messages 1
+        4_route.tcl   markers 16-24  router messages 31-37
+        hold_eco.tcl  markers 11     router messages 46
+
+    PLACE emits router messages while reaching no routing section -- which is
+    exactly the shape of an ABORTED ROUTE, so no content test separates them.
+    Treating every session log as required turned a genuinely clean build
+    (gdsrun-20260822-halo) into NOT-MEASURED on the strength of its place log,
+    and a gate that reads NOT-MEASURED on every build teaches its reader to skip
+    it. That is how the 23 August defect went unread.
+
+    A log that is not required is still SCANNED, and a FINDING in one is still a
+    FAIL -- a net with no path is a net with no path wherever the tool says so.
+    Only its SILENCE is downgraded, to an advisory line that is printed, never
+    dropped.
+    """
     reasons, any_measured, any_fail, unmeasured = [], False, False, []
+    advisory = []
     for r in results:
         tag = os.path.basename(r["path"])
+        is_req = (required is None
+                  or r["path"] in required or tag in required)
         if not r["readable"]:
-            unmeasured.append(f"{tag}: unreadable ({r.get('error','?')})")
+            if is_req:
+                unmeasured.append(f"{tag}: unreadable ({r.get('error','?')})")
+            else:
+                advisory.append(f"{tag}: unreadable ({r.get('error','?')}), and "
+                                f"not a log this run requires to be measurable")
+            continue
+        # A POSITIVE FINDING IS NEVER SUPPRESSED BY A VACUITY CONTROL.
+        # The controls exist to stop an ABSENCE reading as a pass; they say
+        # nothing about evidence that is present. Evaluated first, so a log
+        # that both fails a control and carries a finding is a FAIL -- the
+        # finding is the more specific fact and the more dangerous one.
+        found = _findings(r, tag)
+        if found:
+            any_fail = True
+            reasons.extend(found)
+            if r["route_markers"] == 0 or r["router_messages"] == 0:
+                reasons.append(
+                    f"{tag}: ...and this log ALSO fails a vacuity control "
+                    f"({r['route_markers']} routing marker(s), "
+                    f"{r['router_messages']} router message(s)). The finding "
+                    f"above stands regardless; the control governs absences."
+                )
+            continue
+        # Not required to be measurable: findings above still count, silence
+        # here does not. Recorded, never dropped.
+        if not is_req and (r["route_markers"] == 0 or r["router_messages"] == 0):
+            advisory.append(
+                f"{tag}: no routing section reached ({r['route_markers']} "
+                f"marker(s), {r['router_messages']} router message(s)) and this "
+                f"run does not require it to be measurable — scanned for "
+                f"findings, none present. NOT counted as a pass and NOT counted "
+                f"against coverage."
+            )
             continue
         if r["route_markers"] == 0:
             unmeasured.append(
@@ -272,34 +372,18 @@ def judge(results):
             )
             continue
         any_measured = True
-        if r["unrouted_nets"]:
-            any_fail = True
-            reasons.append(
-                f"{tag}: {len(r['unrouted_nets'])} NET(S) WITH NO GLOBAL ROUTE — "
-                f"their pins are bare and the foundry will find them as floating "
-                f"gates after library merge: " + ", ".join(r["unrouted_nets"][:20])
-            )
-        if r["open_net_declines"]:
-            any_fail = True
-            reasons.append(
-                f"{tag}: the router DECLINED open nets and said so "
-                f"({'; '.join(str(n) + ' open nets' for n in r['open_net_declines'])}). "
-                f"`route_eco -fix_drc` skips open nets by design; if nothing "
-                f"re-routed them with `route_eco -target` they stayed deleted, "
-                f"and a deleted net carries no DRC marker."
-            )
     if any_fail:
-        return FAIL, reasons + unmeasured
+        return FAIL, reasons + unmeasured + advisory
     if not any_measured:
-        return NOT_MEASURED, unmeasured or ["no log could be measured"]
+        return NOT_MEASURED, (unmeasured or ["no log could be measured"]) + advisory
     # Some measured cleanly; if others could not be measured, say so and do NOT
     # let the clean ones launder them.
     if unmeasured:
         return NOT_MEASURED, unmeasured + [
             "some logs measured clean, but the run is only as measured as its "
             "least-measured log — reporting NOT MEASURED rather than PASS."
-        ]
-    return PASS, []
+        ] + advisory
+    return PASS, advisory
 
 
 def cross_check(results, census_path):
@@ -328,6 +412,11 @@ def main():
     ap.add_argument("--json", metavar="OUT", help="write the full census as JSON")
     ap.add_argument("--census-report", metavar="REP",
                     help="a pnr_messages_*.rep to diff the router IDs against")
+    ap.add_argument("--require-measurable", metavar="LOG", action="append",
+                    help="a log (path or basename) that MUST be measurable. "
+                         "Repeatable. Default: every log given. Logs not named "
+                         "here are still scanned for findings; only their "
+                         "silence is downgraded to advisory. See judge().")
     ap.add_argument("--quiet", action="store_true", help="verdict line only")
     ap.add_argument("--selftest", action="store_true",
                     help="run the checked-in fixtures in all three directions")
@@ -346,7 +435,7 @@ def main():
         ap.error("give at least one log, or --selftest")
 
     results = [scan(p) for p in a.logs]
-    rc, reasons = judge(results)
+    rc, reasons = judge(results, a.require_measurable)
 
     out = {
         "gate": "route-message-census",
@@ -412,6 +501,8 @@ def selftest(fixtures=None):
         ("not-measured-no-markers",  NOT_MEASURED, "DERIVED: messages, no markers -> vacuity control alone"),
         ("not-measured-shape-drift", NOT_MEASURED, "DERIVED: markers, no messages -> shape-drift guard alone"),
         ("pass-zero-open-nets",      PASS,         "DERIVED: '0 open nets' is not a finding"),
+        ("pass-echoed-source-only",  PASS,         "the tool echoing a COMMENT that quotes a finding is not a finding"),
+        ("fail-finding-beats-vacuity", FAIL,       "DERIVED: a finding is not suppressed by a failed vacuity control"),
     ]
     bad = 0
     print(f"selftest, fixtures under {fx}")

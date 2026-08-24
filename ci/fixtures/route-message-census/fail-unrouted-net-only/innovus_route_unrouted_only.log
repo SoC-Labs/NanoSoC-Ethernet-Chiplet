@@ -1,0 +1,65 @@
+# FIXTURE — extract of a real Innovus session log, scrubbed of
+# absolute site paths. See PROVENANCE.md. The rzG session with the open-nets line removed:
+# the not-globally-routed finding alone must fail.
+Options:	-stylus -files ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl 
+#WARNING (NRIG-96) Selected single pass global detail route "-global_detail". Clock eco and post optimizations will not be run. See "man NRIG-96" for more details.
+#WARNING (NRDB-2106) Ignoring layer M9 MINIMUMCUT rule with WIDTH (1.800000) <= the layer's MINWIDTH (2.000000). 
+#WARNING (NRIG-1303) The congestion map does not match the GCELL grid. Clearing the map.
+#WARNING (NRDB-1028) Some option affecting pin access calculation is set by the user. Pin access is to be recalculated. This incurs runtime.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#WARNING (NRDB-405) width for LAYER M1 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M3 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M4 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M5 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M6 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M7 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M8 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M9 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER AP in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-166) Boundary for CELL_VIEW nanosoc_eth_chiplet_pads,init is not properly defined. Correct the SIZE of the corresponding MACRO in the library.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1cut for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1cut_FAT_C for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1cut_H for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1cut_FAT_H for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1cut_V for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1cut_FAT_V for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1cut_FAT for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1stack_N for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#WARNING (NRDB-2138) Ignore VIA VIA89_1stack_S for LAYER VIA8 in RULE SNetWidthRule1. It violates the MINCUTS 2 RULE.
+#Done routing data preparation.
+#WARNING (NRDB-665) NET RMII_REF_CLK has a detail routed segment whose one end ( -0.00050 -0.00050 ) is outside of design boundary ( 0.00000 0.00000 1600.00000 2000.00000 ).
+#WARNING (NRDB-665) NET SWDCK has a detail routed segment whose one end ( -0.00050 -0.00050 ) is outside of design boundary ( 0.00000 0.00000 1600.00000 2000.00000 ).
+#WARNING (NRDB-665) NET TL_CLK_RX has a detail routed segment whose one end ( -0.00050 -0.00050 ) is outside of design boundary ( 0.00000 0.00000 1600.00000 2000.00000 ).
+#WARNING (NRDB-665) NET CLK has a detail routed segment whose one end ( -0.00050 -0.00050 ) is outside of design boundary ( 0.00000 0.00000 1600.00000 2000.00000 ).
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.
+#WARNING (NRIF-78) The option route_design_with_eco combined with route_design_with_timing_driven is not recommended due to possible high memory usage, increased run-time, and increased routing pattern pertubations. Please use with caution.
+#WARNING (NRIF-78) The option route_design_with_eco combined with route_design_with_timing_driven is not recommended due to possible high memory usage, increased run-time, and increased routing pattern pertubations. Please use with caution.
+#WARNING (NRDB-942) Reset route_design_exp_with_eco_for_shielding to false because there is no existing shielding wire.
+#Done routing data preparation.
+#WARNING (NRGR-22) Design is already detail routed.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.
+#WARNING (NRIF-78) The option route_design_with_eco combined with route_design_with_timing_driven is not recommended due to possible high memory usage, increased run-time, and increased routing pattern pertubations. Please use with caution.
+#WARNING (NRIF-78) The option route_design_with_eco combined with route_design_with_timing_driven is not recommended due to possible high memory usage, increased run-time, and increased routing pattern pertubations. Please use with caution.
+#WARNING (NRDB-942) Reset route_design_exp_with_eco_for_shielding to false because there is no existing shielding wire.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#WARNING (NRDR-27) Net u_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_RAMCLD0WDATA\[123\] is not globally routed.
+#WARNING (NRIF-19) Check ERROR messages in log file and correct them if possible.
+#WARNING (NRIG-1303) The congestion map does not match the GCELL grid. Clearing the map.
+#Done routing data preparation.

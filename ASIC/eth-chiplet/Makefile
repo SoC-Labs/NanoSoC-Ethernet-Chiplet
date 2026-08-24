@@ -23,3 +23,14 @@
 ASIC_DIR := $(CURDIR)
 include $(ASIC_DIR)/design.mk
 include $(ASIC_FLOW_DIR)/mk/flow.mk
+
+# The evidence flow: gates, one report, publish. LAST, and after flow.mk on
+# purpose - an include earlier would let a name here silently REPLACE a toolkit
+# recipe, and an include guard cannot see a target collision. Every target it
+# defines was checked against mk/*.mk, design.mk, common.mk and the root
+# Makefile before it was written; all six were free.
+#
+#     make evidence            run it
+#     make evidence-selftest   prove the gates BOTH directions, no licence
+#     make evidence-vars       what it will do, without doing it
+include $(ASIC_DIR)/../evidence.mk

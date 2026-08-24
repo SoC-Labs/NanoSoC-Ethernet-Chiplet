@@ -1,0 +1,96 @@
+# DERIVED FIXTURE — one guard in isolation
+#
+# *** THIS FIXTURE IS DERIVED, NOT OBSERVED. ***
+# No Calibre run on this site has produced this exact file. It is assembled from
+# the real report format so that ONE guard can be proven on its own.
+# 
+# EXPECTED VERDICT: NOT-MEASURED (control N6, parser liveness).
+# The OVERALL COMPARISON RESULTS error list still says 'Connectivity errors.' —
+# the tool's own summary — while the parser finds zero net discrepancies. That
+# combination means the parser has gone blind (a column moved, a heading
+# changed), not that the design is clean. It is exactly how a text gate dies
+# silently after a tool upgrade and reports PASS forever.
+# Its discriminating partner is pass-observed-no-net-section: the same missing
+# section, but with no connectivity error declared, which PASSES.
+#
+# source: the pass-observed-toplevel-only arm with its whole INCORRECT NETS section removed, error list untouched
+# transform: absolute site paths -> ${CHIPLET_HOME} / ${SITE_PATH_WITHHELD}; USER NAME -> ${USER};
+#            lines the gate does not read are dropped, so line numbers here are
+#            NOT the source's line numbers. See ci/fixtures/lvs-missing-connection/PROVENANCE.md
+#
+
+
+
+                  ##################################################
+                  ##                                              ##
+                  ##         C A L I B R E    S Y S T E M         ##
+                  ##                                              ##
+                  ##             L V S   R E P O R T              ##
+                  ##                                              ##
+                  ##################################################
+
+
+
+REPORT FILE NAME:         ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext/nanosoc_eth_chiplet_pads.lvs.rep
+LAYOUT NAME:              svdb/nanosoc_eth_chiplet_pads.sp ('nanosoc_eth_chiplet_pads')
+SOURCE NAME:              ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext/nanosoc_eth_chiplet_pads_lvs_src.cdl ('nanosoc_eth_chiplet_pads')
+RULE FILE:                ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext/nanosoc_eth_chiplet_pads_calibre_lvs.deck
+CREATION TIME:            Mon Aug 10 23:00:33 2026
+CURRENT DIRECTORY:        ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_pintext
+USER NAME:                ${USER}
+CALIBRE VERSION:          v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+
+
+
+                               OVERALL COMPARISON RESULTS
+
+
+
+                  #   #         #####################  
+                   # #          #                   #  
+                    #           #     INCORRECT     #  
+                   # #          #                   #  
+                  #   #         #####################  
+
+
+  Error:    Components with non-identical signal pins.
+  Error:    Different numbers of ports.
+  Error:    Different numbers of nets.
+  Error:    Different numbers of instances.
+  Error:    Connectivity errors.
+  Error:    Cells with non-floating extra pins.
+  Warning:  Unbalanced smashed mosfets were matched.
+  Warning:  Ambiguity points were found and resolved arbitrarily.
+
+
+
+**************************************************************************************************************
+                                      LVS PARAMETERS
+**************************************************************************************************************
+
+   LVS REPORT MAXIMUM                     1000
+
+
+**************************************************************************************************************
+                                 INCORRECT INSTANCES
+
+DISC#  LAYOUT NAME                                               SOURCE NAME
+**************************************************************************************************************
+
+1003   ** missing instance **                                    XBuPAD_HOST_IO_6  PAD70NU
+
+       X104/X0/X94/193                                           Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_11.ND
+       X104/X0/X94/126                                           Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_6.ND
+       X104/X0/X94/211                                           Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_10.ND
+       X16/X0/X94/152                                            Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_6.ND
+       X16/X0/X94/126                                            Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_10.ND
+       X16/X0/X94/211                                            Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_0_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_11.ND
+
+
+
+**************************************************************************************************************
+                                         SUMMARY
+**************************************************************************************************************
+
+Total CPU Time:      104 sec
+Total Elapsed Time:  113 sec

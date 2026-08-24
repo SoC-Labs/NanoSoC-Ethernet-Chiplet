@@ -1,0 +1,22 @@
+# FIXTURE — DERIVED, NOT OBSERVED. Cut from pass/innovus_route_clean.log
+# (itself a real extract) by deleting whole lines. This SHAPE has never
+# been produced by the tool on this site; the fixture exists to prove one
+# guard in isolation. See PROVENANCE.md.
+# routing markers present, ZERO router messages -> isolates the shape-drift guard.
+Options:	-stylus -files ${CHIPLET_HOME}/ASIC/asic-toolkit/flow/innovus/4_route.tcl 
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#Done routing data preparation.

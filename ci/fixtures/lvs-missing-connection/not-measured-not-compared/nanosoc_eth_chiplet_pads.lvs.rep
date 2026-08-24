@@ -1,0 +1,64 @@
+# EXTRACT OF A REAL CALIBRE LVS REPORT — verbatim lines, nothing invented
+#
+# EXPECTED VERDICT: NOT-MEASURED.
+# A real ERC-mode run on this site. The comparison box reads NOT COMPARED and
+# the only note is 'Error: Nothing in source.' It contains zero
+# missing-connection rows and zero mentions of the coverage token, so
+# `grep -c` scores it CLEAN. It measured nothing.
+#
+# source: erc_runs/erc_allfix_logo/nanosoc_eth_chiplet_pads.lvs.rep (968 lines, Calibre v2023.1_18.8, 22 Aug 2026)
+# transform: absolute site paths -> ${CHIPLET_HOME} / ${SITE_PATH_WITHHELD}; USER NAME -> ${USER};
+#            lines the gate does not read are dropped, so line numbers here are
+#            NOT the source's line numbers. See ci/fixtures/lvs-missing-connection/PROVENANCE.md
+#
+
+
+
+                  ##################################################
+                  ##                                              ##
+                  ##         C A L I B R E    S Y S T E M         ##
+                  ##                                              ##
+                  ##             L V S   R E P O R T              ##
+                  ##                                              ##
+                  ##################################################
+
+
+
+REPORT FILE NAME:         ${CHIPLET_HOME}/ASIC/genus-innovus/erc_runs/erc_allfix_logo/nanosoc_eth_chiplet_pads.lvs.rep
+LAYOUT NAME:              svdb/nanosoc_eth_chiplet_pads.sp ('nanosoc_eth_chiplet_pads')
+SOURCE NAME:              ${CHIPLET_HOME}/ASIC/genus-innovus/erc_runs/erc_allfix_logo/nanosoc_eth_chiplet_pads_dummy_src.cdl ('nanosoc_eth_chiplet_pads')
+RULE FILE:                ${CHIPLET_HOME}/ASIC/genus-innovus/erc_runs/erc_allfix_logo/run.deck
+CREATION TIME:            Sat Aug 22 22:58:47 2026
+CURRENT DIRECTORY:        ${CHIPLET_HOME}/ASIC/genus-innovus/erc_runs/erc_allfix_logo
+USER NAME:                ${USER}
+CALIBRE VERSION:          v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+
+
+
+                               OVERALL COMPARISON RESULTS
+
+
+
+                 #   #         ########################  
+                  # #          #                      #  
+                   #           #     NOT COMPARED     #  
+                  # #          #                      #  
+                 #   #         ########################  
+
+
+  Error:    Nothing in source.
+
+
+
+**************************************************************************************************************
+                                      LVS PARAMETERS
+**************************************************************************************************************
+
+   LVS REPORT MAXIMUM                     1000
+
+**************************************************************************************************************
+                                         SUMMARY
+**************************************************************************************************************
+
+Total CPU Time:      0 sec
+Total Elapsed Time:  1 sec

@@ -1,0 +1,83 @@
+{
+  "design": "nanosoc_eth_chiplet_pads",
+  "run_tag": "pinfix-20260824",
+
+  "stream": "ASIC/submissions/nanosoc_eth_chiplet_pads_DRYRUN_20260824_pinfix.gds",
+  "supersedes": "41a0baee9343e10cb2c5f8b8fe1a4e50 (gdsrun-20260823-rzG) -- FUNCTIONAL DEFECT: three macro pins shipped with no metal, found by the foundry as PO.R.8 floating gates",
+
+  "base_run": "ASIC/eth-chiplet/build/gdsrun-20260824-valid4",
+  "eco_tree": "ASIC/eth-chiplet/build/pinfix-20260824",
+
+  "session_logs": [
+    "ASIC/eth-chiplet/build/gdsrun-20260824-valid4/work/innovus.log",
+    "ASIC/eth-chiplet/build/gdsrun-20260824-valid4/work/innovus.log1",
+    "ASIC/eth-chiplet/build/gdsrun-20260824-valid4/work/innovus.log2",
+    "ASIC/eth-chiplet/build/pinfix-20260824/logs/orig.log"
+  ],
+  "require_measurable": ["innovus.log2"],
+
+  "lef_root": "ASIC/eth-chiplet/build/gdsrun-20260824-valid4/work/nanosoc_eth_chiplet_pads_routed/libs/lef",
+
+  "calibre_run": "ASIC/genus-innovus/calibre_runs/drc_pinfix_orig_logo_0824",
+
+  "connectivity_reps": [
+    "ASIC/eth-chiplet/build/pinfix-20260824/reports/conn_final_orig.rep",
+    "ASIC/eth-chiplet/build/pinfix-20260824/reports/conn_mid_orig.rep"
+  ],
+
+  "lvs_report": null,
+
+  "publish": { "project": "ethchip", "block": "nanosoc_eth_chiplet_pads", "klass": "candidate" },
+
+  "known_bad": [
+    {
+      "id": "lvs-verdict-incorrect",
+      "what": "The LVS VERDICT is permanently INCORRECT: `.GLOBAL VSS` floods ~17,233 unmatched source nets and the pad ring has no LEF PINs.",
+      "decision": "Grade the DISCREPANCY LIST, not the verdict. A gate that is always red teaches its reader to skip it, and on 23 August the reader skipped the one line that mattered.",
+      "person": "flow owner",
+      "date": "2026-08-19",
+      "withdraw_when": "the pad ring gains LEF PINs and .GLOBAL VSS is scoped, at which point the verdict itself becomes gradable"
+    },
+    {
+      "id": "hold-fep",
+      "what": "hold FEP 22, WNS -0.005 ns on the base run gdsrun-20260824-valid4",
+      "decision": "accepted for a dry-run submission; hold is fixable by ECO and does not affect geometry acceptance",
+      "person": "flow owner",
+      "date": "2026-08-24",
+      "withdraw_when": "before a production tapeout, or if WNS worsens beyond -0.010"
+    }
+  ],
+
+  "not_measured": [
+    {
+      "id": "sta-signoff",
+      "asserts": "a signoff STA run over THIS build's netlist and SPEF",
+      "why": "ci/signoff.yaml has 24 stages and NONE of them times anything; sta-signoff sits under `unsupported:` with the reason 'No Tempus or PrimeTime installed'. MEASURED 2026-08-24: that reason is FALSE. Tempus 21.11 IS installed at ${SSV_HOME}/bin/tempus and HAS run six times (ASIC/sta/reports/, 2026-08-17..18) -- but against build full-20260814, a DIFFERENT and superseded build, with step.write_parasitics FAILED. Its refuted_by exits 1 only because tempus is not on PATH. So: not absent, not run on this stream, and nothing gates on any of it. NOT a pass."
+    },
+    {
+      "id": "antenna-foundry-deck",
+      "asserts": "the foundry antenna deck is clean on this stream",
+      "why": "the router-level check_process_antenna is NOT the foundry deck. No foundry antenna run exists for this stream."
+    },
+    {
+      "id": "ir-drop",
+      "asserts": "static IR drop on the database this stream came from",
+      "why": "the ir-drop stage in ci/signoff.yaml is pinned to build fp1505, a different build. Its number does not describe this stream."
+    },
+    {
+      "id": "lec-rtl-to-gate",
+      "asserts": "RTL and the gate netlist this stream was built from are equivalent",
+      "why": "this lineage was re-synthesised on 2026-08-21 and gate.v's md5 changed; no LEC run covers the gate.v these bytes descend from."
+    },
+    {
+      "id": "po-r8-post-merge",
+      "asserts": "zero PO.R.8 floating gates after the foundry's library merge",
+      "why": "our evidence is pins-have-metal plus connectivity clean plus Calibre unchanged. Only another foundry run closes it: we cannot merge locally because no standard-cell layout exists on this site."
+    },
+    {
+      "id": "gds-layout-identity",
+      "asserts": "these bytes are the layout we intend, independent of write time",
+      "why": "a GDS embeds its write clock in BGNLIB and in every BGNSTR, so two byte-different streams can be the same layout. No canonicalising hash is implemented, so md5 and sha256 identify the WRITE, not the LAYOUT."
+    }
+  ]
+}

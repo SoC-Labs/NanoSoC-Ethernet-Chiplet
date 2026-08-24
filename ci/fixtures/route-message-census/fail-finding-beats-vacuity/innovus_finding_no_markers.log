@@ -1,0 +1,11 @@
+# FIXTURE — DERIVED, and labelled as derived. Assembled from two real
+# fragments: the NRDR-27 finding as emitted in gdsrun-20260823-rzG's route log
+# (innovus.log2:25199, net path shortened), placed in a session that reached NO
+# routing-section marker. Not observed as one file on this site.
+#
+# WHY IT EXISTS: a vacuity control governs an ABSENCE. It must not suppress
+# evidence that is PRESENT. Before 2026-08-24 the marker control was evaluated
+# first and `continue`d, so a real finding in a marker-less log was reported
+# NOT-MEASURED and the net name was dropped on the floor.
+Options:	-stylus -files ${CHIPLET_HOME}/ASIC/eth-chiplet/hooks/some_eco.tcl 
+#WARNING (NRDR-27) Net u_soc/u_cache_subsystem_RAMCLD0WDATA\[123\] is not globally routed.

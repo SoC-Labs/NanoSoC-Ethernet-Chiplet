@@ -1,0 +1,32 @@
+# FIXTURE - extract of a real Innovus session log, scrubbed of absolute site
+# paths. See PROVENANCE.md.
+#
+# THE ECHO TRAP. Innovus prints the script's own source back into the log with
+# an `@file <n>: ` prefix. arm_orig.tcl's header comment QUOTES the open-nets
+# decline verbatim, to explain why the arm exists. Before 2026-08-24 this gate
+# read that comment as a finding and scored TWO ARMS OF THE SUBMISSION
+# CANDIDATE as FAIL on it. Real findings never carry the prefix: the two in the
+# rzG route log are bare, in a file with 5,827 `@file` lines.
+#
+# The routing markers and router messages below are appended so that BOTH
+# vacuity controls are satisfied and this arm isolates the echo rule alone. The
+# verdict must be PASS: an echoed comment is not the tool speaking.
+Options:	-stylus -files ${CHIPLET_HOME}/ASIC/eth-chiplet/build/pinfix-20260824/arm_orig.tcl 
+@file 1: # ===========================================================================
+@file 2: # ARM A -- restore the three bare macro pins by ECO-ROUTING THE OPEN NETS.
+@file 3: #
+@file 4: # valid4's regwire repair ran `delete_routes -regular_wire_with_drc` then
+@file 5: # `route_eco -fix_drc`. Innovus documents -fix_drc as SKIPPING open nets
+@file 6: # ("If open nets are found in the design, NanoRoute skips them and continues
+@file 7: # to fix DRC's for the other nets" -- TCRcom/route_eco.html), and the run log
+@file 8: # says so out loud:
+@file 9: #     #INFO: There were 4 open nets and ecoRoute -fix_drc will not route these
+@file 10: #     #      nets. User needs to use ecoRoute command to route the open nets.
+@file 11: # So the wires were deleted and never replaced. -target is the mode that DOES
+@file 12: # route them: "Enables NanoRoute to work on only eco nets identified by
+#WARNING (NRIG-96) Selected single pass global detail route "-global_detail".
+#WARNING (NRDB-405) width for LAYER M1 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRIF-78) Extra tracks are used for pin access.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...

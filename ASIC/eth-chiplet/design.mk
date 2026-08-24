@@ -1348,3 +1348,20 @@ DESIGN_REPORT_CORE_INSET := 205
 DESIGN_REPORT_TITLE    := nanoSoC Ethernet Chiplet
 DESIGN_REPORT_TECH     := TSMC 65nm LP
 DESIGN_REPORT_SUBTITLE := A dual-Cortex-M0+ networking chiplet: 10/100 Ethernet with IEEE 1588 hardware timestamping, on-die SRAM and boot ROM, and an eight-lane die-to-die link for pairing with a compute die.
+
+#-----------------------------------------------------------------------------
+# EVIDENCE, AFTER THE STAGE'S OWN VERDICT EXISTS
+#
+# The toolkit's route recipe calls these targets once 4_route.tcl has exited,
+# route_gate.txt has been written AND PARSED, the manifest exists and
+# design-report-auto has run. Not at the post_route Tcl hook: that fires 554
+# lines before the verdict exists, so anything there would have to report
+# "verdict unknown" for every gate the stage owns.
+#
+# NON-FATAL TO THE BUILD, FATAL TO THE CLAIM: a store outage must not destroy a
+# four-hour route, but the run is then not an evidenced run. See ASIC/evidence.mk
+# and mk/flow.mk's `post_stage_targets`.
+#
+# Publishing is deliberately NOT enabled from the flow. Set EVIDENCE_PUBLISH=1
+# to push, or run `make evidence-publish` when the bundle has been looked at.
+ROUTE_POST_TARGETS = evidence
