@@ -389,23 +389,62 @@ set_input_delay -clock [get_clocks $SWDCLK] -add_delay 0.1 [get_ports SWDIO]
 # whichever interpreter the tool embeds. A constraint file that errors on one tool
 # and not another is the worst possible failure here.
 set _rx_grp {D2D_RX_CLK_0}
-set _tx_grp {D2D_TX_CLK_0}
+set _tx_grp {D2D_TX_WORD_CLK_0}
 foreach n {0 1 2 3 4 5 6 7} {
     lappend _rx_grp "D2D_RX_WORD_CLK_$n"
     lappend _rx_grp "D2D_RX_WORDN_CLK_$n"   ;# negedge half - same domain, opposite phase
-    lappend _tx_grp "D2D_TX_WORD_CLK_$n"
 }
-if {[llength $_rx_grp] != 17 || [llength $_tx_grp] != 9} {
+
+# D2D_TX_CLK_0 IS IN THE SYSTEM GROUP DELIBERATELY. READ THIS BEFORE MOVING IT.
+#
+# It is a -divide_by 1 generated clock declared on the OUTPUT PORT TL_CLK_TX
+# (tidelink_constraints.sdc:177) and it has ZERO SINKS: no CTS clock tree, no
+# CCOpt skew group, no registers. So its group membership cannot cut or create a
+# single register-to-register path. Its one and only role is to be the reference
+# clock for set_output_delay on TL_TX[*] (tidelink_constraints.sdc:179).
+#
+# While it sat in the TX group those eight checks were DELETED OUTRIGHT. The
+# flops launching TL_TX[*] sit on the internal net io_clk, which carries no
+# generated-clock declaration and therefore resolves to $EXTCLK -- this group.
+# The output-delay reference was in the TX group. -asynchronous between the two
+# deleted the whole reg2out path and the endpoints vanished from analysis.
+#
+# MEASURED, gdsrun-20260823-rzG and gdsrun-20260824-valid7, identically, in
+# reports/place_coverage_untested.rep:
+#
+#     ExternalDelay (Late)   15 checks   7 met   0 violated   8 UNTESTED
+#     TL_TX[7] ... TL_TX[0]  ExternalDelay (Late)  UNTESTED  reason: False Path
+#
+# Eight of the fifteen output-delay checks on this chip -- 100% of the
+# die-to-die transmit data interface, the interface every cross-die transaction
+# crosses -- were disabled by group membership alone. Not loosely constrained.
+# Not constrained at all.
+#
+# TL_CLK_TX itself stays unconstrained after this change and that is CORRECT: no
+# set_output_delay is declared on it, because it is the forwarded clock, not
+# data. Expect uncons_endpoint to fall from 18 entries to 2 (TL_CLK_TX x 2
+# views), NOT to 0.
+set _sys_grp [list $EXTCLK QSPI_SCLK QSPI_SCLK_o D2D_TX_CLK_0]
+
+# _tx_grp is now a single clock, D2D_TX_WORD_CLK_0, and it is still asserted
+# -asynchronous against a group containing the clock it is GENERATED FROM. That
+# remains a deliberate cut of a physically synchronous boundary, backed by RTL
+# synchronisers, NOT a claim of real asynchrony -- exactly the honesty [C2]
+# above asks for. Closing it properly is [C2] option A and is a separate change
+# with a separate risk: ~1,184 exposed endpoints against a design closing setup
+# on 36 ps. Do not fold it in here.
+if {[llength $_rx_grp] != 17 || [llength $_tx_grp] != 1 || [llength $_sys_grp] != 4} {
     error "constraints.sdc: D2D clock groups built wrong -\
-           rx [llength $_rx_grp], tx [llength $_tx_grp], expected 17 and 9"
+           rx [llength $_rx_grp], tx [llength $_tx_grp],\
+           sys [llength $_sys_grp], expected 17, 1 and 4"
 }
 set_clock_groups -asynchronous -name eth_chiplet_cdc \
-    -group [get_clocks [list $EXTCLK QSPI_SCLK QSPI_SCLK_o]] \
+    -group [get_clocks $_sys_grp] \
     -group [get_clocks $_tx_grp] \
     -group [get_clocks $_rx_grp] \
     -group [get_clocks {rmii_ref_clk mii_rx_clk mii_tx_clk}] \
     -group [get_clocks [list $SWDCLK]]
-unset _rx_grp _tx_grp
+unset _rx_grp _tx_grp _sys_grp
 
 #### EXTERNAL DRIVE AND LOAD CHARACTERISATION #################################
 #

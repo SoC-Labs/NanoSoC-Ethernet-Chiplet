@@ -703,12 +703,21 @@ write_sdc                 > $OUT_DIR/${block_name}_syn.sdc       ;# what P&R tim
 # added whose name contains that string as a PREFIX - D2D_RX_WORDN_CLK_n would
 # have counted as a 17th and failed for the wrong reason. Naming each one removes
 # the trap and says WHICH clock is missing.
+# 17 EXPECTED, NOT 24: RX IS 8+8, TX IS **ONE**.
+# TX lanes 1-7 carry no clock. Their io_link_clk is not exported and the divided
+# net inside each lane drives only combinational data pins -- censused in the
+# gate netlist 2026-08-24 across all three uniquified variants with lane 0 as the
+# control. See the long note at inputs/tidelink_constraints.sdc:470. Declaring
+# them produced TA-1018 x21 and master_clk_edge_not_reaching = 14 while covering
+# nothing, so the seven declarations were deleted.
+# GATE B below is what catches this being wrong -- if a flop really were on a
+# lane 1-7 word clock it would show up there as a pin with no clock waveform.
 set _wc_want {}
 foreach n {0 1 2 3 4 5 6 7} {
     lappend _wc_want "D2D_RX_WORD_CLK_$n"    ;# posedge word clock (io_link_clk = count_reg[3] QN)
     lappend _wc_want "D2D_RX_WORDN_CLK_$n"   ;# negedge word clock (count_reg[3] Q) -> link_data_reg
-    lappend _wc_want "D2D_TX_WORD_CLK_$n"
 }
+lappend _wc_want "D2D_TX_WORD_CLK_0"         ;# the only TX lane that exports its divider
 set _wc_fh [open $OUT_DIR/${block_name}_syn.sdc r]
 set _wc_txt [read $_wc_fh] ; close $_wc_fh
 set _wc_missing {}

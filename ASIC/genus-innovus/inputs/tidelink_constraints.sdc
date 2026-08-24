@@ -467,23 +467,51 @@ if {[sizeof_collection $_tx_src] == 0} {
            produced 24 TA-1018 'source latency path ... cannot be found' on\
            2026-08-14 and left ~2k TX flops on 0 ns source latency."
 }
-set _tx_bound 0
-foreach n {0 1 2 3 4 5 6 7} {
-    set _pin [get_pins -quiet $GPIO/gpiotx_$n/io_link_clk]
-    if {[sizeof_collection $_pin] == 0} {
-        error "tidelink_constraints.sdc: D2D TX word-clock anchor\
-               $GPIO/gpiotx_$n/io_link_clk matched NOTHING. The TX word domain\
-               (~2k flops) would be left untimed. Refusing to continue."
-    }
-    create_generated_clock -name "D2D_TX_WORD_CLK_$n" \
-        -source $_tx_src -divide_by 16 $_pin
-    set_clock_uncertainty -setup $CLK_ERROR      [get_clocks "D2D_TX_WORD_CLK_$n"]
-    set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks "D2D_TX_WORD_CLK_$n"]
-    incr _tx_bound
+# ONE TX WORD CLOCK, NOT EIGHT. LANES 1-7 CARRY NO CLOCK, AND THAT IS CORRECT.
+#
+# This loop used to declare eight. Seven of them were phantoms: they named a pin
+# that carries no clock, and they were the whole of this file's own unmet gate
+# fifteen lines above -- TA-1018 x21 (3 views x lanes 1-7, ZERO on lane 0) and
+# check_timing master_clk_edge_not_reaching = 14 (7 lanes x 2 setup views).
+#
+# MEASURED IN THE GATE NETLIST on 2026-08-24, not inferred from the SDC:
+# gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads_pnr.v. Lanes 1..7 are
+# three uniquified variants (HI237, HI18_*, HI237_*) and all were censused, with
+# lane 0 as the control:
+#
+#   lanes 1-7   DFSND1 \count_reg[3] (.CP(io_clk) ... .QN(n_7))
+#               n_7's ONLY consumers are combinational DATA pins -- A1/A2/B1 of
+#               NR2XD0 / OAI211D1 / AOI32D1 / AOI22D1 / NR2D1. Never a .CP.
+#               Flop clock nets are exactly cg_rc_gclk x16, cg_rc_gclk_434 x16,
+#               io_clk x7 -- all module PORTS driven from the parent.
+#   lane 0      .QN(io_link_clk), exported, then DEL02 -> CTS_1 and out of the
+#               module into the link layer.
+#
+# So no flop inside ANY gpiotx runs on the divided net. The 1,481-sink word
+# domain CTS reports (reports/cts_clock_trees.rep: exactly one TX tree, rooted at
+# gpiotx_0/count_reg[3]/QN) lives in the link layer and is reached through lane
+# 0's export alone. There is ONE forwarded TX clock pad on this die, TL_CLK_TX,
+# and lane 0 drives it. That is ordinary source-synchronous practice, not a
+# defect, and no SDC change can or should give the other seven a clock.
+#
+# THE GATE THIS SATISFIES is the one stated above: the TA-1018 /
+# master_clk_edge_not_reaching count in the next run, and it must be 0.
+#
+# GATE B in scripts/1b_synthesis_eval.tcl is the check that catches this being
+# wrong: it requires 0 sequential clock pins without a clock waveform. If any
+# flop really were on a lane 1-7 word clock, deleting these seven declarations
+# would surface it there as a hard synthesis failure.
+set _pin [get_pins -quiet $GPIO/gpiotx_0/io_link_clk]
+if {[sizeof_collection $_pin] == 0} {
+    error "tidelink_constraints.sdc: D2D TX word-clock anchor\
+           $GPIO/gpiotx_0/io_link_clk matched NOTHING. The TX word domain\
+           (~1.5k flops in the link layer) would be left untimed.\
+           Refusing to continue."
 }
-if {$_tx_bound != 8} {
-    error "tidelink_constraints.sdc: bound $_tx_bound/8 TX word clocks"
-}
+create_generated_clock -name "D2D_TX_WORD_CLK_0" \
+    -source $_tx_src -divide_by 16 $_pin
+set_clock_uncertainty -setup $CLK_ERROR      [get_clocks "D2D_TX_WORD_CLK_0"]
+set_clock_uncertainty -hold  $CLK_HOLD_ERROR [get_clocks "D2D_TX_WORD_CLK_0"]
 
 # THE CONSTRAINT BINDING HERE IS NOT THE SAME AS IT REACHING P&R.
 # scripts/nanosoc_eth_chiplet_pads.mmmc:186-188 gives Innovus exactly ONE sdc
