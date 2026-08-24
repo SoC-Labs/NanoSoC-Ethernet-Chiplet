@@ -1336,6 +1336,32 @@ if {![info exists ::env(EVP_NO_G4_FIXVIA)] || $::env(EVP_NO_G4_FIXVIA) ne "1"} {
 ##     where B's bridge costs G.4:M4i x2. D SUPERSEDES B; B should be deleted
 ##     once D has shipped one run. See case D below.
 ##
+##  E. WIDE-METAL SAME-NET GAPS (added 2026-08-24) -- SHIPS DISABLED, and the
+##     measurement is why. Bridging the two M8.S.3 gaps DOES merge the parties
+##     and DOES remove those two markers, but the narrow party is one bar of a
+##     comb of split pad-pin bars and only the pad plate is wide. Merging makes
+##     the bar wide too, and the merged plate then faces the PREVIOUS bar
+##     across 0.785 um where 1.500 is wanted. Calibre: M8.S.3 stays at 2, moved
+##     from (1175.355,1796.400) to (1173.610,1796.400) and from
+##     (1188.955,191.000) to (1187.210,191.000), and the bridges cost 2 missing
+##     VIA8s. Kept, disabled, because the finder is right and the ASSUMPTION is
+##     what is wrong: a long parallel run does not mean both parties are wide.
+##
+##  F. UNDER MIN WIDTH ON ONE AXIS (added 2026-08-24) -- widen the marker box
+##     to min width along the deficient axis. Safe for case C's reason: flush
+##     on the long axis, outward on the short one. Declines a marker that
+##     ENCLOSES a wire, which is an island and case A's business. Measured:
+##     M9.W.1 1 -> 0, nothing else in the deck, no PG cost. See case F below.
+##
+##  G. MIN-STEP STAIRCASES (added 2026-08-24) -- the sites case C correctly
+##     declines, where the steps are made by three wires and their via
+##     enclosures so no PAIR reconstructs the marker as an uncovered corner.
+##     Push the tallest riser's flank out to the marker's outer edge over that
+##     riser's own full height; every short edge becomes interior. Guarded by
+##     requiring the tallest wire to also be the lowest, so the patch is flush
+##     with the union at both ends. Measured: G.4:M6i 2 -> 0, nothing else in
+##     the deck, no PG cost. See case G below.
+##
 ## WHAT C AND D COST, MEASURED. Calibre, two streams from one Innovus session
 ## on gdsrun-20260823-rzG's routed database, control = this block with C and D
 ## off:
@@ -1345,8 +1371,29 @@ if {![info exists ::env(EVP_NO_G4_FIXVIA)] || $::env(EVP_NO_G4_FIXVIA) ne "1"} {
 ##     dangling wires         709 -> 709
 ##     missing power vias     344 -> 344
 ##
+## WHAT F AND G COST, MEASURED 2026-08-24. Calibre, streams from one Innovus
+## session on the same gdsrun-20260823-rzG routed database, control = this
+## block with E, F and G off (which reproduces the 23 Aug run exactly: 15 -> 10
+## check_drc markers, 14993 -> 14994 PG special wires, an identical stream size
+## and 7 / 743 in Calibre):
+##     design-owned Calibre     7 -> 4      (G.4:M6i 2->0, M9.W.1 1->0)
+##     total Calibre results  743 -> 740
+##     every other rulecheck   unchanged, all 1926 of them
+##     special-route opens     52 -> 52
+##     dangling wires         709 -> 709
+##     missing power vias     358 -> 358
+## check_connectivity and check_power_vias are byte-identical to the control:
+## not one line added or removed.
+##
+## AND WHAT E COSTS, WHICH IS WHY IT IS OFF: with E on the same measurement
+## gives 4 design-owned and 740 total -- the SAME count -- because M8.S.3 does
+## not go away, it moves from a 1.495 um gap to a 0.785 um one. The bridges
+## also add 2 missing VIA8s. See the case E header.
+##
 ## GUARDS. Off with EVP_NO_PG_RESIDUE=1; C alone with EVP_PG_STEP_MAX=0; D
-## alone with EVP_PG_TRIM_MAX=0. EVP_PG_RESIDUE_DRYRUN=1 finds and prints the
+## alone with EVP_PG_TRIM_MAX=0; F alone with EVP_PG_WIDEN_MAX=0; G alone with
+## EVP_PG_SQUARE_MAX_W=0; E is off unless EVP_PG_WIDE_GAP_MAX is set.
+## EVP_PG_RESIDUE_DRYRUN=1 finds and prints the
 ## sites without touching anything -- run that first on a new floorplan.
 ## Counts are printed. Deletions and creations are counted as OBJECTS, measured
 ## from the database before and after, never as calls. A check_drc runs on both
@@ -1445,7 +1492,7 @@ if {[info exists ::env(EVP_PG_ISLAND_MAX_AREA)] && $::env(EVP_PG_ISLAND_MAX_AREA
 ## known sites (one dead island, one M5 min-step notch, one M4 stub), so a cap
 ## of 2 would abort the run. 4 leaves one slot of headroom; more than that means
 ## the power plan changed and a person should look.
-set _pgr_cap 4
+set _pgr_cap 8
 if {[info exists ::env(EVP_PG_RESIDUE_CAP)] && $::env(EVP_PG_RESIDUE_CAP) ne ""} {
     set _pgr_cap [expr {int($::env(EVP_PG_RESIDUE_CAP))}]
 }
@@ -1472,6 +1519,60 @@ if {[info exists ::env(EVP_PG_STEP_MAX)] && $::env(EVP_PG_STEP_MAX) ne ""} {
 set _pgr_trimmax 0.150
 if {[info exists ::env(EVP_PG_TRIM_MAX)] && $::env(EVP_PG_TRIM_MAX) ne ""} {
     set _pgr_trimmax [expr {double($::env(EVP_PG_TRIM_MAX))}]
+}
+
+## ---------------------------------------------------------------------------
+## CASES E, F and G -- three more property-driven sites, added 2026-08-24.
+##
+## All three ADD metal. None of them deletes or moves anything, and each one is
+## bounded by edges the same-net union ALREADY has, which is the same
+## no-new-exposure argument case C rests on.
+##
+## CASE E -- an absolute ceiling on the gap this pass will bridge when the
+## spacing rule that fired is a WIDE-METAL one, i.e. when the gap already
+## clears the layer's ordinary min spacing so nothing case D could trim
+## applies. 0 disables case E.
+##
+## THIS SHIPS DISABLED (_pgr_widegap defaults to 0) BECAUSE IT WAS MEASURED AND
+## IT DOES NOT WORK -- see the block header and eco7/REPORT.md. The two M8.S.3
+## results it bridges are a wide pad plate facing the last bar of a comb of
+## split pad-pin bars. Merging the bar into the plate makes the bar wide too,
+## and the merged plate then faces the PREVIOUS bar of the comb across 0.785
+## um where 1.500 is wanted. Calibre keeps M8.S.3 at 2 and the bridges also
+## cost 2 missing VIA8s. The code is kept because the finder and its guards
+## are correct and general -- what is wrong is the assumption that a long
+## parallel run means BOTH parties are wide. Here only one is.
+set _pgr_widegap 0.000
+if {[info exists ::env(EVP_PG_WIDE_GAP_MAX)] && $::env(EVP_PG_WIDE_GAP_MAX) ne ""} {
+    set _pgr_widegap [expr {double($::env(EVP_PG_WIDE_GAP_MAX))}]
+}
+## CASE E -- the shortest parallel run over which a bridge is accepted. The
+## wide-metal spacing rules only apply over a long parallel run (M8.S.3 wants
+## 4.5 um on this process), so a marker whose run is shorter than this is not
+## the geometry this case was measured on.
+set _pgr_widerun 4.500
+if {[info exists ::env(EVP_PG_WIDE_RUN_MIN)] && $::env(EVP_PG_WIDE_RUN_MIN) ne ""} {
+    set _pgr_widerun [expr {double($::env(EVP_PG_WIDE_RUN_MIN))}]
+}
+## CASE F -- the furthest this pass will widen a shape that is under min width
+## on exactly one axis, and the margin it aims past min width. 0 disables F.
+set _pgr_widenmax 1.000
+if {[info exists ::env(EVP_PG_WIDEN_MAX)] && $::env(EVP_PG_WIDEN_MAX) ne ""} {
+    set _pgr_widenmax [expr {double($::env(EVP_PG_WIDEN_MAX))}]
+}
+set _pgr_widenmargin 0.010
+if {[info exists ::env(EVP_PG_WIDEN_MARGIN)] && $::env(EVP_PG_WIDEN_MARGIN) ne ""} {
+    set _pgr_widenmargin [expr {double($::env(EVP_PG_WIDEN_MARGIN))}]
+}
+## CASE G -- the furthest this pass will push out the flank of a riser to
+## square off a min-step staircase, and the window it looks in. 0 disables G.
+set _pgr_sqmaxw 0.050
+if {[info exists ::env(EVP_PG_SQUARE_MAX_W)] && $::env(EVP_PG_SQUARE_MAX_W) ne ""} {
+    set _pgr_sqmaxw [expr {double($::env(EVP_PG_SQUARE_MAX_W))}]
+}
+set _pgr_sqwin 1.000
+if {[info exists ::env(EVP_PG_SQUARE_WIN)] && $::env(EVP_PG_SQUARE_WIN) ne ""} {
+    set _pgr_sqwin [expr {double($::env(EVP_PG_SQUARE_WIN))}]
 }
 
 ## Find and print the sites, change nothing, and skip the "markers must fall"
@@ -1521,6 +1622,30 @@ proc _pgr_markers {rep} {
            is not what this block assumes -- refusing to act on it."
 }
 
+
+## Every net that owns ANY object on $lay inside the box grown by $pad. Cases E
+## and G use this rather than the special-wire-only query cases C and D use,
+## because the parties they face are often generated via enclosures and those
+## are not special wires -- a wire-only query reports "0 nets" at a site that
+## is in fact crowded, and a same-net guard that cannot see the neighbours is
+## not a guard.
+proc _pgr_nets_in {lay x1 y1 x2 y2 padx {pady ""}} {
+    if {$pady eq ""} { set pady $padx }
+    set box [list [list [expr {$x1-$padx}] [expr {$y1-$pady}] \
+                        [expr {$x2+$padx}] [expr {$y2+$pady}]]]
+    set nets {}
+    foreach ot {special_wire wire patch_wire special_via via} {
+        set q {}
+        catch { set q [get_obj_in_area -areas $box -layers [list $lay] \
+                         -obj_type [list $ot]] }
+        foreach o $q {
+            set n "" ; catch { set n [get_db $o .net.name] }
+            if {$n ne "" && [lsearch -exact $nets $n] < 0} { lappend nets $n }
+        }
+    }
+    return $nets
+}
+
 check_drc -limit 200000 -out_file $REPORT_DIR/pg_pre_residue.rep
 set _pgr_mk [_pgr_markers $REPORT_DIR/pg_pre_residue.rep]
 set _pgr_m0 [llength $_pgr_mk]
@@ -1535,6 +1660,7 @@ set _pgr_weld {}    ;# {layer net x1 y1 x2 y2} patches to create        (case B)
 set _pgr_fill {}    ;# {layer net x1 y1 x2 y2} min-step notches to fill (case C)
 set _pgr_trim {}    ;# {wire layer net x1 y1 x2 y2} stubs to re-create   (case D)
 set _pgr_claim {}   ;# markers case D has taken, so case B leaves them alone
+set _pgr_add {}     ;# {layer net x1 y1 x2 y2 tag} shapes to add (cases E F G)
 
 foreach _mk $_pgr_mk {
     set _mb [_pgr_r4 $_mk .bbox]
@@ -1968,13 +2094,309 @@ foreach _mk $_pgr_mk {
               $_ml $_an [expr {min($_px2-$_px1,$_py2-$_py1)}] $_px1 $_py1 $_px2 $_py2]
       }
     }
+
+    ## ---- E. a WIDE-METAL same-net spacing violation, bridged ---------------
+    ##
+    ## THE GEOMETRY at the measured sites (M8.S.3 x2 on the rzG routed DB):
+    ##   (1175.355,1796.400)-(1176.850,1808.400)  and the same shape at
+    ##   (1188.955, 191.000)-(1190.450, 203.000)  -- 1.495 x 12.000 each.
+    ## Both parties are VDD, and NEITHER is a special wire: a wire query over
+    ## a 30x16 um window at either site returns only the M9 ring. The M8 metal
+    ## there is the enclosure of the ring-to-stripe via arrays, so there is
+    ## nothing for case D to trim and nothing for case C to reconstruct. The
+    ## only edit available is to add metal.
+    ##
+    ## WHY THE BRIDGE IS THE SAFE DIRECTION HERE, which is NOT true in general.
+    ## Bridging two shapes merges them, and merging normally RISKS pushing more
+    ## metal over the wide-metal threshold and so tightening the spacing that
+    ## other neighbours must keep. That cannot happen when BOTH parties are
+    ## already wide: the union of two wide shapes is wide, no outer edge moves,
+    ## and the only new metal lies strictly between them. The proxy for "both
+    ## already wide" is the parallel run -- M8.S.3 measures 1.5 um only where
+    ## the run exceeds 4.5 um (M8_S_3_L), and a 12.000 um run means both facing
+    ## edges are at least 12 um long.
+    ##
+    ## The gap is required to be LARGER than the layer's ordinary min spacing.
+    ## That is what says the rule that fired is a wide-metal one and not the
+    ## plain spacing rule case D exists for, so E and D can never both claim a
+    ## marker.
+    if {$_pgr_widegap > 0 && [string match -nocase "*spacing*" [string map {_ "" - "" " " ""} $_msub]]} {
+      set _ew [expr {$_bx2-$_bx1}] ; set _eh [expr {$_by2-$_by1}]
+      set _egap [expr {$_ew < $_eh ? $_ew : $_eh}]
+      set _erun [expr {$_ew < $_eh ? $_eh : $_ew}]
+      set _els 0 ; catch { set _els [get_db [get_db layers $_ml] .min_spacing] }
+      if {$_els eq ""} { set _els 0 }
+      if {$_egap > $_els + $_pgr_eps && $_egap <= $_pgr_widegap \
+          && $_erun >= $_pgr_widerun} {
+        ## The bridge's only NEW exposed boundary is its two ends, and those
+        ## are flush with the ends of the parties it joins -- so nothing the
+        ## parties already clear is brought any closer, and padding the query
+        ## along the RUN axis would only re-report the neighbours they already
+        ## live with. Pad along the GAP axis, where the bridge actually
+        ## reaches, and require bare contact to be same-net on every side.
+        set _epx [expr {$_ew < $_eh ? $_els : $_pgr_eps}]
+        set _epy [expr {$_ew < $_eh ? $_pgr_eps : $_els}]
+        set _enets [_pgr_nets_in $_ml $_bx1 $_by1 $_bx2 $_by2 $_epx $_epy]
+        foreach _en [_pgr_nets_in $_ml $_bx1 $_by1 $_bx2 $_by2 $_pgr_eps] {
+            if {[lsearch -exact $_enets $_en] < 0} { lappend _enets $_en }
+        }
+        set _eforeign 0
+        foreach _en $_enets {
+            if {[lsearch -exact $_pgr_pg $_en] < 0} { set _eforeign 1 }
+        }
+        if {[llength $_enets] != 1 || $_eforeign} {
+          puts "POWERPLAN: PG residue -- SKIP wide-gap $_ml at ($_bx1 $_by1):\
+                [llength $_enets] net(s) alongside it ($_enets); a bridge\
+                is only safe where every party is the same net"
+        } else {
+          set _ecand [list $_ml [lindex $_enets 0] $_bx1 $_by1 $_bx2 $_by2 wide_gap]
+          if {[lsearch -exact $_pgr_add $_ecand] < 0} {
+            lappend _pgr_add $_ecand
+            puts [format "POWERPLAN: PG residue -- WIDE-METAL GAP %s %s %.3f um over a %.3f um parallel run, bridging (%.3f %.3f)-(%.3f %.3f)" \
+                  $_ml [lindex $_enets 0] $_egap $_erun $_bx1 $_by1 $_bx2 $_by2]
+          }
+        }
+      }
+    }
+
+    ## ---- F. a shape under MIN WIDTH on exactly one axis, widened ----------
+    ##
+    ## THE GEOMETRY at the measured site (M9.W.1 x1 on the rzG routed DB):
+    ##   Innovus marker (879.780,244.600)-(881.300,249.050), 1.520 x 4.450
+    ##   Calibre result (879.780,248.200)-(881.300,249.050), 1.520 x 0.850
+    ## The two disagree because Calibre reports only the part that protrudes
+    ## above the M9 stripe (top y = 248.200) while Innovus reports the whole
+    ## column. They agree on the quantity that matters: the shape is 1.520 um
+    ## across where M9 wants 2.000, and it is 4.450 um the other way, so it is
+    ## narrow on ONE axis only. The protruding tab is the M9 enclosure of a via
+    ## array, not a wire, so again nothing can be trimmed or re-created.
+    ##
+    ## Widening the marker box to min width along the deficient axis is safe
+    ## for the same reason case C's corner fill is: the added metal is flush
+    ## with the marker box on the long axis, so it introduces no edge that the
+    ## union does not already have on that axis, and on the short axis it moves
+    ## the boundary OUTWARD -- which a min-width rule can only be helped by.
+    ##
+    ## The two things that could go wrong are checked:
+    ##   * a marker that ENCLOSES a wire is an island, and belongs to case A.
+    ##     Widening one would manufacture the island A exists to delete.
+    ##   * the metal the widening moves toward must be the same net, on the
+    ##     growth axis only -- the perpendicular clearance is not being changed
+    ##     so it is not the growth's business.
+    if {$_pgr_widenmax > 0 \
+        && [string match -nocase "*width*" [string map {_ "" - "" " " ""} $_msub]] \
+        && ![string match -nocase "*step*" [string map {_ "" - "" " " ""} $_msub]]} {
+      set _fmw 0 ; catch { set _fmw [get_db [get_db layers $_ml] .min_width] }
+      set _fw [expr {$_bx2-$_bx1}] ; set _fh [expr {$_by2-$_by1}]
+      set _fenc {}
+      catch { set _fenc [get_obj_in_area -areas [list $_mb] -layers [list $_ml] \
+                           -obj_type special_wire -enclosed_only] }
+      set _fax ""
+      if {$_fmw ne "" && $_fmw > 0} {
+        if {$_fw < $_fmw - $_pgr_eps && $_fh >= $_fmw - $_pgr_eps} { set _fax x }
+        if {$_fh < $_fmw - $_pgr_eps && $_fw >= $_fmw - $_pgr_eps} { set _fax y }
+      }
+      if {[llength $_fenc]} {
+        puts "POWERPLAN: PG residue -- SKIP min-width $_ml at ($_bx1 $_by1):\
+              the marker encloses [llength $_fenc] wire(s), so this is an\
+              island and case A's business, not a widening"
+      } elseif {$_fax eq ""} {
+        puts "POWERPLAN: PG residue -- SKIP min-width $_ml at ($_bx1 $_by1):\
+              [format %.3f $_fw] x [format %.3f $_fh] um against min width\
+              $_fmw is not narrow on exactly one axis; widening it would be a\
+              guess about which way the shape is meant to run"
+      } else {
+        set _ftgt  [expr {$_fmw + $_pgr_widenmargin}]
+        set _fhave [expr {$_fax eq "x" ? $_fw : $_fh}]
+        set _fgrow [expr {$_ftgt - $_fhave}]
+        if {$_fgrow > $_pgr_widenmax} {
+          puts "POWERPLAN: PG residue -- SKIP min-width $_ml at ($_bx1 $_by1):\
+                widening it to $_ftgt um means adding [format %.3f $_fgrow] um,\
+                over the $_pgr_widenmax um bound"
+        } else {
+          if {$_fax eq "x"} {
+            set _fc  [expr {($_bx1+$_bx2)/2.0}]
+            set _fx1 [expr {$_fc - $_ftgt/2.0}] ; set _fx2 [expr {$_fc + $_ftgt/2.0}]
+            set _fy1 $_by1 ; set _fy2 $_by2
+            set _fga [list [list $_fx1 $_fy1 $_bx1 $_fy2] [list $_bx2 $_fy1 $_fx2 $_fy2]]
+          } else {
+            set _fc  [expr {($_by1+$_by2)/2.0}]
+            set _fy1 [expr {$_fc - $_ftgt/2.0}] ; set _fy2 [expr {$_fc + $_ftgt/2.0}]
+            set _fx1 $_bx1 ; set _fx2 $_bx2
+            set _fga [list [list $_fx1 $_fy1 $_fx2 $_by1] [list $_fx1 $_by2 $_fx2 $_fy2]]
+          }
+          ## the growth axis only: what the new metal is moving towards
+          set _fls 0 ; catch { set _fls [get_db [get_db layers $_ml] .min_spacing] }
+          if {$_fls eq "" || $_fls <= 0} { set _fls $_fmw }
+          set _fnets {}
+          foreach _fg $_fga {
+            lassign $_fg _ga _gb2 _gc _gd
+            set _pdx [expr {$_fax eq "x" ? $_fls : 0.0}]
+            set _pdy [expr {$_fax eq "y" ? $_fls : 0.0}]
+            foreach _n [_pgr_nets_in $_ml [expr {$_ga-$_pdx}] [expr {$_gb2-$_pdy}] \
+                          [expr {$_gc+$_pdx}] [expr {$_gd+$_pdy}] 0.0] {
+              if {[lsearch -exact $_fnets $_n] < 0} { lappend _fnets $_n }
+            }
+          }
+          set _fforeign 0
+          foreach _n $_fnets {
+              if {[lsearch -exact $_pgr_pg $_n] < 0} { set _fforeign 1 }
+          }
+          if {[llength $_fnets] != 1 || $_fforeign} {
+            puts "POWERPLAN: PG residue -- SKIP min-width $_ml at ($_bx1 $_by1):\
+                  widening along $_fax reaches [llength $_fnets] net(s)\
+                  ($_fnets); it may only reach its own"
+          } else {
+            set _fcand [list $_ml [lindex $_fnets 0] $_fx1 $_fy1 $_fx2 $_fy2 min_width]
+            if {[lsearch -exact $_pgr_add $_fcand] < 0} {
+              lappend _pgr_add $_fcand
+              puts [format "POWERPLAN: PG residue -- MIN-WIDTH WIDEN %s %s %.3f -> %.3f um on %s, (%.3f %.3f)-(%.3f %.3f)" \
+                    $_ml [lindex $_fnets 0] $_fhave $_ftgt $_fax $_fx1 $_fy1 $_fx2 $_fy2]
+            }
+          }
+        }
+      }
+    }
+
+    ## ---- G. a MIN-STEP staircase on the flank of a riser, squared off ------
+    ##
+    ## THE GEOMETRY at the measured site (the G.4:M6i pair case C skips):
+    ##   three same-net M6 risers, all rising from y = 244.600
+    ##     A (848.100,244.600)-(848.500,247.900)   w 0.400
+    ##     B (848.105,244.600)-(848.495,247.905)   w 0.390
+    ##     C (848.125,244.600)-(848.475,248.600)   w 0.350
+    ##   plus via enclosures that reach x = 848.505.
+    ## Calibre reports two edges, (848.490,247.905)-(848.505,247.905) at 0.015
+    ## um and (848.505,247.900)-(848.505,247.905) at 0.005 um -- ONE staircase,
+    ## two results, not two sites. Case C declines it correctly: no PAIR of
+    ## rectangles reconstructs the marker box as an uncovered corner, because
+    ## the steps are made by three wires and an enclosure, not two wires.
+    ##
+    ## THE EDIT. Push the tallest riser's flank out to the marker's outer edge,
+    ## over that riser's OWN full height. Every short edge in the staircase
+    ## becomes interior; the only new boundary is one flank edge as long as the
+    ## riser (4.000 um here, against a 0.100 um min width).
+    ##
+    ## THE GUARD THAT MAKES IT SAFE is that the tallest riser must also be the
+    ## lowest -- it must span the whole y extent of the same-net metal in the
+    ## window. Then a patch flush with ITS top and bottom is flush with the
+    ## UNION's top and bottom, so squaring the flank cannot poke a new step out
+    ## of either end. If some other wire in the window out-tops or under-bottoms
+    ## it, the pass declines and says so.
+    if {$_pgr_sqmaxw > 0 && [string match -nocase "*minstep*" [string map {_ "" - "" " " ""} $_msub]]} {
+      set _gmw 0 ; catch { set _gmw [get_db [get_db layers $_ml] .min_width] }
+      set _gb $_pgr_stepmax
+      if {$_gmw ne "" && $_gmw > 0 && $_gmw < $_gb} { set _gb $_gmw }
+      set _gw [expr {$_bx2-$_bx1}] ; set _gh [expr {$_by2-$_by1}]
+      ## case C gets first refusal: if it reconstructed this marker as a
+      ## corner, that fill is smaller and G must not double up on it.
+      set _gclaimed 0
+      foreach _c $_pgr_fill {
+        if {abs([lindex $_c 2]-$_bx1) <= $_pgr_eps \
+            && abs([lindex $_c 3]-$_by1) <= $_pgr_eps} { set _gclaimed 1 }
+      }
+      if {!$_gclaimed && $_gw > 0 && $_gh > 0 && $_gw <= $_gb && $_gh <= $_gb} {
+        set _gwin [list [list [expr {$_bx1-$_pgr_sqwin}] [expr {$_by1-$_pgr_sqwin}] \
+                              [expr {$_bx2+$_pgr_sqwin}] [expr {$_by2+$_pgr_sqwin}]]]
+        set _gall {}
+        catch { set _gall [get_obj_in_area -areas $_gwin -layers [list $_ml] \
+                             -obj_type {special_wire wire patch_wire}] }
+        ## The same-net test uses case C's tight window -- what is next to the
+        ## NOTCH. The 1 um window above is only how the risers are FOUND, and a
+        ## neighbouring VSS riser 0.9 um away is no reason to decline a 0.03 um
+        ## flank push; the flank clearance check below is what rules on that.
+        set _gnets [_pgr_nets_in $_ml $_bx1 $_by1 $_bx2 $_by2 [expr {$_pgr_stepmax*2.0}]]
+        set _gforeign 0
+        foreach _n $_gnets {
+            if {[lsearch -exact $_pgr_pg $_n] < 0} { set _gforeign 1 }
+        }
+        if {[llength $_gnets] != 1 || $_gforeign} {
+          puts "POWERPLAN: PG residue -- SKIP staircase $_ml at ($_bx1 $_by1):\
+                [llength $_gnets] net(s) in the window ($_gnets)"
+        } else {
+          set _gnet [lindex $_gnets 0]
+          set _gt {} ; set _gtop "" ; set _gbot ""
+          foreach _o $_gall {
+            ## only the notch's own net: the extents that matter are the ones
+            ## the patch will be flush with, and those are all same-net.
+            set _on "" ; catch { set _on [get_db $_o .net.name] }
+            if {$_on ne $_gnet} { continue }
+            set _r [_pgr_r4 $_o .rect] ; if {[llength $_r] != 4} { continue }
+            if {$_gtop eq "" || [lindex $_r 3] > $_gtop} {
+                set _gtop [lindex $_r 3] ; set _gt $_r
+            }
+            if {$_gbot eq "" || [lindex $_r 1] < $_gbot} { set _gbot [lindex $_r 1] }
+          }
+          if {[llength $_gt] != 4} {
+            puts "POWERPLAN: PG residue -- SKIP staircase $_ml at ($_bx1 $_by1):\
+                  no rectangular wire in the window to widen; the parties are\
+                  all generated via enclosures"
+          } else {
+            lassign $_gt _gtx1 _gty1 _gtx2 _gty2
+            set _gside ""
+            if {$_bx1 >= $_gtx2 - $_pgr_eps} { set _gside right }
+            if {$_bx2 <= $_gtx1 + $_pgr_eps} { set _gside left }
+            set _gfw 0
+            if {$_gside eq "right"} { set _gfw [expr {$_bx2 - $_gtx2}] }
+            if {$_gside eq "left"}  { set _gfw [expr {$_gtx1 - $_bx1}] }
+            if {$_gside eq ""} {
+              puts "POWERPLAN: PG residue -- SKIP staircase $_ml at ($_bx1 $_by1):\
+                    the marker is not clear of either flank of the tallest wire\
+                    ($_gtx1..$_gtx2); this pass only squares a vertical riser"
+            } elseif {$_gty1 > $_gbot + $_pgr_eps} {
+              puts "POWERPLAN: PG residue -- SKIP staircase $_ml at ($_bx1 $_by1):\
+                    the tallest wire starts at $_gty1 but same-net metal in the\
+                    window reaches down to $_gbot, so a patch flush with its\
+                    bottom would leave a new step there"
+            } elseif {$_gfw <= $_pgr_eps || $_gfw > $_pgr_sqmaxw} {
+              puts "POWERPLAN: PG residue -- SKIP staircase $_ml at ($_bx1 $_by1):\
+                    squaring the $_gside flank means [format %.3f $_gfw] um,\
+                    outside (0, $_pgr_sqmaxw]"
+            } elseif {$_gty2 - $_gty1 < $_gmw} {
+              puts "POWERPLAN: PG residue -- SKIP staircase $_ml at ($_bx1 $_by1):\
+                    the wire is only [format %.3f [expr {$_gty2-$_gty1}]] um\
+                    tall, under min width $_gmw -- squaring it would trade a\
+                    min-step for a min-width"
+            } else {
+              if {$_gside eq "right"} {
+                  set _gx1 $_gtx2 ; set _gx2 $_bx2
+              } else {
+                  set _gx1 $_bx1  ; set _gx2 $_gtx1
+              }
+              set _gls 0 ; catch { set _gls [get_db [get_db layers $_ml] .min_spacing] }
+              if {$_gls eq "" || $_gls <= 0} { set _gls $_gmw }
+              set _gfn [_pgr_nets_in $_ml $_gx1 $_gty1 $_gx2 $_gty2 $_gls]
+              set _gff 0
+              foreach _n $_gfn {
+                  if {$_n ne $_gnet} { set _gff 1 }
+              }
+              if {$_gff} {
+                puts "POWERPLAN: PG residue -- SKIP staircase $_ml at ($_bx1 $_by1):\
+                      pushing the $_gside flank out comes within $_gls um of\
+                      net(s) $_gfn"
+              } else {
+                set _gcand [list $_ml $_gnet $_gx1 $_gty1 $_gx2 $_gty2 staircase]
+                if {[lsearch -exact $_pgr_add $_gcand] < 0} {
+                  lappend _pgr_add $_gcand
+                  puts [format "POWERPLAN: PG residue -- MIN-STEP STAIRCASE %s %s squaring the %s flank of (%.3f %.3f)-(%.3f %.3f) by %.3f um, patch (%.3f %.3f)-(%.3f %.3f)" \
+                        $_ml $_gnet $_gside $_gtx1 $_gty1 $_gtx2 $_gty2 $_gfw \
+                        $_gx1 $_gty1 $_gx2 $_gty2]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
 }
 
 set _pgr_sites [expr {[llength $_pgr_kill] + [llength $_pgr_weld] \
-                      + [llength $_pgr_fill] + [llength $_pgr_trim]}]
+                      + [llength $_pgr_fill] + [llength $_pgr_trim] \
+                      + [llength $_pgr_add]}]
 puts "POWERPLAN: PG residue -- [llength $_pgr_kill] dead island(s),\
       [llength $_pgr_weld] same-net gap(s), [llength $_pgr_fill] min-step\
-      notch(es), [llength $_pgr_trim] stub trim(s), $_pgr_sites site(s) total"
+      notch(es), [llength $_pgr_trim] stub trim(s), [llength $_pgr_add]\
+      added shape(s), $_pgr_sites site(s) total"
 
 if {$_pgr_sites > $_pgr_cap} {
     error "power_plan: PG residue found $_pgr_sites sites but the cap is\
@@ -2016,11 +2438,17 @@ foreach _c $_pgr_trim {
         -shape blockwire -status routed
 }
 
+## Cases E, F and G: one new object each, all of them pure additions.
+foreach _c $_pgr_add {
+    lassign $_c _cl _cn _qx1 _qy1 _qx2 _qy2 _ctag
+    create_shape -net $_cn -layer $_cl -rect [list $_qx1 $_qy1 $_qx2 $_qy2] \
+        -shape blockwire -status routed
+}
 set _pgr_sw1 0
 foreach _n [get_db pg_nets] { incr _pgr_sw1 [llength [get_db $_n .special_wires]] }
 ## kill -1 each, weld +1 each, fill +1 each, trim -1 then +1 = 0 each.
 set _pgr_expect [expr {$_pgr_sw0 - [llength $_pgr_kill] + [llength $_pgr_weld] \
-                       + [llength $_pgr_fill]}]
+                       + [llength $_pgr_fill] + [llength $_pgr_add]}]
 puts "POWERPLAN: PG residue -- PG special wires $_pgr_sw0 -> $_pgr_sw1\
       (expected $_pgr_expect)"
 if {$_pgr_sw1 != $_pgr_expect} {
@@ -2047,8 +2475,10 @@ if {$_pgr_sites > 0 && $_pgr_m1 >= $_pgr_m0} {
 
 unset _pgr_sw0 _pgr_sw1 _pgr_expect _pgr_m1
 }
-unset _pgr_kill _pgr_weld _pgr_fill _pgr_trim _pgr_claim _pgr_sites
+unset _pgr_kill _pgr_weld _pgr_fill _pgr_trim _pgr_claim _pgr_add _pgr_sites
 unset _pgr_m0 _pgr_mk _pgr_pg _pgr_eps _pgr_gapmax _pgr_areamax _pgr_cap
 unset _pgr_stepmax _pgr_trimmax _pgr_dry
+unset _pgr_widegap _pgr_widerun _pgr_widenmax _pgr_widenmargin
+unset _pgr_sqmaxw _pgr_sqwin
 }
 unset _pgr_on
