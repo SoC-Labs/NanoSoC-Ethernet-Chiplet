@@ -262,9 +262,17 @@ class Report:
 
     # -- RULE 1 ------------------------------------------------------------
     def counts(self):
+        """KNOWN-BAD counts the section-7 list, not only gate rows.
+
+        A headline reading `0 KNOWN-BAD` above a section 7 listing two accepted
+        defects is a report disagreeing with itself, which is the exact thing
+        this document exists to stop. A deliberately-accepted defect is a
+        verdict about the design whether or not a gate row happens to carry
+        it."""
         c = {v: 0 for v in VERDICTS}
         for g in self.gates:
             c[g.verdict] += 1
+        c[KNOWN_BAD] += len(self.known_bad)
         return c
 
     def signed_off(self):
