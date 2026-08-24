@@ -100,14 +100,40 @@ voltus.cmd*
 # and must not reach a public repository; the scripts and frozen inputs beside
 # it are ours and stay tracked.
 ASIC/genus-innovus/rail/work/
+# Generated EM model files. gen_em_ict.py derives these from the TSMC tech LEF,
+# so their contents ARE vendor current-density data reproduced verbatim - the
+# same reason rail/work/ is ignored above (pg_capacity prints DCCURRENTDENSITY
+# out of the same LEF). The GENERATOR is tracked; its output is not. Rebuild
+# with: gen_em_ict.py --lef <tlef> --volcano <em.rules> --out <path>
+ASIC/genus-innovus/rail/inputs/*.ict
+
 
 # ── Calibre / Mentor LVS+DRC, Synopsys IC Validator ─────────────────────────
 ASIC/*/calibre_runs
+# ERC run directories, same shape and same reason as calibre_runs above: Calibre
+# writes the whole database beside the deck. One run measured 92 MB.
+ASIC/*/erc_runs
 ASIC/imec_results
 # v2lvs netlist-translation log, written wherever the LVS flow is invoked from;
 # one run of it reached 86 MB. The flow that produces it (ASIC/lvs-flow) IS
 # tracked.
 v2lvs.log
+
+# ── Streamed GDS and its backups ────────────────────────────────────────────
+# ASIC/submissions/ holds the streams handed to the foundry/broker. Measured
+# 1.2 GB across four dry-run streams, and a GDS is a BUILD OUTPUT: it is
+# reproducible from the flow, it is rewritten on every run, and it embeds its
+# own write clock so two streams of identical layout never hash the same. What
+# IS tracked is the .md provenance note beside each one, which is the part a
+# reader needs and the part git can usefully diff.
+ASIC/submissions/*.gds
+ASIC/submissions/*.gds.gz
+ASIC/submissions/*.oas
+!ASIC/submissions/*.md
+# Pre-repair backups of the logo stream, written beside the original by
+# repair_logo_seam.py. The repaired .gds IS tracked; the backup is recoverable
+# by re-running the script and is not a second source of truth.
+*.gds.pre-seam-repair
 # IC Validator licence/session droppings.
 .icv.*
 
