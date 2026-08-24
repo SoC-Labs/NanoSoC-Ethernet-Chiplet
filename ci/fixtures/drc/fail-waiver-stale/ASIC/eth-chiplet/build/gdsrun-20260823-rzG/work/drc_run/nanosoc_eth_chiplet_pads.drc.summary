@@ -1,0 +1,21 @@
+
+
+==================================================================================
+=== CALIBRE::DRC-H SUMMARY REPORT
+===
+Execution Date/Time:       Mon Aug 17 15:40:11 2026
+Calibre Version:           v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+Layout Primary Cell:       nanosoc_eth_chiplet_pads
+Maximum Results/RuleCheck: 1000
+==================================================================================
+
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS
+---
+RULECHECK PO.R.8 ........................ TOTAL Result Count = 12   (12)
+
+----------------------------------------------------------------------------------
+--- RULECHECK RESULTS STATISTICS (BY CELL)
+---
+CELL rf_08kCNTRL_RECOMPILED ................... TOTAL Result Count = 12   (12)
+    RULECHECK PO.R.8 .................... TOTAL Result Count = 12   (12)

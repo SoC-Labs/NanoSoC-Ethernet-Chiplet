@@ -1,0 +1,48 @@
+# TRIMMED real transcript. Full run was 53423 lines (Calibre's
+# per-cell extraction noise); head + tail kept, verdict untouched.
+# Real run: 2026-08-18, VDDIO/VSSIO route_special fix applied to
+# fp1505's routed DB via a read-only replay (see docs/tapeout/
+# 51-erc-pg-labels.md section 5.5). rc=0.
+#
+== ERC preflight ==
+  OK      calibre  /eda/mentor/calibre/bin/calibre
+  OK      /tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/calibre.lvs
+  OK      klayout  /home/dam1n19/bin/klayout   (used by --quick and top-cell auto-detect)
+[32m== ERC preflight OK ==[0m
+== Calibre ERC (standalone, dummy source — no schematic compare) ==
+  gds       : /tmpdir/claude-74755/-home-dam1n19-SoCLabs-nanosoc-ethernet-chiplet/4eb56c27-f002-4912-b97b-c0b0265fe3e3/scratchpad/erc_vddio_fix/nanosoc_eth_chiplet_pads_vddiofix.gds
+  top cell  : nanosoc_eth_chiplet_pads
+  deck      : /tsmc65pdk/65/CMOS/LP/pdk/Calibre/lvs/calibre.lvs
+  rundir    : /tmpdir/claude-74755/-home-dam1n19-SoCLabs-nanosoc-ethernet-chiplet/4eb56c27-f002-4912-b97b-c0b0265fe3e3/scratchpad/erc_vddio_fix/erc_run_fixed
+  power     : [VDD VDDIO]
+  ground    : [VSS VSSIO]
+  timeout   : 1800s
+INFO: timeout 1800s calibre -lvs -hier -64 -turbo 8  /tmpdir/claude-74755/-home-dam1n19-SoCLabs-nanosoc-ethernet-chiplet/4eb56c27-f002-4912-b97b-c0b0265fe3e3/scratchpad/erc_vddio_fix/erc_run_fixed/run.deck
+
+[... 53370 lines of Calibre extraction transcript elided ...
+ full transcript: docs/tapeout/51-erc-pg-labels.md section 5.5 ]
+
+--- CIRCUIT EXTRACTION REPORT FILE = /tmpdir/claude-74755/-home-dam1n19-SoCLabs-nanosoc-ethernet-chiplet/4eb56c27-f002-4912-b97b-c0b0265fe3e3/scratchpad/erc_vddio_fix/erc_run_fixed/nanosoc_eth_chiplet_pads.lvs.rep.ext
+--- PERSISTENT HIERARCHICAL DATABASE(PHDB) = svdb/nanosoc_eth_chiplet_pads.phdb
+--- QUERY DATABASE = svdb  TOP CELL = nanosoc_eth_chiplet_pads
+--- TOTAL RULECHECKS EXECUTED = 6
+--- TOTAL RESULTS GENERATED = 0 (0)
+--- ERC RESULTS DATABASE FILE = calibre_erc.db (ASCII)
+--- ERC SUMMARY REPORT FILE = calibre_erc.sum
+
+--- GRAND TOTAL NON-HYPER + LVS COMPARE TOTAL  CPU TIME = 132  REAL TIME = 140  LVHEAP = 270 MALLOC = 398
+
+== calibre exit status: 4 (informational — the compare is not read; only the ERC summary is) ==
+
+== Calibre verdict (PATHCHK POWER/GROUND + the deck's own per-name check) ==
+[32m  OK — Calibre found at least one resolving power name and one resolving[0m
+  ground name, and none of [VDD VDDIO] / [VSS VSSIO] hit the deck's own
+  no-data list (that list only covers the foundry's generic supply names —
+  see the caveat above klayout_missing_names() for which names it can't see).
+
+== Structural cross-check (klayout, independent of the deck's PATHCHK/
+   POWER_NAME-GROUND_NAME universe): does EACH of [VDD VDDIO] / [VSS VSSIO]
+   have text anywhere in the top cell? ==
+[32m  OK — every declared name has top-cell text.[0m
+
+[32m== OVERALL: OK — labels present and resolved for [VDD VDDIO] / [VSS VSSIO]. ==[0m
