@@ -9,14 +9,36 @@
 # THREE THINGS THIS WORKFLOW DOES DELIBERATELY DIFFERENTLY FROM ITS NEIGHBOURS
 #
 #   1. IT DOES NOT FETCH ANY SUBMODULE. `vendor-guard.yml` fails on EVERY run
-#      at "Fetch the content scanner (ASIC/asic-toolkit)", and the cause is not
-#      the token: MEASURED 2026-08-25, the pinned toolkit commit is 22 commits
-#      ahead of the toolkit's origin/main and has never been pushed, so
-#      `git submodule update` cannot resolve it however it authenticates.
-#      run_report.py imports only from scripts/ci/ and the standard library, so
-#      this workflow checks out with submodules:false and cannot inherit that
-#      failure. If you add a step here that needs the toolkit, you have
-#      re-acquired it.
+#      at "Fetch the content scanner (ASIC/asic-toolkit)", for TWO independent
+#      reasons, both measured 2026-08-25 and both of which had to be true at
+#      once for the failure to look as confusing as it did:
+#
+#        a. the pinned toolkit commit was 22 commits ahead of the toolkit's own
+#           origin/main and had never been pushed, so no clone could check it
+#           out however it authenticated. FIXED: toolkit pushed 56f8749..e42355a
+#           and the pin advanced to match.
+#
+#        b. SUBMODULE_TOKEN cannot read the toolkit repository. With the pin
+#           fixed, the very next run still failed, and the log is unambiguous:
+#
+#               remote: Write access to repository not granted.
+#               fatal: ... nanoSoC-ASIC-Toolkit.git/': error: 403
+#
+#           That is GitHub's 403 for a token with NO access to the repo, not a
+#           complaint about write permission. STILL OPEN: it needs the PAT (or
+#           a GitHub App / deploy key) granted read access to
+#           SoC-Labs/nanoSoC-ASIC-Toolkit. Nothing in this repository can fix
+#           it; it is a credential-scope change.
+#
+#      Fixing (a) was necessary and not sufficient, and it is worth saying so
+#      plainly: the pin being unpushed was a real defect that would have failed
+#      on its own, and it masked (b) completely.
+#
+#      This workflow inherits NEITHER. run_report.py imports only scripts/ci and
+#      the standard library -- PROVEN by moving ASIC/asic-toolkit out of the
+#      tree entirely and re-running: identical output, 179 values measured. So
+#      it checks out with submodules:false and needs no token at all. If you add
+#      a step here that touches the toolkit, you have re-acquired both.
 #
 #   2. IT REFUSES RATHER THAN GUESSES THE RUN. `collect-results.py` resolves
 #      RUN_TAG through make and silently defaults to `default` -- an August 13
