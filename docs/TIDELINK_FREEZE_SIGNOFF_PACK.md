@@ -149,6 +149,78 @@ The sim gate is an additional claim, not the load-bearing one.
 replace the 59 status files, or strike the sim-gate row from the signoff block.
 Do not sign the pack with this row reading green and unqualified.
 
+**⚠ A CLEAN TIDELINK CHECKOUT IS NOT SUFFICIENT, AND THE OBVIOUS ATTEMPT PRODUCES A
+FALSE GREEN.** Measured 2026-08-24. The gate reaches outside the tidelink tree:
+
+```
+cocotb/tidechart_tidelink_pair/Makefile:23   TIDECHART_HOME ?= $(realpath $(TIDELINK_HOME)/../tidechart)
+cocotb/tidechart_tidelink_pair/Makefile:24   CHIPLET_HOME   ?= $(realpath $(TIDELINK_HOME)/../nanosoc-ethernet-chiplet)
+
+td-bisect/nanosoc-ethernet-chiplet -> /home/dam1n19/SoCLabs/nanosoc-ethernet-chiplet   SYMLINK
+td-bisect/tidechart               -> /home/dam1n19/SoCLabs/tidechart                   SYMLINK
+```
+
+In `td-bisect/baseline-5e8bdb5a` — the natural clean worktree — those siblings **exist
+as symlinks into the live working tree** (`1ef68f1`, `feat/padring-boundary-scan`, 26
+modified/untracked files, mutating continuously). `realpath` succeeds, no error is
+raised, and the gate compiles **frozen tidelink RTL against dirty chiplet RTL** — a
+combination that exists on no branch anywhere. That is exactly the defect §4b exists
+to rule out, so a naive re-run would not fail to close §4b; **it would close it with a
+false green.**
+
+**The failure is silent in one direction only, and it is the dangerous one.** With the
+siblings *absent*, `realpath` returns empty, the dep-check sees a leading-slash path
+(`/src/rtl/tidechart_shim.sv`) and ~5 suites abort at 0s with `MISSING DEPENDENCY` —
+loud, visible, and structurally incapable of reflecting an RTL change. With the
+siblings *present but wrong*, there is no error at all. **Absent path → visible red.
+Present-but-wrong path → invisible pass.**
+
+**Requirements for a run that actually closes §4b:**
+1. Set `CHIPLET_HOME` and `TIDECHART_HOME` **explicitly**, to checkouts at committed
+   SHAs (chiplet pinning `5e8bdb5a`). Never let them default.
+2. **Record which chiplet SHA was used** in the result. A gate result without it is
+   not evidence.
+3. Confirm each FAIL **elaborated** before believing it — an abort at 0s is a null
+   result, not a failure.
+4. Beware label≠target: `sim_gate_tc_pair_smoke` does not exist; the target is
+   `sim_gate_tc_smoke` (likewise `_eth_m0`/`_eth_m1`/`_eth_shape_a`/`_tc_election`).
+   A wrong label gives exit 2 = `No rule to make target` = **tested nothing**, which
+   reads exactly like a real failure.
+
+**MEASURABLE — the fix is smaller than it looks (2026-08-24).** `CHIPLET_HOME` has
+exactly **one** consumer:
+
+```
+cocotb/tidechart_tidelink_pair/Makefile:40   VERILOG_SOURCES += $(CHIPLET_HOME)/src/rtl/tidechart_shim.sv
+```
+
+One file. **No chiplet checkout, worktree or build is required** — extract it from the
+commit (`git show 1ef68f1:src/rtl/tidechart_shim.sv`, md5 `ddd655f7ab6dbe3a62b3e5d25fbb4377`,
+verified byte-identical to the live worktree copy, which is clean at HEAD).
+
+**And the chiplet was never the uncontrolled input.** `tidechart_shim.sv` is clean at
+HEAD, so the two observed FAILs did not elaborate against a mutating file. The
+uncontrolled input was the *other* variable:
+
+```
+chiplet HEAD pins tidechart:   4b4b89820ab1
+TIDECHART_HOME resolved to:    /home/dam1n19/SoCLabs/tidechart  =  b5102b277c40, 84 DIRTY FILES
+```
+
+Wrong commit **and** dirty. `tidechart_shim.sv:194` connects `.device_strap(device_strap)`
+into a tidechart module that lacks the port at `b5102b27` — hence `Error-[UPIMI-E]` after
+~5 s of real elaboration. **That is a pin mismatch, not an external failure and not a
+dependency abort.** Five clean tidechart checkouts sit at exactly `4b4b8982`; the one
+safe to use (a real directory, not a worktree of this repo) is
+`td-bisect/ethchip-pinbump-2026-08-19/tidechart`.
+
+    make sim_gate \
+      CHIPLET_HOME=<dir containing src/rtl/tidechart_shim.sv extracted from 1ef68f1> \
+      TIDECHART_HOME=/home/dam1n19/SoCLabs/td-bisect/ethchip-pinbump-2026-08-19/tidechart
+
+**Record the triple with the result — chiplet `1ef68f1` / tidechart `4b4b8982` / tidelink
+`5e8bdb5a`.** A gate result that does not name all three is not evidence for this row.
+
 ## 5. Hardware re-validation ON THE FROZEN POINTER
 
 Vehicle `kr260-eth-chiplet` (die_a kr260-01, die_b kr260-02 flip). **Rebuilt from the frozen pin —
@@ -169,6 +241,76 @@ citing the 2026-08-20 pre-fold A/B is NOT acceptable here** (decision 3).
 results at `fcsm=4` on BOTH dies. A run at any other link state is VOID, not a negative result.
 
 ### 5b. Cross-die READ is NOT validated — the significant finding of 2026-08-21
+
+> ## ⚠⚠ RETRACTED 2026-08-24 — THE READ-FAILURE CORPUS BELOW IS LARGELY AN SSH TRANSPORT ARTEFACT
+>
+> **The three `mismatch @100` failures are not DUT failures.** Found by tidelink-92,
+> verified here independently from the archive and the harness source.
+>
+> **The archived signature cannot be a data mismatch.** From `RESCUE_2026-08-22/evidence/`,
+> read with `repr()` rather than printed:
+>
+> ```
+> sysval_a4.json   detail = 'read mismatch @100: '
+> sysval_a5.json   detail = 'read mismatch @100: '
+> sysval_a6.json   detail = 'read mismatch @100: '
+> ```
+>
+> The text after the colon is `out[:80]` and it is **empty**. A real mismatch cannot produce
+> that: `read_chunk` prints `READCHUNK .. firstbad idx.. got0x.. exp0x..` and exits 1, so
+> `out` would be non-empty *and* contain `READCHUNK`. Empty output with a non-zero rc is a
+> command that **never ran**.
+>
+> **The harness conflates transport failure with data mismatch, and discards the evidence
+> twice** (`tidelink/pynq_host/scripts/kr260_sysval.py`):
+>
+> ```python
+> :58   cmd = "cd td && echo %r | sudo -S python3 %s %s 2>/dev/null" % (PW, BOARD, args)
+> :60   return rc, out.strip()                    # err DISCARDED
+> :238  if rc != 0 or "READCHUNK" not in out:
+>           record("T10_read_soak", "FAIL", "read mismatch @%d: %s" % (start, out[:80]))
+> ```
+>
+> `2>/dev/null` throws away the remote stderr; `return rc, out.strip()` throws away ssh's
+> own stderr — where `Connection reset by peer` would appear. `rc == 124` is handled as a
+> timeout, but **`rc == 255` falls into the generic branch and is labelled "read mismatch"**.
+> There is no `ControlMaster`: **every board call opens a fresh ssh connection.** The board
+> runs `maxstartups 10:30:100` with `logingracetime 120`, so past 10 pending connections
+> ~30% are randomly reset, each slot held up to 120 s.
+>
+> **The corroborating detail is already in the table below:** run 3 is recorded VOID with
+> `deploy rc=255`. The harness *did* surface the transport failure at the deploy step — it
+> simply could not do so in the read path, because that branch relabels it.
+>
+> **Discriminating experiment (tidelink-92, same bus traffic, differing only in connection
+> churn):** fresh-ssh-per-call → **3 PASS / 3 FAIL**; one reused connection → **6 PASS / 0
+> FAIL**, 128 words byte-exact. Plus 108 chunked cross-die readbacks across 9 bring-ups with
+> **zero** read failures, and a chunk sweep at 24/24 for CHUNK ∈ {30, 50, 100, 128} —
+> including CHUNK=128, which has **zero** mid-read CAM seams.
+>
+> **INVALIDATED:** the "2 PASS / 4 FAIL" corpus as evidence of a DUT defect, and any
+> conclusion resting on it. The original "CHUNK=30 passed, CHUNK=50 failed 1-in-4" was n=1
+> per setting against a random ~30% connection-drop process.
+>
+> **NOT INVALIDATED — hold this line precisely:**
+> - **The TL-027 `w_inc` CDC defect** (§5e). Proven in *simulation*, independent of any
+>   hardware run. **Mechanism real; causation to the field withdrawn.**
+> - **The single obs-word capture** in which the register *changed* —
+>   `0xB5000001 → 0xB5000600`, bit[9] 0→1, bit[0] 1→0. **An ssh reset cannot fabricate a
+>   changed register value**; that read succeeded and returned different bits. One genuine
+>   park may have occurred. This is now the strongest read-side datapoint we have and it
+>   should be **re-taken with a fixed harness, not discarded.**
+>
+> **Consequence:** cross-die read remains **NOT VALIDATED** — but for a different and weaker
+> reason than this section originally claimed. It is unvalidated because *the instrument was
+> unsound*, not because failures were observed. Those are very different findings, and only
+> the second would have been a defect.
+>
+> **Fix the harness before anything leans on it again:** keep stderr, distinguish `rc=255`
+> from a data mismatch, add `ControlMaster`. Then re-run the corpus. **T6 endurance needs the
+> same check** — 2 of 8 archived runs "failed at beat 1024", a fixed connection ordinal with
+> the same empty-output signature.
+
 
 Six sysval runs on the frozen pointer (one clean, one bad-eye, one void, three POR-recovered):
 
@@ -294,6 +436,149 @@ independent bring-ups. Rig-only, no rebuild needed.
 
 T6 having never passed is unaffected and is now primary-source verified: 0 PASS across every
 artefact.
+
+### 5d. ⚠ CORRECTION — cross-die reads ARE reachable by a shipping-path master
+
+**Recorded 2026-08-24. An earlier assessment in this project concluded "nothing on a
+shipping path reads cross-die" and used it to justify shipping the read defect. That
+conclusion was WRONG and is retracted here.**
+
+What the earlier analysis actually established: *no shipping firmware currently issues
+a cross-die read.* That is true — `NANOSOC_D2D_PEER_BASE` has zero consumers, ethernet
+BDs point at local scratch, PTP arrives as pushed wires, TideChart's bus master is
+write-only and not instantiated.
+
+**What the tapeout default requires is different: that no shipping-path master CAN.**
+It can. Verified in the generated interconnect and the decode:
+
+    multicore_ahb_interconnect.v:39-44   _DMAC_0_M -> ..., _D2D, ...   (5 initiators reach D2D)
+                                         _D2D_M -> _SHARED_SRAM_0, _IPC_MAILBOX_0  (inbound only)
+    multicore_matrix_decode_DMAC_0_M.v   0x2e000000-0x2fffffff -> MI12
+    chiplet_d2d_decode.sv:200            hsel_peer = xfer & a_peer      <- NO hwrite term
+    chiplet_d2d_decode.sv:228            hsel_peer ? DPH_PEER           <- read data returned
+
+**The matrix decodes by ADDRESS BITS, never by symbol.** The DMA-250 and the ETHMAC DMA
+both carry runtime-programmable source addresses; the peer decode is not write-qualified;
+and the DMA's 32-bit source-address field is in the taped-out netlist with no address
+filter. A DMA descriptor, an ethernet TX buffer descriptor, a CPU1 load, or a debugger
+over SWD all reach it.
+
+A documentation bug likely seeded the error: `nanosoc_multicore_addrmap.h:482` asserts
+*"Only CPU0 (network_core) can reach it"* — the generated RTL contradicts its own header.
+
+**Consequence for the shipping decision.** The schedule argument is untouched and remains
+the operative reason to ship as frozen: every GDS run since 21 Aug is seeded from one
+synthesis keyed on the flist hash, and re-synthesis must start by 27 Aug to finish. But
+the risk side is no longer "the defect is on an unreachable path" — it is **a live,
+programmable path that no configuration prevents**. Anyone weighing this must weigh it
+that way.
+
+**The reusable lesson:** reachability is a property of the address decode, not of the
+symbol table. "No caller exists" and "no caller can exist" are different claims, and
+only the second licenses shipping a defect as unreachable.
+
+### 5e. The `w_inc` self-heal is now PROVEN as a mechanism — on all five nodes
+
+Recorded 2026-08-24. The a2l CDC self-heal half of the AR/R fix, previously unproven on
+every node including the three that ship, has been demonstrated in the existing two-clock
+bench:
+
+    NODE=7 override (w_inc = 1'b1)   PASS
+    NODE=7 deps     (w_inc = edge)   FAIL -- 8/8 ACKs lost PERMANENTLY
+    link-clk a2l_link_addr = [2,2,...]   app-clk synced ack STUCK at [1,1,...]
+
+All five data-plane nodes, both arms, with a must-be-present control delivering 12/12 in
+the same runs. The earlier header claim that "idle single-clock sim never tears -> silicon
+verifies w_inc" was wrong about its own bench, which already had independent `app_clk` and
+`link_clk`.
+
+**Scope, stated deliberately:** this proves the MECHANISM exists and the fix addresses it.
+**Causation to any observed silicon read failure remains OPEN** — the fix predicts a wedge
+and the dominant observed signature is a data mismatch.
+
+### 5f. Standing caveat on EVERY rig-sourced read result
+
+The rig and the ASIC ship opposite CRC configurations on the R node:
+
+    rig  (tidelink_fpga_v2.flist)          disable_crc <= 1'h1   CRC OFF
+    ASIC (tidelink_top_full_asic_v2.flist) disable_crc <= 1'h0   CRC ON
+
+With CRC off a corrupted read packet is **committed silently** — no NACK, no counter, no
+flag. Every read measurement in this pack was taken in the OFF configuration. Silicon will
+detect and NACK the same event, so rig read results do not transfer, in either direction.
+
+**SECOND STANDING CAVEAT — the transport (added 2026-08-24, see §5b).** Every result sourced
+from `kr260_sysval.py` was taken through a harness that opens a **fresh ssh connection per
+board call** against a board configured `maxstartups 10:30:100`, and that **relabels
+`rc=255` as a data mismatch** while discarding both stderr streams. Until that is fixed:
+
+- **A sysval FAIL is not evidence of a DUT defect** unless the recorded detail contains
+  actual data (`READCHUNK ... got0x... exp0x...`). **An empty detail string means the
+  command never ran.**
+- **A sysval PASS is still trustworthy** — the transport failure mode destroys results, it
+  does not fabricate byte-exact ones.
+
+**The asymmetry matters: this caveat invalidates reds, not greens.** Do not let it be used
+to discount a passing result, and do not let a red be quoted from this corpus without
+checking its detail string first.
+
+### 5g. ⚠ BUILD PROVENANCE IS FAIL-OPEN — "built from the freeze" stamps are UNVERIFIED
+
+**Every `git_dirty: false` FPGA manifest predating tidelink `df0f1f24` is UNVERIFIED, not
+verified.** Found 2026-08-24 by tidelink-92, mechanism reproduced here.
+
+`tidelink/fpga/scripts/build_provenance.tcl:76`:
+
+```tcl
+if { ![catch { exec git -C $root status --porcelain } st] && [string trim $st] ne "" } {
+    set dirty "-dirty"
+}
+```
+
+In a worktree whose `deps/*` are symlinks, `git status` exits **128**
+(`error: expected submodule path 'deps/axi-chiplet-controller' not to be a symbolic link`).
+The `catch` swallows the failure, the `&&` short-circuits, and **failure-to-evaluate is
+written out as CLEAN — silently, with no warning.** Measured, same commit, opposite verdicts:
+
+| tree | `git status` | stamped |
+|---|---|---|
+| `hostio-wt/tidelink` | rc=128 | `git_dirty: false` ❌ |
+| `nanosoc-ethernet-chiplet/tidelink` | rc=0, 2 untracked | `git_dirty: true` ✅ |
+
+The strongest instance: `imp/fpga/output/kr260-pair-onchip` (2026-07-24) stamps
+`source_commit: "unknown"` **and** `git_dirty: false` — a build whose commit git could not
+determine, recorded clean. Both fields derive from one proc (`:296`), so this is **one root
+cause, not two bugs**.
+
+**Consequence for this pack: there is no genuinely-clean `5e8bdb5a` eth-chiplet FPGA build on
+this host. The honest ones are dirty at the same commit.** This does not change the tapeout
+answer — it devalues the evidentiary standing of every "built from the freeze" claim,
+including ones made here. Fixed upstream in `df0f1f24` (`rev2/hygiene`, unpushed).
+
+**This is the third independent fail-open in the provenance chain**, alongside the gitignored
+XHB500 tree (§3b) and the GDS runs' symlinked `scripts`/`inputs`. The pattern is the finding:
+**three separate mechanisms each score "could not determine" as "clean".**
+
+### 5h. The rule these corrections produced
+
+Two reachability errors were made this week — one on each die, by different sessions, with the
+same shape. §5d: "no caller exists" was used to support "no caller can exist", stopping at the
+symbol table instead of the address decode. On the compute die: `ahb_sub_hprot` was traced as a
+straight passthrough and called a live freeze-blocker, stopping at the passthrough instead of
+the guard one file upstream (`nanosoc_compute_chiplet.sv:366`, whose rejection logic sits
+**outside** the `` `ifndef SYNTHESIS`` at `:400-417` and therefore synthesizes).
+
+Both traced a path until it confirmed the expected answer, then stopped. The rule, in
+tidelink-92's words:
+
+> **A reachability claim is not finished at the hop that confirms it — it is finished at the
+> hop that could refute it.**
+
+**Corollary for the twins, undocumented in either repo until now: the two dies are protected
+against different halves of the same defect.** This die ties `ahb_sub_hprot[3:2]=00`
+(`nanosoc_eth_chiplet.sv:995`), forcing `singles_burst=1` on reads **and** writes at the cost
+of all burst performance. The compute die guards **writes only**, leaving cacheable-burst
+reads on an XHB500 arm that has never executed in any test at any commit on either die.
 
 ## 6. Known limitations shipping with this freeze
 
