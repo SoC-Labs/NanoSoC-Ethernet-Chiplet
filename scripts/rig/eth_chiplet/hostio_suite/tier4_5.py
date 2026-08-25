@@ -33,6 +33,8 @@
 #
 # ENVIRONMENT (all optional; every one of them defaults to "skip, and say so")
 #   HOSTIO_PHC_CORE_HZ      HIO-404 expected PHC core clock (default 250000000).
+#   HOSTIO_TIMER_RELOAD     HIO-406 timer reload (default 0x18000000). Raise it if
+#                           the link is slow -- see the sizing note at the constant.
 #   HOSTIO_PEER_DIE=1       HIO-413: a peer die is powered, has passed its own
 #                           Tier 0-1, and a human is watching.  The harness
 #                           cannot verify any of that, so it must be asserted.
@@ -127,6 +129,15 @@ ETHMAC_BASE = 0x40000000          # UNREACHABLE from debug_m (measured R!) -- HI
 # Budgets and windows.
 # -----------------------------------------------------------------------------
 POLL_BUDGET = 0x00100000          # 1 M poll reads; ~tens of ms on-die
+# HIO-406 sizing.  The floor on "arm the timer, then start polling" is ~2 CU of
+# link (~130 ms measured), so a reload must be MANY times the count the clock
+# racks up in that window or the timer parks at 0 before the poll's first read
+# and every count comes back as 1.  0x18000000 is ~1.6 s at 250 MHz, ~4 s at
+# 100 MHz -- an order of magnitude clear of the link.  Override for a slow link.
+TIMER_RELOAD_A = 0x18000000
+TIMER_RELOAD_B = 0x30000000       # exactly 2x, so the counts must scale with it
+TIMER_POLL_BUDGET = 0x20000000    # must exceed reload_b / (cycles per poll read)
+TIMER_POLL_TIMEOUT_MS = 45000     # the poll cannot finish before the timer does
 POLL_BUDGET_SMALL = 0x00000010    # HIO-401's discrimination pair
 POLL_TIMEOUT_MS = 12000           # host-side; a 1 M-iteration poll is on-die fast
 CMD_TIMEOUT_MS = 4000
@@ -452,60 +463,118 @@ def hio_401(adp, rec):
 
 
 @test("HIO-402", tier=4, hazard=None,
-      purpose="The fabric clock is running. Two P0_CYC reads bracketed by a "
-              "host-measured interval; PASS = a non-zero advance whose implied "
+      destroys="the perf-probe SHADOW set (two SNAP pulses). The live counters are "
+               "NOT touched -- only CLR zeroes those, and CLR is HIO-307's to issue",
+      purpose="The fabric clock is running. Two SNAP-latched P0_CYC samples bracketed "
+              "by a host-measured interval; PASS = a non-zero advance whose implied "
               "frequency is physically plausible. This is the ONE test that "
               "distinguishes 'the die is clocked' from 'the die is latched' -- with a "
               "stopped HCLK every other test in this plan still 'works' (registers "
-              "hold their values, reads return data) and only this one goes red. "
-              "Goes red on delta == 0 (clock stopped) or an implausible rate.")
+              "hold their values, reads return data) and only this one goes red. It "
+              "goes red ONLY on a counter that has demonstrably counted and then "
+              "stopped; the two not-counting signatures (static zero, saturated) are "
+              "SKIPs, because this register alone cannot tell a disabled or "
+              "reset-held probe from a stopped fabric.")
 def hio_402(adp, rec):
-    # The plan calls P0_CYC saturating and warns of a false-fail once it saturates.
-    # The RTL says otherwise: ahb_perf_probe.v:120 is an unconditional
-    # `cyc_q <= cyc_q + 1` with no saturation term, so the counter WRAPS modulo
-    # 2^32 -- about every 43 s at 100 MHz, 17 s at 250 MHz.  That makes the plan's
-    # "strictly increasing over ~5 s" criterion flaky by construction (a wrap
-    # inside the window reads as a decrease), so this test uses a short interval,
-    # modulo arithmetic, and a plausibility band instead.  The saturation case is
-    # still handled explicitly below in case a build differs from this RTL.
-    r1 = _rd(adp, PERF_P0_CYC)
+    # THE TRAP THIS TEST IS BUILT AROUND, measured on the live FPGA die 2026-08-25
+    # and then run to ground in the RTL:
+    #
+    #   0x2C200040 cold  -> 0x00000000 twice     (looks like a dead clock)
+    #   after a SNAP     -> 0xFFFFFFFF three times (looks like a stuck register)
+    #
+    # Both readings come from a HEALTHY, fully clocked die.  The block here is
+    # ctrl_ahb_perf_probe_regs (ID "PRF1" = 0x50524631, matching the measurement),
+    # NOT the ahb_perf_probe_regs of the same name elsewhere in the tree:
+    #   * its readout returns SHADOW registers, frozen until CTRL[0] SNAP
+    #     (ctrl_ahb_perf_probe_regs.v:23-32).  A cold die has never been snapped,
+    #     so the shadow reads 0 -- that is the correct cold value, not a fault.
+    #   * its live counters SATURATE, holding at CNT_MAX
+    #     (ctrl_ahb_perf_probe.v:184: cyc_q <= (cyc_q == CNT_MAX) ? CNT_MAX : +1).
+    #     At 100 MHz full scale is 43 s, so ANY die up for a minute reads
+    #     0xFFFFFFFF -- which is positive evidence the clock RAN, not that it stopped.
+    #   * CTRL is write-only and self-clearing, so CTRL reading back 0x00000000
+    #     after a write is correct (that asymmetry is HIO-307's subject).
+    # The plan's "it is saturating" caveat was right; an earlier revision of this
+    # file cited ahb_perf_probe.v:120 (an unconditional +1, i.e. wrapping) to
+    # contradict it -- that is a DIFFERENT, non-instantiated block (ID "PRF"+0x01).
+    pre = _rd(adp, PERF_P0_CYC)
+    rec.record("p0_cyc_shadow_before_any_snap", pre.value)
+    rec.check("P0_CYC readable", _good(pre), got=pre.raw)
+    if not _good(pre):
+        return
+
+    w1, r1 = _perf_snapshot(adp)
     t1 = time.monotonic()
-    rec.check("P0_CYC readable", _good(r1), got=r1.raw)
-    if not _good(r1):
+    rec.check("SNAP accepted (sample 1)", _wrote(w1), got=w1.raw)
+    rec.check("P0_CYC readable after SNAP (sample 1)", _good(r1), got=r1.raw)
+    if not (_wrote(w1) and _good(r1)):
         return
     time.sleep(FABRIC_INTERVAL_S)
-    r2 = _rd(adp, PERF_P0_CYC)
+    w2, r2 = _perf_snapshot(adp)
     t2 = time.monotonic()
-    rec.check("P0_CYC readable (second sample)", _good(r2), got=r2.raw)
-    if not _good(r2):
+    rec.check("SNAP accepted (sample 2)", _wrote(w2), got=w2.raw)
+    rec.check("P0_CYC readable after SNAP (sample 2)", _good(r2), got=r2.raw)
+    if not (_wrote(w2) and _good(r2)):
         return
 
     elapsed = t2 - t1
-    delta = _u32(r2.value - r1.value)
-    rec.record("p0_cyc_first", r1.value)
-    rec.record("p0_cyc_second", r2.value)
-    rec.record("p0_cyc_delta_mod32", delta)
+    rec.record("p0_cyc_snap1", r1.value)
+    rec.record("p0_cyc_snap2", r2.value)
     rec.record("p0_cyc_interval_s", round(elapsed, 4))
 
-    if r1.value == 0xFFFFFFFF and r2.value == 0xFFFFFFFF:
-        rec.skip("P0_CYC reads 0xFFFFFFFF twice -- saturated, so it can no longer "
-                 "measure anything. Per ahb_perf_probe.v:120 this build should wrap "
-                 "rather than saturate, so either the build differs or the counter is "
-                 "stuck. Run HIO-307 (A x2c200008 ; Wx00000002, the perf-probe CLR, "
-                 "which is Tier 3's to issue because it clears every probe) and re-run "
-                 "this test. Reported as SKIP, not FAIL: a saturated counter measures "
-                 "nothing either way.")
+    # ---- ONE arm for "not advancing", covering both not-counting signatures.
+    stuck = (r1.value == r2.value)
+    if stuck and r1.value in (0x00000000, PERF_CNT_MAX):
+        which = ("STATIC ZERO" if r1.value == 0 else "SATURATED at 0xFFFFFFFF")
+        rec.record("p0_cyc_not_advancing", which)
+        rec.skip(
+            "P0_CYC is not advancing: %s across two SNAP-latched samples %0.1f s "
+            "apart. THIS IS NOT EVIDENCE OF A STOPPED FABRIC, and Abort Gate 6 must "
+            "not be tripped on it. The register cannot discriminate between (a) the "
+            "probe not counting -- its global enable low (ctrl_ahb_perf_probe.v:69, "
+            "'CYC and all events freeze when low') or the probe held in reset, note "
+            "ctrl_dbg_group takes sys_sysresetn while the ADP takes "
+            "u_network_core_sys_hresetn, so the probe CAN be in reset while the "
+            "monitor runs -- and (b) the fabric genuinely stopped. INDEPENDENT "
+            "EVIDENCE THE FABRIC IS LIVE: this reply reached you, and the ADP "
+            "(u_debug_0) is clocked from u_network_core_sys_hclk, the SAME net that "
+            "clocks ctrl_dbg_group and this counter. A monitor that answers cannot be "
+            "on a stopped HCLK -- its own AHB transactions would never complete. So a "
+            "responding port already proves the clock this counter counts is toggling; "
+            "do NOT power-cycle on this result. %s TO GET A MEASUREMENT: issue "
+            "HIO-307's CLR (A x2c200008 ; Wx00000002) -- it is Tier 3's to issue "
+            "because it zeroes every probe's live counters -- then re-run this test."
+            % (which, FABRIC_INTERVAL_S,
+               ("Saturation is itself positive evidence: the counter reached full "
+                "scale (43 s at 100 MHz), so it was counting."
+                if r1.value == PERF_CNT_MAX else
+                "A never-snapped shadow also reads zero, so a cold die reads this "
+                "even with the probe counting normally underneath.")))
 
+    if r2.value < r1.value:
+        rec.skip("P0_CYC went backwards (0x%08X -> 0x%08X). The counter saturates and "
+                 "never wraps, so the only way down is a CLR landing mid-measurement "
+                 "-- a concurrent HIO-307, or another session on this die. Re-run "
+                 "when the die is quiet; measuring nothing is reported as SKIP."
+                 % (r1.value, r2.value))
+
+    delta = r2.value - r1.value
     hz = delta / elapsed if elapsed > 0 else 0.0
+    rec.record("p0_cyc_delta", delta)
     rec.record("fabric_hclk_hz_estimate", int(hz))
-    rec.check("the fabric clock advanced (delta != 0)", delta != 0,
-              got="delta=%d over %.3f s" % (delta, elapsed))
+
+    # Reached only when the counter is in mid-range, i.e. it HAS counted: a zero
+    # delta here is a clock that ran and then stopped, which is a real red.
+    rec.check("the fabric clock advanced between the two snapshots", delta != 0,
+              got="0x%08X -> 0x%08X over %.3f s (mid-range, so the counter had been "
+                  "counting)" % (r1.value, r2.value, elapsed))
     rec.check("implied HCLK is physically plausible (1 MHz .. 2 GHz)",
               FABRIC_HZ_MIN <= hz <= FABRIC_HZ_MAX,
               got="%.3f MHz" % (hz / 1e6))
-    rec.note("Interval kept at %.1f s deliberately: P0_CYC wraps at 2^32 (~43 s at "
-             "100 MHz), and a wrap inside the sampling window would read as a stopped "
-             "clock." % FABRIC_INTERVAL_S)
+    if r2.value == PERF_CNT_MAX:
+        rec.note("Sample 2 is at full scale: the counter saturated inside the window, "
+                 "so the rate above is a lower bound. Re-run after HIO-307's CLR for "
+                 "a true rate.")
 
 
 @test("HIO-403", tier=4, hazard=None,
@@ -586,7 +655,10 @@ def hio_404(adp, rec):
         t = time.monotonic()
         cs = _rd(adp, PHC_CAP_SEC_LO)
         cn = _rd(adp, PHC_CAP_NS)
-        cyc = _rd(adp, PERF_P0_CYC)
+        # P0_CYC is a SNAP-latched shadow, not a live counter: without the SNAP
+        # both samples return the same stale word and the cross-check below would
+        # silently read zero.  See _perf_snapshot().
+        _, cyc = _perf_snapshot(adp)
         return cw, t, cs, cn, cyc
 
     w0, t0, s0, n0, c0 = capture()
@@ -617,9 +689,12 @@ def hio_404(adp, rec):
     rec.record("phc_ns_per_wall_s", int(rate))
     rec.record("phc_implied_core_hz", int(implied_core_hz))
 
-    # Free cross-check: the fabric counter was sampled inside the same bracket.
-    if _good(c0) and _good(c1):
-        fabric_hz = _u32(c1.value - c0.value) / elapsed
+    # Cross-check: the fabric counter was SNAP-sampled inside the same bracket.
+    # Skipped silently when the counter is in one of its not-counting states --
+    # HIO-402 is where that is diagnosed, not here.
+    if (_good(c0) and _good(c1) and c1.value > c0.value
+            and c0.value not in (0x00000000, PERF_CNT_MAX)):
+        fabric_hz = (c1.value - c0.value) / elapsed
         rec.record("fabric_hz_during_phc_window", int(fabric_hz))
         if fabric_hz > 0:
             rec.record("phc_core_over_fabric_ratio", round(implied_core_hz / fabric_hz, 4))
@@ -633,34 +708,47 @@ def hio_404(adp, rec):
              "HOSTIO_PHC_CORE_HZ to the measured fabric clock and re-run.")
 
 
-@test("HIO-405", tier=4, hazard=None, needs=["HIO-401"],
+@test("HIO-405", tier=4, hazard=None, needs=["HIO-401", "HIO-311"],
+      destroys="cc_periph timer0 VALUE and CTRL (CTRL restored to 0 afterwards)",
       purpose="Hardware latency measurement via `P`'s return value -- the capability "
               "that makes this port able to time a hardware interval at HCLK, free of "
               "the ~130 ms link. `P` returns the number of bus reads consumed before "
-              "the match. Polled on P0_CYC, which is genuinely free-running; the "
-              "plan's PHC form cannot advance under a poll (the polled shadow latch "
-              "is stale until the next capture) and is run below only as a recorded "
-              "demonstration of that limitation. Goes red if a poll that must "
-              "terminate does not, if the count is outside the window the mask "
-              "implies, or if repeated measurements return an identical constant "
-              "(a canned reply rather than a measurement).")
+              "the match, so the count IS the measurement. Polled on the cc_periph "
+              "timer0 down-counter, which is the only genuinely free-running location "
+              "this port can poll: BOTH of the plan's suggestions turn out to be "
+              "shadow latches that a poll can never see advance -- P0_CYC is frozen "
+              "until the next SNAP (ctrl_ahb_perf_probe_regs.v:30-32) and "
+              "CAP_NANOSECONDS until the next capture write. The PHC form is kept "
+              "below as a recorded demonstration of exactly that limitation. Goes red "
+              "if a poll that must terminate does not, if the count falls outside the "
+              "window the mask implies, or if three measurements return an identical "
+              "constant (a canned reply rather than a measurement).")
 def hio_405(adp, rec):
-    _require_okay(adp, rec, PERF_P0_CYC, "P0_CYC 0x2C200040")
+    # Free-run the timer from full scale: VALUE is live-readable and decrements
+    # every PCLK while CTRL[0] is set (cmsdk_apb_timer.v:132-133,247).
+    _wr(adp, TIMER0_CTRL, 0x00000000)
+    _wr(adp, TIMER0_VALUE, 0xFFFFFFFF)
+    en = _wr(adp, TIMER0_CTRL, 0x00000001)
+    rec.check("timer0 enabled as the free-running poll target", _wrote(en), got=en.raw)
+    _require_okay(adp, rec, TIMER0_VALUE, "timer0 VALUE 0x28000004")
 
     # Window chosen so the poll cannot step over it: bits [15:12] == 0 is a
-    # 4096-cycle-wide window in a 65536-cycle period, and one poll iteration is a
-    # handful of HCLK.  Worst-case wait is ~61440 cycles, i.e. far below the budget.
+    # 4096-count-wide window in a 65536-count period, and one poll iteration is a
+    # handful of HCLK.  Worst case is ~61440 counts, far below the budget.
     mask, value = 0x0000F000, 0x00000000
     window_period = 0x10000
     counts = []
-    for i in range(3):
-        r = _poll(adp, PERF_P0_CYC, mask, value, POLL_BUDGET)
-        rec.record("p0_cyc_poll%d_raw" % i, r.raw)
-        rec.check("free-running poll %d matched (no !)" % i, _matched(r), got=r.raw)
-        if not _matched(r):
-            return
-        counts.append(r.value)
-        rec.record("p0_cyc_poll%d_iterations" % i, r.value)
+    try:
+        for i in range(3):
+            r = _poll(adp, TIMER0_VALUE, mask, value, POLL_BUDGET)
+            rec.record("latency_poll%d_raw" % i, r.raw)
+            rec.check("free-running poll %d matched (no !)" % i, _matched(r), got=r.raw)
+            if not _matched(r):
+                return
+            counts.append(r.value)
+            rec.record("latency_poll%d_iterations" % i, r.value)
+    finally:
+        _wr(adp, TIMER0_CTRL, 0x00000000)     # always leave the timer disabled
 
     rec.check("every count is inside the window the mask implies (1 .. %d)"
               % (2 * window_period),
@@ -676,8 +764,10 @@ def hio_405(adp, rec):
     rec.record("phc_stale_latch_poll_raw", demo.raw)
     rec.check("the PHC demonstration returned a definite outcome", bool(demo.ok),
               got=demo.raw)
-    rec.note("PHC form is a demonstration only: CAP_NANOSECONDS is a shadow latch, so "
-             "polling it measures the stale value and never the live clock.")
+    rec.note("Shadow-latch demonstration: CAP_NANOSECONDS advances only on a capture "
+             "write, so polling it measures a stale value, never the live clock. The "
+             "same is true of P0_CYC between SNAPs -- neither can serve as `P`'s "
+             "free-running target, which is why this test polls timer0.")
 
 
 @test("HIO-406", tier=4, hazard=None, needs=["HIO-401", "HIO-311"],
@@ -687,16 +777,23 @@ def hio_405(adp, rec):
               "be true for it to pass: the timer must actually count AND the poll must "
               "actually terminate. Runs BOTH polarities: with CTRL = 0 the poll must "
               "time out (the negative control the plan names), and with CTRL = 1 it "
-              "must match. Two different reloads are used so the iteration count is "
-              "checked for PROPORTIONALITY, not merely for being non-zero -- a poll "
-              "whose count does not scale with the interval is not measuring the "
-              "interval. Goes red on a match with the timer disabled, on a timeout "
-              "with it enabled, or on counts that do not scale ~2x with the reload.")
+              "must match. Two reloads differing by exactly 2x are used so the count "
+              "is checked for PROPORTIONALITY, not merely for being non-zero. The "
+              "check is on the DIFFERENCE of the counts, not their ratio: the fixed "
+              "link overhead between arming and polling cancels out of a difference, "
+              "so (reload_b - reload_a) / (n_b - n_a) yields the HCLK cycles per poll "
+              "read directly, and requiring that to be physically plausible (1..64) is "
+              "a self-calibrating check that needs no assumption about the clock "
+              "frequency. Goes red on a match with the timer disabled, a timeout with "
+              "it enabled, counts that do not scale, or an impossible cycles-per-read.")
 def hio_406(adp, rec):
     # cmsdk_apb_timer.v: 0x00 CTRL ([0] EN), 0x04 VALUE (reg_curr_val, RW, decrements
     # while dec_ctrl), 0x08 RELOAD.  At zero the counter reloads from RELOAD, which is
     # left at its 0 reset value, so VALUE parks at 0 and the poll match is stable.
-    reload_a, reload_b = 0x00010000, 0x00020000
+    reload_a = _env_int("HOSTIO_TIMER_RELOAD", TIMER_RELOAD_A)
+    reload_b = min(reload_a * 2, 0xFFFFFFFF)
+    rec.record("timer_reload_a", reload_a)
+    rec.record("timer_reload_b", reload_b)
 
     off = _wr(adp, TIMER0_CTRL, 0x00000000)
     rec.check("timer disabled for the negative control", _wrote(off), got=off.raw)
@@ -708,6 +805,8 @@ def hio_406(adp, rec):
     rec.record("timer_reload_readback", None if rb.value is None else rb.value)
     rec.record("timer_0x08_reload_reg", _rd(adp, TIMER0_RELOAD).value)
 
+    # Negative control keeps the SMALL budget: it only has to prove that a disabled
+    # timer never reaches 0, and a 0x20000000 budget would burn ~30 s on-die.
     neg = _poll(adp, TIMER0_VALUE, 0xFFFFFFFF, 0x00000000, POLL_BUDGET)
     rec.record("timer_negative_control_raw", neg.raw)
     rec.check("NEGATIVE CONTROL: disabled timer never reaches 0 (P! timeout)",
@@ -721,7 +820,8 @@ def hio_406(adp, rec):
         _wr(adp, TIMER0_VALUE, reload_val)
         en = _wr(adp, TIMER0_CTRL, 0x00000001)
         rec.check("timer enabled for run %s" % name, _wrote(en), got=en.raw)
-        p = _poll(adp, TIMER0_VALUE, 0xFFFFFFFF, 0x00000000, POLL_BUDGET)
+        p = _poll(adp, TIMER0_VALUE, 0xFFFFFFFF, 0x00000000, TIMER_POLL_BUDGET,
+                  timeout_ms=TIMER_POLL_TIMEOUT_MS)
         _wr(adp, TIMER0_CTRL, 0x00000000)
         rec.record("timer_run%s_raw" % name, p.raw)
         rec.check("run %s: enabled timer reaches 0 and the poll matches" % name,
@@ -733,17 +833,30 @@ def hio_406(adp, rec):
         rec.record("timer_run%s_iterations" % name, p.value)
 
     n_a, n_b = counts["a"], counts["b"]
-    # One poll iteration costs several HCLK, so n is reload/k with k of order 4-10.
-    # A two-decade band catches "did not count" without pretending to know k.
-    rec.check("run a's count is on the order of its reload (reload/100 .. reload*10)",
-              reload_a // 100 <= n_a <= reload_a * 10,
-              got="%d iterations for reload 0x%08X" % (n_a, reload_a))
-    ratio = (n_b / n_a) if n_a else 0.0
-    rec.record("timer_count_ratio_b_over_a", round(ratio, 3))
-    rec.record("timer_implied_hclk_per_poll_read", round(reload_a / n_a, 3) if n_a else None)
-    rec.check("doubling the reload doubles the count (1.5x .. 2.5x)",
-              1.5 <= ratio <= 2.5,
-              got="n_a=%d n_b=%d ratio=%.3f" % (n_a, n_b, ratio))
+
+    # The timer must still have been counting when the poll's first read landed.
+    # If it had already parked at 0 the count is 1 and measures only the link.
+    if n_a <= 1 or n_b <= 1:
+        rec.skip("the timer expired before the poll began (counts %d / %d). The reload "
+                 "must be many times the count the clock racks up during the ~2 CU of "
+                 "link between arming the timer and the poll's first read; at this "
+                 "clock 0x%08X is not. Raise HOSTIO_TIMER_RELOAD (try 4x) and re-run. "
+                 "Reported as SKIP because a count of 1 measures the link, not the "
+                 "hardware interval -- the polarity result above still stands."
+                 % (n_a, n_b, reload_a))
+
+    rec.check("more reload gives more iterations", n_b > n_a,
+              got="n_a=%d n_b=%d" % (n_a, n_b))
+    if n_b > n_a:
+        # Fixed overhead cancels out of the difference, so this is the real
+        # cycles-per-poll-read of the ADP's poll loop against an APB target.
+        k = (reload_b - reload_a) / float(n_b - n_a)
+        rec.record("hclk_cycles_per_poll_read", round(k, 3))
+        rec.check("implied HCLK cycles per poll read is physically possible (1..64)",
+                  1.0 <= k <= 64.0, got="%.2f cycles" % k)
+        rec.record("timer_count_ratio_b_over_a", round(n_b / float(n_a), 3))
+    rec.check("run a's count cannot exceed its reload (at least 1 cycle per read)",
+              n_a <= reload_a, got="%d iterations for reload 0x%08X" % (n_a, reload_a))
     rec.note("Timer left disabled (CTRL = 0) as the plan requires.")
 
 
