@@ -16,6 +16,9 @@
 #     make store-retention-selftest     prove retention in both directions
 #     make store-builds                 which runs the store knows about
 #     make store-backfill               streams carrying no identity property
+#     make store-submissions            graded streams the store does not hold
+#     make store-restore-drill          restore the backup for real, into a
+#                                       throwaway database
 #     make store-token                  what credential is in use, over what
 #
 # `--destroy` is deliberately NOT reachable from make. Everything that deletes
@@ -91,7 +94,8 @@ EVIDENCE_FORCE ?=
 .PHONY: evidence evidence-collect evidence-render evidence-publish \
         evidence-selftest evidence-vars \
         store-backup store-backup-check store-retention store-retention-selftest \
-        store-builds store-backfill store-token
+        store-builds store-backfill store-token store-submissions \
+        store-restore-drill
 
 ## Run every gate, bundle the evidence, emit one report. ~7-10 min.
 ## Exit 5 means the report is REAL and does not say signed off - that is a
@@ -151,6 +155,17 @@ store-builds:
 ## Report streams carrying no identity property. Add --apply by hand to fix.
 store-backfill:
 	python3 $(REPO_ROOT)/scripts/ci/artifactory_backfill_identity.py
+
+## Which local submissions a foundry graded but the store does not hold.
+## Add --apply by hand to publish them.
+store-submissions:
+	python3 $(REPO_ROOT)/scripts/ci/artifactory_publish_submission.py
+
+## Actually restore the backup into a throwaway database and check its rows
+## reference blobs we hold. Spins a scratch postgres on mapstone-dev; never
+## touches artifactory-db.
+store-restore-drill:
+	$(REPO_ROOT)/scripts/ci/artifactory_restore_drill.sh
 
 ## What credential the store is being reached with, and over what transport.
 store-token:

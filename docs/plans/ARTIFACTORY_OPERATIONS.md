@@ -92,6 +92,19 @@ bit **three times** while building these scripts, in three different files. Use
 `find … -print -quit`, or list once into a variable and match with `case`. Never
 `tar -tzf f | grep -q`.
 
+**Reboot persistence — TESTED 2026-08-25, and it was broken.** The three `systemd --user` units
+were `enabled` but `inactive`: the pod was running from a manual `podman` invocation that systemd
+did not own, so a reboot would have started a *second*, fresh set of containers rather than
+resuming these. The units were verified first (uid 1000 matches `/run/user/1000`, ports 8081/8082
+match, and the recreate lines carry the same bind mounts — `/home/david/jfrog/artifactory/var`
+and `/home/david/jfrog/pgdata` — as the running containers, which is what makes a recreate safe),
+then started for real. All three now `active`, containers recreated under systemd, and every
+artefact survived: 6 candidates, 1846 records, 1 build. The store is now genuinely
+reboot-persistent.
+
+Also fixed while there: `container-artifactory-db.service` was mode **644** with the PostgreSQL
+password in plaintext inside it, readable by any local user on mapstone-dev. Now 600.
+
 **Reading the backup from outside the namespace measures nothing.** `var/backup/artifactory` is
 mode `drwxr-x---` owned by container uid 1030, so a plain `du` as `david` returns **0** — a
 permission artefact that reads exactly like an empty backup. Everything must go through
@@ -214,7 +227,25 @@ real, expensive verdict describing **bytes the store does not contain**, and
 This is the [verdict read the wrong stream] class again, one level up: not a report bound to the
 wrong build, but a build published under a name that implies a submission it never was.
 
-**Not fixed here, because it is a content decision, not a bug.** The options are to publish the
+**FIXED for rzG, 2026-08-25.** `artifactory_publish_submission.py` publishes a local submitted
+stream under the tag whose FOUNDRY RETURN CITES ITS md5 — never by filename resemblance — and
+refuses any stream no return cites. The graded rzG stream is now in `asic-candidate` under
+`nanosoc_eth_chiplet_pads_DRYRUN_20260823_rzG`, and `findmd5 41a0baee…` returns **1 hit** where
+it returned 0. imec's verdict finally describes bytes the store holds.
+
+The other three submissions on disk (`DRYRUN_20260823`, `_armA2`, `_pgfix`) are correctly skipped:
+no foundry return cites them, so they are not submissions and filing them as such would be the
+same error in the other direction. `SUBMIT_allpads_logo` and `logo_full_L300` have returns but
+their streams are not on local disk at all.
+
+That work exposed one more trap worth knowing: **`?properties` cannot be used as an existence
+test.** Artifactory answers `404 "No properties could be found."` *identically* for an artefact
+that exists with no properties and for a path that does not exist. `artifactory.py`'s docstring
+asserted the opposite; it was wrong, and it made the publisher read a missing artefact as already
+present and silently decline to publish it. Use `artifactory.exists()`, which HEADs the artefact.
+
+**Still a content decision:** what to do about the three candidate tags that hold raw route output
+rather than a submission. The options are to publish the
 submitted streams under the tags the foundry returns already use, or to rename what is there so
 nothing implies a submission. Either way the raw route output should probably not sit under a
 run tag as if it were the shipped artefact. Deciding that is the owner's call.
@@ -234,7 +265,50 @@ identity and a token scoped to it **is an admin token**. This is defence in dept
 revocation, one token per machine — and it is *not* least privilege. Saying otherwise would stop
 someone asking for the thing that would actually deliver it.
 
-### TLS — NOT DONE, and it is the other half
+### TLS — BUILT AND RUNNING, ONE ROOT COMMAND FROM USABLE (2026-08-25)
+
+A Caddy TLS terminator now runs on mapstone-dev in front of the store:
+
+```
+container   artifactory-tls   docker.io/library/caddy:2, --network=host
+config      /home/david/jfrog/tls/Caddyfile
+CA + certs  /home/david/jfrog/tls/data/caddy/pki/authorities/local/root.crt
+listens     :8443  ->  reverse_proxy localhost:8082
+```
+
+Verified ON THE HOST: `curl -k https://localhost:8443/artifactory/api/system/ping` and the same
+against the FQDN both return `OK`, certificates issued by Caddy's local CA for
+`mapstone-dev.ecs.soton.ac.uk`, `localhost` and `127.0.0.1`. Port 8082 is untouched and still
+answers, so nothing was broken by adding this.
+
+**Name the site, do not use a bare `:8443`.** A bare port gives the internal CA no subject to
+issue for and the handshake dies with `tlsv1 alert internal error`, which reads like a broken
+proxy rather than a missing certificate name. Cost 10 minutes.
+
+**THREE THINGS STILL NEED SOMEONE WITH ROOT / A DECISION:**
+
+1. **Open the port.** From srv03335, `https://mapstone-dev...:8443` is `No route to host` —
+   firewalld blocks it, and `sudo` on mapstone-dev needs a password. One command:
+   ```
+   sudo firewall-cmd --permanent --add-port=8443/tcp && sudo firewall-cmd --reload
+   ```
+   Beware the trap already recorded here: a runtime-only `--remove-port` is undone by the next
+   `--reload` if the port was added `--permanent`. Match the flag to how it was added.
+2. **Make the proxy persistent.** The container is running but is NOT yet under a
+   `systemd --user` unit, so it does not survive a reboot — the same gap that had the whole store
+   running outside systemd until today. Run on mapstone-dev as david:
+   ```
+   cd ~/.config/systemd/user && podman generate systemd --new --name --files artifactory-tls
+   systemctl --user daemon-reload && systemctl --user enable --now container-artifactory-tls
+   ```
+3. **Decide the certificate, then cut clients over.** Caddy's CA is self-signed, so clients need
+   `root.crt` (path above) in their trust store or `-k`. An ECS-issued certificate is the right
+   end state. Only once one of those is settled should `ASIC_ARTIFACT_BASE` move to
+   `https://mapstone-dev.ecs.soton.ac.uk:8443/artifactory` — **and 8082 then closed**, or the
+   plaintext path stays open and the TLS one is decoration. Do not cut over piecemeal: other
+   sessions are using 8082 right now.
+
+### Why TLS matters here, restated
 
 8082 is plain HTTP. `curl -n` sends `Authorization: Basic base64(user:pass)` — an encoding, not
 encryption. A token over plain HTTP is still a cleartext credential on the lab LAN; it merely
@@ -264,10 +338,9 @@ a runtime-only `--remove-port` is undone by the next `--reload` if the port was 
 
 | | |
 |---|---|
-| **TLS** | §5. The single largest remaining exposure. |
-| **A real restore** | §1. The check runs weekly; the restore itself has never been performed. |
-| **Reboot persistence** | The host has been up 33+ days and the pod ~27 h, so the `systemd --user` units have never cold-started it. `Linger=yes` is set. Test it on purpose. |
-| **Backup retention on the source** | Artifactory's own `backup-daily` has `retentionPeriodHours=0` — it keeps every export forever, ~195 MB each, on the same volume as the filestore. Set it to something finite. |
+| **TLS cutover** | §5. Proxy BUILT and verified on the host; needs the firewall opened, a persistence unit, and a certificate decision before clients move. |
+| **Booting Artifactory on a restored pair** | §1. The dump now provably restores into a real PostgreSQL 16 and its rows reference blobs we hold (`artifactory_restore_drill.sh`). Standing up a second Artifactory to boot on it needs ~8 GB against ~6 GB free, so it would risk the live store to test the backup. Still open. |
+| **Backup retention on the source** | `backup-daily` still has `retentionPeriodHours=0` — every ~195 MB export kept forever on the filestore's own volume. The PATCH to set it to 336 h was attempted and **blocked by this session's permission policy**; it needs a human to run it. |
 | **Repo split** | Still three repos. Deferred deliberately: netlists and tool logs have no producer yet, and four empty repos would be cargo cult. Do it when something publishes to them. |
 | **The submitted streams** | §4. Three of five candidates are raw route output, not what was submitted; the stream imec graded is not in the store at all. |
 | **Other projects** | Only `ethchip/`. FPGA bitstreams, the compute chiplet and a tarball of `asic-toolkit @ 3ca1160` (off-remote, one disk) all belong here. |
