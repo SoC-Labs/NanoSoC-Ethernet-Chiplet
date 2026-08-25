@@ -155,23 +155,47 @@ are the other line. Neither is fixable by us.
 
 ## NOT PROVEN BY THIS STREAM
 
-  - **The foundry has not re-graded.** PO.R.8 = 14 was imec's measurement on a
-    merged database we cannot reproduce — no standard-cell layout exists on this
-    site. Our evidence is pins-have-metal, connectivity clean, Calibre unchanged.
-    Only another imec run closes it.
+  - ~~The foundry has not re-graded.~~ **CLOSED 2026-08-25.** imec ran this exact
+    stream (their Final Report records md5 3215cbe1..., verified both ways) and
+    **PO.R.8 = 0**, down from 14 on rzG. Eight further rules went with it —
+    G.4:M5i 2, G.4:M6i 4, M8.S.3 2, M4.S.1, VIA4.R.4:M5, M5.W.1, M5.A.1, M9.W.1.
+    Design-owned results 29 -> 2. Antenna 204/204 zero on a real 16m18s run over
+    9.25M devices; padring 0 errors 0 warnings. The zero is an EXECUTED zero: the
+    report format lists only non-zero rulechecks, the switch tables diff identical
+    against the run that DID report 14, and VIA3.R.4:M4 fires in both runs at the
+    same core coordinate, so the check descended into the core.
   - 691 PO.R.8 remain waived (`PO.R.8-blackbox-context`); imec's own runs show 21
     of 22 cells clear on merge, so the mechanism holds, but the waiver's
     withdrawal condition has technically fired and it needs re-specifying
     per-cell rather than on the run total.
-  - The underlying pin-access squeeze is UNCHANGED: flash_cache_data blankets its
-    whole footprint with VIA1/2/3 obstruction and leaves a 0.42 um M3 band with
-    0.14 um clearance per pin. Both fixes restore the wires; neither widens the
-    corridor. Next-spin item.
+  - The underlying pin-access squeeze is UNCHANGED, and is now fully diagnosed.
+    flash_cache_data blankets VIA1/VIA2/VIA3 over 100% of its footprint with no
+    slots, so a pin is reachable only planar and the first layer change must sit
+    above the pin edge. Over Q[27]/D[27] a VSS rail-to-M8 stacked via puts SOLID
+    M1..M5 plates and cut arrays 0.235 um above that edge, where a VIA3 needs
+    0.330-0.360. **Zero legal positions** — established 2026-08-25 by four
+    independent investigations, two run blind and one adversarial, with a
+    constructive disproof (inserting the best candidate via reproduces the
+    predicted shorts to the nanometre) and eleven router settings measured dead.
+    THIS STREAM IS SAFE: its wires are restored from the pre-repair checkpoint and
+    Calibre sees nothing at the site — the Innovus markers are against the macro's
+    LEF abstraction, which is more conservative than its actual GDS, and imec's own
+    run on the merged database agrees. The fix for the next spin is a macro move in
+    y (+1.20 um gives a 0.835 um pocket); see docs and floorplan.tcl.
+  - **A caution for whoever validates the next spin:** check `check_connectivity
+    -type regular` on those two nets, NOT `check_drc`. A deleted net has no DRC
+    marker, so the DRC gate cannot tell a fixed net from a deleted one. That is
+    exactly how rzG shipped: its two bit-123 nets were DELETED, not routed, and
+    the flow's own connectivity check reported zero problems.
 
 ## Ask imec, with this submission
 
-  1. Confirm PO.R.8 returns to 0 (or report it BY HIERARCHICAL INSTANCE PATH —
-     their merged DB can name the cell, ours cannot).
+  1. ~~Confirm PO.R.8 returns to 0.~~ **ANSWERED 2026-08-25: it is 0.** Replaced by
+     a new ask — please run ERC / LVS / PadShorts on THIS candidate. The 25 Aug
+     archive has no LVS section and its erc report is the 13-line "no labels found
+     in topcell" bail, so the only pad-short and floating-pad data we hold belongs
+     to the superseded rzG stream. DRC, antenna and padring all ran on this one and
+     all pass; those three are not in question.
   2. Q7 — **CORRECTED 2026-08-25, ask for `PITCH_60_STAGGER`, not P70.** Our
      19 Aug question told imec the parts are 70 um staggered. That was our error.
      Measured from imec's OWN ERC pad table the ring is **67 um** staggered
@@ -181,5 +205,7 @@ are the other line. Neither is fixable by us.
      passes at ZERO margin; P60 demands 53/66 and passes with 5 um. The point is
      not the four results — it is that the P60 rule family has never been run
      against this design. Full text in docs/tapeout/59-imec-round-trip-2026-08-27.md.
-  3. Q8: confirm the acceptance run merges tcbn65lp + tphn65lpgv2od3_sl + tpbn65v.
+  3. Q8 — answered for the 25 Aug run (the Final Report lists exactly those three
+     replacement libraries, and the 24 and 25 Aug runs used identical configuration).
+     Keep only the forward-looking half: confirm the 1 September run matches.
   4. Return the merged GDS so the wire-bond deck stops being unmeasurable here.
