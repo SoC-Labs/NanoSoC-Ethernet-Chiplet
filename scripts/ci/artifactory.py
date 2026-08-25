@@ -128,13 +128,34 @@ def list_repo(repo, base=DEFAULT_BASE):
     return d.get("results", [])
 
 
-def get_properties(repo, path, base=DEFAULT_BASE):
-    """-> dict of property name -> list of values. {} when the artefact exists
-    and simply carries none. Raises StoreUnavailable when it cannot be read.
+def exists(repo, path, base=DEFAULT_BASE):
+    """Does the ARTEFACT exist? A HEAD on the artefact itself, never a
+    properties probe -- see get_properties below for why that distinction is
+    not optional."""
+    code, _ = _curl(["-o", "/dev/null", "-I", "%s/%s/%s" % (base, repo, path)],
+                    timeout=60)
+    if code == "200":
+        return True
+    if code == "404":
+        return False
+    raise StoreUnavailable("exists %s/%s: HTTP %s" % (repo, path, code))
 
-    404 with "No properties could be found" is a real, informative answer -- the
-    artefact is there and has none -- and is returned as {}. A 404 on the
-    artefact itself is not, and raises."""
+
+def get_properties(repo, path, base=DEFAULT_BASE):
+    """-> dict of property name -> list of values. {} when the server reports no
+    properties. Raises StoreUnavailable when it cannot be read.
+
+    THIS FUNCTION CANNOT BE USED AS AN EXISTENCE TEST. Measured 2026-08-25
+    against this instance: `?properties` returns the SAME body --
+
+        {"errors":[{"status":404,"message":"No properties could be found."}]}
+
+    -- for an artefact that exists and carries none AND for a path that does
+    not exist at all. An earlier version of this docstring asserted the
+    opposite ("a 404 on the artefact itself ... raises"); that was wrong, and
+    it produced a real false positive: a publisher using this as an existence
+    check read a missing artefact as already present and silently declined to
+    publish it. Use `exists()`, which HEADs the artefact."""
     code, body = _curl(["%s/api/storage/%s/%s?properties" % (base, repo, path)])
     if code == "404":
         if "No properties could be found" in body:
