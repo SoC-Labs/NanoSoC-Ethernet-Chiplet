@@ -141,6 +141,8 @@ PERF_CNT_MAX = 0xFFFFFFFF         # ctrl_ahb_perf_probe.v:184 holds here, never 
 FAULT_STAT = 0x2C300000           # [0] FAULT_SEEN(W1C) [5:4] INIT_IDX [8] OVERFLOW
 FAULT_ADDR = 0x2C300004
 FAULT_COUNT = 0x2C30000C
+FAULT_CTRL = 0x2C300008           # expect 0x00000062 for a 32-bit NONSEQ write
+FAULT_MASK = 0x2C300014           # resets to 0x8 -- initiator 3 (the DAP) DISARMED
 
 SHARED_SRAM = 0x2D000000          # 8 KB, the only RAM both CPUs and ADP reach
 BOOT_CONFIRM = 0x2D001FF0         # nanosoc_boot_confirm.h:73-74
@@ -271,6 +273,83 @@ _WRITE_REFUSED_BANDS = (
      "== 13'h208 EXACTLY, so a write to 0x209/0x20A/0x20B reaches the same Wlink "
      "register with the swreset mask BYPASSED."),
 )
+
+
+# ---------------------------------------------------------------------------
+# DMA-250 channel registers.  RTL-verified: channel block at 0x20001000, stride
+# 0x100, exactly TWO channels (the render takes no parameters and hardcodes 2 --
+# the DMAC_CHANNEL_NUM=4 vs NUM_VCH=2 question resolves to neither).  Offsets
+# cross-checked against the block-level cocotb bench that drives this very
+# register file (cocotb/dma250_block/test_dma250_copy.py:17-36).
+# ---------------------------------------------------------------------------
+DMA_CH0 = 0x20001000
+DMA_CH_STRIDE = 0x100
+DMA_NUM_CH = 2
+DMA_CH_CMD = 0x000                # [0] ENABLECMD (W1S), [1] CLEARCMD
+DMA_CH_STATUS = 0x004             # [16] STAT_DONE (W1C), [17] STAT_ERR (W1C)
+DMA_CH_INTREN = 0x008
+DMA_CH_CTRL = 0x00C
+DMA_CH_SRCADDR = 0x010
+DMA_CH_DESADDR = 0x018
+DMA_CH_XSIZE = 0x020
+DMA_CMD_ENABLE = 1 << 0
+DMA_CMD_CLEAR = 1 << 1
+DMA_STAT_DONE = 1 << 16           # POLL THIS.  Not [0] -- see HIO-412's purpose.
+DMA_STAT_ERR = 1 << 17
+DMA_CTRL_1D_WORD = 0x00200202     # TRANSIZE_32 | XTYPE_CONT | DONETYPE_EOC
+
+# Where a descriptor may point.  This is a WHITELIST, deliberately: the DMA's
+# data master decode (multicore_matrix_decode_DMAC_0_M.v:246-259, decode field
+# [31:10]) reaches exactly four windows, and three of them are ways to wedge the
+# board THROUGH the DMA, bypassing every guard in this file -- _check_addr only
+# ever sees what ADP writes, never where the DMA subsequently reads or writes.
+#   MI0  0x00000000-0x1FFFFFFF  eth subsystem            <- the only safe one
+#   MI5  0x24000000-0x27FFFFFF  QSPI XiP (HZ-6)          <- 1.3 ms/beat or livelock
+#   MI12 0x2E000000-0x2FFFFFFF  D2D + peer aperture      <- HZ-2 / HZ-3
+#   MI13 0x80000000-0x9FFFFFFF  LIVE CPU1 memory         <- CPU1 sources the SoC clock
+# Note what is NOT in that list: 0x2D shared SRAM.  The DMAC decode jumps from
+# 0x090000 straight to 0x0b8000, so it never selects the 0x2D000000-0x2DFFFFFF
+# port that DEBUG_M has at 22'h0b4000 -- the obvious destination is unreachable
+# BY THE DMA, which is why the buffers below live in eth IMEM instead.
+DMA_REACHABLE_SAFE = (0x00000000, 0x1FFFFFFF)
+DMA_NAMED_REFUSALS = (
+    (0x24000000, 0x27FFFFFF, "QSPI XiP aperture (HZ-6): with no flash fitted the "
+                             "wrapper holds HREADYOUT low for 65536 hclk per beat, "
+                             "and with flash fitted a fetch can livelock forever"),
+    (0x2E000000, 0x2FFFFFFF, "D2D window and the PEER APERTURE (HZ-2/HZ-3): a "
+                             "descriptor here is a cross-die wedge with no default "
+                             "responder and no ADP error escape"),
+    (0x80000000, 0x9FFFFFFF, "LIVE CPU1 memory (HZ-5 adjacent): CPU1 is running from "
+                             "it and its PRMU sources the whole SoC's HCLK/HRESETn"),
+)
+
+# The transfer's own buffers: eth IMEM, top 8 KB of the 32 KB macro, which is
+# inside MI0 and is the only region that is both DMA-reachable and safe.
+DMA_TEST_SRC = 0x10006000
+DMA_TEST_DST = 0x10007000
+DMA_TEST_BEATS = 8
+
+
+def _check_dma_endpoint(addr, nbytes, what):
+    """Refuse a descriptor endpoint BEFORE any channel register is written.
+
+    This is the one guard that address-level checking cannot provide: the DMA is
+    a second bus master, so the danger is not where ADP writes but where the DMA
+    is told to go.
+    """
+    last = addr + nbytes - 1
+    for lo, hi, why in DMA_NAMED_REFUSALS:
+        if not (last < lo or addr > hi):
+            raise HazardRefusal(
+                "refusing to arm the DMA with %s = 0x%08X..0x%08X: it overlaps %s"
+                % (what, addr, last, why))
+    lo, hi = DMA_REACHABLE_SAFE
+    if not (lo <= addr and last <= hi):
+        raise HazardRefusal(
+            "refusing to arm the DMA with %s = 0x%08X..0x%08X: outside the only "
+            "window that is both DMA-reachable and safe (0x%08X-0x%08X, the eth "
+            "subsystem). Note the DMA cannot reach shared SRAM at 0x2D at all."
+            % (what, addr, last, lo, hi))
 
 
 class HazardRefusal(RuntimeError):
@@ -1754,26 +1833,112 @@ def hio_411(adp, rec):
               got="0x%08X" % r.value)
 
 
-@test("HIO-412", tier=4, hazard=None, needs=["HIO-411"],
-      purpose="DMA-250 memory-to-memory descriptor. NOT-YET-EXECUTABLE and skipped by "
-              "construction: the channel register offsets, the start bit and the done "
-              "bit are unresolved. Writing it against guessed offsets would produce a "
-              "test that 'passes' by writing to reserved space and polling a register "
-              "that reads zero for an unrelated reason -- a vacuous green of exactly "
-              "the kind this suite exists to prevent.")
+@test("HIO-412", tier=4, hazard=HZ.DESTRUCTIVE, needs=["HIO-411"],
+      destroys="eth IMEM top 8 KB (0x10006000-0x100077FF): the DMA source and "
+               "destination buffers, written by ADP and then by the DMA itself",
+      purpose="DMA-250 memory-to-memory descriptor -- programmed by ADP, started by "
+              "ADP, waited on in hardware by `P`, and verified by reading the "
+              "destination back. Refused since day one rather than guessed; the "
+              "layout is now RTL-resolved (channel block 0x20001000, stride 0x100, "
+              "exactly 2 channels; CMD +0x00, STATUS +0x04, CTRL +0x0C, SRC +0x10, "
+              "DST +0x18, XSIZE +0x20), cross-checked against the block-level cocotb "
+              "bench that drives this same register file. THREE THINGS THAT WOULD "
+              "OTHERWISE MAKE THIS VACUOUS. (1) The done bit is CH_STATUS[16] "
+              "STAT_DONE, NOT CH_STATUS[0] INTR_DONE: bit 0 is gated by CH_INTREN, "
+              "which this test never enables, so polling it would read a perfect "
+              "transfer as nothing having happened. (2) NOTHING on this DMAC ever "
+              "raises PSLVERR, so discrimination CANNOT come from a bus error and "
+              "must come from the destination readback -- which is why the "
+              "destination is pre-filled with a DIFFERENT pattern first: without "
+              "that, a DMA that moved nothing would verify against whatever was "
+              "already there. (3) SCFG_CHSEC0 DOES NOT EXIST on this part -- no "
+              "decode, ch_nonsec hardwired '1, HAS_TZ=0, PPROT hardwired 3'b011 at "
+              "the wrapper -- so there is no security filtering to understand, and "
+              "the original demand to understand it first came from a header that "
+              "does not describe this design. Goes red if the poll times out, if "
+              "STAT_ERR sets, or if any destination word does not match its source.")
 def hio_412(adp, rec):
-    rec.skip(
-        "DMA-250 channel register layout unresolved -- no bus access attempted. "
-        "KNOWN: the config aperture is DMAC_CFG_ADDR_W = 14 (16 KB) at 0x20000000, "
-        "DMASECCFG at +0x000, SCFG_CTRL at +0x040, SCFG_INTRSTATUS at +0x044 "
-        "(dma250_regdef.h:112-115). UNRESOLVED and required before this test may be "
-        "written: (1) the per-channel block base and stride, (2) the channel "
-        "SRC/DST/SIZE/CTRL offsets within it, (3) which bit starts a transfer, "
-        "(4) which bit or status register signals done, and (5) the SCFG_CHSEC0 "
-        "security mapping, which must be understood before ANY write. Resolve them "
-        "from the rendered register package, not from this plan. Gate: HIO-411 must "
-        "read IIDR 0x2500043B; a power-gated block (IIDR 0) leaves this unrunnable "
-        "whatever the offsets turn out to be.")
+    # SAFETY FIRST: the descriptor is checked before a single channel register is
+    # touched.  The DMA is a second bus master, so _check_addr() cannot see where
+    # it goes -- only this can.
+    nbytes = DMA_TEST_BEATS * 4
+    _check_dma_endpoint(DMA_TEST_SRC, nbytes, "SRC")
+    _check_dma_endpoint(DMA_TEST_DST, nbytes, "DST")
+    rec.record("dma_channels_present", DMA_NUM_CH)
+    rec.record("dma_ch0_base", DMA_CH0)
+    rec.record("dma_src", DMA_TEST_SRC)
+    rec.record("dma_dst", DMA_TEST_DST)
+    rec.record("dma_beats", DMA_TEST_BEATS)
+
+    ch = DMA_CH0                      # channel 0; channel 1 is at +0x100
+    src_pat = [0xD1A50000 | i for i in range(DMA_TEST_BEATS)]
+    dst_pat = [0xBADD0000 | i for i in range(DMA_TEST_BEATS)]
+
+    # Seed both buffers with W, not `F`.  `F` is cheaper and this file does now
+    # emit it (HIO-501's pre-zero), but it writes ONE CONSTANT across a range, and
+    # a constant cannot tell a correct copy from an aliasing bug or a partial one:
+    # every word would compare equal to every other. The per-word pattern below is
+    # what makes the readback discriminate. 8 words is 16 CU, about a second.
+    for i in range(DMA_TEST_BEATS):
+        _wr(adp, DMA_TEST_SRC + 4 * i, src_pat[i])
+        _wr(adp, DMA_TEST_DST + 4 * i, dst_pat[i])
+    seeded = [_rd(adp, DMA_TEST_DST + 4 * i) for i in range(DMA_TEST_BEATS)]
+    rec.check("destination pre-filled with a DIFFERENT pattern (so a no-op DMA "
+              "cannot pass)",
+              all(_good(r) and r.value == dst_pat[i] for i, r in enumerate(seeded)),
+              got=[None if r.value is None else "0x%08X" % r.value for r in seeded])
+
+    armed = False
+    try:
+        # Put the channel FSM in VCH_DISABLED first: ENABLECMD is masked unless it
+        # is, so an un-cleared channel would silently ignore the start.
+        c = _wr(adp, ch + DMA_CH_CMD, DMA_CMD_CLEAR)
+        rec.check("CLEARCMD accepted", _wrote(c), got=c.raw)
+        _wr(adp, ch + DMA_CH_STATUS, DMA_STAT_DONE | DMA_STAT_ERR)   # W1C
+        _wr(adp, ch + DMA_CH_SRCADDR, DMA_TEST_SRC)
+        _wr(adp, ch + DMA_CH_DESADDR, DMA_TEST_DST)
+        _wr(adp, ch + DMA_CH_XSIZE,
+            (DMA_TEST_BEATS & 0xFFFF) | ((DMA_TEST_BEATS & 0xFFFF) << 16))
+        _wr(adp, ch + DMA_CH_CTRL, DMA_CTRL_1D_WORD)
+
+        rb = _rd(adp, ch + DMA_CH_SRCADDR)
+        rec.check("CH_SRCADDR reads back what was programmed",
+                  _good(rb) and rb.value == DMA_TEST_SRC, got=rb.raw)
+
+        armed = True
+        st = _wr(adp, ch + DMA_CH_CMD, DMA_CMD_ENABLE)
+        rec.check("ENABLECMD accepted", _wrote(st), got=st.raw)
+
+        # Wait in hardware.  Bit 16, never bit 0.
+        p = _poll(adp, ch + DMA_CH_STATUS, DMA_STAT_DONE, DMA_STAT_DONE, POLL_BUDGET)
+        rec.record("dma_done_poll_raw", p.raw)
+        rec.record("dma_done_iterations", p.value if _matched(p) else None)
+        rec.check("STAT_DONE (CH_STATUS[16]) set within the budget", _matched(p),
+                  got=p.raw)
+    finally:
+        if armed:
+            _wr(adp, ch + DMA_CH_CMD, DMA_CMD_CLEAR)   # always disarm
+
+    fin = _rd(adp, ch + DMA_CH_STATUS)
+    rec.record("dma_ch_status", fin.value)
+    if _good(fin):
+        rec.check("STAT_ERR (CH_STATUS[17]) is clear",
+                  (fin.value & DMA_STAT_ERR) == 0, got="0x%08X" % fin.value)
+
+    got = [_rd(adp, DMA_TEST_DST + 4 * i) for i in range(DMA_TEST_BEATS)]
+    vals = [None if not _good(r) else r.value for r in got]
+    rec.record("dma_dst_readback", ["0x%08X" % v if v is not None else None
+                                    for v in vals])
+    rec.check("every destination word equals its source word (the ONLY valid "
+              "discrimination here -- this DMAC never raises PSLVERR)",
+              vals == src_pat,
+              got="expected %s" % ["0x%08X" % v for v in src_pat])
+    rec.note("Channel 0 left disarmed (CLEARCMD) and STAT_DONE/STAT_ERR left set for "
+             "the record; a later run clears them before arming. ORDER MATTERS: these "
+             "buffers are the top 8 KB of eth IMEM, so running this test AFTER "
+             "HIO-501 corrupts the image HIO-501 loaded (and an image larger than "
+             "24 KB overlaps them). Tier 4 runs before Tier 5, which is the order "
+             "that keeps both intact.")
 
 
 _HIO413_FIRED = False
@@ -1924,8 +2089,12 @@ def hio_413(adp, rec):
               "reads) that no register test covers. WEAK as a verdict and marked so: "
               "the token is absent on any die whose CPUs have not run, which is the "
               "normal pre-Tier-5 state, so absence cannot be a red. Only the read "
-              "itself is asserted. Presence, by contrast, is strong: 0xB007C0FE is a "
-              "value nothing but firmware writes. The strong form of this test is "
+              "itself is asserted. ON THIS BUILD THE TOKEN CANNOT APPEAR AT ALL: "
+              "0xB007C0FE is absent from all 601 files of the real flist and from both "
+              "boot ROMs -- only a chip_core_* QSPI image emits it, and this part does "
+              "not run one. So absence here is expected and means nothing, and a "
+              "PRESENT token would itself be the surprise (it would mean an image "
+              "outside the flist ran).  The strong form of this test is "
               "HIO-504. If HIO-208 has run, shared SRAM was overwritten and absence "
               "means nothing at all.")
 def hio_414(adp, rec):
@@ -2464,55 +2633,37 @@ def hio_504(adp, rec):
                   got="0x%08X then 0x%08X" % (a.value, b.value))
 
 
-@test("HIO-505", tier=5, hazard=None, needs=["HIO-401", "HIO-502"],
-      purpose="Firmware console, polled from ADP -- the console substitute, and it "
-              "matters because ADP's own STDIO path is dead on this SoC (the debug "
-              "USRT's APB slave is tied off and it has no pins, so `S` and `X` carry "
-              "nothing). uart2 at 0x28006000 IS ADP-reachable. Mask polarity resolved "
-              "from RTL rather than assumed: cmsdk_apb_uart.v:251 packs STATE as "
-              "{rx_overrun, tx_overrun, rx_buf_full, tx_buf_full}, so bit 1 set means "
-              "RX-buffer-full and Mx00000002/Vx00000002 is the correct wait -- a wrong "
-              "polarity would give a poll that always matches, which looks exactly "
-              "like success. Both polarities are run for that reason. Goes red if both "
-              "or neither polarity matches, or if no character is recovered.")
+@test("HIO-505", tier=5, hazard=None,
+      purpose="Firmware console via uart2 -- NOT EXECUTABLE OVER HOSTIO, recorded "
+              "rather than omitted so that 'no ADP console' stays visible in the "
+              "coverage record. Structurally impossible on four independent grounds, "
+              "any one of which is fatal, and no environment flag can make it "
+              "runnable. Kept in the suite because the skip text carries a latent "
+              "false-green that a future reader MUST see before deleting it.")
 def hio_505(adp, rec):
-    # cmsdk_apb_uart.v:261 -- read mux index 0 returns reg_rx_buf, i.e. bytes that
-    # ARRIVED on uart2's RXD pad.  Firmware's console output leaves on TXD, to a
-    # physical pin, and is not visible to ADP at all unless TXD is looped back
-    # externally to RXD.  This is a real limit of the plan's HIO-505 as written and
-    # is the reason for the opt-in below rather than a silent partial pass.
-    if not _env_flag("HOSTIO_UART2_LOOPBACK"):
-        rec.skip("uart2 console recovery needs a path by which characters reach the "
-                 "RX buffer this port can read. Reading 0x28006000 returns reg_rx_buf "
-                 "(cmsdk_apb_uart.v:261) -- bytes arriving on the uart2 RXD pad. "
-                 "Firmware console output goes out on TXD to a pin and is invisible to "
-                 "ADP. REQUIRED: either an external TXD->RXD loopback on the uart2 pads "
-                 "(then set HOSTIO_UART2_LOOPBACK=1) or a character source driving RXD, "
-                 "PLUS firmware that writes to uart2. Neither exists in this tree "
-                 "today. At ~4 CU per character this is a status-string recovery "
-                 "mechanism, never a console: put real firmware output in shared SRAM "
-                 "(HIO-504), where one R<n> retrieves a whole buffer.")
-
-    _require_okay(adp, rec, UART2_STATE, "uart2 STATE 0x28006004")
-
-    pos = _poll(adp, UART2_STATE, UART2_STATE_RX_FULL, UART2_STATE_RX_FULL, POLL_BUDGET)
-    rec.record("uart2_rxfull_poll_raw", pos.raw)
-    neg = _poll(adp, UART2_STATE, UART2_STATE_RX_FULL, 0x00000000, POLL_BUDGET)
-    rec.record("uart2_rxempty_poll_raw", neg.raw)
-    rec.check("EXACTLY ONE STATE[1] polarity matches (mask polarity is real)",
-              _matched(pos) != _matched(neg),
-              got="full -> %s ; empty -> %s" % (pos.raw, neg.raw))
-    rec.check("RX-buffer-full was reached within the budget", _matched(pos), got=pos.raw)
-    if not _matched(pos):
-        return
-
-    ch = _rd(adp, UART2_DATA)
-    rec.check("a character was read out of the RX buffer", _good(ch), got=ch.raw)
-    rec.record("uart2_char", None if ch.value is None else ch.value & 0xFF)
-    if _good(ch):
-        rec.note("Recovered byte 0x%02X. Reading DATA clears rx_buf_full, so repeating "
-                 "the poll/read pair walks the stream one character at a time."
-                 % (ch.value & 0xFF))
+    rec.skip(
+        "PERMANENT SKIP -- four independent blocks, no bus access attempted.\n"
+        "(1) NO TX READBACK: 0x28006000 reads reg_rx_buf only (cmsdk_apb_uart.v:261); "
+        "reg_tx_buf is not readable at any offset, so what firmware WRITES to the "
+        "console can never be read back through this port.\n"
+        "(2) NO LOOPBACK: the CMSDK UART has none. CTRL[6] is TX high-speed test "
+        "mode, not a loop -- a reader looking for a loopback bit will find that one "
+        "and be wrong.\n"
+        "(3) NO PIN, ON ANY BUILD: uart2 has no pin anywhere -- chip_core_uart_rxd is "
+        "tied 1'b1 and TXD is left open at the ASIC top, in the KR260 IP wrapper AND "
+        "in the HAPS top. So nothing can ever arrive in the RX buffer, and "
+        "HOSTIO_UART2_LOOPBACK (which an earlier revision of this test honoured) can "
+        "never legitimately be set. That flag is now ignored.\n"
+        "(4) WRONG CORE ANYWAY: CPU0 -- the core HIO-502 releases -- has no decode "
+        "window at 0x28000000 and cannot write uart2 even in principle. CPU0's real "
+        "console is the eth-subsystem UART at 0x50001000, bonded on KR260 W12/W11 but "
+        "outside debug_m's decode: SWD/DAP only, never ADP.\n"
+        "THE LATENT FALSE GREEN, which is why this text is long: RXD is tied HIGH. If "
+        "a future BD edit ties it LOW instead, enabling CTRL[1] yields an endless "
+        "0x00 break stream with rx_buf_full stuck SET -- and the polled version of "
+        "this test would have scored that as a PASS, reporting a working console on a "
+        "line that is simply shorted to ground. Anyone removing this skip must first "
+        "prove RXD is driven by a real transmitter, not merely that the poll matches.")
 
 
 @test("HIO-506", tier=5, hazard=None, needs=["HIO-502", "HIO-504"],
@@ -2585,9 +2736,32 @@ def hio_507(adp, rec):
     want = int(expect, 0)
     rec.record("fw_expected_fault_addr", want)
 
+    # FAULT_MASK is a control nothing else reads, and its RESET VALUE bounds this
+    # test's coverage claim: 0x8 disarms initiator 3 (the DAP), so a fault from the
+    # DAP is not recorded at all and this test covers three of four initiators.
+    mask = _rd(adp, FAULT_MASK)
+    rec.record("fault_mask", mask.value)
+    if _good(mask):
+        disarmed = [i for i in range(4) if (mask.value >> i) & 1]
+        rec.record("fault_initiators_disarmed", disarmed)
+        rec.record("fault_initiator_coverage", "%d of 4" % (4 - len(disarmed)))
+        if disarmed:
+            rec.note("FAULT_MASK = 0x%08X disarms initiator(s) %s (0 eth_ss_m/CPU0, "
+                     "1 cpu_ss_1_m/CPU1, 2 dmac_0_m, 3 dap_ss_0_m). Its reset value "
+                     "is 0x8, so out of reset the DAP is NOT monitored and this "
+                     "test's coverage is three of four initiators, not four."
+                     % (mask.value, disarmed))
+
     stat = _rd(adp, FAULT_STAT)
     addr = _rd(adp, FAULT_ADDR)
     count = _rd(adp, FAULT_COUNT)
+    ctrl = _rd(adp, FAULT_CTRL)
+    rec.record("fault_ctrl", ctrl.value)
+    if _good(ctrl):
+        # Free extra discrimination: the captured control bundle is a value only a
+        # correct monitor could produce for the access firmware actually made.
+        rec.check("FAULT_CTRL records a 32-bit NONSEQ write (0x00000062)",
+                  ctrl.value == 0x00000062, got="0x%08X" % ctrl.value)
     rec.check("fault registers readable",
               _good(stat) and _good(addr) and _good(count),
               got="%s / %s / %s" % (stat.raw, addr.raw, count.raw))
@@ -2597,6 +2771,9 @@ def hio_507(adp, rec):
     rec.record("fault_addr", addr.value)
     rec.record("fault_count", count.value)
     seen = _bits(stat.value, 0, 0)
+    # [5:4] is correct and stays. bus_fault_monitor.v:31's comment says [7:4]; the
+    # RTL is [5:4]. Numerically harmless at N_INIT=4 because [7:6] are hardwired
+    # zero, so it is a DOC defect, not a test defect -- do not "fix" this line.
     init_idx = _bits(stat.value, 5, 4)
     overflow = _bits(stat.value, 8, 8)
     rec.record("fault_seen", seen)
