@@ -1049,6 +1049,9 @@ def extract_all(root, run_dir, toolkit_dir=None, head_sha=None):
     doc["sections"]["gls"] = gls
     doc["values"].update(gls["values"])
 
+    doc["sections"]["rom_compile"] = sec = extract_rom_compile(root, run_dir)
+    doc["values"].update(sec["values"])
+
     rom = extract_roms(run_dir)
     doc["sections"]["rom"] = rom
     doc["values"].update(rom["values"])
@@ -1245,6 +1248,38 @@ def summarise(doc):
         flags.append({"severity": "high",
                       "what": "CDC: %s unsynchronised crossing(s)" % sg["value"],
                       "detail": sg.get("note") or ""})
+
+    ft = vals.get("rom_compile.failed_total")
+    if ft and ft.get("value"):
+        flags.append({"severity": "high",
+                      "what": "ROM compile: %s generator(s) FAILED" % ft["value"],
+                      "detail": ft.get("note") or ""})
+    for k, r in sorted(vals.items()):
+        if k.startswith("rom_compile.") and k.endswith(".no_verdict") \
+                and r.get("value") is None:
+            flags.append({"severity": "medium",
+                          "what": "ROM compile: %s" % k.split(".")[1]
+                                  + " has a transcript with no verdict",
+                          "detail": (r.get("why") or "")[:280]})
+        if k.startswith("rom_compile.") and k.endswith(".declared_without_log") \
+                and r.get("value"):
+            flags.append({"severity": "medium",
+                          "what": "ROM compile: %s generator(s) declared with no "
+                                  "transcript" % r["value"],
+                          "detail": r.get("note") or ""})
+
+    stm = vals.get("lvs.sub_top_missing_connections")
+    if stm and stm.get("value"):
+        flags.append({
+            "severity": "high",
+            "what": "LVS: %s missing connection(s) below the top level"
+                    % stm["value"],
+            "detail": (stm.get("note") or "")[:340]})
+    cov = vals.get("lvs.coverage_control")
+    if cov and cov.get("value") is None:
+        flags.append({"severity": "high",
+                      "what": "LVS: the scan's coverage control never fired",
+                      "detail": (cov.get("why") or "")[:300]})
 
     ps = vals.get("erc.imec.pad_shorts")
     if ps and ps.get("value"):
@@ -1517,12 +1552,106 @@ def extract_lvs(root, run_dir):
                                  "the report's own stamp")
                         if m else absent("no `CREATION TIME:` in the report",
                                          g, [rep]))
-    m = re.search(r"LVS REPORT MAXIMUM\s+(\d+)", text)
+    m = re.search(r"LVS REPORT MAXIMUM\s+(\S+)", text)
     if m:
         v["lvs.report_maximum"] = measured(
-            int(m.group(1)), os.path.basename(rep), g, "rows",
-            "the discrepancy list is truncated at this many rows")
-    return {"values": v, "source": rep}
+            m.group(1), os.path.basename(rep), g, "rows",
+            "the connection list is truncated at this many rows per "
+            "discrepancy; ALL means uncapped")
+
+    # THE GRADABLE NUMBER, from the grader that already exists.
+    #
+    # `lvs.verdict` cannot discriminate on this design -- it is INCORRECT on a
+    # good stream and on a bad one. `scripts/ci/lvs_missing_connection.py`
+    # grades the DISCREPANCY LIST instead, and that number does discriminate:
+    # MEASURED 2026-08-25 over the recovered reports, rzG has exactly ONE
+    # `** missing connection **` below the top level
+    # (u_cache_subsystem_RAMCLD0RDATA[123], DISC 62) and the pinfix ECO has
+    # ZERO. Same deck, same design, opposite verdicts.
+    #
+    # It is IMPORTED, not reimplemented, for the same reason drc_census is.
+    try:
+        if HERE_DIR not in sys.path:
+            sys.path.insert(0, HERE_DIR)
+        import lvs_missing_connection as LMC
+        r = LMC.scan(rep)
+    except Exception as exc:
+        v["lvs.sub_top_missing_connections"] = absent(
+            "cannot grade the discrepancy list (%s), so only the "
+            "non-discriminating verdict box was read" % exc, g, [rep])
+        return {"values": v, "source": rep}
+
+    # `findings_of` IS the graded population -- missing-connection rows on
+    # sub-top nets. Using the grader's own function rather than re-deriving
+    # the predicate is the whole point: `level == "subtop"` is a classification
+    # the scanner makes from the report's column ruler, and a second guess at
+    # it here would be a second opinion on the one number that discriminates.
+    findings = LMC.findings_of(r)
+    sub = [d for d in (r.get("discrepancies") or []) if d.get("level") == "subtop"]
+
+    v["lvs.sub_top_missing_connections"] = measured(
+        len(findings), os.path.basename(rep), g, "rows",
+        ("THE NUMBER THAT DISCRIMINATES. Each is a connection the netlist "
+         "requires and the layout does not have, on a net below the top level. "
+         "The verdict box cannot tell a good stream from a bad one here; this "
+         "can. Nets: "
+         + ", ".join(sorted({f["source_name"] for f in findings}))[:220])
+        if findings else
+        "zero rows on nets below the top level, over %d sub-top discrepancy(s) "
+        "with the coverage control established" % len(sub))
+    v["lvs.sub_top_discrepancies"] = measured(
+        len(sub), os.path.basename(rep), g, "discrepancies",
+        "the population the number above was computed over")
+    v["lvs.top_level_discrepancies"] = measured(
+        len([d for d in (r.get("discrepancies") or []) if d.get("level") == "top"]),
+        os.path.basename(rep), g, "discrepancies",
+        "top-level discrepancies are NOT graded: .GLOBAL VSS floods ~17,233 "
+        "unmatched source nets, so this count is dominated by a known "
+        "structural artefact and does not discriminate")
+
+    v["lvs.discrepancies"] = measured(
+        len(r.get("discrepancies") or []), os.path.basename(rep), g,
+        "discrepancies", "the gradable artefact; the verdict box is not")
+    v["lvs.missing_connection_rows"] = measured(
+        r.get("missing_rows_total"), os.path.basename(rep), g, "rows",
+        "`** missing connection **` rows scanned over %s of the connection "
+        "list" % ("an UNCAPPED report" if str(r.get("report_maximum")) == "ALL"
+                  else "a report capped at %s rows per discrepancy"
+                       % r.get("report_maximum")))
+    cov = r.get("coverage_count")
+    if cov:
+        v["lvs.coverage_control"] = measured(
+            cov, os.path.basename(rep), g, "mentions",
+            "`%s` mentions -- the control that proves the report was actually "
+            "read. A zero here would mean the scan matched nothing, which is "
+            "not the same as finding nothing"
+            % r.get("coverage_token"))
+    else:
+        v["lvs.coverage_control"] = absent(
+            "the coverage control `%s` was never seen, so this scan cannot show "
+            "it read anything -- every count below it is unmeasured, not zero"
+            % r.get("coverage_token"), g, [rep])
+    unatt = r.get("unattributed_missing_rows") or []
+    v["lvs.unattributed_missing_rows"] = measured(
+        len(unatt), os.path.basename(rep), g, "rows",
+        "rows that could not be attributed to a discrepancy; non-zero means "
+        "the parse lost track of the report's structure")
+    trunc = r.get("row_truncated_discrepancies") or []
+    v["lvs.row_truncated_discrepancies"] = measured(
+        len(trunc), os.path.basename(rep), g, "discrepancies",
+        "discrepancies whose connection list hit the cap. This does NOT make "
+        "the run unmeasured: a truncated row list hides more rows of a net "
+        "whose class is already fixed by its header, never a different net")
+    if not r.get("complete", True):
+        v["lvs.report_complete"] = absent(
+            "the report is truncated and does not carry its own end -- it is a "
+            "partial run, not a measurement", g, [rep])
+    return {"values": v, "source": rep, "scan": {
+        "discrepancies": len(r.get("discrepancies") or []),
+        "sub_top": len(sub),
+        "missing_rows_total": r.get("missing_rows_total"),
+        "report_maximum": r.get("report_maximum"),
+        "coverage_count": cov, "complete": r.get("complete")}}
 
 
 # ---------------------------------------------------------------------------
@@ -2053,4 +2182,225 @@ def extract_erc(root, run_dir):
     m = re.search(r"CREATION TIME:\s*(.+?)\s*$", text, re.M)
     if m:
         v["erc.imec.created"] = measured(m.group(1), os.path.basename(fp), g, "")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# ROM COMPILE LOGS -- the memory compiler's own transcript, per generator
+#
+# The ROMs are built at the START of the end-to-end flow (ahead of synthesis on
+# purpose: synthesis bakes ROM content into the netlist, so a ROM gate that
+# runs after it judges a chip that has already been built). The compiler leaves
+# one log per generator in the cache entry:
+#
+#     build/rom_cache/<rom>/<key>/logs/gen_<generator>.log
+#
+# and `build.json` beside them declares which generators were asked for. THOSE
+# TWO CAN DISAGREE, and nothing checked: a generator declared and never run
+# leaves no log, and a run whose log is missing is indistinguishable from one
+# that was never asked for.
+#
+# TWO TRAPS, BOTH MEASURED 2026-08-25.
+#
+#   THE DATE IN THESE LOGS IS NOT A BUILD DATE. Line 3 is `uname -a`, whose
+#   trailing date is the LINUX KERNEL's build date -- `Fri Jun 19 18:53:55 EDT
+#   2026` on every one of the 28 logs here, months before the ROMs were
+#   compiled. It is the only date-shaped string in the file. Anything grepping
+#   for a date in a ROM compile log finds the kernel's and reports it as the
+#   ROM's. The real stamp is `built_at` in build.json and `Creation Date:`
+#   inside the macro views; see check_rom_dates().
+#
+#   `gds2` HAS A DIGIT IN ITS NAME. A generator-name pattern of `[a-z_-]+`
+#   matches the other thirteen and silently drops the GDS2 one -- the generator
+#   that produces the layout that actually ends up on the die. Verified: that
+#   exact pattern reports 13 of 14 succeeded and reads like one generator
+#   failed. It also writes its created file on the SAME line as its verdict
+#   while the other thirteen use an indented list, so a parser that only
+#   handles the list form records it as producing nothing.
+# ---------------------------------------------------------------------------
+
+_GEN_LAUNCH = re.compile(r"^Launching\s+(.+?)\s+generator\.\.\.\s*$")
+_GEN_RESULT = re.compile(
+    r"^([A-Za-z0-9_.\-]+)\s+generator\s+(succeeded|failed)\b\s*(?:,\s*created:\s*(.*))?$")
+_GEN_TOOL = re.compile(r"^(ARM PIPD .+?|Compiler version\s+\S+|GUI version\s+\S+)\s*$")
+
+
+def _parse_rom_compile_log(path):
+    """-> {generator, launched, result, created[], tool_lines[], lines}."""
+    rec = {"path": path, "generator": None, "launched": None, "result": None,
+           "result_line": None, "created": [], "tool_lines": [], "lines": 0}
+    try:
+        text = open(path, errors="replace").read()
+    except OSError as exc:
+        rec["result"] = "unreadable"
+        rec["error"] = str(exc)
+        return rec
+    lines = text.splitlines()
+    rec["lines"] = len(lines)
+    collecting = False
+    for n, line in enumerate(lines, 1):
+        m = _GEN_LAUNCH.match(line.strip())
+        if m:
+            rec["launched"] = m.group(1)
+            continue
+        m = _GEN_RESULT.match(line.strip())
+        if m:
+            rec["generator"] = m.group(1)
+            rec["result"] = m.group(2)
+            rec["result_line"] = n
+            # gds2 puts its artefact on THIS line; the rest use the list below.
+            if m.group(3):
+                rec["created"].append(m.group(3).strip())
+            collecting = True
+            continue
+        m = _GEN_TOOL.match(line.strip())
+        if m and not line.startswith(" "):
+            rec["tool_lines"].append(m.group(1))
+            continue
+        if collecting:
+            t = line.strip()
+            if t and (line.startswith("   ") or line.startswith("\t")):
+                rec["created"].append(t)
+            elif t:
+                collecting = False
+    return rec
+
+
+def extract_rom_compile(root, run_dir):
+    """The compiler transcripts for the ROMs THIS RUN pinned.
+
+    The cache entry is taken from the run's own `.rom_pin.json`, never from the
+    newest directory under build/rom_cache/ -- that directory belongs to
+    whichever build last compiled a ROM, which is the same class of mistake as
+    reading the newest calibre_runs/ for a DRC result."""
+    import json
+    g = "rom-compile"
+    out = {"values": {}, "roms": [], "sources": []}
+    v = out["values"]
+    pin_p = os.path.join(run_dir, "romlibs", ".rom_pin.json") if run_dir else None
+    if not pin_p or not os.path.isfile(pin_p):
+        v["rom_compile.roms"] = absent(
+            "no romlibs/.rom_pin.json under this run, so the cache entries this "
+            "run's ROMs were built in cannot be identified. Reading the newest "
+            "entry under build/rom_cache/ instead would attribute another "
+            "build's compile to this one.", g, [pin_p] if pin_p else [])
+        return out
+    try:
+        pin = json.load(open(pin_p))
+    except (ValueError, OSError) as exc:
+        v["rom_compile.roms"] = absent(".rom_pin.json will not parse: %s" % exc,
+                                       g, [pin_p])
+        return out
+
+    roms = pin.get("roms") or {}
+    total_logs = total_ok = total_failed = 0
+    for name in sorted(roms):
+        entry = (roms[name] or {}).get("cache_entry")
+        pre = "rom_compile.%s" % name
+        if not entry or not os.path.isdir(entry):
+            v["%s.generators" % pre] = absent(
+                "the cache entry %r named by .rom_pin.json for %s is not on "
+                "this host, so its compile transcript cannot be read. The build "
+                "is still described by build.json's hashes; only the compiler's "
+                "own log is unavailable." % (entry, name), g,
+                [entry] if entry else [])
+            continue
+        logdir = os.path.join(entry, "logs")
+        bj = os.path.join(entry, "build.json")
+        declared = []
+        built_at = compiler = None
+        if os.path.isfile(bj):
+            try:
+                b = json.load(open(bj))
+                declared = b.get("generators") or []
+                built_at = b.get("built_at")
+                compiler = (b.get("compiler") or {}).get("versions")
+            except (ValueError, OSError):
+                pass
+
+        logs = []
+        if os.path.isdir(logdir):
+            for f in sorted(os.listdir(logdir)):
+                if f.startswith("gen_") and f.endswith(".log"):
+                    logs.append(_parse_rom_compile_log(os.path.join(logdir, f)))
+        out["sources"].append(logdir)
+
+        ok = [l for l in logs if l["result"] == "succeeded"]
+        bad = [l for l in logs if l["result"] == "failed"]
+        silent = [l for l in logs if l["result"] not in ("succeeded", "failed")]
+        seen = {l["generator"] for l in logs if l["generator"]}
+        missing = [d for d in declared if d not in seen]
+        total_logs += len(logs)
+        total_ok += len(ok)
+        total_failed += len(bad)
+
+        if not logs:
+            v["%s.generators" % pre] = absent(
+                "the cache entry exists but holds no logs/gen_*.log, so nothing "
+                "records what the compiler did for %s" % name, g, [logdir])
+            continue
+
+        v["%s.generators" % pre] = measured(
+            len(logs), "logs/gen_*.log", g, "generators",
+            "compile transcripts found for %s" % name)
+        v["%s.succeeded" % pre] = measured(
+            len(ok), "logs/gen_*.log", g, "generators",
+            " ".join(sorted(l["generator"] or "?" for l in ok)))
+        if bad:
+            v["%s.failed" % pre] = measured(
+                len(bad), "logs/gen_*.log", g, "generators",
+                "FAILED: " + " ".join(sorted(
+                    "%s (%s:%s)" % (l["generator"], os.path.basename(l["path"]),
+                                    l["result_line"]) for l in bad)))
+        else:
+            v["%s.failed" % pre] = measured(
+                0, "logs/gen_*.log", g, "generators",
+                "no log carries a `generator failed` line, over %d transcript(s)"
+                % len(logs))
+        if silent:
+            v["%s.no_verdict" % pre] = absent(
+                "%d transcript(s) carry NO `generator succeeded|failed` line "
+                "(%s) -- the generator was launched and the log does not say "
+                "how it ended, which is not the same as succeeding"
+                % (len(silent), " ".join(os.path.basename(l["path"])
+                                         for l in silent)), g, [logdir])
+        if declared:
+            if missing:
+                v["%s.declared_without_log" % pre] = measured(
+                    len(missing), "build.json", g, "generators",
+                    "DECLARED in build.json and NO transcript on disk: "
+                    + " ".join(sorted(missing))
+                    + ". A generator that never ran leaves no log, and is "
+                      "indistinguishable from one never asked for")
+            else:
+                v["%s.declared_without_log" % pre] = measured(
+                    0, "build.json", g, "generators",
+                    "all %d declared generator(s) have a transcript" % len(declared))
+        created = sorted({c for l in logs for c in l["created"]})
+        v["%s.artefacts" % pre] = measured(
+            len(created), "logs/gen_*.log", g, "files",
+            "files the compiler reports creating; "
+            + " ".join(created[:6]) + (" ..." if len(created) > 6 else ""))
+        if compiler:
+            v["%s.compiler" % pre] = measured(
+                "; ".join(compiler), "build.json", g, "",
+                "the compiler's own version strings, from build.json -- NOT the "
+                "kernel line in the logs, whose date is the OS build date")
+        if built_at:
+            v["%s.built_at" % pre] = measured(
+                built_at, "build.json", g, "",
+                "THE compile time. The logs' only date-shaped string is `uname "
+                "-a`'s kernel build date and is months out")
+        out["roms"].append({"rom": name, "entry": entry, "logs": logs,
+                            "declared": declared, "missing": missing})
+
+    v["rom_compile.roms"] = measured(
+        len(out["roms"]), ".rom_pin.json", g, "ROMs",
+        "ROMs whose compile transcripts were read")
+    v["rom_compile.generators_total"] = measured(
+        total_logs, "logs/gen_*.log", g, "generators",
+        "across every ROM this run pinned")
+    v["rom_compile.failed_total"] = measured(
+        total_failed, "logs/gen_*.log", g, "generators",
+        "generators that reported failure, over %d transcript(s)" % total_logs)
     return out

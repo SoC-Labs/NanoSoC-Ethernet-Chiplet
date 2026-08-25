@@ -42,10 +42,29 @@ pass itself off as observed.
 All four are Calibre `v2023.1_18.8`. The first three are 10 August 2026 runs;
 the ERC one is 22 August.
 
-**None of them is the shipping lineage, and that is a finding rather than an
-oversight.** Every LVS report of a 22–24 August stream — rzG's included — was
-written to a session scratch path and is gone. See the `fail-derived-rzg-entry62`
-arm.
+**None of them is the shipping lineage** — but the reports that ARE it have
+since been **RECOVERED**, and the claim that they were gone was wrong.
+
+> **CORRECTION, 2026-08-25.** This file previously stated six times that every
+> LVS report of a 22–24 August stream, rzG's included, "is gone". They were not
+> gone: they were in a *different session's* scratchpad, which the 2026-08-24
+> search did not reach. They are now in the repo tree:
+>
+> | run | recovered to | verdict under this gate |
+> |---|---|---|
+> | rzG | `ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/lvs_run/` | **FAIL** — 1 sub-top missing connection |
+> | pinfix (capped) | `ASIC/eth-chiplet/build/pinfix-20260824/work/lvs_run/` | **PASS** — 0 |
+> | pinfix (uncapped control) | `ASIC/eth-chiplet/build/pinfix-20260824/work/lvs_run_uncapped/` | **PASS** — 0, 18,214 rows scanned |
+>
+> Each carries a `RECOVERED_FROM.txt` naming its source and the stream it
+> graded. The identification is not by filename: the coverage counts below —
+> **388 for rzG and 384 for the fixed stream** — match this file's own recorded
+> values exactly, and the rzG report contains both `RAMCLD0RDATA` and `g87561`.
+>
+> **The lesson is not "the search was sloppy".** It is that a provenance file
+> which records evidence as DESTROYED stops anyone looking for it, and is
+> therefore worse than one that records it as merely unreachable. An absence
+> asserted in a tracked file outlives the search that produced it.
 
 ## The arms
 
@@ -64,9 +83,32 @@ arm.
 | `not-measured-disc-list-saturated` | DERIVED | 134 | **NOT-MEASURED** | control N7 alone — discrepancy count equals `LVS REPORT MAXIMUM` |
 | `pass-toplevel-row-saturated` | DERIVED | 123 | **PASS** | the other side of N7: a truncated *row* list inside one top-level discrepancy is recorded, not laundered and not over-read |
 
-## The defect arm, in detail — because the report it came from is GONE
+## The defect arm, in detail — and the report it came from is BACK
 
 `fail-derived-rzg-entry62` reconstructs the finding this whole gate exists for.
+
+> **CORRECTED 2026-08-25. The report IS on disk**, at
+> `ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep`.
+> It contains `RAMCLD0RDATA` (2 hits) and `g87561` (2 hits), and the real entry
+> reads, at line 3616:
+>
+> ```
+>      ** missing connection **        Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xg87561:B2
+> ```
+>
+> The gate run against it returns **FAIL, required 0 got 1**, naming
+> `…u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_RAMCLD0RDATA[123]` at
+> DISC 62 — while the pinfix stream returns **PASS, 0**. So the derived arm no
+> longer stands alone: the observed pair now exists and proves the same thing
+> the reconstruction was built to assert. **The derived arm should be re-based
+> on the real report, or retired in favour of an observed pair.**
+>
+> The 2026-08-24 search that concluded otherwise did not reach the scratchpad of
+> a different session.
+
+The paragraph below is the ORIGINAL text, kept because the reasoning it records
+is still worth reading — it is what a careful reconstruction looks like when the
+source really is unavailable. **Its factual premise is now false.**
 
 **The report is not on disk.** Searched 2026-08-24 across the filesystem: no
 `.rep` file anywhere contains `RAMCLD0RDATA` or `g87561`. It lived in an
@@ -101,6 +143,10 @@ surrounding line are verbatim from `lvs_run_pintext`.
 What is **not verifiable**: the exact spelling Calibre printed in the rzG
 report. The file is gone. That absence is itself the point of the work item
 these fixtures belong to.
+
+> **CORRECTED 2026-08-25.** It is verifiable now — see the recovered report
+> named above. Compare the derived arm against line 3616 before trusting its
+> column alignment.
 
 ## Derivation, arm by arm
 
@@ -162,8 +208,9 @@ zero clean if the token is absent. Recorded values:
 
 | report | mentions |
 |---|---|
-| rzG (gone) | 388 |
-| the fixed stream (gone) | 384 |
+| rzG (**recovered**, `build/gdsrun-20260823-rzG/work/lvs_run/`) | 388 |
+| the fixed stream (**recovered**, `build/pinfix-20260824/work/lvs_run/`) | 384 |
+| the fixed stream, uncapped control (`…/lvs_run_uncapped/`) | 3835 |
 | `lvs_run` | 360 |
 | `lvs_run_pintext` | 408 |
 | `lvs_run_nopadbox` | 482 |

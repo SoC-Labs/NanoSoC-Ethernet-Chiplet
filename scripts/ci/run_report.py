@@ -212,6 +212,7 @@ SECTION_ORDER = [
     ("ir_drop", "IR drop", "Voltus"),
     ("gls", "Gate-level sim", "VCS"),
     ("rom", "Boot ROMs", "memory compiler"),
+    ("rom_compile", "ROM compile logs", "ARM PIPD compiler"),
     ("lint", "Lint", "Verilator + HAL"),
     ("cdc", "CDC", "HAL + SpyGlass"),
     ("signoff", "Signoff stages", "signoff.py"),
@@ -223,7 +224,8 @@ def _grouped(doc):
     pref = {"synthesis": "syn.", "place": "place.", "cts": "cts.", "route": "route.",
             "drc": "drc.", "lvs": "lvs.", "erc": "erc.", "lec": "lec.",
             "ir_drop": "ir_drop.",
-            "gls": "gls.", "rom": "rom.", "lint": "lint.", "cdc": "cdc."}
+            "gls": "gls.", "rom": "rom.", "rom_compile": "rom_compile.",
+            "lint": "lint.", "cdc": "cdc."}
     out = []
     for key, label, tool in SECTION_ORDER:
         if key == "signoff":
