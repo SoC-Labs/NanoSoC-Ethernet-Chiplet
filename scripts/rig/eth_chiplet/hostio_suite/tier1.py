@@ -118,21 +118,13 @@ def _field(word, hi, lo):
 def _ascii(word):
     """Render a 32-bit word MSB-byte-first: 0x42464D31 -> 'BFM1'.
 
-    That is the order the block magics on this die are packed in (BFM1, ETC1, PRF1,
-    SOCD). It is NOT universal — the discovery table's INTERCONNECT_NAME is packed the
-    other way round — so _ascii_le() exists for that case and HIO-119 records both.
+    That is the order every block magic this tier reads is packed in: BFM1 (HIO-108),
+    ETC1 (HIO-109), PRF1 (HIO-110). Byte order is not universal across the SoC, so
+    check it before reusing this on a magic from another block.
     """
     if word is None:
         return ""
     bs = [(word >> s) & 0xFF for s in (24, 16, 8, 0)]
-    return "".join(chr(b) if 0x20 <= b <= 0x7E else "." for b in bs)
-
-
-def _ascii_le(word):
-    """Render a 32-bit word LSB-byte-first: 0x746C756D -> 'mult'."""
-    if word is None:
-        return ""
-    bs = [(word >> s) & 0xFF for s in (0, 8, 16, 24)]
     return "".join(chr(b) if 0x20 <= b <= 0x7E else "." for b in bs)
 
 
@@ -189,6 +181,49 @@ def _marker(rec, label, word, expect, hi=31, lo=24):
 # ===========================================================================
 # B1 — HIO-106.  RUNS FIRST.
 # ===========================================================================
+# The six-rung BOOT-STATE LADDER.
+# docs/bringup/ASIC_FIRST_SILICON_HOSTIO_PROCEDURE.md §3.2 (running order and expected
+# values) and §0.3 (what a zero boot gate actually means). Every rung is HOSTIO-
+# readable and each says how far CPU1 got, so a zero gate resolves into WHICH of four
+# states rather than one undifferentiated "anomaly". Run only when the gate reads
+# zero: 8 extra reads, ~1 s, and only on the die that needs the diagnosis.
+#
+# (rung, address, expected, mode, what it proves)
+_BOOT_LADDER = [
+    (0, 0x800000E4, 0x08000678, "eq",  "CPU1 ROM slot holds stage0_bootrom_chip_core"),
+    (0, 0x800004F4, 0x220423A4, "eq",  "gate-release store site 1 present in ROM"),
+    (0, 0x800004F8, 0x601A059B, "eq",  "gate-release store site 1 (continued)"),
+    (1, 0x98000200, 0x0F1C0DE1, "eq",  "CPU1 main() entered"),
+    (2, 0x21000030, 0x0000800B, "eq",  "QSPI AHB_SETUP written"),
+    (3, 0x21000000, 1 << 8,     "bit", "QSPI CTRL[8] XIP_ACTIVE latched"),
+    (4, 0x23000010, 0xD15C0001, "eq",  "XiP-warm handshake published"),
+    (5, 0x98000084, 0xFFFFFFFF, "eq",  "CPU1 g_tbl (0xFFFFFFFF on blank flash)"),
+]
+
+
+def _bootgate_values(rec):
+    """The target profile's declared terminating-path words, or () if undeclared."""
+    t = getattr(rec, "target", None)
+    if t is None:
+        return ()
+    return tuple(t.get("bootgate_values", ()) or ())
+
+
+def _run_boot_ladder(adp, rec):
+    """Read the ladder and return (rung_ok dict, values dict). No assertions here --
+    the caller decides, because most ladder failures are benign diagnoses."""
+    ok, vals = {}, {}
+    for rung, addr, expect, mode, what in _BOOT_LADDER:
+        v = _probe(adp, addr)
+        got = v.value if (v.ok and not v.error) else None
+        vals["%s" % _h(addr)] = {"rung": rung, "value": got, "raw": v.raw,
+                                 "expected": _h(expect), "proves": what}
+        held = (got is not None and
+                ((got & expect) == expect if mode == "bit" else got == expect))
+        ok[rung] = ok.get(rung, True) and held
+    return ok, vals
+
+
 # Every other test in the tier. HIO-106 gates all of them — see its purpose.
 _TIER1_OTHERS = [
     "HIO-101", "HIO-102", "HIO-103", "HIO-104", "HIO-105", "HIO-107", "HIO-108",
@@ -199,52 +234,43 @@ _TIER1_OTHERS = [
 
 
 @test("HIO-106", tier=1, control=True, gates=_TIER1_OTHERS, hazard=None,
-      purpose="Boot-gate register 0x29000000 — the boot state of the chip, read FIRST "
-              "so every later Tier-1 reading is interpreted against a known "
-              "CPU0-loose/CPU0-held state. RED when: the read times out; the read "
-              "reports '!' (the 0x29 decode arm is dead); bits [31:4] are non-zero, "
-              "which is impossible because HRDATA={28'b0, remap_q} "
-              "(chip_core_remap_ctrl.v:121) — a non-zero top means something other than "
-              "the boot gate answered; OR the register reads 0x00000000, which is the "
-              "ANOMALY and not the healthy state (see below). NOT a write test: HZ-4 "
-              "(write-1-set, irreversible without a power cycle) applies to writes "
-              "only, and this test only reads. "
-              "THE HEALTHY VALUE IS NON-ZERO ON BOTH TARGETS — the plan says the "
-              "opposite and the plan is WRONG. cpu1_bootgate is tied 1'b1 "
-              "(build_soc/rtl/nanosoc_multicore_soc.sv:1387-88), so CPU1 free-runs from "
-              "power-on and executes cc_rom, and cc_rom OPENS THE CPU0 GATE ON EVERY "
-              "PATH. The write is synthesised rather than taken from a literal pool — "
-              "'movs r3,#164 ; movs r2,#4 ; lsls r3,r3,#22 ; str r2,[r3]', i.e. "
-              "0xA4 << 22 = 0x29000000, value 4 — which is why grepping the ROM words "
-              "for 0x29000000 finds nothing. It appears at cc_rom byte offsets 0x4F4 "
-              "and 0x528, and 0x528 is the 'every boot candidate failed' path, so even "
-              "a total boot failure releases CPU0 and halts. THERE IS NO PATH THAT "
-              "LEAVES THE GATE CLOSED. Verified from GDS-extracted ROM bits, unanimous "
-              "across all 23 build pins including rzG and gdsrun-20260825-resynth; "
-              "cc_rom carries no sim-divergence waiver and is identical on FPGA and "
-              "ASIC. So a healthy fresh ASIC die reads 0x00000004 (CPU1 found no boot "
-              "candidate — unprovisioned flash, the expected first-silicon case) or "
-              "0x00000005 (CPU1 loaded and booted an app, bit0 also mapping CPU1's "
-              "address 0 to IMEM). The FPGA's measured 0x00000004 with an empty IMEM is "
-              "the SAME mechanism working correctly — it is cc_rom, not a stray debug "
-              "write, and plan §5.5's 'investigate before Phase F' is now ANSWERED "
-              "rather than open. A 0x00000000 reading means cc_rom did not reach either "
-              "path, which is a real anomaly and makes every reading below it "
-              "uninterpretable — hence the hard red and the VOID cascade. "
-              "WHY IT GATES THE TIER, where plan §3 B1 calls it 'not a gate': this "
-              "runner orders tests only on explicit gates/needs edges, and B1 is "
-              "explicit that 0x29000000 is read BEFORE ANYTHING ELSE and recorded first "
-              "— the gate is how that ordering is expressed here. It is also "
-              "defensible on the merits: this read is what says whether CPU0 is loose, "
-              "so if it does not answer, every reading below it was taken from a bus of "
-              "unknown quiescence and is uninterpretable rather than merely unknown.")
+      purpose="Boot-gate register 0x29000000 — the boot state of the chip, read FIRST, "
+              "and on a zero reading followed immediately by the six-rung BOOT-STATE "
+              "LADDER that says how far CPU1 actually got. "
+              "ALWAYS ASSERTED, target-independent: the read is clean, and bits "
+              "[31:4] == 0 because HRDATA = {28'b0, remap_q} "
+              "(chip_core_remap_ctrl.v:121) — a non-zero top means something other "
+              "than the boot gate answered. "
+              "THE VALUE IS NEVER ASSERTED AGAINST A HARDCODED CONSTANT. On a "
+              "NON-ZERO reading it is checked against the target profile's "
+              "bootgate_values via rec.target_check, so an undeclared target defers "
+              "instead of inheriting FPGA expectations. "
+              "A ZERO READING IS NOT ASSUMED TO BE A FAULT. 0x00000000 is FOUR "
+              "distinct states, not one, and on an ASIC bring-up board with "
+              "unprovisioned or absent QSPI flash it is the EXPECTED reading and the "
+              "quietest bus state the die can be in: CPU1 HardFaults on xip_enable()'s "
+              "warm-up read of 0x24000000 (the QSPI AHB wrapper holds HREADYOUT low "
+              "for a 16-bit watchdog then ERRORs with no flash device) and parks in "
+              "'b .' at 0x080001CE, never reaching either cc_rom site that writes the "
+              "gate. So the ladder runs and CLASSIFIES instead: rung 0 wrong ROM; rung "
+              "1 CPU1 never reached main(); rungs 2/3 halted inside xip_enable(); "
+              "rungs 1-3 good but no handshake at rung 4 = the no-flash HardFault park, "
+              "BENIGN and by far the most likely first-silicon reading. "
+              "THE ONE ZERO THAT IS A HARD RED is rung 4 published (the XiP-warm "
+              "handshake at 0x23000010 = 0xD15C0001) with the gate still zero on a "
+              "re-read: CPU1 provably survived xip_enable(), so it must have reached a "
+              "terminating store — both are in the reticle — and a zero then "
+              "contradicts the mask. That is the only reading in §0.3's table that is a "
+              "silicon finding, and it is the only one that fails here. "
+              "NOT a write test: HZ-4 (write-1-set, irreversible without a power "
+              "cycle) applies to writes only; this test only reads.")
 def hio_106(adp, rec):
     v = _rd(adp, rec, 0x29000000, "boot gate")
     rec.record("boot_gate_word", v)
     if v is None:
         return
 
-    # Structural: the register is 4 bits wide, zero-extended. Nothing else can answer.
+    # Structural, target-independent: 4-bit register, zero-extended.
     rec.check("boot gate [31:4] == 0 (HRDATA = {28'b0, remap_q})",
               _field(v, 31, 4) == 0, got=_h(v))
 
@@ -255,38 +281,125 @@ def hio_106(adp, rec):
     rec.record("boot_gate_bit3", int(bool(v & 8)))
     rec.record("bus_quiescent_expected", int(not cpu0_released))
 
-    # THE ONLY ASSERTION ABOUT THE VALUE IS THE NEGATIVE ONE. cc_rom opens the gate on
-    # every path on both targets, so zero is the state that needs explaining.
-    rec.check("boot gate is NOT 0x00000000 (cc_rom opens the CPU0 gate on EVERY path, "
-              "on FPGA and ASIC alike — a closed gate means cc_rom did not get there)",
-              v != 0x00000000, got=_h(v))
+    if v & (1 << 1):
+        rec.note("BOOT GATE BIT 1 (CHIP_CORE_BOOTGATE) IS SET — unexplained. Nothing "
+                 "in either boot ROM writes it, and the SoC ties cpu1_bootgate to "
+                 "1'b1 so it does nothing anyway. Something other than the ROM wrote "
+                 "this register. Recorded, not diagnosed; stop before Phase C and "
+                 "resolve it.")
 
-    outcome = {0x00000004: "CPU1 found NO boot candidate (unprovisioned flash) — the "
-                           "expected fresh-silicon state",
-               0x00000005: "CPU1 loaded and booted an app (bit0 maps CPU1 address 0 "
-                           "to IMEM)",
-               0x00000000: "ANOMALY — cc_rom reached neither the success path (0x4F4) "
-                           "nor the all-candidates-failed path (0x528)",
-               }.get(v, "unrecognised encoding — record it and decode against cc_rom")
-    rec.record("cpu1_boot_outcome", outcome)
+    # ---------------------------------------------------------------- non-zero ----
+    if v != 0x00000000:
+        outcome = {0x00000004: "CPU1 found NO boot candidate — unprovisioned flash, "
+                               "the expected first-silicon reading. CPU1 is in "
+                               "'wfi ; b .' in ROM and CPU0 HAS been released.",
+                   0x00000005: "CPU1 found a CRC-valid image: it released CPU0, set "
+                               "its own REMAP and branched into IMEM. CPU1 IS RUNNING "
+                               "AN APPLICATION and you do not know what it is doing "
+                               "to memory.",
+                   }.get(v, "unrecognised encoding — decode against cc_rom before "
+                            "trusting anything below")
+        rec.record("cpu1_boot_outcome", outcome)
+        rec.record("boot_ladder_run", 0)
 
-    if v == 0x00000000:
-        rec.note("BOOT GATE READS 0x00000000 — this is the ANOMALY, not a cold-die "
-                 "baseline. cpu1_bootgate is tied 1'b1, so CPU1 cannot be held in "
-                 "reset, and cc_rom writes 4 to this register on both of its exit "
-                 "paths. A zero therefore means CPU1 never reached either exit: "
-                 "suspect the CPU1 clock/PRMU, cc_rom integrity, or a CPU1 hang before "
-                 "byte offset 0x4F4. Everything below this test is VOID, which is "
-                 "correct — with CPU1's boot outcome unknown, the state of the bus and "
-                 "of every RAM is unknown too.")
-    else:
-        rec.note("Boot gate = %s: %s. CPU0 IS RELEASED and is contending for the bus "
+        known = _bootgate_values(rec)
+        rec.target_check("boot gate is a terminating-path value for this target",
+                         (v in known) if known else None,
+                         prop="bootgate_values", got=_h(v),
+                         expected=[_h(x) for x in known] or None)
+        rec.note("Boot gate = %s: %s CPU0 IS RELEASED and is contending for the bus "
                  "and mutating memory, so every Tier-1 value below was read from a "
                  "LIVE system — RAM-backed readings (HIO-107, the census RAM rows, "
-                 "HIO-118) may move between probes. This is the NORMAL condition on "
-                 "both targets, not a fault: there is no configuration of this SoC in "
-                 "which a running die presents a quiescent bus to HOSTIO."
-                 % (_h(v), outcome))
+                 "HIO-118) may move between probes. That is the NORMAL condition on "
+                 "both targets, not a fault." % (_h(v), outcome))
+        return
+
+    # -------------------------------------------------------------------- zero ----
+    rec.record("boot_ladder_run", 1)
+    ok, vals = _run_boot_ladder(adp, rec)
+    rec.record("boot_ladder", vals)
+    rec.record("boot_ladder_rungs_ok",
+               dict(("rung%d" % k, int(bool(ok.get(k)))) for k in sorted(ok)))
+
+    # Re-read: the ladder itself bought ~1 s of elapsed time, so a CPU1 that was
+    # merely still executing has had a chance to finish.
+    again = _rd(adp, rec, 0x29000000, "boot gate (after ladder)")
+    rec.record("boot_gate_word_after_ladder", again)
+    if again not in (None, 0x00000000):
+        rec.record("cpu1_boot_outcome",
+                   "CPU1 was STILL EXECUTING during the first read; the gate reached "
+                   "%s by the end of the ladder. Not a fault." % _h(again))
+        rec.note("The boot gate went 0x00000000 -> %s across the ladder. CPU1 was "
+                 "simply still booting when the suite started. Use the later value "
+                 "for the record, and note that anything read before it was taken "
+                 "from a die that had not finished booting." % _h(again))
+        return
+
+    # §0.3's table, in order. Only the last branch is a silicon finding.
+    if not ok.get(0, False):
+        state = ("rung 0 FAILED — the CPU1 ROM slot does not hold "
+                 "stage0_bootrom_chip_core, or the gate-release stores are not in it. "
+                 "A wrong ROM image explains a zero gate with NO silicon fault, and it "
+                 "voids the premise of the whole bring-up procedure for this die.")
+        silicon = False
+    elif not ok.get(1, False):
+        state = ("rung 1 FAILED — CPU1 never reached main(). Suspect the CPU1 core, "
+                 "its reset, or the ROM. Rung 0 passed, so the image is right.")
+        silicon = False
+    elif not (ok.get(2, False) and ok.get(3, False)):
+        state = ("rungs 2/3 FAILED — CPU1 halted inside xip_enable(); CTRL.XIP_ACTIVE "
+                 "never latched. halt() is 'for(;;) wfi();', a quiet park in ROM. "
+                 "Suspect the QSPI controller or its clock.")
+        silicon = False
+    elif not ok.get(4, False):
+        state = ("rungs 1-3 OK, rung 4 absent — THE MOST LIKELY READING ON A FIRST "
+                 "BRING-UP BOARD, AND IT IS BENIGN. xip_enable()'s warm-up read of "
+                 "0x24000000 hit an AHB ERROR (no flash device: the QSPI AHB wrapper "
+                 "holds HREADYOUT low for 65536 HCLK, then ERRORs) and CPU1 took "
+                 "HardFault_Handler, which is 'b .' at 0x080001CE. CPU1 is parked in a "
+                 "branch-to-self in ROM — the QUIETEST bus state this die can be in — "
+                 "and CPU0 is still held in reset. Provision flash, or accept a "
+                 "quiescent bus and read on.")
+        silicon = False
+    else:
+        state = ("rung 4 PUBLISHED but the gate is STILL ZERO on a re-read — THE ONLY "
+                 "SILICON FINDING in §0.3's table. CPU1 provably survived "
+                 "xip_enable(), so it reached a terminating path, and both stores are "
+                 "in the reticle (cc_rom byte offsets 0x4F4 and 0x528). Either CPU1 is "
+                 "still executing — re-run after 5 s before believing this — or the "
+                 "0x29 decode arm or chip_core_remap_ctrl is faulty.")
+        silicon = True
+
+    rec.record("cpu1_boot_outcome", state)
+    rec.record("boot_gate_zero_is_silicon_finding", int(silicon))
+
+    rec.check("boot gate zero is not the rung-4 contradiction "
+              "(XiP handshake published, yet no terminating store landed)",
+              not silicon, got="%s | %s" % (_h(v), state))
+
+    if not silicon:
+        rec.target_defer(
+            "boot gate value is a known terminating-path word",
+            prop=None, got=_h(v),
+            expected=[_h(x) for x in _bootgate_values(rec)] or None,
+            would_have_held=False,
+            reason="the gate reads 0x00000000 and the ladder classifies that as a "
+                   "NON-silicon state (%s). Whether zero is correct here depends on "
+                   "whether QSPI flash is provisioned on this board, and NO TARGET "
+                   "PROPERTY ESTABLISHES THAT — targets.py has no flash_provisioned "
+                   "property, so there is nothing sound to assert against and the "
+                   "value is recorded instead. Asserting bootgate_values here would "
+                   "red a healthy unprovisioned board on the first test of the first "
+                   "die." % state.split(" — ")[0])
+        rec.note("BOOT GATE READS 0x00000000, and the ladder says this is NOT a "
+                 "silicon fault. %s CPU0 is still held in reset, so unlike the "
+                 "non-zero case the bus below IS quiescent — which makes the memory "
+                 "readings in this run unusually trustworthy, not untrustworthy."
+                 % state)
+    else:
+        rec.note("BOOT GATE READS 0x00000000 AND THE LADDER CONTRADICTS IT. %s "
+                 "Everything below is VOID, which is correct here: the boot state is "
+                 "genuinely unknown." % state)
 
 
 # ===========================================================================
@@ -798,9 +911,13 @@ CPU0_RAN_MARKER = 0x05F5E100        # SystemCoreClock initialiser, FPGA image on
               "EVERY path, 'gate open' carries no information about CPU0 on its own and "
               "the converse is only sound where a witness exists. Declaring "
               "ETH_ROM_IMAGE = 'smoke_remap' restores it in full. "
-              "ON ASIC THE WITNESS IS STRUCTURALLY ABSENT and this test says so rather "
-              "than inventing one — closing that hole needs a Tier-5 firmware witness "
-              "or an image whose .data[0] is non-zero, not a wider constant here.")
+              "ON ASIC THE WITNESS IS STRUCTURALLY ABSENT, the cross-check is "
+              "recorded as NOT EXECUTABLE (target_defer, never a pass and never a "
+              "red), and only the two target-independent structural checks are "
+              "asserted. The replacement and its one-shot precondition are specified "
+              "in ASIC_FIRST_SILICON_HOSTIO_PROCEDURE.md §3.7.4/§3.5.1; it is not "
+              "implemented here because it depends on a Phase-B measurement of "
+              "uninitialised SRAM that has not been taken.")
 def hio_107(adp, rec):
     rec.record("eth_rom_image_declared", ETH_ROM_IMAGE)
 
@@ -847,6 +964,7 @@ def hio_107(adp, rec):
     # ---- the FPGA-only converse, gated on a declared image --------------------
     if ETH_ROM_IMAGE == "smoke_remap":
         rec.record("hio107_crosscheck_strength", "full (bidirectional)")
+        rec.record("hio107_crosscheck_executable", 1)
         rec.check("FPGA image declared: gate bit2 == 1 => eth DMEM word 0 == "
                   "0x05F5E100 (SystemCoreClock initialiser)",
                   (not released) or witness, got=_h(dmem0))
@@ -858,18 +976,39 @@ def hio_107(adp, rec):
                      "blank IMEM faults immediately, and that latches the lockup cause "
                      "if lockupreseten is on." % _h(dmem0))
     elif ETH_ROM_IMAGE == "stage0_bootrom":
-        rec.record("hio107_crosscheck_strength", "one-way (no witness on this image)")
-        rec.note("ASIC image declared (stage0_bootrom): eth DMEM word 0 CANNOT witness "
-                 "CPU0 execution on this die. Its .data[0] is impure_data, an all-zero "
-                 "initialiser, and the image does not link SystemCoreClock, so "
-                 "0x05F5E100 is absent BY CONSTRUCTION and word 0 = %s is the healthy "
-                 "reading. Nothing further is asserted here, deliberately: the "
-                 "converse would be false. Whether CPU0 actually executed is OPEN on "
-                 "this target and needs a witness the ASIC image really writes — a "
-                 "Tier-5 firmware token, or HIO-105's CPU0 lockup cause bit if "
-                 "lockupreseten is on." % _h(dmem0))
+        rec.record("hio107_crosscheck_strength", "NOT EXECUTABLE on this image")
+        rec.record("hio107_crosscheck_executable", 0)
+        rec.target_defer("boot gate <-> CPU0-alive cross-check",
+                         prop="eth_dmem_word0", got=_h(dmem0),
+                         would_have_held=None,
+                         reason="STRUCTURALLY BROKEN on this image and deliberately "
+                                "not asserted in either direction. See "
+                                "docs/bringup/ASIC_FIRST_SILICON_HOSTIO_PROCEDURE.md "
+                                "§3.7.4: 0x18000000 reads 0x00000000 whether or not "
+                                "CPU0 ran, because stage0_bootrom's .data[0] is zero "
+                                "and the image never links SystemCoreClock. A test "
+                                "asserting either way would report 'CPU0 never ran' on "
+                                "a die where CPU0 ran perfectly.")
+        rec.note("ASIC image declared (stage0_bootrom): THIS CROSS-CHECK IS NOT "
+                 "EXECUTABLE, and it is recorded as such rather than passed or failed. "
+                 "eth DMEM word 0 = %s carries NO information about CPU0 on this "
+                 "image: .data[0] is impure_data, an all-zero initialiser, and "
+                 "SystemCoreClock is never linked, so 0x05F5E100 is absent by "
+                 "construction. Only the target-independent structural checks above "
+                 "(register width, and the write-1-set monotonicity of the gate) were "
+                 "asserted. THE REPLACEMENT, and its precondition, are in "
+                 "ASIC_FIRST_SILICON_HOSTIO_PROCEDURE.md §3.7.4: compare the "
+                 "initialised region 0x18000000..0x18000104 against an UNINITIALISED "
+                 "region of the same RAM (0x18000200), with 0x18000084 (eth g_tbl, "
+                 "0xFFFFFFFF on blank flash) as independent corroboration. It is valid "
+                 "ONLY IF §3.5.1's one-shot Phase-B measurement shows uninitialised "
+                 "TSMC rf_* SRAM is not all-zero — that measurement is destroyed by "
+                 "Phase C and cannot be retaken without a power cycle, so take it "
+                 "before anything writes shared SRAM. If it comes back all zeros, this "
+                 "test is NOT EXECUTABLE on this die permanently." % _h(dmem0))
     else:
         rec.record("hio107_crosscheck_strength", "one-way (image undeclared)")
+        rec.record("hio107_crosscheck_executable", 0)
         rec.note("ETH_ROM_IMAGE is undeclared, so only the target-independent half ran. "
                  "eth DMEM word 0 = %s, gate = %s. Set tier1.ETH_ROM_IMAGE to "
                  "'smoke_remap' (FPGA) to restore the full bidirectional cross-check, "
@@ -1325,80 +1464,85 @@ def hio_118(adp, rec):
 
     cpu1_rom = results.get("cpu1_bootrom", {})
     rec.record("cpu1_region_wrap_bytes", cpu1_rom.get("wrap_bytes"))
-    rec.note("Documentation discrepancy the plan asks this test to flag: the generated "
-             "discovery table declares eth IMEM TGT_1_SIZE = 0x00010000 (64 KB) while "
-             "ETH_IMEM_RAM_ADDR_W = 15 gives 32 KB physical, and the same table calls "
-             "the 2 KB bootrom 8 KB. THE SILICON IS THE AUTHORITY; the discovery "
-             "table's SIZE fields are not. HIO-119 is where the two are compared.")
+    rec.note("ARBITRATION SETTLED, and this probe was right. The generated discovery "
+             "table declares eth IMEM TGT_1_SIZE = 0x00010000 (64 KB); "
+             "ETH_IMEM_RAM_ADDR_W = 15 gives 32 KB physical "
+             "(nanosoc_multicore_soc.sv:25), and the chiplet overrides only the ROM "
+             "image filename, so FPGA and ASIC are identical here. The alias-wrap "
+             "measurement above agrees with the parameter, not with the table. "
+             "THE MECHANISM, because it is a class and not a one-off: discovery.py "
+             "lines 237-244 resolve phys_size against the SUBSYSTEM'S DEFAULT "
+             "parameters and are blind to the parent's override. That single defect "
+             "explains FOUR wrong targets — bootrom 8 KB declared vs 2 KB real, imem "
+             "64 vs 32 KB, scratch_rx 16 vs 8 KB, scratch_tx 16 vs 8 KB. Note the "
+             "arbitration is now settled MORE STRONGLY than a table readback could "
+             "have settled it: a readback would only have told us what one table "
+             "SAID, whereas the parameter chain tells us WHY the table is wrong. "
+             "Nothing in this tier treats the discovery table as an authority for a "
+             "size, and nothing should — see HIO-119, which is a permanent skip "
+             "because no such table is instantiated on this build at all.")
 
 
 # ---------------------------------------------------------------------------
-# HIO-119 — conditional
+# HIO-119 — PERMANENT SKIP. NOT APPLICABLE ON THIS BUILD.
 # ---------------------------------------------------------------------------
-# NOT RESOLVED in the built RTL. Set this to the discovery-table base if and when it
-# is located, and the test below runs for real. Leave it None and the test SKIPs with
-# a reason. It is never guessed.
-DISCOVERY_TABLE_BASE = None
-
-_DISC_TABLE_ID = 0x534F4344            # "SOCD"
-_DISC_TABLE_VERSION = 0x00000001
-_DISC_TABLE_SIZE = {0x00200610: "multicore (16 targets, 6 initiators, 32-bit)",
-                    0x0020040A: "eth (4 targets, 10 initiators, 32-bit)"}
-_DISC_NAME = {0x746C756D: "'mult'", 0x5F687465: "'eth_'"}
+# THERE IS NO DISCOVERY TABLE ON THIS DIE, AND THERE IS NO BASE ADDRESS TO FIND.
+# Do not add one. This is a tombstone, not a TODO.
+#
+# If you have just found one of the *_ahb_interconnect_discovery register files and
+# are about to helpfully wire this test up: those files are COMPILED BUT INSTANTIATED
+# NOWHERE. An RTL audit over the real flist (flist/nanosoc_eth_chiplet.flist, 601
+# files) found each of the three module names appearing ONLY in its own defining file,
+# with no `bind` statements anywhere; and `grep -c -i discovery` on the shipping gate
+# netlist returns 0. The single instantiation site in the whole repo is the legacy
+# single-core nanosoc_region_soc_peripheral.v:370 at APB slot 13 — a file that is in
+# neither flist, and this build sets EN13 = 0 so that slot is disabled regardless.
+#
+# So the resolution is NOT "we could not locate the base"; it is "the base does not
+# exist". Deliberately there is no DISCOVERY_TABLE_BASE constant to set: a settable
+# knob would be an invitation to point this test at some plausible-looking address and
+# get a confident reading of the wrong register.
+#
+# The table would not have been worth much even if it were mapped: its SIZE fields are
+# wrong by construction for four targets (see HIO-118). HIO-118's alias-wrap probe
+# already establishes the real geometry from the silicon, and the parameter chain
+# explains why the table disagrees — both stronger than a readback would have been.
 
 
 @test("HIO-119", tier=1, control=False, hazard=None,
-      purpose="CONDITIONAL — interconnect discovery-table readback. The table's base "
-              "address WAS NOT RESOLVED in the built RTL, so with "
-              "DISCOVERY_TABLE_BASE unset this test SKIPs with that reason rather than "
-              "guessing an address or passing vacuously; the plan is explicit that an "
-              "unmapped table must be marked NOT APPLICABLE, not green. When a base IS "
-              "pinned, it goes RED when: TABLE_ID is not 'SOCD' (0x534F4344), "
-              "TABLE_VERSION is not 1, TABLE_SIZE is neither of the two declared "
-              "target/initiator encodings, or INTERCONNECT_NAME is neither 'mult' nor "
-              "'eth_'. Its real value is the cross-check against HIO-114: the table is "
-              "self-describing, so its per-target BASE/SIZE words can be compared with "
-              "the measured census, and the two disagreeing is a real finding rather "
-              "than a test bug (see the HIO-118 note on the table's wrong SIZE fields).")
+      purpose="Interconnect discovery-table readback — PERMANENTLY NOT APPLICABLE on "
+              "this build, and reported as a SKIP rather than a pass. There is no "
+              "discovery table to read: all three *_ahb_interconnect_discovery register "
+              "files are compiled but INSTANTIATED NOWHERE (each module name appears "
+              "only in its own defining file across all 601 files of "
+              "flist/nanosoc_eth_chiplet.flist, there are no bind statements, and "
+              "grep -c -i discovery on the shipping gate netlist returns 0). The only "
+              "instantiation site in the repo is the legacy single-core "
+              "nanosoc_region_soc_peripheral.v:370 at APB slot 13, which is in neither "
+              "flist and is disabled by EN13 = 0 in this build. HOW THIS TEST GOES RED: "
+              "it does not, and it never passes either — it always skips, which is the "
+              "honest outcome for a test of something that is not on the die. The plan "
+              "is explicit that an unmapped table must be marked NOT APPLICABLE rather "
+              "than passed vacuously. There is deliberately NO base-address constant to "
+              "set; the cross-check against HIO-114 that this test was meant to provide "
+              "is not available on this build, and HIO-118's alias-wrap probe is what "
+              "establishes RAM geometry instead — from the silicon, which is a better "
+              "authority than the table would have been.")
 def hio_119(adp, rec):
-    rec.record("discovery_table_base", DISCOVERY_TABLE_BASE)
-    rec.record("discovery_table_expected",
-               {"TABLE_ID": _h(_DISC_TABLE_ID),
-                "TABLE_VERSION": _h(_DISC_TABLE_VERSION),
-                "TABLE_SIZE": [_h(k) for k in _DISC_TABLE_SIZE],
-                "INTERCONNECT_NAME": [_h(k) for k in _DISC_NAME]})
-
-    if DISCOVERY_TABLE_BASE is None:
-        rec.note("Nothing was read. This is NOT APPLICABLE on this build, not a pass.")
-        rec.skip("discovery-table base address is not resolved in the built RTL "
-                 "(the tables are generated as *_discovery_table register files; the "
-                 "plan's own Hz column says 'base address not yet located — resolve "
-                 "before scheduling'). Set tier1.DISCOVERY_TABLE_BASE once it is "
-                 "located and this test runs; it is never guessed.")
-
-    why = forbidden(DISCOVERY_TABLE_BASE)
-    if why is not None:
-        rec.skip("configured DISCOVERY_TABLE_BASE %s is on the hazard blocklist: %s"
-                 % (_h(DISCOVERY_TABLE_BASE), why))
-
-    base = DISCOVERY_TABLE_BASE
-    tid = _rd(adp, rec, base + 0x0, "TABLE_ID")
-    tver = _rd(adp, rec, base + 0x4, "TABLE_VERSION")
-    tsize = _rd(adp, rec, base + 0x8, "TABLE_SIZE")
-    tname = _rd(adp, rec, base + 0xC, "INTERCONNECT_NAME")
-    rec.record("discovery_table_header", [tid, tver, tsize, tname])
-
-    _eq(rec, "TABLE_ID ('SOCD')", tid, _DISC_TABLE_ID)
-    _eq(rec, "TABLE_VERSION", tver, _DISC_TABLE_VERSION)
-    rec.check("TABLE_SIZE is one of the two declared encodings",
-              tsize in _DISC_TABLE_SIZE,
-              got="%s (%s)" % (_h(tsize), _DISC_TABLE_SIZE.get(tsize, "unknown")))
-    rec.check("INTERCONNECT_NAME is 'mult' or 'eth_'", tname in _DISC_NAME,
-              got="%s le='%s' be='%s'" % (_h(tname), _ascii_le(tname), _ascii(tname)))
-    rec.record("discovery_interconnect", _DISC_NAME.get(tname, "unknown"))
-    rec.note("Cross-check the per-target BASE/SIZE words against HIO-114's census "
-             "before trusting either. The table's SIZE fields are known to be wrong "
-             "for at least two targets — see HIO-118.")
+    rec.record("discovery_table_instantiated", 0)
+    rec.record("discovery_table_base", None)
+    rec.note("Nothing was read and nothing was asserted. NOT APPLICABLE on this build, "
+             "which is not the same as a pass. RAM geometry comes from HIO-118 "
+             "instead, measured on the die rather than declared by a table whose SIZE "
+             "fields are wrong for four targets.")
+    rec.skip("no discovery table exists on this build: all three "
+             "*_ahb_interconnect_discovery register files are compiled but instantiated "
+             "nowhere (no instance and no bind across the 601 files of the real flist; "
+             "0 hits for 'discovery' in the shipping gate netlist). The only "
+             "instantiation site in the repo is the legacy single-core "
+             "nanosoc_region_soc_peripheral.v:370 at APB slot 13, which is in neither "
+             "flist and is disabled by EN13 = 0 here. This is permanent — the base "
+             "address does not exist, so do not add one.")
 
 
 # ---------------------------------------------------------------------------
