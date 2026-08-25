@@ -29,5 +29,18 @@
 # Independent second check, outside the tool, once the netlist exists:
 #     grep -c "^module tidelink_link_clk_div" outputs/<block>_gate.v
 # That is the method that established WlinkGenericFCSM* had been absorbed.
-source [file join [file dirname [info script]] .. .. genus-innovus scripts protect_link_clk_div.tcl]
+# Resolve genus-innovus. A run that PINS its inputs copies these hooks into the
+# run dir (gdsrun-*/hooks), where the two-level climb below lands on
+# build/genus-innovus and the source fails 6 minutes into synthesis. Such a run
+# sets LEGACY_ASIC_DIR at the pinned genus-innovus, so prefer it; the climb is
+# the in-tree layout, where hooks sit at ASIC/eth-chiplet/hooks.
+if {[info exists ::env(LEGACY_ASIC_DIR)] && $::env(LEGACY_ASIC_DIR) ne ""} {
+    set _gi $::env(LEGACY_ASIC_DIR)
+} else {
+    set _gi [file normalize [file join [file dirname [info script]] .. .. genus-innovus]]
+}
+if {![file exists [file join $_gi scripts protect_link_clk_div.tcl]]} {
+    error "protect_link_clk_div.tcl not found under $_gi/scripts"
+}
+source [file join $_gi scripts protect_link_clk_div.tcl]
 protect_link_clk_div_post_synth
