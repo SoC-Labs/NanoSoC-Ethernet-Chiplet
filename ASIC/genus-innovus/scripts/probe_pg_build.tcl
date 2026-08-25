@@ -170,11 +170,75 @@ pgstep power_plan { source ../scripts/power_plan.tcl }
 # Nothing below this line means anything if the grid was not built.
 pg_require init floorplan power_plan
 
+# --- POST_POWERPLAN HOOK, run exactly where the flow runs it ------------------
+#
+# 2_place.tcl sources $POWER_PLAN_TCL and then calls `flow_hook post_powerplan`
+# (2_place.tcl:876-879). flow_hook sources the hook with `uplevel 1` from a proc
+# called at the top level, so the hook body executes in the GLOBAL scope with
+# $REPORT_DIR and the flow's say/warn helpers visible. pgstep's own `uplevel 1`
+# reproduces that scope, and the two helpers are stubbed below when the flow's
+# are absent -- the hook guards both with [info commands ...], and a probe that
+# skipped those branches would not be testing the code the run executes.
+#
+# THIS IS THE WHOLE POINT OF THE PROBE. The hook applies PG geometry edits that,
+# in a real run, land ~50 minutes in; a Tcl error there aborts place and burns
+# the hour. Here the same code runs against the same power grid in ~5 minutes.
+#
+#   PGPROBE_HOOK=/path/to/post_powerplan.tcl   (unset = skip, and say so)
+#
+if {[info exists ::env(PGPROBE_HOOK)] && $::env(PGPROBE_HOOK) ne ""} {
+    if {[info commands say] eq ""} { proc say {s} { puts "SAY| $s" ; flush stdout } }
+    if {[info commands warn] eq ""} { proc warn {s} { puts "WARN| $s" ; flush stdout } }
+    pgstep post_powerplan_hook {
+        set _h $::env(PGPROBE_HOOK)
+        if {![file readable $_h]} { error "PGPROBE_HOOK unreadable: $_h" }
+        pgr "HOOK-SOURCE $_h"
+        pgr "HOOK-ENV LEGACY_ASIC_DIR = [expr {[info exists ::env(LEGACY_ASIC_DIR)] ? $::env(LEGACY_ASIC_DIR) : {<unset -- hook will use the two-level climb>}}]"
+        pgr "HOOK-ENV EVP_NO_PG_DRC_EDITS = [expr {[info exists ::env(EVP_NO_PG_DRC_EDITS)] ? $::env(EVP_NO_PG_DRC_EDITS) : {<unset>}}]"
+        source $_h
+        # The hook must leave no scratch variables behind: a bare `unset` on a
+        # branch that never ran is exactly the defect 76ba1cb fixed, and a
+        # LEFTOVER variable is the tell that the unset did not cover this path.
+        foreach v {_fpg_hook_dir _fpg_gi _fpg_check _pgd_hook_dir _pgd_gi _pgd_eco} {
+            if {[info exists $v]} { pgr "HOOK-LEAK $v = [set $v]" } 
+        }
+        pgr "HOOK-OK post_powerplan returned without error"
+    }
+    pg_require post_powerplan_hook
+} else {
+    pgr "POST_POWERPLAN HOOK NOT RUN (PGPROBE_HOOK unset) -- this probe did not test it"
+}
+
 pgstep checks {
     check_drc -limit 200000 -out_file $R/rb_${TAG}_drc.rep
     check_connectivity -type special -error 200000 -warning 200000 \
         -out_file $R/rb_${TAG}_conn.rep
-    catch { check_power_vias -layer_range {M8 AP} -report $R/rb_${TAG}_pv.rep }
+    # LAYER RANGE: MUST MATCH WHAT THE ROUTE GATE ASKS, OR THE PROBE IS BLIND.
+    #
+    # This was hard-coded {M8 AP} and that is the exact blindness the tech pack
+    # documents at tech/tsmc65/tech.tcl:640 - the same database answers 2 over the
+    # top two metals and 556 over the full stack, 452 of them between two
+    # mid-stack layers. It is why fp1505's route gate reporting 575 read as a
+    # catastrophic regression against earlier builds scoring 2-4: every earlier
+    # build was asked {M8 AP} and fp1505 was the first asked {M1 AP}. Control,
+    # from fp1505's own by-pair line: M8->M9 3 + M9->AP 1 = 4, identical to the
+    # shipping stream over the same scope. Nothing regressed; the question changed.
+    #
+    # The route stage builds its range as [list <pg_via_check_layer_bottom> <top>],
+    # which on this pack is {M1 AP} (tech.tcl:665). The probe has no tech-pack
+    # access, so it takes the same answer via the environment and defaults to the
+    # route stage's value rather than to a narrower one.
+    #
+    # WHY IT MATTERS BEYOND REPORTING: the opens and dangling wires are created at
+    # power-plan time - fp1505's own innovus.log3 already read 64 and 889 thirty
+    # hours before route, and place/CTS/route changed neither. So with this range
+    # correct, every candidate PG fix is a ~3-minute A/B on this licence-free
+    # probe instead of a 4.5-hour route.
+    set PGVIA_RANGE [expr {[info exists ::env(PGPROBE_PGVIA_RANGE)]
+                           && $::env(PGPROBE_PGVIA_RANGE) ne ""
+                           ? $::env(PGPROBE_PGVIA_RANGE) : {M1 AP}}]
+    pgr "PGVIA-RANGE $PGVIA_RANGE"
+    catch { check_power_vias -layer_range $PGVIA_RANGE -report $R/rb_${TAG}_pv.rep }
 }
 
 # Probe the geometry of the 0.155-gap M4 family specifically: which of the two

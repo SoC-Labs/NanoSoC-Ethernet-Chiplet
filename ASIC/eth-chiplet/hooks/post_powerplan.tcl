@@ -157,3 +157,14 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     if {[info exists REPORT_DIR]} {
         check_drc -limit 200000 -out_file $REPORT_DIR/pg_post_drc_edits.rep
         if {[info commands say] ne ""} {
+            say "post_powerplan: PG DRC edit artefact -> $REPORT_DIR/pg_post_drc_edits.rep"
+        }
+    } elseif {[info commands warn] ne ""} {
+        warn "post_powerplan: REPORT_DIR is not set, so the PG DRC edits applied\
+              above leave NO artefact. They are unevidenced for this run."
+    }
+    # Same -nocomplain reasoning as the geometry gate above: _pgd_hook_dir is set
+    # only on the climb branch, so a bare unset errors on the LEGACY_ASIC_DIR
+    # branch -- which is the branch a pinned run actually executes.
+    unset -nocomplain _pgd_hook_dir _pgd_gi _pgd_eco
+}
