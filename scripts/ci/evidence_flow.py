@@ -53,6 +53,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -65,6 +66,7 @@ from evidence_report import (  # noqa: E402
     PASS, FAIL, NOT_MEASURED, KNOWN_BAD,
     md5_of, sha256_of, now, render_html)
 import artifactory  # noqa: E402
+import gds_canonical_hash  # noqa: E402
 
 
 SPEC_FIELDS = {
@@ -876,6 +878,9 @@ def load_spec(path):
     for req in ("design", "run_tag", "stream"):
         if req not in spec:
             die("spec %s is missing required field %r" % (path, req))
+    # After validation, never before: SPEC_FIELDS is the contract for what a
+    # human may write in the file, and this is not something a human writes.
+    spec["__path__"] = os.path.abspath(path)
     return spec
 
 
@@ -945,6 +950,70 @@ def render(out):
     return hp
 
 
+def freeze_recipe(spec, out):
+    """Tar the run's scripts/ and inputs/ -- DEREFERENCING THE SYMLINKS.
+
+    THE HAZARD THIS CLOSES, verbatim from ARTIFACT_FLOW_PLAN_2026-08-23 s3.1:
+    the power plan that built `gdsrun-20260823-rzG` -- the candidate our own
+    sidecar marks `** USE THIS ONE **` -- exists in NO repository. Its blob is
+    not in `git rev-list --objects --all`. The `armA2` recipe appears already
+    lost, having survived only in session scratchpads whose paths no longer
+    resolve. One `git checkout` of that path destroys the rzG one too.
+
+    And the reason it is a hazard is visible in one `ls`: a run's `scripts/`
+    and `inputs/` are SYMLINKS into the live shared ASIC/genus-innovus tree
+    (measured: 23 of 27 run directories). Editing a Tcl mid-run changes that
+    run, retroactively. `tar -h` is therefore not a detail -- an archive of the
+    symlinks would store two dangling pointers and exit 0.
+
+    Cheap: measured 1.7 MB across 83 files, so this is not a size decision.
+    A run whose recipe is not in the store is a run nobody can repeat."""
+    srcs = []
+    for k in ("eco_tree", "base_run"):
+        d = spec.get(k)
+        if not d:
+            continue
+        for sub in ("scripts", "inputs"):
+            p = os.path.join(ROOT, d, sub)
+            if os.path.exists(p):
+                srcs.append((k, sub, p))
+    if not srcs:
+        return None, []
+    tgz = os.path.join(out, "recipe.tar.gz")
+    members = []
+    with tarfile.open(tgz, "w:gz", dereference=True) as tf:
+        for k, sub, p in srcs:
+            arc = "%s/%s" % (k, sub)
+            tf.add(p, arcname=arc)
+            for dirpath, _, files in os.walk(p, followlinks=True):
+                for f in sorted(files):
+                    fp = os.path.join(dirpath, f)
+                    if os.path.isfile(fp):
+                        members.append((os.path.join(arc, os.path.relpath(fp, p)), fp))
+    return tgz, members
+
+
+def store_build_id(spec, idy):
+    """(build name, build number) for the ARTIFACT STORE.
+
+    Named `store_build_id`, not `build_identity`: this module already has a
+    `build_identity(spec)` that collect() calls, and defining a second function
+    of that name later in the file silently REPLACES it -- collect() would then
+    call this one with one argument and die. Caught before it shipped; the two
+    concepts are genuinely different and now read that way.
+
+    Ordinal, not content-derived.
+
+    ARTIFACT_FLOW_PLAN s7 settles this and the reasoning is worth not
+    re-litigating: the flow is NOT bit-reproducible, so an input hash maps 1:N
+    onto results -- a class label, not an identity -- and is not even stable
+    across a run's own lifetime. The run tag is the identity; the digests are
+    attributes, and they travel as artefact digests and properties."""
+    pub = spec.get("publish") or {}
+    return ("%s-%s" % (pub.get("project", "ethchip"), pub.get("block", idy["design"])),
+            idy["run_tag"])
+
+
 def publish(spec, out, force=False):
     """Publish the stream WITH its raw md5 as a property, plus the report and
     the whole evidence bundle.
@@ -963,17 +1032,42 @@ def publish(spec, out, force=False):
     key = "%s/%s/%s" % (project, block, idy["run_tag"])
     marker = os.path.join(out, "NOT-PUBLISHED.txt")
 
+    bname, bnum = store_build_id(spec, idy)
+    # build.* are the JOIN, not decoration: Artifactory finds a build's real
+    # artefacts by looking for items carrying these, and a promotion of a build
+    # whose artefacts lack them fails with "Unable to find artifacts of build".
+    bprops = artifactory.build_props(bname, bnum)
+
+    # The canonical hash: the layout's identity, as opposed to the write
+    # event's. ~80 s on a 302 MB stream (measured), which is noise beside the
+    # 7-10 min this flow already costs, and it replaces a property whose value
+    # was the literal string UNVERIFIED-gds-canonical-not-implemented.
+    stream = os.path.join(ROOT, idy["stream_path"])
+    print("evidence_flow: canonical hash over %s ..." % os.path.basename(stream),
+          flush=True)
+    canon = gds_canonical_hash.canonical(stream)
+    if canon["raw_md5"] != idy["stream_md5"]:
+        die("the stream this program just hashed (%s) is not the one the report "
+            "describes (%s). Publishing would attach a report to bytes it never "
+            "measured -- the exact defect this flow exists to prevent."
+            % (canon["raw_md5"], idy["stream_md5"]))
+    print("evidence_flow: canonical %s  (%d records, %d timestamp records zeroed)"
+          % (canon["canonical_sha256"][:16], canon["records"],
+             canon["timestamp_records_neutralised"]))
+
     props = {
         "pnr.raw_md5": idy["stream_md5"],
         "pnr.raw_sha256": idy["stream_sha256"],
         "pnr.bytes": idy["stream_bytes"],
         "submitted.raw_md5": idy["stream_md5"],
-        "layout.canonical_hash": "UNVERIFIED-gds-canonical-not-implemented",
+        "layout.canonical_hash": canon["canonical_sha256"],
+        "layout.canonical_method": "gdsii-record-walk-bgnlib-bgnstr-zeroed",
         "run.tag": idy["run_tag"],
         "evidence.verdict": "SIGNED-OFF" if d["verdict"]["signed_off"] else "NOT-SIGNED-OFF",
         "evidence.not_measured": d["verdict"]["counts"]["NOT-MEASURED"],
         "evidence.fail": d["verdict"]["counts"]["FAIL"],
     }
+    props.update(bprops)
     try:
         if not force:
             try:
@@ -986,7 +1080,6 @@ def publish(spec, out, force=False):
             except artifactory.StoreUnavailable:
                 pass
 
-        stream = os.path.join(ROOT, idy["stream_path"])
         comp = os.path.join(out, os.path.basename(stream) + ".zst")
         if shutil.which("zstd") is None:
             die("zstd is not on PATH; the stream is published compressed")
@@ -996,10 +1089,39 @@ def publish(spec, out, force=False):
 
         print("evidence_flow: deploying stream with %d propert(y/ies) ..." % len(props),
               flush=True)
-        back = artifactory.deploy(comp, repo, "%s/stream/%s" % (key, os.path.basename(comp)),
-                                  props)
+        stream_dest = "%s/stream/%s" % (key, os.path.basename(comp))
+        back = artifactory.deploy(comp, repo, stream_dest, props)
         print("evidence_flow: VERIFIED raw md5 property readable from the store: %s"
               % back["pnr.raw_md5"][0])
+
+        # Every artefact this run produced, for the build record. The digests
+        # are taken from the bytes actually sent, never copied from the report:
+        # a build record that repeats a number rather than measuring it cannot
+        # detect the one failure it exists to detect.
+        artifacts = [artifactory.artifact_entry(comp, atype="gds.zst")]
+
+        # The recipe freeze. See freeze_recipe(): this is the only copy of the
+        # scripts that built the stream which is not a symlink into a tree
+        # somebody else is editing.
+        tgz, members = freeze_recipe(spec, out)
+        deps = []
+        if tgz:
+            artifactory.deploy(tgz, "asic-record", "%s/recipe/recipe.tar.gz" % key,
+                               dict(bprops, **{"pnr.raw_md5": idy["stream_md5"]}))
+            artifacts.append(artifactory.artifact_entry(tgz, atype="tar.gz"))
+            # The freeze's CONTENTS become the build's dependencies -- the
+            # input closure at recipe level, which is SLSA's
+            # resolvedDependencies[] in all but name. 83 small files, measured.
+            for arc, fp in members:
+                deps.append(dict(artifactory.artifact_entry(fp, name=arc), id=arc,
+                                 scope="recipe"))
+            print("evidence_flow: recipe  %s (%d file(s) frozen, symlinks dereferenced)"
+                  % (rel(tgz), len(members)))
+        else:
+            print("evidence_flow: recipe  NOT-MEASURED - the spec names no base_run or "
+                  "eco_tree with scripts/ or inputs/, so the recipe that built this "
+                  "stream is NOT in the store. That is a gap, not a pass.",
+                  file=sys.stderr)
 
         # digests.txt, NOT *.md5/*.sha256: those are Artifactory's
         # checksum-deploy convention and a PUT of one sets a SIBLING's checksum
@@ -1010,31 +1132,85 @@ def publish(spec, out, force=False):
             fh.write("pnr.raw_md5           %s\n" % idy["stream_md5"])
             fh.write("pnr.raw_sha256        %s\n" % idy["stream_sha256"])
             fh.write("pnr.bytes             %d\n" % idy["stream_bytes"])
-            fh.write("pnr.layout_sha256     UNVERIFIED:gds-canonical-not-implemented\n")
+            fh.write("pnr.canonical_sha256  %s\n" % canon["canonical_sha256"])
+            fh.write("pnr.canonical_method  %s\n" % canon["method"])
+            fh.write("pnr.gds_records       %d\n" % canon["records"])
             fh.write("archive.name          %s\n" % os.path.basename(comp))
             fh.write("archive.sha256        %s\n" % sha256_of(comp))
 
+        recprops = dict(bprops, **{"pnr.raw_md5": idy["stream_md5"]})
         sent = 0
         for local, dest in [(dg, "manifest/digests.txt"),
                             (jp, "evidence_report.json"),
                             (os.path.join(out, "evidence_report.html"),
                              "evidence_report.html")]:
             if os.path.isfile(local):
-                artifactory.deploy(local, "asic-record", "%s/%s" % (key, dest),
-                                   {"pnr.raw_md5": idy["stream_md5"]})
+                artifactory.deploy(local, "asic-record", "%s/%s" % (key, dest), recprops)
+                artifacts.append(artifactory.artifact_entry(local, name=dest))
                 sent += 1
         ev = os.path.join(out, "evidence")
         for dirpath, _, files in os.walk(ev):
             for f in files:
                 p = os.path.join(dirpath, f)
                 r = os.path.relpath(p, out)
-                artifactory.deploy(p, "asic-record", "%s/%s" % (key, r),
-                                   {"pnr.raw_md5": idy["stream_md5"]})
+                artifactory.deploy(p, "asic-record", "%s/%s" % (key, r), recprops)
                 sent += 1
         print("evidence_flow: record  %d file(s) sent to asic-record/%s" % (sent, key))
+
+        # --- the build record ------------------------------------------------
+        # Until 2026-08-25 this store had never held one, so it could say what
+        # bytes it had and never which run produced them. Two of these subtract:
+        # that difference is the delta explanation which bit-reproducibility
+        # cannot give us, because no seed exists anywhere in the P&R flow.
+        vcs = []
+        # NOTE the contract of the module's _git(): it returns "" on failure,
+        # never None. A second _git() defined here returning None instead would
+        # SHADOW it -- Python keeps the later definition -- and crash
+        # build_provenance()'s `sha[:12]` outside a git repo. That shadow was
+        # written and caught; see store_build_id() for the same trap.
+        rev = _git(["rev-parse", "HEAD"])
+        if rev:
+            vcs = [{"revision": rev,
+                    "url": _git(["config", "--get", "remote.origin.url"]) or "UNVERIFIED",
+                    "branch": _git(["rev-parse", "--abbrev-ref", "HEAD"]) or "UNVERIFIED"}]
+        dirty = _git(["status", "--porcelain"])
+        bmeta = dict(props)
+        bmeta.pop("build.timestamp", None)
+        bmeta.update({
+            "spec": rel(spec.get("__path__", "")) or "UNVERIFIED",
+            "stream.name": os.path.basename(stream),
+            "store.stream_path": "%s/%s" % (repo, stream_dest),
+            "recipe.frozen_files": len(deps),
+            # A build whose tree was dirty is reproducible only up to that
+            # delta, and saying so is cheaper than discovering it later.
+            "vcs.worktree_dirty": "yes" if dirty else "no",
+            "vcs.dirty_paths": str(len(dirty.splitlines())) if dirty else "0",
+        })
+        try:
+            artifactory.build_publish(
+                bname, bnum,
+                [{"id": idy["run_tag"], "artifacts": artifacts, "dependencies": deps}],
+                properties=bmeta, vcs=vcs,
+                principal=os.environ.get("USER", "unknown"),
+                url=os.environ.get("BUILD_URL"))
+            print("evidence_flow: build   %s/%s published: %d artefact(s), %d input(s)"
+                  % (bname, bnum, len(artifacts), len(deps)))
+            print("evidence_flow:         inspect: python3 scripts/ci/artifactory.py "
+                  "build %s %s" % (bname, bnum))
+        except artifactory.StoreUnavailable as e:
+            # The bytes are up and verified. A missing build record loses the
+            # index, not the evidence -- so it is reported loudly and does not
+            # discard a publish that otherwise succeeded.
+            print("evidence_flow: build   NOT PUBLISHED: %s" % e, file=sys.stderr)
+            print("evidence_flow:         the artefacts and their properties ARE in the "
+                  "store; what is missing is the record binding them to this run.",
+                  file=sys.stderr)
+
         if os.path.exists(marker):
             os.unlink(marker)
         os.unlink(comp)
+        if tgz and os.path.exists(tgz):
+            os.unlink(tgz)
         return 0
     except (artifactory.StoreUnavailable, subprocess.CalledProcessError, OSError) as e:
         with open(marker, "w") as fh:
@@ -1144,6 +1320,26 @@ def selftest():
     # spec is a duplication risk; an automated agreement check is what makes it
     # a proof instead.
     ok = crosscheck_router_gate() and ok
+
+    # A DEFINITION SHADOWED BY A LATER ONE OF THE SAME NAME IS SILENT. Python
+    # keeps the last, imports nothing, warns about nothing, and the first
+    # symptom is a TypeError in an unrelated function months later. It happened
+    # TWICE while wiring the store into this file -- `build_identity` and
+    # `_git`, both of which already existed above and were redefined below with
+    # different contracts. This arm makes the next one fail loudly and cheaply.
+    import ast as _ast
+    for _f in ("evidence_flow.py", "artifactory.py", "artifactory_retention.py",
+               "gds_canonical_hash.py", "artifactory_backfill_identity.py"):
+        _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), _f)
+        if not os.path.isfile(_p):
+            continue
+        _seen = {}
+        for _n in _ast.parse(open(_p).read()).body:
+            if isinstance(_n, _ast.FunctionDef):
+                _seen.setdefault(_n.name, []).append(_n.lineno)
+        _dupe = {k: v for k, v in _seen.items() if len(v) > 1}
+        say("no shadowed definitions in %s" % _f, not _dupe,
+            ("%s" % _dupe) if _dupe else "%d top-level function(s)" % len(_seen))
 
     print("\nevidence_flow selftest: %s" % ("OK" if ok else "FAILED"))
     return 0 if ok else 1
