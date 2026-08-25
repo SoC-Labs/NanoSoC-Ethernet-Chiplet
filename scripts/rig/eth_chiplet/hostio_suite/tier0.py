@@ -18,7 +18,7 @@ Values used here that are MEASURED, not derived (plan sections 5.1 and 1.3):
     0x30000000 -> R!             undecoded from debug_m -> default slave ERROR
     banner word 0x50c1ab04       (an ADPBASIC build would emit 0x50c1ab01)
 
-THREE IMPLEMENTATION TRAPS.  Read these before changing anything in this file.
+FOUR IMPLEMENTATION TRAPS.  Read these before changing anything in this file.
 
  1. THE ECHO WIDTH IS NOT STICKY -- IT IS RE-DERIVED PER COMMAND.  An earlier
     revision of this file guarded against a sticky `adp_size` leaking a narrow
@@ -63,7 +63,25 @@ THREE IMPLEMENTATION TRAPS.  Read these before changing anything in this file.
     nothing.  HIO-004 must do the opposite: prove a good command answers first,
     so that its `?` is the parser's default arm and not the artefact.
 
- 3. HIO-001 MUST NOT SEND ANYTHING.  It is the only test that proves the ADP TX
+ 3. ESC IS AN ENTRY EVENT ONLY, SO A TEST MUST ESTABLISH THE STARTING STATE.
+    FNvalid_adp_entry (:86-89) is evaluated in STD_RXD1 (:487), which is reached
+    only from STD_IOCHK -- the STDIO bypass.  Inside the monitor an ESC is not
+    exit (FNexit is 0x04/0x00, :133-136), not a space and not an EOL, so
+    ADP_RXCMD (:523) takes it as the COMMAND LETTER and parks in ADP_RXPARAM
+    waiting for an EOL: no prompt, no output at all, and the NEXT command line
+    completes that dangling line as an invalid command and answers '?'.
+    MEASURED 2026-08-25, first hardware run of this suite: HIO-002 sent a bare
+    ESC to a port that earlier work had left inside the monitor, got '', and
+    reported ABORT GATE 2 -- "the RX path is dead" -- on a healthy die, taking
+    nine tests down with it as `needs` skips.  The very next command answered
+    `C 0x00000000]`.  X then ESC returns ']' (measured separately).
+    A port is left in the monitor by the previous test, by the previous run and
+    by any manual poking, so "starts outside the monitor" holds exactly once, on
+    a cold die at plan section 3 A1, and never again.  HIO-002 and HIO-003 call
+    _to_bypass() to FORCE the pre-state and record which one they found.  The
+    same trap makes a '?' ambiguous three ways -- see HIO-003.
+
+ 4. HIO-001 MUST NOT SEND ANYTHING.  It is the only test that proves the ADP TX
     path with zero dependence on RX, so it uses adp.raw_rx() and never enter().
     The runner's own per-test entry preamble would destroy it just as surely as a
     command would, so HIO-001, HIO-002 and HIO-003 are declared preamble=False
@@ -158,6 +176,51 @@ def _gpi(word):
     return -2 if word is None else (word >> 24) & 0xFF
 
 
+def _to_bypass(adp, rec, probe_ms=1500):
+    """Force the STDIO bypass, and report what the pre-state actually was.
+
+    ESC only enters the monitor from the bypass (trap 3), so any test that wants
+    to observe the entry transition has to guarantee it starts outside.  `X`
+    (ADP_EXIT :576, :671) is the way out and is benign in both directions: in the
+    monitor it exits; in the bypass its characters are pushed at the SoC's dead
+    STDIN and discarded.
+
+    The two probes are what make a later "no prompt" unambiguous:
+
+      answered before X, silent after   -> the port WAS in the monitor and the X
+                                           provably landed; RX is already proven
+                                           alive, so a missing prompt after the
+                                           ESC can only be the entry path.
+      silent before and after           -> the port was already in the bypass, OR
+                                           RX is dead.  The X is a no-op and
+                                           cannot be shown to land -- it does not
+                                           need to.  The ESC is then exactly the
+                                           experiment that separates those two,
+                                           which is ABORT GATE 2's actual job.
+
+    The exit is CONFIRMED, not assumed, and retried once.  A single residual
+    byte -- the one resync() leaves, or a bare ESC parked in ADP_RXPARAM by an
+    interrupted earlier run -- is consumed by whatever command line arrives next,
+    and that can be the `X` itself, in which case the port never leaves the
+    monitor.  One probe before the X absorbs one residual; two residuals need the
+    retry.  If the monitor is still answering after two exits, that is a real
+    anomaly and the caller's check says so.
+
+    Returns (answered_before, answered_after) as plain bools.
+    """
+    before = adp.cmd("C", timeout_ms=probe_ms)
+    for attempt in (1, 2):
+        adp.cmd("X", timeout_ms=1000)      # no reply and no prompt by design
+        after = adp.cmd("C", timeout_ms=probe_ms)
+        if after.ok is False:
+            break
+    rec.record("pre_state", "monitor" if before.ok else "stdio-bypass or dead RX")
+    rec.record("probe_before_exit", before.raw)
+    rec.record("exit_attempts", attempt)
+    rec.record("probe_after_exit", after.raw)
+    return (before.ok is True), (after.ok is True)
+
+
 def _esc(adp):
     """adp.esc() if the harness offers it, else None.
 
@@ -225,18 +288,39 @@ def hio_001(adp, rec):
 
 @test("HIO-002", tier=0, preamble=False,
       purpose="Monitor entry: ESC (0x1b) moves STD_RXD1 -> ADP_LINEACK -> "
-              "ADP_PROMPT and the port prompts. RED when ESC is not recognised "
-              "(FNvalid_adp_entry :86-89) or the host->SoC direction is dead: the "
-              "command times out (r.ok False) or no prompt character comes back. "
-              "This is ABORT GATE 2 — the banner already proved TX, so a failure "
-              "here isolates the fault to the RX direction: one PIO state "
-              "machine, four data lines and IOREQ1/2.")
+              "ADP_PROMPT and the port prompts. The pre-state is ESTABLISHED, not "
+              "assumed: ESC is an entry event only (trap 3), so the test exits to "
+              "the STDIO bypass with `X` first and records which pre-state it "
+              "found. RED when ESC is not recognised (FNvalid_adp_entry :86-89) "
+              "or the host->SoC direction is dead: no prompt comes back. This is "
+              "ABORT GATE 2 — the banner already proved TX, so a failure here "
+              "isolates the fault to the RX direction: one PIO state machine, "
+              "four data lines and IOREQ1/2. It must therefore be impossible to "
+              "fail it any other way, which is what the two probes around the `X` "
+              "are for: they separate 'the X never landed' from 'RX is dead'.")
 def hio_002(adp, rec):
     esc = _esc(adp)
     if esc is not None:
+        adp.resync()
+        # Trap 3: guarantee the bypass, do not assume it. On the second and every
+        # later run of this suite the port is left inside the monitor.
+        was_in, still_in = _to_bypass(adp, rec)
+        rec.check("the port is in the STDIO bypass when the ESC goes out",
+                  still_in is False, got=rec.values.get("probe_after_exit"))
+        if was_in:
+            rec.note("Pre-state was the MONITOR: the port answered a command "
+                     "before the X and is silent after it, so the X provably "
+                     "landed AND the RX path is already proven alive. A missing "
+                     "prompt below could then only be the ESC entry path itself.")
+        else:
+            rec.note("Pre-state was the STDIO BYPASS or a dead RX: nothing "
+                     "answered before the X either, so the X is a no-op here and "
+                     "cannot be shown to have landed -- it does not need to be. "
+                     "This is the cold-die case of plan section 3 A1, and the ESC "
+                     "below is precisely the experiment that separates 'sitting "
+                     "in the bypass' from 'RX is dead'.")
         # The plan's own sequence: ESC alone, and the prompt must come back with
         # no command behind it.
-        adp.resync()
         e = esc()
         rec.record("esc_reply", e.raw)
         rec.check("prompt character '%s' comes back from a bare ESC" % PROMPT,
@@ -277,18 +361,33 @@ def hio_002(adp, rec):
               "one that leaves more than one residual byte, rejects the second "
               "command too. Whether the FIRST is rejected is recorded, not "
               "checked: if a die ever answers the first command cleanly, the host "
-              "link changed and the SoC did not.")
+              "link changed and the SoC did not. The pre-state is forced to the "
+              "STDIO bypass first, because otherwise the '?' is ambiguous three "
+              "ways -- the link artefact, the parser's default arm, or (trap 3) a "
+              "bare ESC swallowed as a command letter inside the monitor, whose "
+              "dangling line the next command completes and is rejected for. That "
+              "third mechanism would let this test pass while measuring the wrong "
+              "thing, which is worse than failing.")
 def hio_003(adp, rec):
     # enter() absorbs the artefact by design, so re-create the condition rather
     # than observe nothing: resync (+ a bare ESC where the harness offers one)
     # is the entry preamble minus the throwaway command.
     esc = _esc(adp)
-    adp.resync()
     if esc is not None:
+        was_in, still_in = _to_bypass(adp, rec)
+        rec.check("the port is in the STDIO bypass before the entry preamble",
+                  still_in is False, got=rec.values.get("probe_after_exit"))
+        adp.resync()
         e = esc()
         rec.record("esc_reply", e.raw)
-        rec.record("recreation", "resync + bare ESC (preamble minus throwaway)")
+        rec.check("ESC entered the monitor (prompt seen), so the '?' below is the "
+                  "ENTRY artefact and not a swallowed ESC",
+                  PROMPT in (e.raw or ""), got=e.raw)
+        rec.record("recreation",
+                   "X -> bypass -> resync -> bare ESC (the entry preamble minus "
+                   "the throwaway command)")
     else:
+        adp.resync()
         rec.record("recreation", "resync only (no bare-ESC primitive available)")
     r1 = adp.cmd("C")
     r2 = adp.cmd("C")
