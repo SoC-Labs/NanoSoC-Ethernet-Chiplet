@@ -1199,8 +1199,13 @@ def summarise(doc):
                     "severity": "high" if key.startswith(("lvs", "drc")) else "medium",
                     "what": "%s predates this run (%s vs %s)"
                             % (label, got, run_start),
-                    "detail": "it describes an earlier build, so it is not "
-                              "evidence about this one"})
+                    "detail": ("it describes an earlier build, so it is not "
+                               "evidence about this one"
+                               + (" -- and this says only that no newer one is "
+                                  "REACHABLE IN THE REPO. Newer LVS reports for "
+                                  "these streams exist in session scratchpads "
+                                  "outside it, unreachable from any gate."
+                                  if key.startswith("lvs") else ""))})
 
     # --- LEC --------------------------------------------------------------
     for k, r in vals.items():
@@ -1414,6 +1419,23 @@ def extract_drc(root, run_dir):
 # runs leave a .lvs.rep whose verdict is NOT COMPARED because the source was a
 # dummy: that file is an ERC artefact, not an LVS result, and reporting it as
 # an LVS verdict would claim a run that never happened.
+#
+# THE SEARCH IS THE REPO TREE ONLY, AND THAT SCOPE IS PART OF THE ANSWER.
+# MEASURED 2026-08-25: LVS reports for the 17-24 August streams -- rzG's and
+# pinfix's included -- exist on this host in SESSION SCRATCHPADS under /tmpdir,
+# newer and more complete than anything in the repo. The pinfix pair
+# (capped 2026-08-24 20:19 and an UNCAPPED control at 23:06) both grade PASS
+# under scripts/ci/lvs_missing_connection.py, with the documented coverage
+# control `u_cache_subsystem` x384 confirming the fixed stream.
+#
+# They are NOT read here, deliberately: session scratchpads are ephemeral,
+# reapable and unreachable from any gate, so a durable per-run report that
+# quoted them would cite evidence that can vanish and cannot be re-derived.
+# What this module must not do is let "no LVS in the repo" read as "no LVS
+# exists" -- so every absence below names the scope it searched.
+#
+# Note also that `ci/fixtures/lvs-missing-connection/PROVENANCE.md`, which is
+# TRACKED, states six times that those reports are "gone". They are not.
 # ---------------------------------------------------------------------------
 
 _LVS_BOX = re.compile(r"#\s+(CORRECT|INCORRECT|NOT COMPARED)\s+#")
@@ -1446,9 +1468,17 @@ def extract_lvs(root, run_dir):
 
     if not rep:
         v["lvs.verdict"] = absent(
-            "no *.lvs.rep for this run -- LVS has not been run against this "
-            "stream. NOT a pass, and not the same as the standing INCORRECT.",
+            "no *.lvs.rep REACHABLE IN THE REPO TREE for this run. That is the "
+            "scope searched, and it is not the same claim as 'no LVS exists': "
+            "reports for these streams have been written to session scratchpads "
+            "outside the repo, where no gate can reach them and where they are "
+            "reapable. NOT a pass, and not the same as the standing INCORRECT.",
             g, [c for c in cands[:3]])
+        v["lvs.search_scope"] = measured(
+            "repo tree only", "flow_values.extract_lvs", g, "",
+            "session scratchpads are deliberately NOT searched: they are "
+            "ephemeral and unreachable from any gate, so citing them would make "
+            "this report depend on evidence that can vanish")
         return {"values": v, "source": None}
 
     text = open(rep, errors="replace").read()
@@ -1473,6 +1503,11 @@ def extract_lvs(root, run_dir):
             "for a known structural reason (.GLOBAL VSS floods ~17,233 "
             "unmatched source nets; the pad ring has no LEF PINs), so it does "
             "NOT discriminate -- the gradable artefact is the discrepancy list")
+    v["lvs.search_scope"] = measured(
+        "repo tree only", "flow_values.extract_lvs", g, "",
+        "a NEWER LVS report may exist in a session scratchpad outside the repo; "
+        "those are not searched because they are ephemeral and no gate can "
+        "reach them")
     v["lvs.report_is_erc_artefact"] = measured(
         is_erc_artefact, os.path.basename(rep), g, "",
         "an ERC run also writes a .lvs.rep; it is not an LVS result")
