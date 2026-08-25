@@ -1,0 +1,137 @@
+# -----------------------------------------------------------------------------
+# run-report.yml -- collate one run's VALUES and publish them.
+#
+# WHAT IT RUNS
+#   scripts/ci/run_report.py, which reads a finished (or part-finished) run
+#   directory and writes run_report.{json,yaml,html,md} into its reports/.
+#   No EDA licence, no tool launch, no PDK. Seconds, not hours.
+#
+# THREE THINGS THIS WORKFLOW DOES DELIBERATELY DIFFERENTLY FROM ITS NEIGHBOURS
+#
+#   1. IT DOES NOT FETCH ANY SUBMODULE. `vendor-guard.yml` fails on EVERY run
+#      at "Fetch the content scanner (ASIC/asic-toolkit)", and the cause is not
+#      the token: MEASURED 2026-08-25, the pinned toolkit commit is 22 commits
+#      ahead of the toolkit's origin/main and has never been pushed, so
+#      `git submodule update` cannot resolve it however it authenticates.
+#      run_report.py imports only from scripts/ci/ and the standard library, so
+#      this workflow checks out with submodules:false and cannot inherit that
+#      failure. If you add a step here that needs the toolkit, you have
+#      re-acquired it.
+#
+#   2. IT REFUSES RATHER THAN GUESSES THE RUN. `collect-results.py` resolves
+#      RUN_TAG through make and silently defaults to `default` -- an August 13
+#      build -- then reports that build's stages as though they were yours.
+#      run-tag is a REQUIRED input here and the job fails if the directory is
+#      absent.
+#
+#   3. IT NEVER GATES. The report says what a run WAS; `make` decides whether
+#      it was good. A collator that can fail a pipeline becomes a second
+#      verdict on one run, and the fuzzier of two verdicts is the one that gets
+#      quoted. `continue-on-error` is NOT used to hide breakage -- the report
+#      step itself is allowed to fail loudly; what is never done is turning a
+#      finding IN the report into a red job.
+#
+# RUNNER REALITY, MEASURED 2026-08-25: this repository has ZERO registered
+# self-hosted runners (`gh api .../actions/runners` -> total_count 0). Every
+# self-hosted workflow here queues forever -- `nightly` has been pending or
+# cancelled every night since at least 08-20. Until a runner is registered on
+# srv03335 this job will queue too, because the run directories live on that
+# host and are gitignored: there is nowhere else the evidence exists.
+# `scripts/ci/install_runner.sh` is the registration script.
+# -----------------------------------------------------------------------------
+name: run-report
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-tag:
+        description: "Run tag under ASIC/eth-chiplet/build/ (e.g. gdsrun-20260823-rzG)"
+        required: true
+        type: string
+      runner:
+        description: "Runner label. The run dirs live on srv03335."
+        required: false
+        default: soclabs-pdk
+        type: string
+      publish:
+        description: "Upload the report to Artifactory. A publish is a claim."
+        required: false
+        default: false
+        type: boolean
+      klass:
+        description: "candidate | release -- recorded as report.klass"
+        required: false
+        default: candidate
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run-report:
+    runs-on: [self-hosted, linux, "${{ inputs.runner }}"]
+    timeout-minutes: 30
+    steps:
+      # submodules:false is load-bearing -- see note 1 in the header.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          clean: false
+
+      - name: Show what this job can see
+        run: |
+          echo "run-tag : ${{ inputs.run-tag }}"
+          echo "host    : $(hostname)"
+          echo "python  : $(python3 -V 2>&1)"
+          python3 -c "import yaml; print('pyyaml  :', yaml.__version__)" \
+            || echo "pyyaml  : ABSENT -- YAML will be skipped, JSON still written"
+
+      # A MISSING RUN DIRECTORY IS THE FAILURE THIS JOB EXISTS TO CATCH EARLY.
+      # The build tree is gitignored, so a checkout NEVER contains it: if this
+      # step fails, the job is running on a machine that did not do the build,
+      # and every number it could produce would be about some other run.
+      - name: Require the run directory
+        run: |
+          RUN="ASIC/eth-chiplet/build/${{ inputs.run-tag }}"
+          if [ ! -d "$RUN" ]; then
+            echo "::error::no run directory at $RUN on $(hostname)."
+            echo "The build tree is gitignored and never arrives with a checkout."
+            echo "Runs present here:"; ls -1 ASIC/eth-chiplet/build/ 2>/dev/null | sed 's/^/  /' || echo "  (no build/ at all)"
+            exit 1
+          fi
+          echo "OK: $RUN"
+
+      - name: Collate the run report
+        run: |
+          python3 scripts/ci/run_report.py --run-tag "${{ inputs.run-tag }}"
+
+      # The summary is the point of running this in CI at all: the counts and
+      # the findings land in the job page, so nobody has to open an artefact to
+      # learn whether anything moved.
+      - name: Job summary
+        if: always()
+        run: |
+          MD="ASIC/eth-chiplet/build/${{ inputs.run-tag }}/reports/run_report.md"
+          if [ -r "$MD" ]; then
+            head -c 900000 "$MD" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No run_report.md was produced -- the collation step did not reach one." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish to Artifactory
+        if: ${{ inputs.publish }}
+        run: |
+          python3 scripts/ci/run_report.py --run-tag "${{ inputs.run-tag }}" \
+            --publish --klass "${{ inputs.klass }}"
+
+      # 90 days, matching asic-signoff.yml. NOT a substitute for the store:
+      # Actions artefacts expire and Artifactory does not, which is why
+      # --publish exists.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-report-${{ inputs.run-tag }}
+          path: ASIC/eth-chiplet/build/${{ inputs.run-tag }}/reports/run_report.*
+          if-no-files-found: warn
+          retention-days: 90

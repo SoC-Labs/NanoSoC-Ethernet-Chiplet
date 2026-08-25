@@ -2391,6 +2391,38 @@ def extract_rom_compile(root, run_dir):
                 built_at, "build.json", g, "",
                 "THE compile time. The logs' only date-shaped string is `uname "
                 "-a`'s kernel build date and is months out")
+
+        # DID THIS RUN COMPILE THE ROM, OR REUSE A CACHED ONE?
+        #
+        # The ROMs are a hard prerequisite of synthesis (design.mk: `syn place
+        # cts route: ... rom-ensure` and `syn: asic-flist romlibs-check`), so
+        # every run MATERIALISES them. It does not follow that any run COMPILED
+        # them: `rom-run` is content-addressed and hardlinks a cache hit into
+        # the run. MEASURED 2026-08-25 -- `rom-run-status` reports hit:true
+        # fresh:true for both ROMs, and every run since 2026-08-14 has
+        # hardlinked the same two cache entries.
+        #
+        # So these transcripts are real and they describe the macro that is
+        # actually in the chip -- but they are NOT a record of this run doing
+        # anything. Reporting them without that distinction would let a build
+        # from today look like it exercised a compiler it never launched.
+        mat = (roms[name] or {}).get("materialised_by")
+        staged = (roms[name] or {}).get("staged_at")
+        same_run = None
+        if built_at and staged:
+            b, st = _epoch_iso_z(built_at), _epoch_iso_z(staged)
+            if b is not None and st is not None:
+                same_run = abs(st - b) < 3600
+        v["%s.compiled_by_this_run" % pre] = measured(
+            bool(same_run), "build.json + .rom_pin.json", g, "",
+            ("the macro was compiled and staged within the hour, so this run "
+             "very likely ran the compiler"
+             if same_run else
+             "NO -- materialised_by=%s from a cache entry compiled at %s and "
+             "staged into this run at %s. The transcripts below describe THAT "
+             "compile, not work this run did. They still describe the macro "
+             "that is in the chip."
+             % (mat, built_at, staged)))
         out["roms"].append({"rom": name, "entry": entry, "logs": logs,
                             "declared": declared, "missing": missing})
 
