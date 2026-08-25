@@ -70,7 +70,16 @@ cache nets, closed by deleting them.
     ZERO, all previously non-zero on rzG:
       M8.S.3 2->0   VIA4.R.4:M5 1->0   M4.S.1 1->0   M5.W.1 1->0   M5.A.1 1->0
       M9.W.1 1->0   G.4:M5i 2->0       G.4:M6i 4->0
-      LOGO.S.1 / LOGO.O.1 / LOGO.R.4 = 0, real zeros (not capped)
+    NOT A PASS -- VACUOUS. Corrected 2026-08-25.
+      LOGO.S.1 / LOGO.O.1 / LOGO.R.4 = 0, and G.1/G.2/G.3/CSR.R.1:LOGO = 0, but
+      the summary's own layer census reads `LAYER LOGO ... TOTAL Original
+      Geometry Count = 0`. The logo recognition layer is absent from the stream
+      by choice, so these seven rulechecks ran over an empty layer and could not
+      have fired. An earlier revision of this note called them "real zeros (not
+      capped)": not-capped is true and beside the point. imec sees the same
+      absence from their side as IM.LOGO.R.1:WARN. We are NOT re-adding the
+      layer -- on a placed-and-routed die it has no legal placement, and it
+      resurrects two 1000-capped rulechecks.
 
     648-pin macro census (LEF pin rects vs streamed metal)   3 bare -> 0
     check_connectivity -type regular                         2 open -> 0
@@ -84,6 +93,65 @@ violations against the macro's LEF ABSTRACTION, not silicon — flattening
 flash_cache_data.gds2 with positive controls gives real VIA3 at the cut-short
 sites = 0 (control 19,986 in-macro) and real M3 in the Metal Short box = 0
 (control 120,528).
+
+## LVS — ran, verdict INCORRECT, and why that is not a blocker
+
+Added 2026-08-25. An earlier revision of this note did not mention LVS at all.
+It ran on 24 Aug at 20:19 and it says INCORRECT; silence about that is exactly
+the failure mode that nearly shipped the rzG defect, so the reasoning is set out
+here in full rather than left for imec to find.
+
+    verdict     INCORRECT
+    ports       52 / 52 matched, 0 unmatched either side
+    instances   every device type 0 unmatched both sides
+                (MN 17,269  MP 51,539  D 1,241  and all std cells)
+    nets        270,715 matched / 185 unmatched layout / 18,137 unmatched source
+
+**Graded on the discrepancy list, not the verdict.** The count that discriminates
+a real open from pad-model noise is sub-top `missing connection`:
+
+    10 Aug   153 layout-missing connections, 84 of them SUB-TOP
+    rzG      95, 3 sub-top   <- includes the RAMCLD bit-123 defect we shipped
+    pinfix   97, 1 sub-top
+
+rzG's three include `Xg87561:B2`, the defect this stream fixes. **It is gone.**
+LVS confirms the pin fix independently of the macro-pin census.
+
+**The one remaining sub-top entry was traced end to end to real routed metal.**
+Discrepancy 65 names `bsp_host_io_0_out` missing a mux output. Chain: Calibre's
+own matched-instance line places that mux at (1315.600, 1293.835); its Z pin is
+net 3416; that resolves to top net 27448; net 27448 is a terminal of the
+HOST_IO_0 pad wrapper. Mux to pad, in metal. Net 27448 is itself listed as
+"unmatched layout" -- which is what that bucket actually is.
+
+**Cause: the pad LEF abstract, not our routing.** Each pad pin is repeated as the
+same rectangle on every metal layer with no via geometry, so a 5-pin source model
+extracts as 33 ports. The router lands on one layer while the pin-name text sits
+on another: the named port is an unrouted stub and the routed port is unnamed.
+All 97 layout-missing connections sit at the IO pad boundary; none reaches core
+logic. The `bsp_*` names are not new either -- on 10 Aug the same population was
+called `soc_pad_rx[N]`, mapping one for one.
+
+**18,117 of the 18,137 unmatched source nets are one CDL bug**: `.GLOBAL` omits
+VSS. Layout VSS connections minus source VSS connections = 18,117 exactly. The
+layout has MORE ground connectivity than the source declares -- the safe
+direction. Fix in CDL prep before 1 Sept; it makes the list readable.
+
+**The report we had been reading was truncated.** `LVS REPORT MAXIMUM 1000` hid
+17,392 entries. Re-run uncapped: 18,474 discrepancies, identical verdict and
+identical counts. Nothing load-bearing was lost this time only because the
+layout-side entries happen to occupy positions 1-255 contiguously. Set it to ALL.
+
+**ERC (same run):** all six checks zero and not capped -- mnpg, mppg,
+floating.nxwell_float, floating.psub, npvss49, ppvdd49. The floating N-well and
+the aborted psub check seen previously are both absent. Coverage caveat: ERC is
+device-based and the only transistors in this stream are the merged memory and
+ROM macros, so this is "no ERC violation among merged macro devices", not
+chip-wide.
+
+**A clean CORRECT is structurally unreachable** while the pads are LEF abstracts
+-- 5 declared pins must extract as 33 ports. The 82 unmodelled bondpad instances
+are the other line. Neither is fixable by us.
 
 ## NOT PROVEN BY THIS STREAM
 
@@ -104,8 +172,14 @@ sites = 0 (control 19,986 in-macro) and real M3 in the Metal Short box = 0
 
   1. Confirm PO.R.8 returns to 0 (or report it BY HIERARCHICAL INSTANCE PATH —
      their merged DB can name the cell, ours cannot).
-  2. Q7: set `PITCH_70_STAGGER`. Measured CB opening is 58.000 x 66.000, which
-     hits the P70 minimums exactly on both axes; the P80 branch demands 65 and 75.
-     Four results, one switch.
+  2. Q7 — **CORRECTED 2026-08-25, ask for `PITCH_60_STAGGER`, not P70.** Our
+     19 Aug question told imec the parts are 70 um staggered. That was our error.
+     Measured from imec's OWN ERC pad table the ring is **67 um** staggered
+     (outer row x=56, inner x=158, alternating every 67), which on the deck's own
+     switch definitions selects P60 — also the deck's shipped default. Our CB
+     opening is 66 x 58: P80 demands 65/75 and fails both; P70 demands 58/66 and
+     passes at ZERO margin; P60 demands 53/66 and passes with 5 um. The point is
+     not the four results — it is that the P60 rule family has never been run
+     against this design. Full text in docs/tapeout/59-imec-round-trip-2026-08-27.md.
   3. Q8: confirm the acceptance run merges tcbn65lp + tphn65lpgv2od3_sl + tpbn65v.
   4. Return the merged GDS so the wire-bond deck stops being unmeasurable here.
