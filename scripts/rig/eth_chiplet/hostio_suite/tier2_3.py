@@ -66,11 +66,28 @@ Two register mislabels, also fixed:
     (``cmsdk_apb_timer.v:29-38``, verified).  This module exercises **both**
     words so the plan's intent (RELOAD is writable) and its literal sequence
     (``0x04`` is writable) are each covered and correctly named.
-  * **HIO-307**'s "``P0_CYC`` restarts from a small value" needs a bound.
-    ``P0_CYC`` is documented *saturating*, not wrapping
-    (``perf_probe.yaml``), so a die up for >43 s at 100 MHz sits at
-    ``0xFFFFFFFF`` and "small" is well defined.  The bound used here is derived
-    from the host-measured elapsed time, not hard-coded.
+  * **HIO-307 measures nothing as written, and this one is MEASURED on the live
+    die, not argued.**  The block at ``0x2C200000`` is
+    ``ctrl_ahb_perf_probe_regs`` and **its readout is a SHADOW set, frozen
+    until ``CTRL[0]`` SNAP is written**.  A CLR with no subsequent SNAP leaves
+    ``P0_CYC`` *bit-identical*::
+
+        P0_CYC as found            R 0xffffffff   (live counter saturated)
+        Wx00000002 (CLR)
+        P0_CYC, no SNAP            R 0xffffffff   <-- UNCHANGED
+        Wx00000001 (SNAP)
+        P0_CYC                     R 0x0e6e0fe4   <-- now fresh
+
+    So the plan's "``CLR`` must make ``P0_CYC`` visibly reset" reads the
+    *pre-CLR* shadow: ``0x00000000`` before and after on a cold die, which is
+    the vacuous-green case exactly.  Every observation here is SNAP-then-read,
+    and the SNAP-less read is kept as an explicit **shadow control**.
+    ``CTRL`` is write-only and self-clearing, so reading it back as
+    ``0x00000000`` is correct behaviour, not a fault.  ``P0_CYC`` *saturates*
+    rather than wrapping, so an as-found ``0xFFFFFFFF`` is positive evidence
+    the clock ran.  The "restarted" bound is derived from host-measured elapsed
+    time, not hard-coded.  **Issuing CLR belongs to this tier alone**: Tier 4's
+    HIO-402 samples through its own SNAP helper and refuses to emit CLR.
 
 ===============================================================================
 CPU1 IS RUNNING WHILE HIO-206 / HIO-207 TEST ITS RAMs
@@ -914,9 +931,10 @@ IPC_LOCK = 0x23000030
 IPC_PERIPH_ID = 0x23000034
 IPC_OUT_OF_RANGE = 0x23000038           # first word index above the aperture -> PSLVERR
 ETC_CTRL = 0x2C000004                   # RW: [0] GLOBAL_EN [1] IRQ_EN (etc_capture.yaml, verified)
-PERF_CTRL = 0x2C200008                  # WO: [0] SNAP [1] CLR (perf_probe.yaml, verified)
-PERF_CLR = 0x00000002
-PERF_P0_CYC = 0x2C200040                # RO, "cycles since clear (time base, SATURATING)"
+PERF_CTRL = 0x2C200008                  # WO, self-clearing: [0] SNAP, [1] CLR
+PERF_SNAP = 0x00000001                  # CTRL[0]: latch live counters -> shadow
+PERF_CLR = 0x00000002                   # CTRL[1]: zero the LIVE counters (shadow untouched)
+PERF_P0_CYC = 0x2C200040                # RO SHADOW readout, "cycles since clear (SATURATING)"
 BFM_STAT = 0x2C300000                   # [0] FAULT_SEEN (W1C) [5:4] INIT_IDX [8] OVERFLOW
 BFM_ADDR = 0x2C300004
 BFM_COUNT = 0x2C30000C
@@ -930,6 +948,22 @@ TIMER0_RELOAD = 0x28000008              # RELOAD VALUE, RW (cmsdk_apb_timer.v:35
 TIMER_SETUP_VALUE = 0x00010000
 TIDELINK_SWEEP_BASE = 0x2E032000
 TIDELINK_SWEEP_LAST = 0x2E0321FC
+
+
+def _perf_snap(adp: Adp) -> Reply:
+    """Latch every probe's live counters into its shadow set.  1 CU + 1 CU.
+
+    The readout registers at 0x2C200040+ are a **SHADOW**, frozen until CTRL[0]
+    SNAP is written.  MEASURED on the live die: a CLR with no subsequent SNAP
+    leaves the readout BIT-IDENTICAL.  So a read without a preceding SNAP
+    returns whatever the last SNAP captured, and the naive
+    ``CLR ; read P0_CYC`` sequence observes the PRE-CLR state.
+
+    SNAP does not disturb the live counters -- only CLR zeroes them.  Tier 4's
+    HIO-402 samples through its own SNAP helper and deliberately refuses to
+    emit CLR in code; issuing CLR belongs to this tier alone (HIO-307).
+    """
+    return _w(adp, PERF_CTRL, PERF_SNAP)
 
 
 @test("HIO-301", tier=3, hazard=None,
@@ -1162,58 +1196,114 @@ def hio_306(adp, rec):
 
 
 @test("HIO-307", tier=3, hazard=HZ.DESTRUCTIVE,
-      destroys="every AHB perf-probe live counter (P0..P3 CYC/XFER/WAIT/...). The CLR is the point of the "
-               "test. Do not run it in the middle of a measurement.",
+      destroys="every AHB perf-probe LIVE counter (P0..P3 CYC/XFER/WAIT/...), via CLR — the CLR is the point "
+               "of the test. The SHADOW set is also overwritten, by the three SNAPs this test issues. Do not "
+               "run it in the middle of a measurement. Issuing CLR belongs to this test alone: tier4_5 "
+               "samples through SNAP and refuses to emit CLR in code.",
       purpose="Write-only register asymmetry, in two halves that are both required. (1) perf_probe.CTRL "
-              "(0x2C200008) is WO: its read value must NOT be the 0x00000002 just written — a block that "
-              "implemented WO as RW would return it. (2) The FUNCTIONAL half: the CLR must actually restart "
-              "P0_CYC. Without (2), 'the read did not match' is indistinguishable from 'the write went "
-              "nowhere'. "
-              "P0_CYC is documented SATURATING, not wrapping, so a die up for more than ~43 s at 100 MHz "
-              "sits at 0xFFFFFFFF and 'restarted' is well defined. Three assertions: the post-CLR value is "
-              "below a bound DERIVED FROM THE HOST-MEASURED elapsed time (not hard-coded); it is strictly "
-              "less than the pre-CLR value; and it ADVANCES on a second read — that last one closes the "
-              "vacuous path where a disabled or latched counter reads small forever and 'passes'. "
+              "(0x2C200008) is WRITE-ONLY AND SELF-CLEARING: its read value must NOT be the 0x00000002 just "
+              "written — a block that implemented WO as RW would return it. Reading CTRL back as 0x00000000 "
+              "IS THE CORRECT BEHAVIOUR here, not a fault. (2) The FUNCTIONAL half: CLR must actually "
+              "restart the counter. Without (2), 'the read did not match' is indistinguishable from 'the "
+              "write went nowhere'. "
+              "THE READOUT AT 0x2C200040 IS A SHADOW, FROZEN UNTIL CTRL[0] SNAP IS WRITTEN — MEASURED on the "
+              "live die: a CLR with no subsequent SNAP leaves the readout BIT-IDENTICAL. This is why the "
+              "naive CLR-then-read sequence MEASURES NOTHING: it reads the PRE-CLR shadow and calls it the "
+              "post-CLR state. On a cold die that shadow reads 0x00000000 before and after, and a "
+              "'successful reset' is declared having observed nothing at all; after saturation it reads "
+              "0xFFFFFFFF both times. Every observation here is therefore SNAP-then-read. "
+              "Four assertions. (a) SHADOW CONTROL: the post-CLR read WITHOUT a SNAP must be bit-identical "
+              "to the as-found value — this proves the shadow semantics that the rest of the test depends "
+              "on, and would go red if the readout were ever direct. (b) After CLR+SNAP the value is below "
+              "a bound DERIVED FROM THE HOST-MEASURED elapsed time, not hard-coded. (c) It is strictly lower "
+              "than the as-found value (asserted only when the as-found value was above the bound, so a "
+              "die powered seconds ago cannot false-red). (d) A LATER SNAP READS LARGER — this is what "
+              "separates 'CLR worked' from 'the register is stuck at a small number', which no single "
+              "post-CLR read can do. "
+              "These counters SATURATE rather than wrap, so an as-found 0xFFFFFFFF is POSITIVE evidence the "
+              "fabric clock ran, not a stuck register. The implied clock rate from the SNAP delta is "
+              "recorded as a free cross-check of the 0x05F5E100 clock-rate word at 0x18000000. "
               "(The plan's literal CLR write lands on 0x2C20000C because R auto-increments.) "
-              "Budget: ~16 CU ~= 1.0 s.")
+              "Budget: ~22 CU ~= 1.4 s.")
 def hio_307(adp, rec):
-    ctrl_before = _r(adp, PERF_CTRL)
-    cyc_before = _r(adp, PERF_P0_CYC)
-    rec.record("perf_ctrl_read_value", "0x%08X" % (ctrl_before.value if ctrl_before.value is not None else -1))
-    rec.record("perf_p0_cyc_before_clr", "0x%08X" % (cyc_before.value if cyc_before.value is not None else -1))
-    if cyc_before.value == 0xFFFFFFFF:
-        rec.note("P0_CYC reads 0xFFFFFFFF before the CLR: the counter is saturated, as expected on a die "
-                 "that has been up for more than ~43 s at 100 MHz.")
+    # The readout is a SHADOW, frozen until SNAP.  Every observation below is
+    # SNAP-then-read; a bare read returns whatever the last SNAP captured.
+    _perf_snap(adp)
+    found = _r(adp, PERF_P0_CYC)
+    fv = found.value if found.value is not None else -1
+    rec.record("perf_p0_cyc_as_found", "0x%08X" % fv)
+    rec.check("the as-found P0_CYC read (after a SNAP) is well-formed and unflagged",
+              found.ok and not found.error, got=found.raw)
+    if fv == 0xFFFFFFFF:
+        rec.note("P0_CYC reads 0xFFFFFFFF as found: the live counter has SATURATED. These counters saturate "
+                 "rather than wrap, so this is POSITIVE evidence that the fabric clock has been running, not "
+                 "a stuck register.")
 
     t0 = time.monotonic()
     wr = _w(adp, PERF_CTRL, PERF_CLR)
-    cyc1 = _r(adp, PERF_P0_CYC)
-    t1 = time.monotonic()
-    cyc2 = _r(adp, PERF_P0_CYC)
+    rec.check("the CLR write reported OK", wr.ok and not wr.error, got=wr.raw)
 
     ctrl_after = _r(adp, PERF_CTRL)
-    rec.check("perf_probe.CTRL is WRITE-ONLY: it does not read back the 0x%08X just written" % PERF_CLR,
+    rec.record("perf_ctrl_read_value", "0x%08X" % (ctrl_after.value if ctrl_after.value is not None else -1))
+    rec.check("perf_probe.CTRL is WRITE-ONLY: it does not read back the 0x%08X just written. It is also "
+              "self-clearing, so reading 0x00000000 here is the CORRECT answer, not a fault" % PERF_CLR,
               ctrl_after.ok and not ctrl_after.error and ctrl_after.value != PERF_CLR, got=ctrl_after.raw)
 
+    # (a) SHADOW CONTROL -- nothing has SNAPped since the as-found read, so the
+    # readout must not have moved, even though CLR has zeroed the live counter.
+    stale = _r(adp, PERF_P0_CYC)
+    sv = stale.value if stale.value is not None else -2
+    rec.record("perf_p0_cyc_after_clr_no_snap", "0x%08X" % sv)
+    rec.check("SHADOW CONTROL: with no SNAP after the CLR, the readout is BIT-IDENTICAL to the as-found "
+              "0x%08X. This is exactly why the naive CLR-then-read sequence measures nothing — it observes "
+              "the PRE-CLR shadow" % fv,
+              stale.ok and not stale.error and sv == fv, got="as_found=0x%08X after_clr=0x%08X" % (fv, sv))
+
+    # (b)/(c) now SNAP, so the observation is of the post-CLR state.
+    _perf_snap(adp)
+    a1r = _r(adp, PERF_P0_CYC)
+    t1 = time.monotonic()
+    a1 = a1r.value if a1r.value is not None else -1
+
+    # (d) a second SNAP later must read larger: "CLR worked" vs "stuck small".
+    _perf_snap(adp)
+    a2r = _r(adp, PERF_P0_CYC)
+    t2 = time.monotonic()
+    a2 = a2r.value if a2r.value is not None else -1
+
     elapsed = max(t1 - t0, 0.0)
-    bound = max(200_000_000, int(elapsed * 3 * ASSUMED_HCLK_HZ))
-    v1 = cyc1.value if cyc1.value is not None else -1
-    v2 = cyc2.value if cyc2.value is not None else -1
-    rec.record("perf_p0_cyc_after_clr", "0x%08X" % v1)
-    rec.record("perf_p0_cyc_second_read", "0x%08X" % v2)
+    bound = max(500_000_000, int(elapsed * 4 * ASSUMED_HCLK_HZ))
+    rec.record("perf_p0_cyc_after_clr_snap", "0x%08X" % a1)
+    rec.record("perf_p0_cyc_second_snap", "0x%08X" % a2)
     rec.record("perf_clr_bound", "0x%08X (from %.3f s of host-measured elapsed time at %d Hz)"
                % (bound, elapsed, ASSUMED_HCLK_HZ))
 
-    rec.check("the CLR write reported OK", wr.ok and not wr.error, got=wr.raw)
-    rec.check("P0_CYC restarted: 0x%08X is below the elapsed-time bound 0x%08X" % (v1 & 0xFFFFFFFF, bound),
-              0 <= v1 <= bound, got="0x%08X" % v1)
-    rec.check("P0_CYC is strictly lower after the CLR than before it (the FUNCTIONAL proof that the WO write "
-              "had an effect, which the read-value check alone cannot give)",
-              cyc_before.value is not None and v1 >= 0 and v1 < cyc_before.value,
-              got="before=0x%08X after=0x%08X" % (cyc_before.value or 0, v1))
-    rec.check("P0_CYC ADVANCES after the CLR — rules out a latched or disabled counter reading small forever, "
-              "which would make the two checks above vacuous",
-              v2 > v1, got="0x%08X -> 0x%08X" % (v1, v2))
+    rec.check("after CLR+SNAP, P0_CYC restarted: 0x%08X is below the elapsed-time bound 0x%08X"
+              % (a1 & 0xFFFFFFFF, bound),
+              0 <= a1 <= bound, got="0x%08X" % a1)
+
+    if fv > bound:
+        rec.check("P0_CYC is strictly LOWER after CLR+SNAP than as found (0x%08X -> 0x%08X) — the FUNCTIONAL "
+                  "proof that the write-only CLR had an effect, which the read-value check alone cannot give"
+                  % (fv, a1),
+                  0 <= a1 < fv, got="as_found=0x%08X after=0x%08X" % (fv, a1))
+    else:
+        rec.record("perf_clr_reduction_exercised", False)
+        rec.note("The as-found P0_CYC (0x%08X) was already below the bound (0x%08X), so the 'CLR reduced it' "
+                 "comparison is UNEXERCISED — the die was powered too recently for the live counter to have "
+                 "grown past the bound. The advance check still discriminates." % (fv, bound))
+
+    rec.check("a LATER SNAP reads LARGER (0x%08X -> 0x%08X): the counter is live and advancing. This is what "
+              "separates 'CLR worked' from 'the readout is stuck at a small number', which no single "
+              "post-CLR read can distinguish" % (a1, a2),
+              a2 > a1, got="0x%08X -> 0x%08X" % (a1, a2))
+
+    dt = max(t2 - t1, 1e-9)
+    if a2 > a1 and a2 != 0xFFFFFFFF:
+        rec.record("perf_implied_hclk_hz", int((a2 - a1) / dt))
+        rec.note("Implied fabric clock from the SNAP delta: %.2f MHz over %.3f s. Free cross-check of the "
+                 "0x05F5E100 (100 MHz) clock-rate word at 0x18000000; recorded, not asserted — rate is "
+                 "HIO-402's subject." % ((a2 - a1) / dt / 1e6, dt))
 
 
 @test("HIO-308", tier=3, hazard=HZ.DESTRUCTIVE, weak=True,
