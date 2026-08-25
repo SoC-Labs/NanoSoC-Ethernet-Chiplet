@@ -180,8 +180,10 @@ evidence of a fault.  The plan (§3, D4) offers two honest options:
       Both tests are declared ``weak=True`` in this mode, because their primary
       assertion has been withdrawn.  They are *not* counted as full coverage.
 
-  (b) **park CPU1 first**, then re-run with ``HOSTIO_CPU1_PARKED=1`` set, which
-      restores the strict per-cell assertions and clears ``weak``.  Parking
+  (b) **park CPU1 first**, then re-run against a profile that declares
+      ``bus_quiescent`` (or force it with ``HOSTIO_CPU1_PARKED=1``), which
+      restores the strict per-cell assertions and clears ``weak``.  **This route
+      does not exist on the ASIC**: ``bus_parkable`` is False there.  Parking
       (plan §3 D4, HIO-508's mechanism):
           1. preload a two-instruction spin loop at ``0x90000000``;
           2. set ``0x29000000`` bit 0 so CPU1's address 0 maps to IMEM
@@ -214,9 +216,37 @@ written, a fixed deterministic sample is read back — plus an explicit last-wor
 write/read that closes the ``F``/``U`` off-by-one hole in §1.5.  Each test says
 so in its ``purpose``; none of them claims full-RAM read coverage.
 
+TARGET PROFILE
+==============
+
+Everything vehicle-specific now comes from ``rec.target`` (``targets.py``), not
+from a constant in this file.  ``--target fpga_kr260 | asic_tsmc65 | unknown``;
+the default is ``unknown``, which asserts everything true of the DESIGN and
+defers everything true only of a vehicle.
+
+The single property that reshapes this module is **``bus_quiescent``, and it is
+False on BOTH shipping profiles.**  The FPGA's boot gate reads ``0x00000004``
+(CPU0 is loose there too) and on the ASIC ``cc_rom`` opens the CPU0 gate on every
+terminating path while ``cpu1_bootgate`` is tied ``1'b1``.  So the
+inconclusive-by-default contract written for HIO-206/207 is the NORMAL case on
+every vehicle, and the six tests that hard-coded ``strict=True`` were making
+per-cell claims no vehicle could support.  They now take ``strict=_strict(rec)``
+and carry ``weak=_LIVE_BUS``; every withdrawn assertion is recorded through
+``rec.target_defer`` with its ``would_have_held`` value, so a deferred run stays
+diagnosable and cannot be mistaken for a clean one.
+
+``bus_parkable`` is the second half of that story: True on the FPGA, **False on
+the ASIC**, where parking would cost an irreversible boot-gate bit (HZ-4) and a
+fabric reset (HZ-5).  HIO-206/207 are therefore PERMANENTLY inconclusive on
+silicon, not merely inconclusive until someone does the park.
+
 Environment knobs (host-side only, they touch nothing on the die):
-  ``HOSTIO_CPU1_PARKED=1``   CPU1 has been parked -> HIO-206/207 run strict.
-  ``HOSTIO_SOAK_SECONDS=N``  HIO-211 soak length (default 60).
+  ``HOSTIO_CPU1_PARKED=1``   force strict even on a live-bus profile (and
+                             ``=0`` forces non-strict). Unset means "ask the
+                             profile", which is the right answer.
+  ``HOSTIO_SOAK_SECONDS=N``  HIO-211 soak length; defaults to the profile's
+                             ``soak_seconds``. WALL-CLOCK — never scaled by the
+                             fabric rate.
 """
 
 from __future__ import annotations
@@ -224,7 +254,16 @@ from __future__ import annotations
 import os
 import time
 
+import harness
 from harness import Adp, Reply, test, Rec, HZ
+
+#: The active target, resolved at IMPORT time.  harness.main() calls
+#: set_active_target() BEFORE it discovers tier modules, precisely so a module's
+#: import-time constants can bind from the profile ("Resolve the target BEFORE
+#: anything else touches the registry", harness.py:2863-2864).  Only constants
+#: that must exist at decoration time (``weak=``) are taken from here; every
+#: assertion uses ``rec.target``, which is the per-run object.
+_T = harness.active_target()
 
 
 # ---------------------------------------------------------------------------
@@ -244,26 +283,92 @@ CPU1_IMEM_SIZE = 16 * 1024
 CPU1_DMEM_BASE = 0x98000000        # CPU1 DMEM, 8 KB
 CPU1_DMEM_SIZE = 8 * 1024
 
-ROM_DIFF_OFFSET = 0x0E4            # first word where the two boot ROMs differ (HIO-102)
+#: Fallback only.  The DISTINCT-DATA control offset is a property of the ROM
+#: IMAGE, not of the design: the FPGA carries `smoke_remap` and the ASIC
+#: `stage0_bootrom`, and 172 of 320 words differ.  The live value comes from
+#: ``target.rom_distinct_offsets[rom_name]``; a missing key DEFERS rather than
+#: borrowing the other vehicle's offset.
+ROM_DIFF_OFFSET_FALLBACK = 0x0E4
 
 PAT_A = 0x5A5A5A5A
 PAT_B = 0xA5A5A5A5
 ROM_POISON = 0xDEADBEEF
 WRITE_PATH_TAG = 0x0BADC0DE
 
-# SYS_CLK_FREQ_HZ = 100 MHz (0x05F5E100, the HIO-107 DMEM word 0 initialiser).
-ASSUMED_HCLK_HZ = 100_000_000
+# THE CLOCK RATE IS NOT A MODULE CONSTANT.  It comes from `target.fabric_hz`.
+#
+# What used to be here was `ASSUMED_HCLK_HZ = 100_000_000`, carrying the comment
+# "SYS_CLK_FREQ_HZ = 100 MHz (0x05F5E100, the HIO-107 DMEM word 0 initialiser)".
+# Both halves were wrong, and the second is the more instructive:
+#
+#   * 100 MHz is the ASIC figure. This suite has only ever run on the KR260 FPGA,
+#     whose fabric is 25.010 MHz measured (492,193,491 P0_CYC over a host-timed
+#     19.680 s; the routed report says 25.011 MHz, agreeing to 0.004%).  So the
+#     one clock constant in the file was 4x wrong for the only vehicle it had
+#     ever seen.
+#   * The provenance was circular. 0x05F5E100 at eth DMEM word 0 is
+#     `SystemCoreClock` -- a FIRMWARE BUILD CONSTANT compiled into the image, not
+#     a clock register.  Reading a hardware rate out of it is how the 4x error
+#     survived; golden_fpga_reference.json now forbids that inference explicitly.
+#     That the image says 100 MHz on 25 MHz hardware is itself a finding: the
+#     loaded image was built for the wrong clock (and its UART baud is 4x off
+#     for the same reason).  On the ASIC that word is 0x00000000 and there is no
+#     such constant to misread.
+#
+# CONSEQUENCE, STATED PLAINLY: nothing here was RED because of this.  The only
+# consumer is HIO-307's counter bound, an UPPER bound wrapped in a max() floor.
+# A 4x-too-high rate made that bound 4x too generous, i.e. HIO-307 was WEAKER
+# than it read -- it would have accepted a post-CLR counter four times larger
+# than the elapsed time can justify.  This is a repair to the strength of a
+# check, not to a failure.
 
-SOAK_SECONDS = int(os.environ.get("HOSTIO_SOAK_SECONDS", "60"))
 
-
-def _env_flag(name: str) -> bool:
+def _env_flag(name):
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "y", "on")
 
 
-#: CPU1 has been parked out of its RAMs by the operator (plan §3 D4 option b).
-#: Read once at import so it can feed the ``weak=`` kwarg of HIO-206/207.
-CPU1_PARKED = _env_flag("HOSTIO_CPU1_PARKED")
+def _env_set(name):
+    return os.environ.get(name, "").strip() != ""
+
+
+#: HIO-211's soak window is WALL-CLOCK and must NOT scale with the fabric clock.
+SOAK_SECONDS = int(os.environ.get("HOSTIO_SOAK_SECONDS", _T.soak_seconds or 60))
+
+#: Is the bus quiet enough for a per-cell memory assertion to be evidence?
+#:
+#: `bus_quiescent` is False on BOTH shipping profiles -- the FPGA's boot gate
+#: reads 0x00000004 (CPU0 is loose there too) and on the ASIC cc_rom opens the
+#: gate on every terminating path while cpu1_bootgate is tied 1'b1.  So the
+#: inconclusive-by-default contract written for HIO-206/207 is the NORMAL case
+#: on both vehicles, not the exception, and the six tests that hard-coded
+#: strict=True were making claims the vehicle could not support.
+#:
+#: `HOSTIO_CPU1_PARKED=1` still forces strict, but note `bus_parkable` is False
+#: on the ASIC: the park procedure needs an irreversible boot-gate bit (HZ-4)
+#: and a fabric reset (HZ-5), so forcing it there is an operator error and is
+#: recorded as one.
+_ENV_PARKED = _env_flag("HOSTIO_CPU1_PARKED") if _env_set("HOSTIO_CPU1_PARKED") else None
+BUS_QUIESCENT = (_ENV_PARKED if _ENV_PARKED is not None
+                 else bool(_T.known("bus_quiescent") and _T.bus_quiescent))
+
+#: Import-time view, used only for the ``weak=`` kwarg, which the decorator needs
+#: before any Rec exists.  Unknown counts as live: a profile that does not say
+#: the bus is quiet is not a licence to assume it.
+_LIVE_BUS = not BUS_QUIESCENT
+
+
+def _strict(rec):
+    """Per-run strictness. Same rule as BUS_QUIESCENT but from `rec.target`."""
+    if _ENV_PARKED is not None:
+        return _ENV_PARKED
+    t = rec.target
+    return bool(t is not None and t.known("bus_quiescent") and t.bus_quiescent)
+
+
+def _fabric_hz(rec):
+    """Fabric clock in Hz, or None when this target does not establish it."""
+    t = rec.target
+    return t.fabric_hz if (t is not None and t.known("fabric_hz")) else None
 
 
 #: Plan §3 Phase D order, with the CPU1 pair deliberately last (see the module
@@ -396,7 +501,41 @@ def _guard_value(addr: int, val: int) -> None:
         raise HazardGuard("write datum 0x%X is not a 32-bit value" % val)
 
 
-def _r(adp: Adp, addr: int, allow_acquire: bool = False, timeout_ms: int = 4000) -> Reply:
+#: Conservative host-side timing jitter, in seconds, used to decide whether a
+#: cycle-counter window is long enough to assert a clock rate against.
+_HOST_TIMER_JITTER_S = 0.05
+
+
+#: A write-path POSITIVE CONTROL needs a location that (a) really goes to a bus
+#: slave, (b) is safe to disturb, and (c) is not being written by a live core in
+#: the ~130 ms between the write and the read-back.
+#:
+#: The profile supplies one as `write_path_control_addr` (eth IMEM 0x10001000 on
+#: the FPGA, where IMEM was measured empty).  On the ASIC it is None, because
+#: `eth_imem_live_code` is True -- CPU0 is FETCHING from eth IMEM there, so no
+#: RAM word in it is safe as a control.
+#:
+#: FALLBACK, and it is mine rather than the migration report's: the QSPI ADDR
+#: scratch at 0x2100000C.  RTL-verified a full 32-bit RW store with an unmasked
+#: readback (apb_qspi_regs.v:112,188,220), combinational with no wait states, on
+#: a decode arm present on both vehicles, restorable, and touched by no core's
+#: instruction fetch.  It proves the ADP write path lands data on a slave, which
+#: is the only thing a write-path control has to prove.  It is NOT memory, so it
+#: does not prove a RAM works -- no test here uses it for that.
+_WRITE_CTRL_FALLBACK_ADDR = 0x2100000C          # QSPI ADDR, a pure RW scratch
+_WRITE_CTRL_FALLBACK_TAG = 0x00355AA3           # inside ADDR's 22-bit output field
+
+
+def _write_path_control(rec):
+    """Return (addr, tag, source) for a write-path positive control."""
+    t = rec.target
+    if t is not None and t.known("write_path_control_addr"):
+        return t.write_path_control_addr, WRITE_PATH_TAG, "target.write_path_control_addr"
+    return (_WRITE_CTRL_FALLBACK_ADDR, _WRITE_CTRL_FALLBACK_TAG,
+            "fallback QSPI ADDR scratch (target declares no RAM control word)")
+
+
+def _r(adp: Adp, addr: int, allow_acquire: bool = False) -> Reply:
     """Guarded word read.  ``A x<addr>`` then ``R`` — 2 CU.
 
     Always re-issues ``A``: ``R`` auto-increments, so never assume the address
@@ -424,7 +563,12 @@ BOOTGATE_NOOP_DATUM = 0x00000000
 #: Positive write-path control for HIO-313.  eth IMEM is real writable RAM and
 #: is EMPTY on this die; write/read-back/restore of 0xD00DFEED at 0x10001000 is
 #: a MEASURED hardware fact.  Captured and restored, so HIO-313 destroys nothing.
-BOOTGATE_WRITE_CONTROL_ADDR = 0x10001000
+#: SUPERSEDED by `_write_path_control(rec)`, which takes the address from
+#: `target.write_path_control_addr`.  Kept only as the FPGA-measured value it
+#: always was: write/read-back/restore of 0xD00DFEED at 0x10001000 was proven on
+#: the KR260 die, where eth IMEM is empty.  It is NOT a property of the design —
+#: on the ASIC CPU0 fetches from eth IMEM and no word in it is safe as a control.
+BOOTGATE_WRITE_CONTROL_ADDR_FPGA = 0x10001000
 BOOTGATE_WRITE_CONTROL_TAG = 0xD00DFEED
 
 #: bit 0 = CPU1 remap (address 0 -> IMEM), bit 2 = NETWORK_CORE_BOOTGATE
@@ -505,10 +649,34 @@ def _replies_healthy(rec: Rec, replies, what: str) -> bool:
     """
     no_reply = [i for i, r in enumerate(replies) if not r.ok]
     errored = [i for i, r in enumerate(replies) if r.ok and r.error]
-    ok = not no_reply and not errored
-    rec.check("%s: %d accesses, no NO-REPLY and no bus ERROR" % (what, len(replies)), ok,
-              got="no_reply=%d errored=%d" % (len(no_reply), len(errored)))
-    return ok
+
+    # NO-REPLY is a stalling slave or a desynced link. That is a host/protocol
+    # fact, true on every vehicle, and stays asserted everywhere.
+    rec.check("%s: %d accesses, no NO-REPLY (a missing reply is a stall, not a "
+              "memory result)" % (what, len(replies)), not no_reply,
+              got="no_reply=%d" % len(no_reply))
+
+    # A bus ERROR inside a RAM window is a different question, and on the ASIC it
+    # is not purely a memory question: CRC is ON at reset there, so a read of a
+    # cell that has never been written to a CRC-consistent value can legitimately
+    # raise '!'. Assert only where CRC is known OFF; elsewhere record it and let
+    # the memory-subsystem owner rule. A test must not settle a hardware
+    # configuration question by going red.
+    t = rec.target
+    crc_on = t.get("crc_enabled_at_reset") if t is not None else None
+    if crc_on is False:
+        rec.check("%s: no bus ERROR across %d accesses (CRC is off on this "
+                  "target, so '!' inside a RAM window is a real fault)"
+                  % (what, len(replies)), not errored, got="errored=%d" % len(errored))
+    else:
+        rec.target_defer("%s: no bus ERROR across %d accesses" % (what, len(replies)),
+                         prop="crc_enabled_at_reset", got="errored=%d" % len(errored),
+                         would_have_held=(not errored),
+                         reason="CRC is on at reset (or unknown) on target %s, so a '!' "
+                                "from a not-yet-CRC-consistent cell is a configuration "
+                                "effect, not a memory fault. Recorded, not asserted."
+                                % (t.name if t is not None else "?"))
+    return (not no_reply) and (not errored)
 
 
 # ---------------------------------------------------------------------------
@@ -563,10 +731,16 @@ def _walking_ones_zeros(adp: Adp, rec: Rec, addr: int, tag: str, strict: bool) -
                   n_ones_ok > 0, got="%d/32 ok" % n_ones_ok)
         rec.check("%s: at least one walking-ZEROS pattern round-tripped" % tag,
                   n_zeros_ok > 0, got="%d/32 ok" % n_zeros_ok)
+        rec.target_defer("%s: all 64 walking patterns read back exactly" % tag,
+                         prop="bus_quiescent",
+                         got="ones %d/32, zeros %d/32" % (n_ones_ok, n_zeros_ok),
+                         would_have_held=(not fails["ones"] and not fails["zeros"]),
+                         reason="the bus is not quiescent on this target, so a mismatch is a live "
+                                "core writing its own memory and cannot be attributed to the RAM")
         if fails["ones"] or fails["zeros"]:
             rec.note("%s: INCONCLUSIVE — %d/64 walking patterns mismatched while the owning CPU is live; "
                      "a running CPU legitimately writes this memory. Not reported as a fault. "
-                     "Park the CPU and re-run with HOSTIO_CPU1_PARKED=1 for a verdict." %
+                     "Park the CPU (where the profile says that is possible) and re-run for a verdict." %
                      (tag, len(fails["ones"]) + len(fails["zeros"])))
 
     return {"ones_ok": n_ones_ok, "zeros_ok": n_zeros_ok,
@@ -631,16 +805,70 @@ def _address_uniqueness(adp: Adp, rec: Rec, base: int, size: int, tag: str, stri
     wrap_val = wrap.value if wrap.value is not None else -1
     wrap_ok = wrap_val == base
 
+    # THE WRAP CHECK IS STRUCTURAL AND MUST SURVIVE A LIVE BUS.  A macro built at
+    # the wrong depth is not something a running CPU can explain, and the earlier
+    # non-strict path DROPPED this check to a record -- a defect in the weak mode
+    # itself, not a porting artefact.  It is asserted on every target, with one
+    # honest precondition: the comparison is only meaningful if the anchor word at
+    # offset 0 still holds what was written. If a live core overwrote the anchor,
+    # there is nothing to compare the wrap against, and THAT is the only case that
+    # defers.
+    # THE ALIAS CHECK THAT SURVIVES A LIVE BUS.
+    #
+    # Each probed location was given its OWN ADDRESS as its datum, so the set of
+    # values written is known exactly. If location X reads back the address value
+    # belonging to a DIFFERENT probed location Y, the two share a cell -- and a
+    # live core cannot fake that, because a core writing its own data does not
+    # happen to write `base+Y` for one of our probe offsets. So this is asserted
+    # on EVERY target, live bus or not.
+    #
+    # It is also the only form that catches a RAM SMALLER than declared. The
+    # base+size wrap probe cannot: at base+size a 32 KB macro and a 16 KB macro
+    # BOTH alias back onto offset 0, so the probe reads the same thing either
+    # way. The half-depth case shows up here instead, as offset 0 holding
+    # offset 0x4000's value.
+    addr_values = dict((base + o, o) for o in offs)
+    alias_hits = []
+    for off in offs:
+        v = got.get(off)
+        if v != base + off and v in addr_values:
+            alias_hits.append("off 0x%X holds off 0x%X's value 0x%08X (address bit 0x%X suspect)"
+                              % (off, addr_values[v], v, off ^ addr_values[v]))
+    rec.record("%s_addr_alias_hits" % tag, alias_hits)
+    rec.check("%s: no probed location holds ANOTHER probed location's address value. STRUCTURAL — a live "
+              "core writing its own data cannot produce a probe's exact address word, so this is asserted "
+              "on every target. It is what detects a macro built at the WRONG DEPTH, which the base+0x%X "
+              "wrap probe cannot (both a full-depth and a half-depth macro alias to offset 0 there)"
+              % (tag, size),
+              not alias_hits, got="; ".join(alias_hits[:3]) or "no aliasing pairs")
+
+    anchor_ok = got.get(0) == base
+    rec.record("%s_addr_wrap_observed" % tag, "0x%08X (expected 0x%08X)" % (wrap_val, base))
+    if anchor_ok:
+        rec.check("%s: window aliases back to offset 0 at the declared physical size 0x%X. STRUCTURAL — a "
+                  "live core cannot explain a macro built at the wrong depth, so this is asserted on every "
+                  "target (HIO-118 class)" % (tag, size),
+                  wrap_ok, got="0x%08X at base+0x%X, expected 0x%08X" % (wrap_val, size, base))
+    else:
+        rec.target_defer("%s: window aliases back at the declared size 0x%X" % (tag, size),
+                         prop="bus_quiescent",
+                         got="anchor at offset 0 reads 0x%08X, not 0x%08X" % (got.get(0, -1), base),
+                         would_have_held=wrap_ok,
+                         reason="the offset-0 anchor was overwritten between the write and the wrap read, "
+                                "so there is no trustworthy value to compare the alias against")
+
     if strict:
         rec.check("%s: every location holds its own address (no address aliasing, no stuck address bit)" % tag,
                   not bad, got="%d/%d ok; %s" % (len(offs) - len(bad), len(offs), aliases[:3] or "no alias pairs"))
-        rec.check("%s: window aliases back to offset 0 at the declared physical size 0x%X "
-                  "(a mismatch means the macro is not the declared depth — HIO-118 class)" % (tag, size),
-                  wrap_ok, got="0x%08X at base+0x%X, expected 0x%08X" % (wrap_val, size, base))
     else:
         rec.check("%s: at least one location still holds its own address" % tag,
                   len(bad) < len(offs), got="%d/%d ok" % (len(offs) - len(bad), len(offs)))
-        rec.record("%s_addr_wrap_observed" % tag, "0x%08X (expected 0x%08X)" % (wrap_val, base))
+        rec.target_defer("%s: every location holds its own address" % tag,
+                         prop="bus_quiescent",
+                         got="%d/%d ok" % (len(offs) - len(bad), len(offs)),
+                         would_have_held=(not bad),
+                         reason="the bus is not quiescent on this target, so an overwritten location is a "
+                                "live core, not an address-bus fault")
         if bad:
             rec.note("%s: INCONCLUSIVE — %d/%d address-uniqueness locations mismatched while the owning CPU "
                      "is live. Not reported as a fault." % (tag, len(bad), len(offs)))
@@ -735,6 +963,15 @@ def _fill_and_sample(adp: Adp, rec: Rec, base: int, size: int, pattern: int,
                   len(bad) < len(offs), got="%d/%d ok" % (len(offs) - len(bad), len(offs)))
         rec.check("%s: an explicit W at the last word reports OK (F/U off-by-one hole, §1.5)" % tag,
                   last_wr_clean, got=lwr.raw)
+        rec.target_defer("%s: all %d sampled cells hold 0x%08X after the fill" % (tag, len(offs), pattern),
+                         prop="bus_quiescent", got="%d/%d ok" % (len(offs) - len(bad), len(offs)),
+                         would_have_held=(not bad),
+                         reason="the bus is not quiescent on this target; a cell that changed between the "
+                                "fill and the readback is a live core, not a memory fault")
+        rec.target_defer("%s: the last word was filled" % tag, prop="bus_quiescent",
+                         got=("0x%08X" % (lrd0.value if lrd0.value is not None else -1)),
+                         would_have_held=last_filled,
+                         reason="same: a live core can rewrite the last word inside the readback window")
         if bad or not last_filled:
             rec.note("%s: INCONCLUSIVE — %d/%d sampled cells did not hold 0x%08X while the owning CPU is live. "
                      "Not reported as a fault." % (tag, len(bad), len(offs), pattern))
@@ -759,7 +996,7 @@ def _ram_battery(adp: Adp, rec: Rec, base: int, size: int, tag: str, strict: boo
 # TIER 2 — memory integrity  (HIO-201 .. HIO-211)
 # ===========================================================================
 
-@test("HIO-201", tier=2, hazard=HZ.DESTRUCTIVE,
+@test("HIO-201", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
       destroys="eth IMEM word at 0x10000000 (left holding 0x7FFFFFFF)",
       purpose="Eth IMEM data-bus integrity: 32 walking-ones AND 32 walking-zeros at 0x10000000. "
               "RED when a written pattern does not read back. Both polarities are required and are "
@@ -769,10 +1006,10 @@ def _ram_battery(adp: Adp, rec: Rec, base: int, size: int, tag: str, strict: boo
               "Records stuck-high/stuck-low bit masks so a failure names the data bit. "
               "Budget: 256 CU ~= 17 s.")
 def hio_201(adp, rec):
-    _walking_ones_zeros(adp, rec, ETH_IMEM_BASE, "eth_imem", strict=True)
+    _walking_ones_zeros(adp, rec, ETH_IMEM_BASE, "eth_imem", strict=_strict(rec))
 
 
-@test("HIO-202", tier=2, hazard=HZ.DESTRUCTIVE,
+@test("HIO-202", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
       destroys="eth IMEM words at offsets 0x0, 0x4, 0x8 ... 0x4000 (14 locations)",
       purpose="Eth IMEM address-bus integrity / aliasing: writes each location's own ADDRESS into it "
               "(a distinct value per location), then reads them all back. RED when any location returns a "
@@ -784,10 +1021,10 @@ def hio_201(adp, rec):
               "Also RED when base+0x8000 does not alias back to offset 0 (macro not the declared 32 KB depth). "
               "Budget: 58 CU ~= 3.8 s.")
 def hio_202(adp, rec):
-    _address_uniqueness(adp, rec, ETH_IMEM_BASE, ETH_IMEM_SIZE, "eth_imem", strict=True)
+    _address_uniqueness(adp, rec, ETH_IMEM_BASE, ETH_IMEM_SIZE, "eth_imem", strict=_strict(rec))
 
 
-@test("HIO-203", tier=2, hazard=HZ.DESTRUCTIVE,
+@test("HIO-203", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
       destroys="ALL 32 KB of eth IMEM (0x10000000-0x10007FFF), overwritten with 0x5A5A5A5A",
       purpose="Eth IMEM whole-RAM fill 0x5A5A5A5A via the F engine, then strided sampled readback. "
               "Every cell is WRITTEN (one F command, ~4700x cheaper than a dump); 12 fixed sample cells are "
@@ -799,55 +1036,79 @@ def hio_202(adp, rec):
               "loop-continue branch, so a fill whose ONLY erroring beat is the last one reports clean. "
               "Budget: 35 CU ~= 2.3 s.")
 def hio_203(adp, rec):
-    _fill_and_sample(adp, rec, ETH_IMEM_BASE, ETH_IMEM_SIZE, PAT_A, "eth_imem_5a", strict=True)
+    _fill_and_sample(adp, rec, ETH_IMEM_BASE, ETH_IMEM_SIZE, PAT_A, "eth_imem_5a", strict=_strict(rec))
 
 
-@test("HIO-204", tier=2, hazard=HZ.DESTRUCTIVE,
+@test("HIO-204", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
       destroys="ALL 32 KB of eth IMEM (0x10000000-0x10007FFF), overwritten with 0xA5A5A5A5",
       purpose="Eth IMEM whole-RAM fill 0xA5A5A5A5 — the complement of HIO-203. RED for the same reasons. "
               "The pair is what makes either sound: a cell stuck at 0x5A5A5A5A's bit values passes HIO-203 "
               "and fails here. Running one polarity only is the 'measured nothing' failure mode. "
               "Budget: 35 CU ~= 2.3 s.")
 def hio_204(adp, rec):
-    _fill_and_sample(adp, rec, ETH_IMEM_BASE, ETH_IMEM_SIZE, PAT_B, "eth_imem_a5", strict=True)
+    _fill_and_sample(adp, rec, ETH_IMEM_BASE, ETH_IMEM_SIZE, PAT_B, "eth_imem_a5", strict=_strict(rec))
 
 
-@test("HIO-205", tier=2, hazard=HZ.DESTRUCTIVE,
-      destroys="ALL 16 KB of eth DMEM (0x18000000-0x18003FFF) — INCLUDING WORD 0, the SystemCoreClock "
-               "value (0x05F5E100) that HIO-107 uses to prove CPU0 ran its stage-0 scatter-load. "
-               "Capture HIO-107 before this test (plan §3, Phase D preamble).",
+@test("HIO-205", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
+      destroys="ALL 16 KB of eth DMEM (0x18000000-0x18003FFF), including word 0. On a target whose image "
+               "puts a witness there (FPGA: 0x05F5E100, the SystemCoreClock initialiser HIO-107 reads to "
+               "prove CPU0 ran its scatter-load) capture HIO-107 FIRST. On a target whose word 0 is "
+               "0x00000000 by construction (ASIC: the image never links it) there is nothing to capture "
+               "and the Phase-D preamble obligation does not apply.",
       purpose="Eth DMEM full battery: walking ones/zeros, address uniqueness, and both bulk fills "
               "(F x00001000). RED on the same conditions as HIO-201/202/203/204, applied to the 16 KB "
               "DMEM macro; the address-uniqueness half additionally goes RED if the window does not alias "
               "at 16 KB. Budget: ~380 CU ~= 25 s.")
 def hio_205(adp, rec):
-    rec.note("eth DMEM word 0 held the HIO-107 boot-state evidence; it is destroyed by this test.")
-    _ram_battery(adp, rec, ETH_DMEM_BASE, ETH_DMEM_SIZE, "eth_dmem", strict=True)
+    _t205 = rec.target
+    _w0 = _t205.eth_dmem_word0 if (_t205 is not None and _t205.known("eth_dmem_word0")) else None
+    if _w0:
+        rec.note("eth DMEM word 0 holds this image's CPU0-ran witness (0x%08X) and is destroyed by this "
+                 "test. HIO-107 must have been captured first." % _w0)
+    elif _w0 == 0:
+        rec.note("eth DMEM word 0 is 0x00000000 by construction on this target — the image never links a "
+                 ".data[0] initialiser — so there is NO witness here to destroy and no Phase-D capture "
+                 "obligation. HIO-107 cannot use this word on this vehicle.")
+    else:
+        rec.target_defer("eth DMEM word 0 carries a CPU0-ran witness worth capturing first",
+                         prop="eth_dmem_word0", got="target does not declare it",
+                         reason="unknown whether this image puts a witness at DMEM word 0; capture "
+                                "HIO-107 before this test to be safe")
+    _ram_battery(adp, rec, ETH_DMEM_BASE, ETH_DMEM_SIZE, "eth_dmem", strict=_strict(rec))
 
 
-@test("HIO-206", tier=2, hazard=HZ.DESTRUCTIVE, weak=not CPU1_PARKED,
+@test("HIO-206", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
       destroys="ALL 16 KB of CPU1 IMEM (0x90000000-0x90003FFF). CPU1 IS EXECUTING and cannot be held in "
-               "reset (cpu1_bootgate tied 1'b1). If CPU1's REMAP bit is set, this destroys the code it is "
-               "running.",
+               "reset (cpu1_bootgate tied 1'b1). If boot-gate bit 0 (CPU1 REMAP) is set, this destroys the "
+               "code CPU1 is running — and on an ASIC die reading 0x00000005 that condition is not a "
+               "hypothetical, it is already true. HIO-313 records the bit.",
       purpose="CPU1 IMEM full battery through the remap-independent 0x9x alias, so it works whatever CPU1's "
               "REMAP bit says. CPU1 CANNOT BE HELD IN RESET, so by default a mismatch is reported as "
               "INCONCLUSIVE (rec.note + a recorded count), NOT as a fault — a running CPU legitimately "
               "writes its own memory, and a red here would be unfalsifiable. What still goes RED, and cannot "
               "be explained by a live CPU: any NO-REPLY or bus ERROR inside the declared window, and ZERO of "
               "32/12 locations retaining what was written (an absent or fully-aliased macro). "
-              "Declared weak=True in this mode because the per-cell assertion has been withdrawn. "
-              "Set HOSTIO_CPU1_PARKED=1 after parking CPU1 (docstring, option b) to restore strict "
-              "assertions and clear weak. Budget: ~380 CU ~= 25 s.")
+              "Declared weak when the profile does not establish a quiescent bus, because the per-cell "
+              "assertion has been withdrawn; every withdrawn assertion is recorded via target_defer with "
+              "the value it would have had. Strict returns on a profile declaring bus_quiescent (or with "
+              "HOSTIO_CPU1_PARKED=1). PERMANENTLY inconclusive on the ASIC, where bus_parkable is False. "
+              "Budget: ~380 CU ~= 25 s.")
 def hio_206(adp, rec):
-    rec.record("hio206_mode", "STRICT (CPU1 parked)" if CPU1_PARKED else "INCONCLUSIVE-BY-DEFAULT (CPU1 live)")
-    if not CPU1_PARKED:
+    rec.record("hio206_mode", "STRICT (bus quiescent)" if _strict(rec)
+               else "INCONCLUSIVE-BY-DEFAULT (bus live)")
+    if rec.target is not None and rec.target.get("bus_parkable") is False:
+        rec.note("This target is NOT PARKABLE (bus_parkable=False): the park procedure needs an "
+                 "irreversible boot-gate bit (HZ-4) and a fabric reset (HZ-5), so this test is "
+                 "PERMANENTLY inconclusive here. It is not a step that can be completed later.")
+    if not _strict(rec):
         rec.note("CPU1 is running out of this address space and cannot be held in reset "
                  "(cpu1_bootgate tied 1'b1, nanosoc_multicore_soc.sv:1387). Mismatches below are recorded "
-                 "as INCONCLUSIVE, not as faults. Park CPU1 and re-run with HOSTIO_CPU1_PARKED=1 for a verdict.")
-    _ram_battery(adp, rec, CPU1_IMEM_BASE, CPU1_IMEM_SIZE, "cpu1_imem", strict=CPU1_PARKED)
+                 "as INCONCLUSIVE, not as faults. Park CPU1 and re-run for a verdict where the profile "
+                 "says parking is possible.")
+    _ram_battery(adp, rec, CPU1_IMEM_BASE, CPU1_IMEM_SIZE, "cpu1_imem", strict=_strict(rec))
 
 
-@test("HIO-207", tier=2, hazard=HZ.DESTRUCTIVE, weak=not CPU1_PARKED,
+@test("HIO-207", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
       destroys="ALL 8 KB of CPU1 DMEM (0x98000000-0x98001FFF) — INCLUDING CPU1'S LIVE STACK. CPU1 will "
                "fault on its next return. CPU1's PRMU is the source of the whole SoC's HCLK/HRESETn, so a "
                "runaway CPU1 can take the fabric clock, the ADP and HOSTIO down with it: budget a power cycle "
@@ -855,19 +1116,22 @@ def hio_206(adp, rec):
       purpose="CPU1 DMEM full battery. Same inconclusive-by-default contract as HIO-206 and for the same "
               "reason — CPU1's stack lives here, so a mismatch is recorded, not failed. RED only on a "
               "NO-REPLY / bus ERROR inside the window, or on ZERO locations retaining what was written. "
-              "Declared weak=True unless HOSTIO_CPU1_PARKED=1. "
+              "Declared weak unless the profile establishes a quiescent bus. "
               "HIGHEST-RISK TEST IN TIER 2: destroying a live stack can cost the session. "
               "Budget: ~376 CU ~= 24 s plus a possible power cycle.")
 def hio_207(adp, rec):
-    rec.record("hio207_mode", "STRICT (CPU1 parked)" if CPU1_PARKED else "INCONCLUSIVE-BY-DEFAULT (CPU1 live)")
-    if not CPU1_PARKED:
+    rec.record("hio207_mode", "STRICT (bus quiescent)" if _strict(rec)
+               else "INCONCLUSIVE-BY-DEFAULT (bus live)")
+    if rec.target is not None and rec.target.get("bus_parkable") is False:
+        rec.note("This target is NOT PARKABLE (bus_parkable=False): permanently inconclusive here.")
+    if not _strict(rec):
         rec.note("CPU1's live stack is in this RAM. Mismatches are INCONCLUSIVE, not faults. After this test "
                  "CPU1 has almost certainly faulted; if HOSTIO stops answering, the fabric clock went with it "
                  "(CPU1's PRMU sources HCLK/HRESETn, HZ-5) and a power cycle is required.")
-    _ram_battery(adp, rec, CPU1_DMEM_BASE, CPU1_DMEM_SIZE, "cpu1_dmem", strict=CPU1_PARKED)
+    _ram_battery(adp, rec, CPU1_DMEM_BASE, CPU1_DMEM_SIZE, "cpu1_dmem", strict=_strict(rec))
 
 
-@test("HIO-208", tier=2, hazard=HZ.DESTRUCTIVE,
+@test("HIO-208", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
       destroys="ALL 8 KB of shared cross-core SRAM (0x2D000000-0x2D001FFF) — INCLUDING THE BOOT-CONFIRM "
                "TOKEN read by HIO-414. Read HIO-414 first (plan §3, Phase C5).",
       purpose="Shared cross-core SRAM full battery. This is the only RAM reachable by both CPUs and the ADP, "
@@ -877,7 +1141,7 @@ def hio_207(adp, rec):
 def hio_208(adp, rec):
     rec.note("Shared SRAM carries the boot-confirm token (HIO-414) and is the medium for HIO-410/HIO-504; "
              "this test destroys its contents.")
-    _ram_battery(adp, rec, SHARED_SRAM_BASE, SHARED_SRAM_SIZE, "shared_sram", strict=True)
+    _ram_battery(adp, rec, SHARED_SRAM_BASE, SHARED_SRAM_SIZE, "shared_sram", strict=_strict(rec))
 
 
 @test("HIO-209", tier=2, hazard=HZ.DESTRUCTIVE,
@@ -900,19 +1164,27 @@ def hio_208(adp, rec):
               "Budget: ~24 CU ~= 1.6 s.")
 def hio_209(adp, rec):
     # (1) contemporaneous positive control: the ADP write path is alive right now.
-    ctrl_addr = ETH_IMEM_BASE + 0x40
-    cw = _w(adp, ctrl_addr, WRITE_PATH_TAG)
+    ctrl_addr, ctrl_tag, ctrl_src = _write_path_control(rec)
+    ctrl_orig = _r(adp, ctrl_addr)
+    cw = _w(adp, ctrl_addr, ctrl_tag)
     cr = _r(adp, ctrl_addr)
-    rec.record("hio209_write_path_control", "0x%08X -> %s" % (ctrl_addr, cr.raw))
+    rec.record("hio209_write_path_control", "0x%08X -> %s (%s)" % (ctrl_addr, cr.raw, ctrl_src))
     rec.check("POSITIVE CONTROL: the ADP write path is alive (0x%08X takes 0x%08X) — without this, a "
               "protected-looking ROM is indistinguishable from a dead write path"
-              % (ctrl_addr, WRITE_PATH_TAG),
-              cw.ok and not cw.error and cr.value == WRITE_PATH_TAG,
+              % (ctrl_addr, ctrl_tag),
+              cw.ok and not cw.error and cr.value == ctrl_tag,
               got="W=%s R=%s" % (cw.raw, cr.raw))
+    if ctrl_orig.ok and ctrl_orig.value is not None:
+        _w(adp, ctrl_addr, ctrl_orig.value)
 
+    t = rec.target
+    diffs = (t.rom_distinct_offsets or {}) if t is not None else {}
     for name, rom in (("eth_rom", ETH_ROM_BASE), ("cpu1_rom", CPU1_ROM_BASE)):
+        # The DISTINCT-DATA offset is a property of the ROM IMAGE. Never borrow
+        # the other vehicle's: 172 of 320 eth ROM words differ between the two.
+        diff_off = diffs.get(name)
         before = _r(adp, rom)
-        other = _r(adp, rom + ROM_DIFF_OFFSET)
+        other = _r(adp, rom + (diff_off if diff_off is not None else ROM_DIFF_OFFSET_FALLBACK))
         wr = _w(adp, rom, ROM_POISON)
         after = _r(adp, rom)
 
@@ -924,11 +1196,24 @@ def hio_209(adp, rec):
         rec.check("%s: reads are well-formed and unflagged before and after the write attempt" % name,
                   before.ok and not before.error and after.ok and not after.error,
                   got="before=%s after=%s" % (before.raw, after.raw))
-        rec.check("DISTINCT-DATA CONTROL %s: offset 0xE4 differs from offset 0x00, so the ROM read path "
-                  "returns real data and 'unchanged' is not trivially true" % name,
-                  other.ok and other.value is not None and before.value is not None
-                  and other.value != before.value,
-                  got="0x00=0x%08X 0xE4=0x%08X" % (before.value or 0, other.value or 0))
+        distinct = (other.ok and other.value is not None and before.value is not None
+                    and other.value != before.value)
+        if diff_off is not None:
+            rec.check("DISTINCT-DATA CONTROL %s: offset 0x%03X differs from offset 0x000, so the ROM read "
+                      "path returns real data and 'unchanged' is not trivially true" % (name, diff_off),
+                      distinct,
+                      got="0x000=0x%08X 0x%03X=0x%08X" % (before.value or 0, diff_off, other.value or 0))
+        else:
+            rec.target_defer("DISTINCT-DATA CONTROL %s: a known-differing offset differs from offset 0x000"
+                             % name, prop="rom_distinct_offsets",
+                             got="0x000=0x%08X 0x%03X=0x%08X (offset is the FPGA fallback, unverified on "
+                                 "this image)" % (before.value or 0, ROM_DIFF_OFFSET_FALLBACK,
+                                                  other.value or 0),
+                             would_have_held=distinct,
+                             reason="target %s names no distinct-data offset for %s, and the two vehicles "
+                                    "run different ROM images (172 of 320 eth words differ), so the FPGA's "
+                                    "0x0E4 is not evidence here"
+                                    % ((t.name if t is not None else "?"), name))
         rec.check("%s: the ROM word at 0x%08X is UNCHANGED after W 0x%08X — RED IF THE WRITE SUCCEEDED "
                   "(a writable boot ROM is RAM: the wrong macro was instantiated)"
                   % (name, rom, ROM_POISON),
@@ -947,6 +1232,16 @@ def hio_209(adp, rec):
               "(socdebug_adp_control.v:338-340) and the RAM's byte-enable decode. "
               "Budget: 18 CU ~= 1.2 s.")
 def hio_210(adp, rec):
+    t = rec.target
+    if not (t is not None and t.known("subword_rmw_supported") and t.subword_rmw_supported):
+        rec.skip("byte-enable semantics are not established on target %s "
+                 "(subword_rmw_supported is %r). This is the most CRC-exposed test in the file: a "
+                 "sub-word write into a word-granular macro that is CRC-protected needs the controller "
+                 "to read-modify-write, and TideLink CRC is ON at reset on the ASIC. A red here would be "
+                 "attributed to broken byte enables when it is a configuration difference, so the test "
+                 "does not run rather than produce a misattributed fault."
+                 % ((t.name if t is not None else "?"),
+                    (t.get("subword_rmw_supported") if t is not None else None)))
     z = _w(adp, ETH_IMEM_BASE, 0x00000000)
     rec.check("byte-lane: the word starts at 0x00000000", z.ok and not z.error, got=z.raw)
 
@@ -967,8 +1262,11 @@ def hio_210(adp, rec):
                   % (lane, expect[lane], ETH_IMEM_BASE + lane),
                   seen[lane] == expect[lane], got="0x%08X" % seen[lane])
     if seen and seen[0] == 0xFFFFFFFF:
-        rec.note("Lane 0's byte write set ALL FOUR lanes: the byte-enable decode is broken, or HSIZE did not "
-                 "reach 8-bit (check that the parameter really was two hex digits).")
+        rec.note("Lane 0's byte write set ALL FOUR lanes. THREE candidate causes, in order of cheapness to "
+                 "rule out: (1) HSIZE never reached 8-bit — check the parameter really was two hex digits; "
+                 "(2) the RAM's byte-enable decode is broken; (3) a CRC-protected word-granular macro "
+                 "read-modify-wrote the whole word. Cause 3 is a configuration effect, not a defect, and is "
+                 "why this test refuses to run unless the target declares subword_rmw_supported.")
 
 
 @test("HIO-211", tier=2, hazard=None, needs=["HIO-203"],
@@ -1011,11 +1309,34 @@ def hio_211(adp, rec):
     _replies_healthy(rec, replies, "soak")
     changed = [(offs[i], before[i], after[i]) for i in range(len(offs)) if before[i] != after[i]]
     rec.record("hio211_changed", ["off 0x%X: 0x%08X -> 0x%08X" % c for c in changed])
-    rec.check("eth IMEM is unchanged across a %d s idle window (RED = retention failure, or another agent "
-              "is writing this RAM while the bus was supposed to be quiescent)" % SOAK_SECONDS,
-              not changed, got="%d/%d words changed: %s" % (len(changed), len(offs),
-                                                            ["off 0x%X: 0x%08X -> 0x%08X" % c
-                                                             for c in changed[:4]]))
+    rec.record("hio211_changed_count", len(changed))
+
+    if _strict(rec):
+        rec.check("eth IMEM is unchanged across a %d s idle window (RED = retention failure, or another "
+                  "agent is writing this RAM while the bus was supposed to be quiescent)" % SOAK_SECONDS,
+                  not changed, got="%d/%d words changed: %s"
+                  % (len(changed), len(offs),
+                     ["off 0x%X: 0x%08X -> 0x%08X" % c for c in changed[:4]]))
+    else:
+        # THE ASSERTION'S OWN TEXT SAID "the bus was supposed to be quiescent".
+        # On neither shipping vehicle is it. A red here could not separate a
+        # retention failure from cc_rom's CPU0 doing exactly its job, so the
+        # useful form is the POSITIVE one: report the mutation as a fingerprint
+        # of core activity and assert nothing about it.
+        rec.target_defer("eth IMEM is unchanged across a %d s idle window" % SOAK_SECONDS,
+                         prop="bus_quiescent",
+                         got="%d/%d sampled words changed" % (len(changed), len(offs)),
+                         would_have_held=(not changed),
+                         reason="the bus is not quiescent on this target, so a changed word is evidence a "
+                                "core is EXECUTING, not evidence of a retention failure. Recorded as an "
+                                "activity fingerprint instead.")
+        rec.record("hio211_core_activity_fingerprint",
+                   {"window_s": SOAK_SECONDS, "sampled": len(offs), "changed": len(changed),
+                    "offsets": ["0x%X" % c[0] for c in changed]})
+        rec.note("SOAK AS AN ACTIVITY PROBE: %d of %d sampled eth IMEM words changed in %d s of host idle. "
+                 "On a live-bus target that is a POSITIVE observation — something on the die is writing "
+                 "this RAM — not a fault. Zero changed is equally informative and equally not a pass."
+                 % (len(changed), len(offs), SOAK_SECONDS))
 
 
 # ===========================================================================
@@ -1197,11 +1518,23 @@ def hio_303(adp, rec):
     a1 = st.ok and not st.error and sv >= 0 and (sv & 0xFFFFE000) == 0
     a2 = dc.ok and not dc.error and dv >= 0 and (dv & 0xFFFF0000) == 0
     a3 = sv != dv
+    both_zero = (sv == 0 and dv == 0)
     rec.check("ANCHOR: TC_STATUS (0x%08X) has bits [31:13] clear — the read mux zero-fills above bit 12, so "
               "a shifted or collapsed decode shows up here" % TC_STATUS, a1, got=st.raw)
     rec.check("ANCHOR: TC_DEVICE_CLASS (0x%08X) has bits [31:16] clear" % TC_DEVICE_CLASS, a2, got=dc.raw)
-    rec.check("ANCHOR: TC_STATUS and TC_DEVICE_CLASS return DIFFERENT values — the two offsets are not "
-              "aliased onto one register", a3, got="status=0x%08X device_class=0x%08X" % (sv, dv))
+    if both_zero:
+        # A per-die strap of 0x0000 on a die whose election never completed makes
+        # both registers legitimately zero. The anchor then proves nothing about
+        # aliasing, so it is recorded as unexercised rather than red for a
+        # non-aliasing reason -- the same treatment HIO-314 gives its zero case.
+        a3 = True
+        rec.record("tc_antialias_anchor_exercised", False)
+        rec.note("ANTI-ALIAS ANCHOR UNEXERCISED: TC_STATUS and TC_DEVICE_CLASS both read 0x00000000. That "
+                 "is legitimate on a die with a 0x0000 device-class strap whose election never completed, "
+                 "so equality here is not evidence of a collapsed decode. Not asserted.")
+    else:
+        rec.check("ANCHOR: TC_STATUS and TC_DEVICE_CLASS return DIFFERENT values — the two offsets are not "
+                  "aliased onto one register", a3, got="status=0x%08X device_class=0x%08X" % (sv, dv))
 
     if bv == 0xFFFFFFFF:
         rec.note("TC_BEST_CLAIM (0x%08X) reads 0xFFFFFFFF. That is its documented NO-CLAIM-YET SENTINEL "
@@ -1289,8 +1622,12 @@ def hio_304(adp, rec):
     try:
         o0 = _r(adp, SPINLOCK_OWNER)
         rec.record("spinlock_owner_before", "0x%08X" % (o0.value if o0.value is not None else -1))
-        rec.check("OWNER reads 0x00000000 before the test (all 16 locks free)",
-                  o0.ok and not o0.error and o0.value == 0x00000000, got=o0.raw)
+        rec.check("the OWNER read is well-formed and unflagged", o0.ok and not o0.error, got=o0.raw)
+        # A HELD LOCK IS NORMAL with two live cores, so the pre-state is recorded,
+        # not asserted. Asserting it made the test red for a healthy die -- and
+        # the note-and-return below already handled the case, so the red was pure
+        # noise on top of a correct decision.
+        rec.record("spinlock_all_free_before", o0.value == 0x00000000)
         if o0.value != 0x00000000:
             rec.note("A lock is already held (OWNER = %s). NOT force-releasing: that would steal a running "
                      "CPU's mutual exclusion. The acquire/release half of this test is not exercised."
@@ -1305,18 +1642,25 @@ def hio_304(adp, rec):
 
         o1 = _r(adp, SPINLOCK_OWNER)
         rec.record("spinlock_owner_after_acquire", "0x%08X" % (o1.value if o1.value is not None else -1))
-        rec.check("OWNER now reads 0x00000003 — OWN_DBG in lock 0's field [1:0]. Nothing else on this die "
-                  "can produce 0b11: it requires an access with HADDR[9:8]==2, so this proves both that the "
-                  "ADP read reached the block and that the requester-page decode works",
-                  o1.ok and not o1.error and o1.value == 0x00000003, got=o1.raw)
+        # MASK TO LOCK 0's FIELD. The whole-word compare was a latent bug: any
+        # other lock held by a live core puts bits outside [1:0] and reds a test
+        # whose subject is lock 0 only.
+        rec.check("OWNER lock-0 field [1:0] now reads 0b11 — OWN_DBG. Nothing else on this die can produce "
+                  "it: it requires an access with HADDR[9:8]==2, so this proves both that the ADP read "
+                  "reached the block and that the requester-page decode works",
+                  o1.ok and not o1.error and o1.value is not None and (o1.value & 0x3) == 0x3,
+                  got="%s (lock-0 field = 0b%s)" % (o1.raw, format((o1.value or 0) & 0x3, "02b")))
 
         if acquired:
             fr = _w(adp, SPINLOCK_FORCE_RELEASE, 0x00000001)
             o2 = _r(adp, SPINLOCK_OWNER)
-            acquired = not (o2.ok and o2.value == 0x00000000)
+            acquired = not (o2.ok and o2.value is not None and (o2.value & 0x3) == 0)
             rec.record("spinlock_owner_after_release", "0x%08X" % (o2.value if o2.value is not None else -1))
-            rec.check("FORCE_RELEASE returns OWNER to 0x00000000",
-                      fr.ok and not fr.error and o2.value == 0x00000000, got="W=%s R=%s" % (fr.raw, o2.raw))
+            rec.check("FORCE_RELEASE frees LOCK 0 — its owner field [1:0] returns to 0b00. Masked to lock 0: "
+                      "a lock held by a live core elsewhere in the word is not this test's subject",
+                      fr.ok and not fr.error and o2.value is not None and (o2.value & 0x3) == 0,
+                      got="W=%s R=%s (lock-0 field = 0b%s)"
+                          % (fr.raw, o2.raw, format((o2.value or 0) & 0x3, "02b")))
     finally:
         if acquired:
             # Polite release: a write to the DBG page frees the lock only if DBG owns it.
@@ -1361,8 +1705,18 @@ def hio_305(adp, rec):
 
         irq = _r(adp, IPC_IRQ_STATUS)
         rec.record("ipc_irq_status", "0x%08X" % (irq.value if irq.value is not None else -1))
-        rec.check("IPC IRQ_STATUS reads 0x00000000 with no error flag (nothing has posted)",
-                  irq.ok and not irq.error and irq.value == 0x00000000, got=irq.raw)
+        rec.check("the IPC IRQ_STATUS read is well-formed and unflagged",
+                  irq.ok and not irq.error, got=irq.raw)
+        # Two live cores sharing a mailbox is the block's INTENDED traffic, so a
+        # non-zero IRQ_STATUS is an observation, not a fault.
+        if _strict(rec):
+            rec.check("IPC IRQ_STATUS reads 0x00000000 (nothing has posted on a quiescent bus)",
+                      irq.value == 0x00000000, got=irq.raw)
+        else:
+            rec.target_defer("IPC IRQ_STATUS reads 0x00000000", prop="bus_quiescent",
+                             got=irq.raw, would_have_held=(irq.value == 0x00000000),
+                             reason="two live cores sharing the IPC mailbox is the intended traffic on this "
+                                    "target, so a posted doorbell is normal operation")
 
         oor = _r(adp, IPC_OUT_OF_RANGE)
         rec.record("ipc_out_of_range_reply", oor.raw)
@@ -1375,6 +1729,12 @@ def hio_305(adp, rec):
         if slot_orig.value is not None:
             _w(adp, IPC_SLOT0_W0, slot_orig.value)
         rec.note("Restored IPC slot-0 word 0 and LOCK to their captured values.")
+        if not _strict(rec):
+            rec.note("HAZARD ON A LIVE-BUS TARGET: this restore writes back a LOCK word captured up to a "
+                     "second earlier. If firmware acquired the mailbox lock in that window, writing the "
+                     "stale value releases a lock the test does not own and breaks firmware mutual "
+                     "exclusion. The restore is still the lesser evil (leaving LOCK held blocks both cores) "
+                     "but it is not side-effect-free here.")
 
 
 @test("HIO-306", tier=3, hazard=None,
@@ -1479,38 +1839,117 @@ def hio_307(adp, rec):
     a2 = a2r.value if a2r.value is not None else -1
 
     elapsed = max(t1 - t0, 0.0)
-    bound = max(500_000_000, int(elapsed * 4 * ASSUMED_HCLK_HZ))
+    t = rec.target
+    f_hz = _fabric_hz(rec)
+    # THE BOUND IS NOW NAMED IN SECONDS, NOT CYCLES. Both numbers in the old
+    # expression were unnamed clock assumptions: the rate (4x wrong on the only
+    # vehicle this has ever run on) and the 500,000,000-cycle floor, which is 5 s
+    # at 100 MHz but 20 s at 25.010 MHz. A floor expressed in seconds means the
+    # same thing on every vehicle.
+    floor_s = (t.perf_clr_floor_seconds if t is not None else 5.0) or 5.0
+    headroom = 4                      # named: tolerance for host-side jitter
+    if f_hz is not None:
+        bound = max(int(floor_s * f_hz), int(elapsed * headroom * f_hz))
+    else:
+        bound = None
     rec.record("perf_p0_cyc_after_clr_snap", "0x%08X" % a1)
     rec.record("perf_p0_cyc_second_snap", "0x%08X" % a2)
-    rec.record("perf_clr_bound", "0x%08X (from %.3f s of host-measured elapsed time at %d Hz)"
-               % (bound, elapsed, ASSUMED_HCLK_HZ))
+    rec.record("perf_clr_elapsed_s", round(elapsed, 4))
+    rec.record("perf_clr_floor_seconds", floor_s)
+    rec.record("perf_clr_bound",
+               ("0x%08X (max of a %.1f s floor and %.3f s measured x%d headroom, at %d Hz)"
+                % (bound, floor_s, elapsed, headroom, f_hz)) if bound is not None
+               else "not computable: target %s does not establish fabric_hz"
+                    % (t.name if t is not None else "?"))
 
-    rec.check("after CLR+SNAP, P0_CYC restarted: 0x%08X is below the elapsed-time bound 0x%08X"
-              % (a1 & 0xFFFFFFFF, bound),
-              0 <= a1 <= bound, got="0x%08X" % a1)
+    if bound is not None:
+        rec.check("after CLR+SNAP, P0_CYC restarted: 0x%08X is below the elapsed-time bound 0x%08X"
+                  % (a1 & 0xFFFFFFFF, bound),
+                  0 <= a1 <= bound, got="0x%08X" % a1)
+    else:
+        rec.target_defer("after CLR+SNAP, P0_CYC is below an elapsed-time bound", prop="fabric_hz",
+                         got="0x%08X after %.3f s" % (a1, elapsed),
+                         reason="the bound is elapsed_seconds x fabric_hz and this target does not "
+                                "establish the clock, so there is no number to compare against. The "
+                                "reduction and advance checks below still discriminate.")
 
-    if fv > bound:
+    if fv == 0xFFFFFFFF:
+        # CLOCK-FREE AND TARGET-INDEPENDENT. A saturating counter that is still
+        # at its ceiling after CLR+SNAP proves the CLR did not take, and needs no
+        # rate to say so. This is the arm that keeps HIO-307 discriminating on a
+        # target that does not establish fabric_hz.
+        rec.check("P0_CYC was SATURATED (0xFFFFFFFF) before the CLR and is 0x%08X after CLR+SNAP — a "
+                  "working CLR must move it off the ceiling. No clock rate is needed for this comparison, "
+                  "so it holds on every target" % a1,
+                  0 <= a1 < 0xFFFFFFFF, got="as_found=0xFFFFFFFF after=0x%08X" % a1)
+    elif bound is not None and fv > bound:
         rec.check("P0_CYC is strictly LOWER after CLR+SNAP than as found (0x%08X -> 0x%08X) — the FUNCTIONAL "
                   "proof that the write-only CLR had an effect, which the read-value check alone cannot give"
                   % (fv, a1),
                   0 <= a1 < fv, got="as_found=0x%08X after=0x%08X" % (fv, a1))
     else:
         rec.record("perf_clr_reduction_exercised", False)
-        rec.note("The as-found P0_CYC (0x%08X) was already below the bound (0x%08X), so the 'CLR reduced it' "
-                 "comparison is UNEXERCISED — the die was powered too recently for the live counter to have "
-                 "grown past the bound. The advance check still discriminates." % (fv, bound))
+        rec.note("The 'CLR reduced it' comparison is UNEXERCISED (as-found 0x%08X, bound %s). Either the die "
+                 "was powered too recently for the live counter to grow past the bound, or the clock is "
+                 "unknown. The advance check still discriminates. NOTE this branch fires far more often on "
+                 "a fast fabric: P0_CYC saturates in ~43 s at 100 MHz but ~172 s at 25.010 MHz."
+                 % (fv, ("0x%08X" % bound) if bound is not None else "not computable"))
 
-    rec.check("a LATER SNAP reads LARGER (0x%08X -> 0x%08X): the counter is live and advancing. This is what "
-              "separates 'CLR worked' from 'the readout is stuck at a small number', which no single "
-              "post-CLR read can distinguish" % (a1, a2),
-              a2 > a1, got="0x%08X -> 0x%08X" % (a1, a2))
+    if a1 == 0xFFFFFFFF:
+        # A saturated counter cannot advance. Reporting that as "not advancing"
+        # would be red for a saturation reason, not a clock reason.
+        rec.record("perf_advance_check_exercised", False)
+        rec.note("P0_CYC is SATURATED at 0xFFFFFFFF after the CLR+SNAP, so the advance check cannot run: a "
+                 "saturating counter at its ceiling is not required to increase. This is itself a finding — "
+                 "it means the CLR did not take, and the reduction check above is the one that reports it.")
+    else:
+        rec.check("a LATER SNAP reads LARGER (0x%08X -> 0x%08X): the counter is live and advancing. This is "
+                  "what separates 'CLR worked' from 'the readout is stuck at a small number', which no "
+                  "single post-CLR read can distinguish" % (a1, a2),
+                  a2 > a1, got="0x%08X -> 0x%08X" % (a1, a2))
 
     dt = max(t2 - t1, 1e-9)
     if a2 > a1 and a2 != 0xFFFFFFFF:
-        rec.record("perf_implied_hclk_hz", int((a2 - a1) / dt))
-        rec.note("Implied fabric clock from the SNAP delta: %.2f MHz over %.3f s. Free cross-check of the "
-                 "0x05F5E100 (100 MHz) clock-rate word at 0x18000000; recorded, not asserted — rate is "
-                 "HIO-402's subject." % ((a2 - a1) / dt / 1e6, dt))
+        implied = int((a2 - a1) / dt)
+        rec.record("perf_implied_hclk_hz", implied)
+        rec.record("perf_implied_hclk_window_s", round(dt, 4))
+
+        # THE CHEAPEST CLOCK GUARD IN THE SUITE, and it was recorded but never
+        # asserted. It is asserted now -- but only when the measurement window
+        # can actually support the tolerance being asserted.
+        #
+        # The delta is (cycles / host-measured seconds), so its relative error is
+        # dominated by host timer jitter divided by the window. Over the ~0.26 s
+        # of a single ADP round trip, ~50 ms of jitter is ~19% error, which would
+        # red a perfectly good 1%-tolerance comparison for a HOST-TIMING reason.
+        # Over the 19.680 s window that measured 25.010 MHz it is ~0.25%, and the
+        # measurement agreed with the routed report to 0.004%. So: compare the
+        # window's own achievable precision against the tolerance, and assert
+        # only when the measurement is good enough to mean something.
+        tol = (t.fabric_hz_tol if t is not None else 0.01) or 0.01
+        precision = _HOST_TIMER_JITTER_S / dt
+        rec.record("perf_implied_hclk_precision", round(precision, 5))
+        if precision <= tol:
+            rec.target_check("the implied fabric clock (%.3f MHz over %.3f s, precision +/-%.2f%%) is "
+                             "within %.1f%% of the target's declared %s"
+                             % (implied / 1e6, dt, 100.0 * precision, 100.0 * tol,
+                                ("%.3f MHz" % (f_hz / 1e6)) if f_hz else "fabric_hz"),
+                             (t.fabric_hz_holds(implied) if (t is not None and f_hz) else None),
+                             prop="fabric_hz", got="%d Hz" % implied, expected=f_hz)
+        else:
+            rec.target_defer("the implied fabric clock is within %.1f%% of the declared fabric_hz" % (100.0 * tol),
+                             prop="fabric_hz", got="%d Hz over %.3f s" % (implied, dt), expected=f_hz,
+                             would_have_held=(t.fabric_hz_holds(implied)
+                                              if (t is not None and f_hz) else None),
+                             reason="the %.3f s measurement window supports only +/-%.2f%% precision against "
+                                    "a %.1f%% tolerance -- asserting it would red on host timer jitter, not "
+                                    "on the clock. Widen the window to assert this."
+                                    % (dt, 100.0 * precision, 100.0 * tol))
+        rec.note("Implied fabric clock from the SNAP delta: %.3f MHz over %.3f s. This is a HARDWARE "
+                 "measurement. It is NOT to be cross-checked against 0x05F5E100 at eth DMEM word 0 — that "
+                 "word is SystemCoreClock, a firmware build constant, and on this FPGA it says 100 MHz "
+                 "while the fabric runs at 25.010 MHz. Deriving a rate from it is how a 4x error survived."
+                 % (implied / 1e6, dt))
 
 
 @test("HIO-308", tier=3, hazard=HZ.DESTRUCTIVE, weak=True,
@@ -1579,14 +2018,39 @@ def hio_309(adp, rec):
     n = n0.value if n0.value is not None else None
     rec.record("phc_ns_incr_before", "0x%08X" % (n if n is not None else -1))
     rec.check("NS_INCR read is well-formed and unflagged", n0.ok and not n0.error, got=n0.raw)
+    # PROMOTED FROM A RECORD TO AN ASSERTION. NS_INCR has exactly two defensible
+    # values: the RTL reset default (4, target-independent) and the value that
+    # makes the PHC keep real time (40 on a 25.010 MHz fabric, 10 on a 100 MHz
+    # one). Anything else means firmware programmed the PHC for a clock the
+    # fabric does not run at -- a real finding, and invisible until now.
+    _t309 = rec.target
+    _rt = _t309.phc_ns_incr_for_realtime if (_t309 is not None
+                                             and _t309.known("phc_ns_incr_for_realtime")) else None
+    _default = harness.targets.TargetIndependent.phc_ns_incr_reset_default
+    if n is not None:
+        if _rt is not None:
+            rec.check("NS_INCR (%d) is either the RTL reset default (%d) or this target's real-time value "
+                      "(%d). Any other value means the PHC is programmed for a clock this fabric does not "
+                      "run at" % (n, _default, _rt),
+                      n in (_default, _rt), got=n, expected="%d or %d" % (_default, _rt))
+        else:
+            rec.check("NS_INCR (%d) is the RTL reset default (%d) — target-independent, and the only value "
+                      "assertable when the target does not name a real-time increment" % (n, _default),
+                      n == _default, got=n, expected=_default)
     if n is None:
         rec.skip("NS_INCR did not return a value; without a captured value there is no safe restore target.")
 
     try:
-        w = _w(adp, PHC_NS_INCR, 0x00000005)
+        # A DELIBERATELY IMPLAUSIBLE DATUM. The old value 5 sits between the
+        # reset default (4) and the ASIC real-time value (10), so a 5 stranded by
+        # an aborted restore would look plausible to a later reader while leaving
+        # the PHC at half real time with nothing flagging it. 0x7F is a value no
+        # correct configuration produces.
+        w = _w(adp, PHC_NS_INCR, 0x0000007F)
         r = _r(adp, PHC_NS_INCR)
-        rec.check("PHC NS_INCR is RW and reads back 0x00000005",
-                  w.ok and not w.error and r.value == 0x00000005, got="W=%s R=%s" % (w.raw, r.raw))
+        rec.check("PHC NS_INCR is RW and reads back 0x0000007F (an implausible datum, so a stranded value "
+                  "from an aborted restore is unmistakable rather than plausible)",
+                  w.ok and not w.error and r.value == 0x0000007F, got="W=%s R=%s" % (w.raw, r.raw))
     finally:
         wr = _w(adp, PHC_NS_INCR, n)
         rr = _r(adp, PHC_NS_INCR)
@@ -1688,6 +2152,14 @@ def hio_310(adp, rec):
     rec.note("SCOPE OF THE PRE-FLIGHT: it proves the sweep matches the blocklist and the guard. It CANNOT "
              "prove the blocklist matches the hardware — that claim rests on the decode RTL cited beside "
              "each band in _NEVER_TOUCH, and it is the claim that was wrong when HZ-1 stopped at 0x1B8.")
+    _t310 = rec.target
+    if _t310 is not None and _t310.kind != "fpga":
+        rec.note("OPEN ITEM FOR THIS TARGET: every band in _NEVER_TOUCH was derived from FPGA-build RTL. "
+                 "The quarantine addresses are register offsets inside TideLink and should transfer, but "
+                 "the ASIC netlist strips FCSM recovery and this sweep covers 0x2E032108, the FCSM state "
+                 "register. RE-CONFIRM _NEVER_TOUCH AGAINST THE ASIC NETLIST BEFORE THE FIRST ASIC RUN, "
+                 "and run it attended: a wrong band here costs a power cycle and simulation cannot catch "
+                 "the mistake.")
 
     stable, live, errored, no_reply = [], [], [], []
     values = {}
@@ -1733,9 +2205,25 @@ def hio_311(adp, rec):
     ctrl = _r(adp, TIMER0_CTRL)
     cv = ctrl.value if ctrl.value is not None else -1
     rec.record("timer0_ctrl", "0x%08X" % cv)
-    rec.check("timer0 CTRL reads its reset value 0x00000000 (timer disabled)",
-              ctrl.ok and not ctrl.error and cv == 0x00000000, got=ctrl.raw)
+    rec.check("the timer0 CTRL read is well-formed and unflagged", ctrl.ok and not ctrl.error, got=ctrl.raw)
     running = cv > 0 and (cv & 0x1)
+    # The file already DETECTED the live-timer case and relaxed the value
+    # readback for it, citing "otherwise this test would go red for a firmware
+    # reason rather than a silicon one" -- and then asserted CTRL == 0 anyway,
+    # which is exactly that red. Carried through properly now.
+    _t311 = rec.target
+    if _t311 is not None and _t311.get("timer0_owned_by_firmware") is False:
+        rec.check("timer0 CTRL reads its reset value 0x00000000 (this target declares firmware does not "
+                  "own timer0, so a running timer is a real finding)",
+                  cv == 0x00000000, got=ctrl.raw)
+    else:
+        rec.record("timer0_ctrl_at_reset_value", cv == 0x00000000)
+        rec.target_defer("timer0 CTRL reads its reset value 0x00000000",
+                         prop="timer0_owned_by_firmware", got=ctrl.raw,
+                         would_have_held=(cv == 0x00000000),
+                         reason="target %s does not establish that firmware leaves timer0 alone, so a "
+                                "running timer is a firmware fact, not a silicon fault"
+                                % (_t311.name if _t311 is not None else "?"))
     if running:
         rec.note("timer0 CTRL[0] is SET: the timer is counting, so CURRENT VALUE is falling. The exact "
                  "readback below is relaxed to a bounded check.")
@@ -1745,8 +2233,19 @@ def hio_311(adp, rec):
     got_v = rv.value if rv.value is not None else -1
     rec.record("timer0_value_readback", "0x%08X" % got_v)
     if running:
-        rec.check("timer0 CURRENT VALUE (0x28000004) accepted 0x00010000 and is counting down from it",
-                  wv.ok and not wv.error and 0 < got_v <= TIMER_SETUP_VALUE, got=rv.raw)
+        # DEMOTED TO A RECORD. TIMER_SETUP_VALUE is 65536 cycles = 2.6 ms at
+        # 25.010 MHz and 0.66 ms at 100 MHz, against a ~130 ms round trip: the
+        # timer has wrapped dozens of times before the readback, so the bounded
+        # form "0 < v <= 65536" excludes only exact zero. That is not an
+        # assertion worth its line, on either vehicle.
+        rec.record("timer0_value_while_running", "0x%08X" % got_v)
+        rec.note("timer0 is RUNNING, and the preload (0x%08X = %d cycles) is far shorter than one ~130 ms "
+                 "ADP round trip, so VALUE has wrapped many times before it could be read. The bounded "
+                 "readback is recorded, not asserted — it would exclude only an exact zero. Raising the "
+                 "preload above one round trip needs the fabric rate and is a real open item."
+                 % (TIMER_SETUP_VALUE, TIMER_SETUP_VALUE))
+        rec.check("the timer0 VALUE write and read-back are well-formed and unflagged",
+                  wv.ok and not wv.error and rv.ok and not rv.error, got="W=%s R=%s" % (wv.raw, rv.raw))
     else:
         rec.check("timer0 CURRENT VALUE (0x28000004) accepts 0x00010000 and reads it back exactly",
                   wv.ok and not wv.error and got_v == TIMER_SETUP_VALUE, got=rv.raw)
@@ -1846,34 +2345,48 @@ def hio_313(adp, rec):
     # is "the value did not change", which a write that goes nowhere satisfies
     # perfectly.  Abort Gate 8 gates the IRREVERSIBLE CPU0 release, so it must
     # not be able to pass vacuously.
-    ctl_orig = _r(adp, BOOTGATE_WRITE_CONTROL_ADDR)
+    ctl_addr, ctl_tag, ctl_src = _write_path_control(rec)
+    rec.record("bootgate_write_path_control_addr", "0x%08X (%s)" % (ctl_addr, ctl_src))
+    ctl_orig = _r(adp, ctl_addr)
     try:
-        cw = _w(adp, BOOTGATE_WRITE_CONTROL_ADDR, BOOTGATE_WRITE_CONTROL_TAG)
-        cr = _r(adp, BOOTGATE_WRITE_CONTROL_ADDR)
-        rec.record("bootgate_write_path_control", "0x%08X -> %s" % (BOOTGATE_WRITE_CONTROL_ADDR, cr.raw))
+        cw = _w(adp, ctl_addr, ctl_tag)
+        cr = _r(adp, ctl_addr)
+        rec.record("bootgate_write_path_control", "0x%08X -> %s" % (ctl_addr, cr.raw))
+        # NEVER WEAKENED, ON ANY TARGET. This is the check that authorises the
+        # irreversible CPU0 release; without it a write path that goes nowhere
+        # passes this whole test, because "the boot gate did not change" is
+        # exactly what a dead write produces. When the profile names no RAM word
+        # that is safe here (ASIC: CPU0 is fetching from eth IMEM), the control
+        # moves to a pure RW register scratch rather than being deferred.
         rec.check("POSITIVE CONTROL: the ADP write path really lands data on the bus (0x%08X takes 0x%08X). "
-                  "Without this check a write path that goes nowhere passes this whole test, because "
-                  "'the boot gate did not change' is exactly what a dead write produces"
-                  % (BOOTGATE_WRITE_CONTROL_ADDR, BOOTGATE_WRITE_CONTROL_TAG),
-                  cw.ok and not cw.error and cr.value == BOOTGATE_WRITE_CONTROL_TAG,
+                  "Without this check a write path that goes nowhere passes this whole test"
+                  % (ctl_addr, ctl_tag),
+                  cw.ok and not cw.error and cr.value == ctl_tag,
                   got="W=%s R=%s" % (cw.raw, cr.raw))
     finally:
         if ctl_orig.ok and ctl_orig.value is not None:
-            rw = _w(adp, BOOTGATE_WRITE_CONTROL_ADDR, ctl_orig.value)
-            rr = _r(adp, BOOTGATE_WRITE_CONTROL_ADDR)
+            rw = _w(adp, ctl_addr, ctl_orig.value)
+            rr = _r(adp, ctl_addr)
             rec.check("the write-path control word at 0x%08X is restored to 0x%08X — this test destroys nothing"
-                      % (BOOTGATE_WRITE_CONTROL_ADDR, ctl_orig.value),
+                      % (ctl_addr, ctl_orig.value),
                       rw.ok and not rw.error and rr.value == ctl_orig.value,
                       got="W=%s R=%s" % (rw.raw, rr.raw))
         else:
             rec.note("Could not capture the original word at 0x%08X, so it was NOT restored and may still "
-                     "hold 0x%08X. eth IMEM is destroyed by Tier 2 anyway."
-                     % (BOOTGATE_WRITE_CONTROL_ADDR, BOOTGATE_WRITE_CONTROL_TAG))
+                     "hold 0x%08X." % (ctl_addr, ctl_tag))
 
     before = _r(adp, BOOTGATE_ADDR)
     v = before.value if before.value is not None else -1
     rec.record("bootgate_before", "0x%08X" % v)
     rec.record("bootgate_cpu0_released_before", bool(v > 0 and (v & 0x4)))
+    # Bit 0 is CPU1's REMAP (address 0 -> IMEM). An ASIC die reading 0x00000005
+    # has it already set, which was completely unhandled here: it means step 2 of
+    # HIO-206/207's park procedure is ALREADY COMMITTED for this power cycle.
+    rec.record("bootgate_cpu1_remap_before", bool(v > 0 and (v & 0x1)))
+    if v > 0 and (v & 0x1):
+        rec.note("Boot gate bit 0 (CPU1 REMAP) is already SET, so CPU1's address 0 maps to IMEM. That is "
+                 "step 2 of the CPU1 park procedure already committed for this power cycle — it is not "
+                 "reversible, and it changes what HIO-206 is testing.")
     rec.check("the boot-gate read is well-formed and unflagged", before.ok and not before.error, got=before.raw)
 
     wr = _bootgate_noop_write(adp, BOOTGATE_ADDR, BOOTGATE_NOOP_DATUM)
@@ -1893,10 +2406,17 @@ def hio_313(adp, rec):
         rec.note("Boot gate bit 2 is CLEAR: CPU0 has never been released. HIO-502 would be a real, "
                  "irreversible action on this die.")
     elif va == v and v >= 0:
-        rec.note("Boot gate bit 2 already reads SET, so CPU0 is already released and HIO-502 may be a no-op "
-                 "here. Resolve which before Phase F (plan §5.5): the FPGA build showed 0x29000000 and "
-                 "0x29000004 returning identical values, and this block ignores HADDR, so an alias cannot be "
-                 "ruled out from this register alone.")
+        _t313 = rec.target
+        if _t313 is not None and _t313.kind == "asic":
+            rec.note("Boot gate bit 2 reads SET. On this target that is RESOLVED and expected, not a "
+                     "puzzle: cc_rom opens the CPU0 gate on every terminating path, so CPU0 is released "
+                     "by design and HIO-502 is a no-op here. The consequence to carry forward is that "
+                     "there is no quiescent-bus window on this die at all.")
+        else:
+            rec.note("Boot gate bit 2 already reads SET, so CPU0 is already released and HIO-502 may be a "
+                     "no-op here. Resolve which before Phase F (plan §5.5): this build showed 0x29000000 "
+                     "and 0x29000004 returning identical values, and this block ignores HADDR, so an alias "
+                     "cannot be ruled out from this register alone.")
 
 
 @test("HIO-314", tier=3, hazard=None,
@@ -1947,6 +2467,13 @@ def hio_314(adp, rec):
                      "absent: HIO-124.)" % name)
 
     rec.record("hio314_exercised_nonzero_constants", exercised)
+    # THE THRESHOLD HOLDS BY CONSTRUCTION, which is why it is asserted flat on
+    # every target rather than deferred. Three of the five are structurally
+    # non-zero on both vehicles: reset_ctrl CID0 (0x0000000D, a hard-coded
+    # localparam), LINK_CAPABILITIES (0x00080008, an RDL constant) and IPC
+    # PERIPH_ID (0xC0DE0001, a module parameter). Only TC_DEVICE_CLASS (a per-die
+    # strap) and the DMA IIDR (zero when power-gated) can legitimately read zero.
     rec.check("at least 3 of the 5 constants held a NON-ZERO value across the write, so the sweep tested "
-              "immutability rather than agreeing with a bus that returns zeros",
+              "immutability rather than agreeing with a bus that returns zeros. Three of the five are "
+              "structurally non-zero on every target, so this threshold cannot fail for a target reason",
               exercised >= 3, got="%d/5 non-zero" % exercised)
