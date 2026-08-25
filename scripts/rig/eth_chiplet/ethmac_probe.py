@@ -25,7 +25,10 @@ REGS = [  # (name, offset, expected_reset or None)
     ("INT_SOURCE", 0x004, None),
     ("INT_MASK",   0x008, None),
     ("IPGT",       0x00C, 0x00000012),
-    ("PACKETLEN",  0x018, 0x00064000),
+    # CORRECTED 2026-08-25: was 0x00064000, a digit transposition, and it is the
+    # known "4/5 exact" false red. Ground truth eth_defines.v:220-223 --
+    # ETH_PACKETLEN_DEF_{0,1,2,3} = 00,06,40,00 assembled {D3,D2,D1,D0}.
+    ("PACKETLEN",  0x018, 0x00400600),
     ("TX_BD_NUM",  0x020, 0x00000040),
     ("CTRLMODER",  0x024, None),
     ("MIIMODER",   0x028, 0x00000064),

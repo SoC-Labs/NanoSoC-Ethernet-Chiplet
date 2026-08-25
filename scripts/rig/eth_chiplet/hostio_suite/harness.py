@@ -111,7 +111,7 @@ import sys
 import time
 import traceback
 
-HARNESS_VERSION = "1.0.0"
+HARNESS_VERSION = "1.1.0"
 RESULT_SCHEMA = "hostio4-suite-result/1"
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -121,6 +121,36 @@ if _HERE not in sys.path:
 # `hostio_suite.harness` that would import a SECOND copy with its own registry
 # and every test would silently vanish.  Alias both names to this object.
 sys.modules.setdefault("harness", sys.modules[__name__])
+
+# targets.py holds the TARGET PROFILE: which of this suite's ~300 assertions are
+# evidence on the vehicle in front of you.  It imports nothing from here -- keep
+# it that way, or a tier module's `from harness import ...` re-enters a
+# half-initialised harness.
+import targets                                     # noqa: E402
+from targets import Target                          # noqa: E402,F401  (re-export)
+
+# The target of the run currently in flight.  Tier modules should prefer
+# `rec.target`, which is handed to them directly; this exists for module-level
+# code that has no Rec in hand.
+_ACTIVE_TARGET = None
+
+
+def active_target():
+    """The Target of the run in flight, or the neutral `unknown` profile.
+
+    NEVER returns None and NEVER falls back to the FPGA profile: an undeclared
+    target must not silently inherit FPGA expectations.
+    """
+    global _ACTIVE_TARGET
+    if _ACTIVE_TARGET is None:
+        _ACTIVE_TARGET = targets.resolve(targets.DEFAULT_TARGET)
+    return _ACTIVE_TARGET
+
+
+def set_active_target(t):
+    global _ACTIVE_TARGET
+    _ACTIVE_TARGET = t
+    return t
 
 # ---------------------------------------------------------------------------
 # tuning (all measured -- see the module docstring)
@@ -962,12 +992,19 @@ class Rec(object):
     `rec.check("read ok", r)` can never become a vacuous green.
     """
 
-    def __init__(self, test_id="", meta=None):
+    def __init__(self, test_id="", meta=None, target=None):
         self.test_id = test_id
         self.meta = meta
         self.checks = []
         self.values = {}
         self.notes = []
+        # The vehicle under test.  NEVER None: an undeclared run gets the neutral
+        # `unknown` profile, which asserts nothing target-specific.
+        self.target = target if target is not None else active_target()
+        # Assertions that were NOT made because the target does not establish the
+        # property they rest on.  Each one carries the value that was seen, so a
+        # deferral is a RECORD, never a silence.
+        self.deferrals = []
 
     def check(self, label, ok, got=None, expected=None, **extra):
         if isinstance(ok, bool):
@@ -997,6 +1034,68 @@ class Rec(object):
         self.values[k] = _jsonable(value)
         return value
 
+    # -- target-dependent assertions ---------------------------------------
+    def target_check(self, label, ok, prop=None, got=None, expected=None,
+                     reason=None, **extra):
+        """Assert `ok` when this target establishes `prop`; otherwise DEFER it.
+
+            rec.target_check("eth DMEM word 0 is the image initialiser",
+                             v == t.eth_dmem_word0, prop="eth_dmem_word0", got=v)
+
+        On a target that declares the property this is exactly `rec.check()` --
+        same discipline, same red.  On one that does not (the `unknown` profile,
+        or an ASIC value nobody has measured yet) it records the label, the
+        property, the value seen and the reason it was not asserted, and returns
+        None.
+
+        RETURNS None WHEN IT DEFERRED, not False.  A caller that writes
+        `if not rec.target_check(...)` has turned a deferral back into a red,
+        which is the exact bug this mechanism exists to prevent.
+
+        `ok` may be None when the caller could not even compute the comparison
+        (the expected value is unknown, so there was nothing to compare against).
+        When it is a bool it is kept in the deferral as `would_have_held`, which
+        is what makes a deferred run still diagnosable.
+        """
+        t = self.target
+        if prop is not None and t is not None and t.known(prop):
+            return self.check(label, ok, got=got, expected=expected, **extra)
+        self.target_defer(label, prop=prop, got=got, expected=expected,
+                          reason=reason, would_have_held=ok, **extra)
+        return None
+
+    def target_defer(self, label, prop=None, got=None, expected=None, reason=None,
+                     would_have_held=None, **extra):
+        """Record an assertion that was deliberately NOT made, and why.
+
+        This is the only sanctioned way to relax an assertion for a target
+        reason.  It is counted in the run summary and printed in the report, so a
+        run that asserted almost nothing cannot look like a clean run.
+        """
+        t = self.target
+        if reason is None:
+            if prop is None:
+                reason = ("not asserted on target %s"
+                          % (t.name if t is not None else "?"))
+            elif t is not None and not t.known(prop):
+                reason = ("target %s does not establish %s, so there is nothing to "
+                          "assert against -- the value seen is recorded instead"
+                          % (t.name, prop))
+            else:
+                reason = "deferred for a target reason"
+        e = {"label": str(label),
+             "property": prop,
+             "target": (t.name if t is not None else None),
+             "got": _jsonable(got),
+             "expected": _jsonable(expected),
+             "would_have_held": (bool(would_have_held)
+                                 if isinstance(would_have_held, bool) else None),
+             "reason": str(reason)}
+        if extra:
+            e["extra"] = dict((str(k), _jsonable(x)) for k, x in extra.items())
+        self.deferrals.append(e)
+        return None
+
     def skip(self, reason):
         raise SkipTest(str(reason))
 
@@ -1015,6 +1114,10 @@ class Rec(object):
 
     def failed_labels(self):
         return [c["label"] for c in self.checks if not c["ok"]]
+
+    @property
+    def n_deferred(self):
+        return len(self.deferrals)
 
 
 # ---------------------------------------------------------------------------
@@ -1254,6 +1357,9 @@ class Opts(object):
         self.max_seconds = 0.0
         self.carried = {}             # id -> outcome, from --controls-from
         self.carried_from = None
+        self.target = None            # a targets.Target; None -> `unknown`
+        self.target_source = "default"   # 'cli' | 'env:NAME' | 'default'
+        self.target_bindings = []     # what apply_module_bindings() did
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -1262,6 +1368,13 @@ class Runner(object):
     def __init__(self, reg, opts, adp=None, out=None):
         self.reg = reg
         self.opts = opts
+        # The target is resolved ONCE, here, and handed to every Rec.  Defaulting
+        # to `unknown` rather than to the FPGA profile is the whole point: an
+        # operator who forgets --target gets data and a flag, not a wall of reds
+        # calibrated for a different vehicle.
+        self.target = (opts.target if getattr(opts, "target", None) is not None
+                       else targets.resolve(targets.DEFAULT_TARGET))
+        set_active_target(self.target)
         self.adp = adp
         self.out = out if out is not None else sys.stdout
         self.gb = compute_gating(reg)
@@ -1333,12 +1446,16 @@ class Runner(object):
 
     def _blank(self, meta, outcome, reason, rec=None, dur=0.0, err=None):
         d = meta.to_dict()
+        deferred = list(rec.deferrals) if rec is not None else []
         d.update({
             "outcome": outcome,
             "reason": reason,
             "checks": list(rec.checks) if rec is not None else [],
             "values": dict(rec.values) if rec is not None else {},
             "notes": list(rec.notes) if rec is not None else [],
+            "target": self.target.name,
+            "target_deferred": deferred,
+            "target_deferred_count": len(deferred),
             "gated_by": list(self.gb.get(meta.id, [])),
             "unvouched": False,
             "timing": {"duration_s": round(dur, 3)},
@@ -1363,7 +1480,7 @@ class Runner(object):
 
     # -- one test ----------------------------------------------------------
     def _run_one(self, meta):
-        rec = Rec(meta.id, meta)
+        rec = Rec(meta.id, meta, target=self.target)
         self.in_flight = meta.id
         t0 = time.monotonic()
         err = None
@@ -1388,6 +1505,21 @@ class Runner(object):
             self.in_flight = None
         dur = time.monotonic() - t0
         if not rec.checks:
+            if rec.deferrals:
+                # NOT a FAIL.  Every assertion this test had was target-dependent
+                # and this target does not establish the properties they rest on,
+                # so the test produced no evidence either way -- which is a SKIP,
+                # the outcome that already means "did not produce a result".
+                # Calling it FAIL would be exactly the false red on first silicon
+                # that the target profile exists to prevent; calling it PASS would
+                # be the vacuous green the whole suite exists to prevent.
+                return self._blank(
+                    meta, SKIP,
+                    "INCONCLUSIVE on target %s: all %d of this test's assertions "
+                    "are target-dependent and were deferred (see target_deferred "
+                    "for each value seen). Re-run with the right --target to turn "
+                    "them back into evidence."
+                    % (self.target.name, len(rec.deferrals)), rec, dur)
             return self._blank(meta, FAIL,
                                "recorded no checks -- a test cannot pass "
                                "vacuously", rec, dur)
@@ -1487,11 +1619,19 @@ class Runner(object):
             return s
         return "%s%s%s" % (self._COL.get(key, ""), s, self._COL["off"])
 
-    def _tag(self, outcome, weak=False):
+    def _tag(self, outcome, weak=False, thin=0):
+        """`thin` is the number of assertions deferred for target reasons.
+
+        A PASS with deferrals is printed `[ pass~]`, not `[ PASS ]`.  A run that
+        asserted almost nothing MUST NOT look like a clean run at a glance --
+        that is the whole discipline this profile mechanism is under.
+        """
         t = {PASS: "[ PASS ]", FAIL: "[ FAIL ]", VOID: "[ VOID ]",
              SKIP: "[ skip ]", ERROR: "[ERROR!]", NOTRUN: "[  --  ]"}[outcome]
         if outcome == PASS and weak:
             t = "[ pass*]"
+        elif outcome == PASS and thin:
+            t = "[ pass~]"
         return self._c(t, outcome)
 
     def _live(self, res):
@@ -1499,11 +1639,16 @@ class Runner(object):
         summary is authoritative, because a control failing later can void a
         result printed here as PASS."""
         el = res["timing"]["duration_s"]
+        nd = res.get("target_deferred_count", 0)
         self._p("  %s %-9s %-52s %5.1fs"
-                % (self._tag(res["outcome"], res["weak"]), res["id"],
+                % (self._tag(res["outcome"], res["weak"], nd), res["id"],
                    (res["purpose"] or "")[:52], el))
         if res["reason"]:
             self._p("           %s" % res["reason"])
+        if nd:
+            self._p("           ~ %d assertion%s deferred for target %s "
+                    "(recorded, not asserted)"
+                    % (nd, "" if nd == 1 else "s", res.get("target", "?")))
         if self.opts.verbose:
             for ch in res["checks"]:
                 self._p("             %s %s%s"
@@ -1519,6 +1664,18 @@ class Runner(object):
         c["weak_pass"] = sum(1 for r in self.results.values()
                              if r["outcome"] == PASS and r["weak"])
         c["unvouched"] = sum(1 for r in self.results.values() if r["unvouched"])
+        # Target accounting.  These are the numbers that tell a thin run from a
+        # clean one, so they sit in the same dict as the outcome counts and are
+        # never optional.
+        c["target_deferred_assertions"] = sum(
+            r.get("target_deferred_count", 0) for r in self.results.values())
+        c["tests_with_deferrals"] = sum(
+            1 for r in self.results.values() if r.get("target_deferred_count", 0))
+        c["thin_pass"] = sum(1 for r in self.results.values()
+                             if r["outcome"] == PASS
+                             and r.get("target_deferred_count", 0))
+        c["assertions_made"] = sum(len(r.get("checks", []))
+                                   for r in self.results.values())
         return c
 
     def by_tier(self):
@@ -1551,8 +1708,11 @@ class Runner(object):
                     mark += "  *weak: not coverage*"
                 if r["hazard"]:
                     mark += "  [%s]" % "+".join(r["hazard"])
-                p("  %s %-9s %s%s" % (self._tag(r["outcome"], r["weak"]), r["id"],
-                                      (r["purpose"] or "")[:60], mark))
+                nd = r.get("target_deferred_count", 0)
+                if nd:
+                    mark += "  ~%d deferred for target" % nd
+                p("  %s %-9s %s%s" % (self._tag(r["outcome"], r["weak"], nd),
+                                      r["id"], (r["purpose"] or "")[:60], mark))
                 if r["outcome"] == VOID:
                     p("             %s" % C("^ UNVOUCHED -- this is NOT a result: %s"
                                             % r["reason"], VOID))
@@ -1575,6 +1735,7 @@ class Runner(object):
         if c["weak_pass"]:
             p("  %d of the %d passes are WEAK (declared non-discriminating) and "
               "must not be counted as coverage." % (c["weak_pass"], c[PASS]))
+        self._print_target_block(c)
         bad = [r["id"] for r in self.results.values() if r["outcome"] in (FAIL, ERROR)]
         if bad:
             p("  %s : %s" % (C("FAILED/ERROR", FAIL), " ".join(sorted(bad))))
@@ -1598,6 +1759,50 @@ class Runner(object):
             for w in self.reg.warnings:
                 p("  warning: %s" % w)
         p("-" * 78)
+
+    def _print_target_block(self, c):
+        """The target accounting.  Printed on EVERY run, including a clean one.
+
+        A block that appears only when something was deferred would train the
+        reader to skim past it; one that always states the target and the
+        deferral count is a number the reader has to look at.
+        """
+        p, C = self._p, self._c
+        t = self.target
+        nd = c["target_deferred_assertions"]
+        made = c["assertions_made"]
+        p("")
+        p("%s  %s   [%s]" % (C("TARGET", "hdr"), t.summary_line(),
+                             self.opts.target_source))
+        p("  %d assertion%s made, %d deferred for target reasons across %d test%s."
+          % (made, "" if made == 1 else "s", nd, c["tests_with_deferrals"],
+             "" if c["tests_with_deferrals"] == 1 else "s"))
+        if t.overrides:
+            p("  overrides in force: %s"
+              % ", ".join("%s=%s (%s)" % (k, v["to"], v["via"])
+                          for k, v in sorted(t.overrides.items())))
+        for w in t.override_conflicts:
+            p("  %s" % C("override conflict: %s" % w, ERROR))
+        for b in (self.opts.target_bindings or []):
+            if b.get("applied"):
+                p("  bound %s.%s = %r from the profile"
+                  % (b["module"], b["attr"], b["value"]))
+        if nd:
+            p(C("  ~ %d assertion%s DID NOT RUN as an assertion. They are recorded "
+                "in target_deferred" % (nd, "" if nd == 1 else "s"), VOID))
+            p(C("    with the value seen and the reason. THIS RUN IS THINNER THAN A "
+                "CLEAN ONE.", VOID))
+            if t.is_unknown:
+                p(C("    The target was NOT DECLARED. Re-run with --target "
+                    "fpga_kr260 or --target asic_tsmc65", VOID))
+                p(C("    to turn them back into evidence. (--list-targets shows "
+                    "the profiles.)", VOID))
+        thin = c["thin_pass"]
+        if thin:
+            p("  %d of the %d passes are THIN (marked [ pass~]): they held every "
+              "assertion that ran," % (thin, c[PASS]))
+            p("  but some of their assertions were deferred. Do not read them as "
+              "full coverage.")
 
     def exit_code(self):
         c = self.counts()
@@ -1649,6 +1854,13 @@ def build_record(runner, die_id, timestamp, argv=None, adp=None, selection=None)
                     "when diffing one die against another",
         },
         "selection": selection or {},
+        # THE TARGET IS PART OF THE FINGERPRINT.  Two records that disagree are
+        # only comparable if they were taken against the same profile, and a
+        # record that does not say which vehicle it describes is not evidence
+        # about either of them.
+        "target": dict(runner.target.to_dict(),
+                       source=runner.opts.target_source,
+                       bindings_applied=list(runner.opts.target_bindings or [])),
         "gating_rule": compute_gating.__doc__.strip().splitlines()[0],
         "controls_carried_from": runner.opts.carried_from,
         "aborted": runner.aborted,
@@ -1667,8 +1879,40 @@ def build_record(runner, die_id, timestamp, argv=None, adp=None, selection=None)
                               if r["outcome"] == SKIP),
             "weak_passes": sorted(r["id"] for r in runner.results.values()
                                   if r["outcome"] == PASS and r["weak"]),
+            # How much of this run was actually asserted.  A run that asserted
+            # almost nothing must be distinguishable from a clean one WITHOUT
+            # reading the per-test detail, so the totals live here.
+            "target": {
+                "name": runner.target.name,
+                "source": runner.opts.target_source,
+                "assertions_made": c["assertions_made"],
+                "assertions_deferred": c["target_deferred_assertions"],
+                "tests_with_deferrals": c["tests_with_deferrals"],
+                "thin_passes": sorted(r["id"] for r in runner.results.values()
+                                      if r["outcome"] == PASS
+                                      and r.get("target_deferred_count", 0)),
+                "inconclusive": sorted(
+                    r["id"] for r in runner.results.values()
+                    if r["outcome"] == SKIP and r.get("target_deferred_count", 0)
+                    and not r.get("checks")),
+                "deferred_by_property": _deferrals_by_property(runner),
+                "unknown_properties": sorted(
+                    p for p in targets.Target.PROPS
+                    if getattr(runner.target, p) is None),
+                "override_conflicts": list(runner.target.override_conflicts),
+            },
         },
     }
+
+
+def _deferrals_by_property(runner):
+    """property -> [test ids].  The one-glance answer to 'what did this run not
+    assert, and what would fix it?'"""
+    out = {}
+    for r in runner.results.values():
+        for d in r.get("target_deferred", []):
+            out.setdefault(str(d.get("property")), []).append(r["id"])
+    return dict((k, sorted(set(v))) for k, v in sorted(out.items()))
 
 
 def write_record(record, path):
@@ -1686,6 +1930,11 @@ def write_record(record, path):
 # ---------------------------------------------------------------------------
 # tier-module discovery
 # ---------------------------------------------------------------------------
+# name -> module object, filled by discover().  The target profile binds a small
+# declared set of module globals (targets.MODULE_BINDINGS) and needs the objects.
+LOADED_MODULES = {}
+
+
 def discover(reg=None, pattern="tier*.py", modules=None, verbose=False):
     """Import the tier modules from this directory as plain top-level modules."""
     reg = reg if reg is not None else REGISTRY
@@ -1699,7 +1948,7 @@ def discover(reg=None, pattern="tier*.py", modules=None, verbose=False):
     for name in names:
         name = os.path.splitext(os.path.basename(name))[0]
         try:
-            importlib.import_module(name)
+            LOADED_MODULES[name] = importlib.import_module(name)
             loaded.append(name)
         except Exception:
             reg.import_errors[name] = traceback.format_exc()
@@ -1753,6 +2002,7 @@ def _selftest(out=sys.stdout):
     from io import StringIO
     fails = []
     n = [0]
+    n_target = [0]          # section [4] only -- the ORIGINAL 93 stay countable
 
     def ck(desc, got, want):
         n[0] += 1
@@ -2120,16 +2370,317 @@ def _selftest(out=sys.stdout):
     r.run()
     ck("exit code 1 when something FAILs", r.exit_code(), 1)
 
+    core = n[0]
+    _selftest_targets(ck, n_target, out)
+
     out.write("\n%s\n" % ("-" * 78))
     if fails:
         out.write("SELFTEST FAILED: %d of %d checks\n\n" % (len(fails), n[0]))
         for f in fails:
             out.write("  - %s\n" % f)
         return 1
-    out.write("SELFTEST PASSED: %d checks, no hardware touched.\n" % n[0])
+    out.write("SELFTEST PASSED: %d checks, no hardware touched.\n" % core)
+    out.write("           plus %d target-profile checks   (%d total)\n"
+              % (n_target[0], n[0]))
     out.write("Proven both ways: the same gated test PASSes on a healthy control\n"
-              "and is VOID on a broken one, with its own checks holding in both.\n")
+              "and is VOID on a broken one, with its own checks holding in both.\n"
+              "And the same target-dependent assertion is a RED on a declared\n"
+              "target and a recorded DEFERRAL on an undeclared one -- a profile\n"
+              "that could only ever soften a result would be worth nothing.\n")
     return 0
+
+
+def _selftest_targets(ck, n_target, out):
+    """[4] The target profile -- proven in BOTH directions, like everything else.
+
+    A profile is only trustworthy if it can be shown NOT to hide a failure. Every
+    case below is paired: the same assertion on a declared target and on an
+    undeclared one, and a genuine failure that stays a failure on both.
+    """
+    from io import StringIO
+    base = n_target[0]
+
+    def tck(desc, got, want):
+        ck(desc, got, want)
+        n_target[0] = n_target[0] + 1
+
+    out.write("\n[4] Target profiles -- the default must not inherit the FPGA\n")
+
+    # -- resolution -------------------------------------------------------
+    t, src = targets.build(None, environ={})
+    tck("no --target and no env resolves to `unknown`", t.name, "unknown")
+    tck("...and the record says the choice was a default", src, "default")
+    tck("`unknown` is NOT the FPGA profile", t.fabric_hz, None)
+    tck("an explicit --target is sourced as cli", targets.build("asic", environ={})[1], "cli")
+    tck("alias fpga -> fpga_kr260", targets.resolve("fpga").name, "fpga_kr260")
+    tck("alias silicon -> asic_tsmc65", targets.resolve("silicon").name, "asic_tsmc65")
+    tck("HOSTIO_TARGET is honoured and RECORDED as env",
+        targets.build(None, environ={"HOSTIO_TARGET": "asic"})[1], "env:HOSTIO_TARGET")
+    tck("a --target the profile does not know is a hard error, not a fallback",
+        _raises(targets.resolve, "kr420"), "ValueError")
+
+    # -- the measured differences are in the profile ----------------------
+    f, a = targets.resolve("fpga_kr260"), targets.resolve("asic_tsmc65")
+    tck("fpga fabric clock", f.fabric_hz, 25_010_000)
+    tck("asic fabric clock", a.fabric_hz, 100_000_000)
+    tck("fpga eth ROM image", f.eth_rom_image, "smoke_remap")
+    tck("asic eth ROM image", a.eth_rom_image, "stage0_bootrom")
+    tck("fpga eth DMEM word 0", f.eth_dmem_word0, 0x05F5E100)
+    tck("asic eth DMEM word 0", a.eth_dmem_word0, 0x00000000)
+    tck("fpga PHC NS_INCR for real time", f.phc_ns_incr_for_realtime, 40)
+    tck("asic PHC NS_INCR for real time", a.phc_ns_incr_for_realtime, 10)
+    tck("NS_INCR x f == 1e9 on the fpga profile",
+        f.phc_ns_incr_for_realtime * f.fabric_hz, 1_000_400_000)
+    tck("NS_INCR x f == 1e9 on the asic profile EXACTLY",
+        a.phc_ns_incr_for_realtime * a.fabric_hz, 1_000_000_000)
+    tck("asic boot gate allows 0x4 AND 0x5", a.bootgate_values, (0x4, 0x5))
+    tck("THE CONSEQUENCE: no asic run has a quiescent bus", a.bus_quiescent, False)
+    tck("...and it cannot be made one", a.bus_parkable, False)
+    tck("the fpga bus is not quiescent either -- but it IS parkable",
+        (f.bus_quiescent, f.bus_parkable), (False, True))
+    tck("asic ECC/CRC/FCSM are the inverse of the fpga's",
+        (a.ecc_enabled, a.crc_enabled_at_reset, a.fcsm_recovery_present),
+        (not f.ecc_enabled, not f.crc_enabled_at_reset, not f.fcsm_recovery_present))
+    tck("a declared target can still leave a property unknown (asic FCSM map)",
+        a.known("fcsm_state_map"), False)
+    tck("the fpga DMA is PRESENT -- settled by HIO-124's run records, not by "
+        "inferring power state from SCFG_CHSEC0 reading zero", f.dma_powered, True)
+    tck("an OPEN QUESTION and an ESTABLISHED ABSENCE are different kinds of None",
+        (a.to_dict()["open_questions"], list(a.to_dict()["established_absent"])),
+        (["dma_powered", "fcsm_state_map", "phy_oui", "subword_rmw_supported",
+          "timer0_owned_by_firmware", "write_path_control_addr"],
+         ["cpu0_ran_marker"]))
+    tck("...and both still defer, so the distinction is documentation, not licence",
+        (a.expect("cpu0_ran_marker").asserted,
+         a.expect("dma_powered").asserted), (False, False))
+    tck("the fpga census overlay can STRENGTHEN a class, not only relax one",
+        f.census_class(0x20000FC8, targets.CLS_D)[0], targets.CLS_D)
+    tck("asking about a property that does not exist RAISES, never answers False",
+        _raises(f.known, "fabric_mhz"), "KeyError")
+
+    # -- clock arithmetic --------------------------------------------------
+    tck("scale_cycles rescales an FPGA-calibrated count to the asic",
+        a.scale_cycles(0x00100000), int(round(0x00100000 * (100e6 / 25.010e6))))
+    tck("scale_cycles returns None on an unknown clock, never the input",
+        t.scale_cycles(0x00100000), None)
+    tck("P0_CYC saturates 4x sooner on the asic",
+        round(a.perf_counter_saturation_seconds(), 1), 42.9)
+    tck("...vs the fpga", round(f.perf_counter_saturation_seconds(), 1), 171.7)
+    tck("fabric_hz_holds is None (not False) when the clock is undeclared",
+        t.fabric_hz_holds(25_010_000), None)
+    tck("fabric_hz_holds discriminates: the fpga rate is not the asic's",
+        (a.fabric_hz_holds(100_000_000), a.fabric_hz_holds(25_010_000)), (True, False))
+
+    # -- Expect ------------------------------------------------------------
+    e_known = f.expect("eth_dmem_word0")
+    e_unknown = t.expect("eth_dmem_word0")
+    tck("a known property yields an ASSERTABLE expectation", e_known.asserted, True)
+    tck("...that discriminates", (e_known.matches(0x05F5E100), e_known.matches(0)),
+        (True, False))
+    tck("an unknown property is NOT assertable", e_unknown.asserted, False)
+    tck("...and matches() answers None, which is NOT False",
+        e_unknown.matches(0x05F5E100), None)
+
+    # -- census overlay OVERRIDES the base table --------------------------
+    tck("base class survives where the overlay says nothing",
+        f.census_class(0x23000038, targets.CLS_E)[0], targets.CLS_E)
+    tck("the fpga overlay keeps eth DMEM word 0 a hard-D row",
+        f.census_class(0x18000000, targets.CLS_D)[0], targets.CLS_D)
+    tck("the asic overlay demotes it to D/Z (all-zero .data[0] is HEALTHY there)",
+        a.census_class(0x18000000, targets.CLS_D)[0], targets.CLS_DZ)
+    tck("...and says so with a reason, not silently",
+        bool(a.census_class(0x18000000, targets.CLS_D)[1]), True)
+    tck("an undeclared target demotes every hard-D to D/Z",
+        t.census_class(0x20000FC8, targets.CLS_D)[0], targets.CLS_DZ)
+    tck("BUT NEVER demotes an E row -- the decode class is RTL, not vehicle",
+        t.census_class(0x40000000, targets.CLS_E)[0], targets.CLS_E)
+    tck("...nor a Z row", t.census_class(0x23000000, targets.CLS_Z)[0], targets.CLS_Z)
+
+    # -- overrides ---------------------------------------------------------
+    ov = targets.apply_env(targets.resolve("fpga_kr260"),
+                           {"HOSTIO_CPU1_PARKED": "1", "HOSTIO_SOAK_SECONDS": "5"})
+    tck("HOSTIO_CPU1_PARKED=1 declares a quiescent bus", ov.bus_quiescent, True)
+    tck("HOSTIO_SOAK_SECONDS is honoured", ov.soak_seconds, 5)
+    tck("every override that fires is RECORDED with its source",
+        ov.overrides["bus_quiescent"]["via"], "env:HOSTIO_CPU1_PARKED")
+    tck("an override that changes nothing is not recorded as one",
+        "ecc_enabled" in ov.overrides, False)
+    ovc = targets.apply_env(targets.resolve("asic_tsmc65"),
+                            {"HOSTIO_CPU1_PARKED": "1"})
+    tck("forcing a quiescent bus on the asic is HONOURED...", ovc.bus_quiescent, True)
+    tck("...and FLAGGED, because that target cannot be parked",
+        len(ovc.override_conflicts), 1)
+    tck("ETH_ROM_IMAGE still works as a per-rig override",
+        targets.apply_env(targets.resolve("unknown"),
+                          {"ETH_ROM_IMAGE": "smoke_remap"}).eth_rom_image,
+        "smoke_remap")
+    tck("--no-target-env means the profile stands alone",
+        targets.build("fpga", environ={"HOSTIO_SOAK_SECONDS": "5"},
+                      use_env=False)[0].soak_seconds, 60)
+    tck("--target-set parses a hex word",
+        targets.apply_settings(targets.resolve("unknown"),
+                               ["eth_dmem_word0=0xDEADBEEF"]).eth_dmem_word0,
+        0xDEADBEEF)
+    tck("--target-set parses a float frequency",
+        targets.apply_settings(targets.resolve("unknown"),
+                               ["fabric_hz=100e6"]).fabric_hz, 100_000_000)
+    tck("--target-set on a property that does not exist RAISES",
+        _raises(targets.apply_settings, targets.resolve("unknown"), ["fabrik_hz=1"]),
+        "ValueError")
+
+    # -- module bindings ---------------------------------------------------
+    class _Mod(object):
+        ETH_ROM_IMAGE = None
+    m = _Mod()
+    got = targets.apply_module_bindings({"tier1": m}, a)
+    tck("the profile reaches tier1.ETH_ROM_IMAGE", m.ETH_ROM_IMAGE, "stage0_bootrom")
+    tck("...and the binding is recorded", got[0]["applied"], True)
+    m2 = _Mod()
+    m2.ETH_ROM_IMAGE = "smoke_remap"
+    got2 = targets.apply_module_bindings({"tier1": m2}, a)
+    tck("an explicitly-set module value WINS over the profile",
+        m2.ETH_ROM_IMAGE, "smoke_remap")
+    tck("...and the refusal to bind is recorded too", got2[0]["applied"], False)
+    m3 = _Mod()
+    targets.apply_module_bindings({"tier1": m3}, targets.resolve("unknown"))
+    tck("an undeclared target binds nothing", m3.ETH_ROM_IMAGE, None)
+
+    # ==================================================================
+    # THE PAIRED PROOF: the same assertion, red on a declared target and a
+    # recorded deferral on an undeclared one -- and a real failure that is a
+    # failure on BOTH, so the profile cannot be used to make reds go away.
+    # ==================================================================
+    def build_reg(word0):
+        reg = Registry("st-t")
+        tbl = {0x18000000: "\nR 0x%08x\n]" % word0}
+
+        @test("T-T01", tier=1, registry=reg, purpose="a target-dependent assertion")
+        def _dep(adp, rec):
+            v = adp.read(0x18000000).value
+            rec.target_check("eth DMEM word 0 is the image initialiser",
+                             v == rec.target.eth_dmem_word0,
+                             prop="eth_dmem_word0", got=v)
+
+        @test("T-T02", tier=1, registry=reg, purpose="a target-INDEPENDENT assertion")
+        def _ind(adp, rec):
+            v = adp.read(0x18000000).value
+            rec.check("word 0 is word-aligned", (v & 3) == 0, got=v)
+            rec.target_check("...and is the image initialiser",
+                             v == rec.target.eth_dmem_word0,
+                             prop="eth_dmem_word0", got=v)
+        return reg, tbl
+
+    def run(tname, word0):
+        reg, tbl = build_reg(word0)
+        r = Runner(reg, Opts(preamble=False, target=targets.resolve(tname)),
+                   adp=_FakeAdp(tbl), out=StringIO())
+        r.run()
+        return r
+
+    # the FPGA value, on the FPGA profile: a genuine PASS
+    r = run("fpga_kr260", 0x05F5E100)
+    tck("declared target, right value -> PASS", r.results["T-T01"]["outcome"], PASS)
+    tck("...with the assertion actually made", len(r.results["T-T01"]["checks"]), 1)
+    tck("...and nothing deferred", r.results["T-T01"]["target_deferred_count"], 0)
+
+    # the ASIC value, on the FPGA profile: THE FALSE RED this work exists to stop
+    r = run("fpga_kr260", 0x00000000)
+    tck("declared target, wrong value -> FAIL (the gate still goes red)",
+        r.results["T-T01"]["outcome"], FAIL)
+
+    # the ASIC value, on the ASIC profile: healthy, and it says so
+    r = run("asic_tsmc65", 0x00000000)
+    tck("THE POINT: the same reading is a PASS on the asic profile",
+        r.results["T-T01"]["outcome"], PASS)
+    r = run("asic_tsmc65", 0x05F5E100)
+    tck("...and the FPGA value is a FAIL there (the profile is not a rubber stamp)",
+        r.results["T-T01"]["outcome"], FAIL)
+
+    # undeclared: record and flag, never a red and never a green
+    r = run("unknown", 0x00000000)
+    res = r.results["T-T01"]
+    tck("UNDECLARED: not a FAIL", res["outcome"] != FAIL, True)
+    tck("UNDECLARED: not a PASS either -- it asserted nothing",
+        res["outcome"], SKIP)
+    tck("UNDECLARED: the assertion is recorded as deferred",
+        res["target_deferred_count"], 1)
+    tck("UNDECLARED: the deferral names the property",
+        res["target_deferred"][0]["property"], "eth_dmem_word0")
+    tck("UNDECLARED: THE VALUE SEEN IS RECORDED", res["target_deferred"][0]["got"], 0)
+    tck("UNDECLARED: and what the assertion would have said",
+        res["target_deferred"][0]["would_have_held"], False)
+    tck("UNDECLARED: with a reason a reader can act on",
+        "does not establish" in res["target_deferred"][0]["reason"], True)
+    tck("UNDECLARED: the reason names the outcome as INCONCLUSIVE, not a fault",
+        "INCONCLUSIVE" in (res["reason"] or ""), True)
+
+    # a test with BOTH kinds of assertion stays a real test on an unknown target
+    res2 = r.results["T-T02"]
+    tck("a target-INDEPENDENT assertion still runs on an undeclared target",
+        len(res2["checks"]), 1)
+    tck("...so the test is a real PASS, marked thin", res2["outcome"], PASS)
+    tck("...and the thinness is on the record", res2["target_deferred_count"], 1)
+    c = r.counts()
+    tck("the run counts deferred assertions", c["target_deferred_assertions"], 2)
+    tck("the run counts THIN passes separately from clean ones", c["thin_pass"], 1)
+    tck("a thin pass is tagged [ pass~], not [ PASS ]",
+        r._tag(PASS, False, 1).strip(), "[ pass~]")
+    tck("a clean pass is still [ PASS ]", r._tag(PASS, False, 0).strip(), "[ PASS ]")
+
+    # a target-INDEPENDENT assertion cannot be softened by ANY profile
+    reg3 = Registry("st-t3")
+
+    @test("T-T03", tier=1, registry=reg3, purpose="a plain failing check")
+    def _plain(adp, rec):
+        rec.check("boot gate is not zero (target-independent)", False, got=0)
+
+    for tname in ("fpga_kr260", "asic_tsmc65", "unknown"):
+        r3 = Runner(reg3, Opts(preamble=False, target=targets.resolve(tname)),
+                    adp=_FakeAdp(), out=StringIO())
+        r3.run()
+        tck("a target-INDEPENDENT red stays red on %s" % tname,
+            r3.results["T-T03"]["outcome"], FAIL)
+
+    # a vacuous test is still a FAIL -- deferrals do not launder it
+    reg4 = Registry("st-t4")
+
+    @test("T-T04", tier=1, registry=reg4, purpose="records nothing at all")
+    def _vac(adp, rec):
+        rec.note("nothing")
+
+    r4 = Runner(reg4, Opts(preamble=False, target=targets.resolve("unknown")),
+                adp=_FakeAdp(), out=StringIO())
+    r4.run()
+    tck("no checks AND no deferrals is still a FAIL",
+        r4.results["T-T04"]["outcome"], FAIL)
+
+    # the record
+    r5 = run("unknown", 0x00000000)
+    rr = build_record(r5, "SELFTEST-DIE", None, argv=["--selftest"])
+    tck("record: the target is part of the fingerprint",
+        rr["target"]["name"], "unknown")
+    tck("record: and how it was chosen", rr["target"]["source"], "default")
+    tck("record: the summary states how much was asserted",
+        rr["summary"]["target"]["assertions_deferred"], 2)
+    tck("record: and which property would fix it",
+        rr["summary"]["target"]["deferred_by_property"]["eth_dmem_word0"],
+        ["T-T01", "T-T02"])
+    tck("record: thin passes are listed by id",
+        rr["summary"]["target"]["thin_passes"], ["T-T02"])
+    tck("record: so are the inconclusive ones",
+        rr["summary"]["target"]["inconclusive"], ["T-T01"])
+    tck("record: it json round-trips",
+        json.loads(json.dumps(rr, sort_keys=True))["target"]["name"], "unknown")
+    out.write("     (%d target checks)\n" % (n_target[0] - base))
+
+
+def _raises(fn, *a, **kw):
+    """Return the exception type name, or 'no exception'. Used by the selftest."""
+    try:
+        fn(*a, **kw)
+    except Exception as exc:
+        return type(exc).__name__
+    return "no exception"
 
 
 # ---------------------------------------------------------------------------
@@ -2144,6 +2695,22 @@ outcomes
   SKIP    did not run: hazard not enabled, `needs` unmet, or rec.skip()
   ERROR   the test raised, or the link died while it was in flight
 
+targets
+  --target NAME selects the VEHICLE.  The default is `unknown`, which asserts
+  nothing target-specific and records everything -- an unspecified target must
+  NOT silently inherit the FPGA expectations this suite was calibrated on.
+  Every assertion the profile relaxes is recorded with the value seen and the
+  reason, counted in summary.target, and a pass with deferrals prints as
+  [ pass~] and not [ PASS ].  --list-targets prints the table.
+    fpga_kr260 (fpga, kr260)   the KR260 FPGA build -- the calibration vehicle
+    asic_tsmc65 (asic, silicon) the TSMC65 chiplet
+    unknown                    the default: record, flag, assert nothing
+                               target-specific
+  The pre-existing env knobs (ETH_ROM_IMAGE, HOSTIO_CPU1_PARKED,
+  HOSTIO_SOAK_SECONDS, HOSTIO_PHC_CORE_HZ, ...) still work and are layered ON
+  TOP of the profile as per-rig overrides; each one that fires is recorded.
+  --target-set prop=value does the same thing explicitly on the command line.
+
 exit codes
   0 clean   1 FAIL/ERROR present   2 VOID present (no FAIL)   3 run aborted
   4 usage
@@ -2151,6 +2718,9 @@ exit codes
 examples
   harness.py --selftest
   harness.py --list
+  harness.py --list-targets
+  harness.py --port /dev/ttyACM4 --die-id ETH-S01 --target asic_tsmc65 \\
+             --tier 0 --tier 1 --json runs/ETH-S01.json
   harness.py --port /dev/ttyACM4 --die-id ETH-D01 --tier 0 --tier 1 \\
              --timestamp "$(date -u +%FT%TZ)" --json runs/ETH-D01.json -v
   harness.py --port /dev/ttyACM4 --die-id ETH-D01 --test 'HIO-2*' \\
@@ -2173,6 +2743,24 @@ def _build_parser():
     p.add_argument("--timestamp", default=None,
                    help="recorded verbatim in the result record; the harness "
                         "does not invent one")
+    p.add_argument("--target", default=None,
+                   help="the vehicle under test: %s (aliases: fpga, kr260, asic, "
+                        "silicon). DEFAULT %r -- an unspecified target asserts "
+                        "nothing target-specific and records everything, rather "
+                        "than silently inheriting the FPGA calibration."
+                        % (", ".join(targets.names()), targets.DEFAULT_TARGET))
+    p.add_argument("--target-set", dest="target_set", action="append", default=[],
+                   metavar="PROP=VALUE",
+                   help="override one target property (repeatable). Recorded in "
+                        "the result record like any other override.")
+    p.add_argument("--list-targets", action="store_true",
+                   help="print the target profiles and exit; touches nothing")
+    p.add_argument("--no-target-env", action="store_true",
+                   help="ignore the HOSTIO_*/ETH_ROM_IMAGE environment knobs; "
+                        "the profile and --target-set are then the only sources")
+    p.add_argument("--no-target-bindings", action="store_true",
+                   help="do not push profile values into tier-module globals "
+                        "(see targets.MODULE_BINDINGS)")
     p.add_argument("--tier", type=int, action="append", default=[],
                    help="run this tier (repeatable)")
     p.add_argument("--test", action="append", default=[],
@@ -2275,6 +2863,26 @@ def main(argv=None):
     if args.selftest:
         return _selftest()
 
+    if args.list_targets:
+        sys.stdout.write(targets.format_table())
+        sys.stdout.write(
+            "\nThe DEFAULT is %r. An unspecified target asserts nothing "
+            "target-specific\nand records everything, so a first-silicon run "
+            "without --target gives you data\nand a flag rather than a wall of "
+            "reds calibrated for the other vehicle.\n" % targets.DEFAULT_TARGET)
+        return 0
+
+    # Resolve the target BEFORE anything else touches the registry: the tier
+    # modules' import-time constants are bound from it.
+    try:
+        target, target_source = targets.build(
+            args.target, settings=args.target_set,
+            use_env=not args.no_target_env)
+    except (ValueError, KeyError) as exc:
+        sys.stderr.write("%s\n" % exc)
+        return 4
+    set_active_target(target)
+
     reg = REGISTRY
     mods = [m.strip() for m in args.modules.split(",")] if args.modules else None
     discover(reg, modules=mods, verbose=args.verbose)
@@ -2283,6 +2891,10 @@ def main(argv=None):
             "no tests found. Tier modules (tier0.py ... tier5.py) live beside "
             "harness.py and declare tests with @test(...).\n")
         return 3 if reg.import_errors else 4
+
+    bindings = []
+    if not args.no_target_bindings:
+        bindings = targets.apply_module_bindings(LOADED_MODULES, target)
 
     gb = compute_gating(reg)
     ids, unmatched = _select(reg, args.tier, args.test)
@@ -2322,10 +2934,13 @@ def main(argv=None):
         max_seconds=args.max_seconds,
         carried=carried,
         carried_from=carried_from,
+        target=target,
+        target_source=target_source,
+        target_bindings=bindings,
     )
 
     if args.list or args.list_json:
-        return _do_list(reg, gb, args)
+        return _do_list(reg, gb, args, target)
     if args.dry_run:
         return _do_dry_run(reg, gb, ids, opts, args)
 
@@ -2358,6 +2973,9 @@ def main(argv=None):
     runner.adp = adp
 
     hdr = ["HOSTIO4 suite v%s -- die %s" % (HARNESS_VERSION, args.die_id),
+           "target %s   [%s]%s" % (target.summary_line(), target_source,
+                                   "   OVERRIDES: %s" % ", ".join(sorted(target.overrides))
+                                   if target.overrides else ""),
            "timestamp %s   port %s   pump %dms  stuck %dms  timeout %dms"
            % (args.timestamp or "(none given)", args.port, args.pump_ms,
               args.stuck_ms, args.timeout_ms),
@@ -2406,9 +3024,11 @@ def main(argv=None):
     return rc
 
 
-def _do_list(reg, gb, args):
+def _do_list(reg, gb, args, target=None):
+    target = target if target is not None else active_target()
     if args.list_json:
         out = {"harness_version": HARNESS_VERSION,
+               "target": target.to_dict(),
                "tests": [dict(m.to_dict(), gated_by=gb.get(m.id, []))
                          for m in reg.all()],
                "import_errors": dict(reg.import_errors),
@@ -2442,6 +3062,8 @@ def _do_list(reg, gb, args):
     print("")
     print("%d tests, tiers %s" % (len(reg.tests),
                                   ",".join(str(t) for t in reg.tiers())))
+    print("target: %s  (--list-targets for the profile table)"
+          % target.summary_line())
     for w in reg.warnings:
         print("warning: %s" % w)
     return 3 if reg.import_errors else 0
@@ -2450,6 +3072,17 @@ def _do_list(reg, gb, args):
 def _do_dry_run(reg, gb, ids, opts, args):
     order = order_tests(reg, ids, gb)
     runner = Runner(reg, opts, adp=None, out=sys.stdout)
+    print("")
+    print("TARGET -- %s   [%s]" % (runner.target.summary_line(),
+                                   opts.target_source))
+    for k, v in sorted(runner.target.overrides.items()):
+        print("   OVERRIDE %s: %s -> %s   (%s)" % (k, v["from"], v["to"], v["via"]))
+    for b in (opts.target_bindings or []):
+        print("   %s %s.%s = %r  (%s)"
+              % ("bound" if b["applied"] else "kept ", b["module"], b["attr"],
+                 b["value"], b["why"]))
+    for w in runner.target.override_conflicts:
+        print("   CONFLICT: %s" % w)
     print("")
     print("PLAN -- %d tests, in this order. No hardware is touched." % len(order))
     print("")

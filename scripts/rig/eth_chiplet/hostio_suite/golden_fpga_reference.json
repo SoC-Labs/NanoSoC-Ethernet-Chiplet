@@ -30,7 +30,7 @@
   "ok_with_zeros_class": {
     "_comment": "Decode WITHOUT the error flag but read zero. The census must distinguish these from the error class - value alone cannot.",
     "0x28000000": "cc_periph_0",
-    "0x20000000": "decodes but is NOT writable RAM; writes echo and do not stick"
+    "0x20000000": "NOT memory -- this is the DMA-250 CONFIG APERTURE (DMAC_CFG_ADDR_W=14, 16 KB), DMASECCFG at +0x000. It decodes and reads 0x00000000, and writes do not stick because it is a register aperture, not RAM. **DO NOT INFER DMA POWER STATE FROM THIS ADDRESS.** An agent did exactly that on 2026-08-25 and set a target profile to dma_powered=False, which would have mis-shaped every later run. The DMA power state is settled ONLY by the IIDR at 0x20000FC8, MEASURED 0x2500043B = PRESENT AND NOT POWER-GATED, confirmed in three separate suite run records (HIO-124 and HIO-411 both PASS)."
   },
 
   "alias_signatures": {

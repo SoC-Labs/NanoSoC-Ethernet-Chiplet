@@ -45,6 +45,19 @@
 #     registers, the HZ-6 XiP aperture, or the spinlock acquire pages.  That is
 #     enforced in code by _check_addr(), not by review.
 #   * It touches the HZ-2 peer aperture exactly once, from HIO-413, guarded.
+#   * It never WRITES wlink 0x208 (0x2E030208); reads there are safe and allowed.
+#
+# OPERATIONAL HAZARDS -- not addresses, but they belong beside the address guards
+# so nobody re-derives them the hard way.  None of these is enforceable in code;
+# they bound what an operator may do around a run of this suite.
+#   * NEVER reload the PL on a live link.  POR both boards instead.
+#   * NEVER `sudo reboot` a KR260.  It wedges harder, and only a JTAG POR recovers
+#     it.
+#   * Do NOT run `eth_ss_probe.py` or `kr260_eth_run.sh status`.  That probe
+#     hard-wedged a board on 2026-08-23.  Its "safe by construction" claim rests
+#     on the SoC being clocked and out of reset, which nothing asserts.
+#   * 0x2E0321AC / 0x21B0 / 0x21B4 hard-stall the CPU (HZ-1, enforced in _BANDS).
+#     0x2E0321F8 and 0x2E0321E0 are documented-safe and are what this file reads.
 #
 # ENVIRONMENT (all optional; every one of them defaults to "skip, and say so")
 #   HOSTIO_PHC_CORE_HZ      HIO-404: the clock feeding the PHC on THIS platform.
@@ -243,6 +256,23 @@ _WRITE_WHITELIST = {
 }
 
 
+# Write-only refusals: addresses that are SAFE TO READ but must never be driven
+# from here.  Kept separate from _BANDS because a read refusal would cost real
+# observability for no safety gain.
+_WRITE_REFUSED_BANDS = (
+    (0x2E030208, 0x2E03020B,
+     "WLINK 0x208 (swi_enable[0], lltx_enable[1], lltx_enable_1[2], swreset[3]). "
+     "Hand-driving it wedges the PS: swreset resets axi2wl mid-burst, BVALID never "
+     "returns, the PS7 M_AXI_GP0 SmartConnect SI port saturates and the whole PL "
+     "slave set wedges until a USB power-cycle (tidelink_top.sv:2887-2928). Let "
+     "autonomy drive it. READS ARE SAFE and deliberately still allowed -- the RTL "
+     "shim is write-only and states reads are bit-exact unchanged. The whole 32-bit "
+     "word is refused, not just 0x208: the hardening shim matches apb_paddr[12:0] "
+     "== 13'h208 EXACTLY, so a write to 0x209/0x20A/0x20B reaches the same Wlink "
+     "register with the swreset mask BYPASSED."),
+)
+
+
 class HazardRefusal(RuntimeError):
     """Raised instead of issuing an access this module is forbidden to make."""
 
@@ -260,6 +290,9 @@ def _check_addr(addr, allow_peer=False):
 
 
 def _check_write(addr, val):
+    for lo, hi, why in _WRITE_REFUSED_BANDS:
+        if lo <= addr <= hi:
+            raise HazardRefusal("refusing to WRITE 0x%08X: %s" % (addr, why))
     allowed = _WRITE_WHITELIST.get(addr)
     if allowed is not None and val not in allowed:
         raise HazardRefusal(
@@ -801,6 +834,22 @@ def _decode_lane_status(v):
     }
 
 
+def _link_up(f):
+    """THE link predicate for this file: fcsm in the 4..7 band AND cal done.
+
+    NEVER put lane_locked (or lane_synced) in a link predicate.  lane_locked
+    reads 0x00 even on a healthy, fully working link -- a known observability
+    defect, not a link state (lane_synced_i is tied 8'h00, same class).  So
+    `lane_locked != 0` is DEAD on a good link and can only ever fire on garbage:
+    as an OR term it is a false-GREEN path (a die with cal=0 but a junk non-zero
+    lane_locked would be declared link-present), and as an AND term it would be a
+    permanent false red.  The 4..7 band is the RTL's own definition of link-up
+    (auto_anchor_link_up = sync_obs_fcsm_state_1[2], axi_chiplet_controller.sv
+    :4992), which is why it, with calibration_done, is the whole predicate.
+    """
+    return 4 <= f["fcsm_state"] <= 7 and f["calibration_done"] == 1
+
+
 def _classify_fcsm(f):
     """FCSM state is 3 bits, so 0..7 IS the whole domain -- there is no state 8.
 
@@ -841,7 +890,10 @@ def _read_xhb_witness(adp, timeout_ms=None):
         out["sub_wr_os_hwm"] = _bits(v, 7, 5)
         out["sub_wr_stuck_sticky"] = _bits(v, 8, 8)
         out["sub_err_sticky"] = _bits(v, 9, 9)
-        out["xhb_stall_stuck_sticky"] = _bits(v, 10, 10)  # the deadlock witness
+        # [10] sets on ANY healthy cross-die read: a ~460 us round trip exceeds
+        # its 4096-hclk threshold.  OBSERVATION ONLY -- it is not a wedge
+        # indicator, and gating on it reds the first successful cross-die read.
+        out["xhb_stall_stuck_sticky"] = _bits(v, 10, 10)
         out["ext_stall_err"] = _bits(v, 11, 11)
 
     r_e0 = _rd(adp, AXINODE_OBS, timeout_ms=timeout_ms)
@@ -857,9 +909,25 @@ def _read_xhb_witness(adp, timeout_ms=None):
         out["wedge_sticky"] = _bits(v, 19, 10)
         out["stall_live"] = _bits(v, 9, 0)
 
+    # PARKED predicate: sub_err_sticky high AND bridge_ready low AND STUCK.
+    # "Stuck" needs more than one look, so 0x21F8 is sampled twice; a single
+    # low sample is legitimate mid-transfer.
+    r_f8b = _rd(adp, XHB_SUB_OBS, timeout_ms=timeout_ms)
+    out["f8_second"] = r_f8b
+    out["f8_second_ok"] = _good(r_f8b)
+    if out["f8_marker_ok"] and out["f8_second_ok"]:
+        out["bridge_ready_2nd"] = _bits(r_f8b.value, 0, 0)
+        out["bridge_ready_stuck"] = (out["bridge_ready"] == 0
+                                     and out["bridge_ready_2nd"] == 0)
+    else:
+        out["bridge_ready_stuck"] = False
+    out["parked"] = bool(out["f8_marker_ok"]
+                         and out.get("sub_err_sticky", 0) == 1
+                         and out["bridge_ready_stuck"])
+
     out["healthy"] = bool(
         out["f8_marker_ok"] and out["e0_marker_ok"]
-        and out.get("xhb_stall_stuck_sticky", 1) == 0
+        and not out["parked"]
         and out.get("data_healthy", 0) == 1)
     return out
 
@@ -871,6 +939,8 @@ def _record_xhb(rec, w, prefix):
     rec.record(prefix + "_marker_ad", bool(w["e0_marker_ok"]))
     if w["f8_marker_ok"]:
         rec.record(prefix + "_xhb_stall_stuck_sticky", w["xhb_stall_stuck_sticky"])
+        rec.record(prefix + "_bridge_ready_stuck", bool(w.get("bridge_ready_stuck")))
+        rec.record(prefix + "_parked", bool(w.get("parked")))
         rec.record(prefix + "_bridge_ready", w["bridge_ready"])
         rec.record(prefix + "_sub_err_sticky", w["sub_err_sticky"])
         rec.record(prefix + "_sub_wr_stuck_sticky", w["sub_wr_stuck_sticky"])
@@ -1430,7 +1500,8 @@ def hio_406(adp, rec):
 @test("HIO-407", tier=4, hazard=None,
       purpose="TideLink lane / calibration / FCSM state -- a diagnosis, not just a "
               "verdict. Decodes swi_lane_status @0x2E032108 (RDL-verified: [7:0] "
-              "lane_locked, [15:8] lane_fault, [16] calibration_done, [20:17] "
+              "lane_locked (stuck at 0x00 by construction -- never a predicate), "
+              "[15:8] lane_fault, [16] calibration_done, [19:17] "
               "fcsm_state, [22:21] llrx_state, [29] llrx_valid). Named failure "
               "signatures are hard reds once the PHY is up: fcsm = 1 is the "
               "credit-path bring-up wedge, fcsm = 2 is the stalled/no-progress "
@@ -1457,13 +1528,29 @@ def hio_407(adp, rec):
         rec.record("tl_" + k, v)
     rec.record("tl_fcsm_class", _classify_fcsm(f["fcsm_state"]))
 
-    phy_up = f["calibration_done"] == 1 or f["lane_locked"] != 0
+    phy_up = _link_up(f)
     rec.record("tl_link_present", bool(phy_up))
+    rec.note("lane_locked = 0x%02X is an OBSERVATION, not evidence: the field reads "
+             "0x00 even on a healthy working link (known observability defect; "
+             "lane_synced_i is tied 8'h00 in the same class). A zero there means "
+             "NOTHING either way, so no predicate in this file reads it."
+             % f["lane_locked"])
+    # The named wedge signatures are asserted UNCONDITIONALLY. They do not depend
+    # on the link being up, and they must not be swallowed by the "no link" arm:
+    # fcsm=1 IS a credit-path wedge whether or not calibration ever completed, and
+    # the documented cold/idle state of a die with no peer is 0, not 1 or 2.
+    rec.check("fcsm is not a named wedge signature (1 = credit bring-up, 2 = stalled)",
+              f["fcsm_state"] not in (1, 2),
+              got="fcsm=%d (%s)" % (f["fcsm_state"], _classify_fcsm(f["fcsm_state"])))
+
     if not phy_up:
-        rec.note("No link: calibration_done = 0 and no lane is locked. fcsm/lane_fault "
-                 "are not interpretable in that state (a lone die legitimately sits "
-                 "there), so they are recorded and not asserted. On a die that is "
-                 "supposed to be paired, this line IS the finding.")
+        rec.note("No link: fcsm=%d (%s) is outside the 4..7 band and/or "
+                 "calibration_done=%d. lane_fault is not interpretable in that state "
+                 "(a lone die legitimately sits here), so it is recorded and not "
+                 "asserted. On a die that is supposed to be paired, this line IS the "
+                 "finding."
+                 % (f["fcsm_state"], _classify_fcsm(f["fcsm_state"]),
+                    f["calibration_done"]))
         if f["a2l_replay_app_valid"]:
             rec.note("a2l_replay_app_valid (bit 20) is SET with the link down. That is "
                      "the APP side of the a2l replay buffer holding a word it cannot "
@@ -1475,17 +1562,14 @@ def hio_407(adp, rec):
                      "state' -- a bit-field error, not a die fault.")
         return
 
+    # Reached only with the link up, so these are now interpretable.
     rec.check("no lane reports a sticky fault", f["lane_fault"] == 0,
               got="lane_fault=0x%02X" % f["lane_fault"])
     rec.check("llrx byte-align FSM is not in its error state (2)",
               f["llrx_state"] != 2, got="llrx_state=%d" % f["llrx_state"])
-    rec.check("fcsm is not a named wedge signature (1 = credit bring-up, 2 = stalled)",
-              f["fcsm_state"] not in (1, 2),
-              got="fcsm=%d (%s)" % (f["fcsm_state"], _classify_fcsm(f["fcsm_state"])))
-    healthy = 4 <= f["fcsm_state"] <= 7 and f["calibration_done"] == 1
-    rec.record("tl_healthy", bool(healthy))
-    rec.check("healthy operating point (fcsm in 4..7 and calibration_done = 1)",
-              healthy, got="fcsm=%d cal=%d" % (f["fcsm_state"], f["calibration_done"]))
+    rec.record("tl_healthy", True)
+    rec.note("Healthy operating point: fcsm=%d is in the 4..7 link-up band and "
+             "calibration_done=1." % f["fcsm_state"])
 
 
 @test("HIO-408", tier=4, hazard=None, needs=["HIO-401", "HIO-407"],
@@ -1547,10 +1631,15 @@ def hio_408(adp, rec):
               "is absent or mis-decoded and every bit below it is meaningless, so the "
               "bits are not decoded at all in that case -- a test that reads bits "
               "without checking the marker reports 'healthy, all zeros' on a register "
-              "that is not there. PASS = both markers, 0x1F8[10] "
-              "xhb_stall_stuck_sticky = 0 (hreadyout low for 2^12 hclk: the XHB500 "
-              "hazard-list deadlock witness) and 0x1E0[23] data_healthy = 1, which by "
-              "construction also asserts wedge_sticky = 0 and both error bits clear.")
+              "that is not there. PASS = both markers, NOT PARKED, and 0x1E0[23] "
+              "data_healthy = 1 (which by construction also asserts wedge_sticky = 0 "
+              "and both error bits clear). PARKED is 0x1F8[9] sub_err_sticky high AND "
+              "0x1F8[0] bridge_ready low and STILL low on a second sample -- a single "
+              "low sample is legitimate mid-transfer, so the register is read twice. "
+              "0x1F8[10] xhb_stall_stuck_sticky is RECORDED, NOT GATED: it sets on ANY "
+              "healthy cross-die read, because a ~460 us round trip exceeds its "
+              "4096-hclk threshold, so gating on it would red the first successful "
+              "cross-die read on every working link.")
 def hio_409(adp, rec):
     w = _read_xhb_witness(adp)
     _record_xhb(rec, w, "xhb")
@@ -1568,8 +1657,17 @@ def hio_409(adp, rec):
                  "unattributed.")
         return
 
-    rec.check("xhb_stall_stuck_sticky (0x1F8[10]) is clear", w["xhb_stall_stuck_sticky"] == 0,
-              got="0x%08X" % w["f8"].value)
+    rec.record("xhb_stall_stuck_sticky_observed", w["xhb_stall_stuck_sticky"])
+    rec.check("the bridge is not PARKED (0x1F8[9] set AND 0x1F8[0] low twice)",
+              not w["parked"],
+              got="sub_err_sticky=%d bridge_ready=%d/%d"
+                  % (w.get("sub_err_sticky", -1), w.get("bridge_ready", -1),
+                     w.get("bridge_ready_2nd", -1)))
+    if w["xhb_stall_stuck_sticky"]:
+        rec.note("0x1F8[10] xhb_stall_stuck_sticky is SET. This is EXPECTED on any "
+                 "link that has served a cross-die read (~460 us round trip vs a "
+                 "4096-hclk threshold) and is NOT a wedge indicator. Recorded, not "
+                 "gated.")
     rec.check("data_healthy (0x1E0[23]) is set", w["data_healthy"] == 1,
               got="0x%08X" % w["e0"].value)
     if w["sub_err_sticky"] or w["sub_wr_stuck_sticky"] or w["ext_stall_err"]:
@@ -1721,8 +1819,9 @@ def hio_413(adp, rec):
     rec.record("peer_pre_lane_status", ls.value)
     rec.record("peer_pre_fcsm", f["fcsm_state"])
     rec.record("peer_pre_cal", f["calibration_done"])
-    if not (4 <= f["fcsm_state"] <= 7 and f["calibration_done"] == 1
-            and f["lane_fault"] == 0):
+    # One predicate, one definition: _link_up() is the only place the 4..7 band
+    # and calibration_done are written down.
+    if not (_link_up(f) and f["lane_fault"] == 0):
         rec.skip("link preconditions not met at the moment of the access: fcsm=%d (%s), "
                  "cal=%d, lane_fault=0x%02X. Phase E aborts here -- do not touch 0x2F."
                  % (f["fcsm_state"], _classify_fcsm(f["fcsm_state"]),
@@ -1732,9 +1831,9 @@ def hio_413(adp, rec):
     _record_xhb(rec, before, "peer_pre_xhb")
     if not before["healthy"]:
         rec.skip("XHB witness is not healthy immediately before the access (markers "
-                 "%s/%s, stall_sticky=%s, data_healthy=%s). Refusing to touch 0x2F."
+                 "%s/%s, parked=%s, data_healthy=%s). Refusing to touch 0x2F."
                  % (before["f8_marker_ok"], before["e0_marker_ok"],
-                    before.get("xhb_stall_stuck_sticky"), before.get("data_healthy")))
+                    before.get("parked"), before.get("data_healthy")))
 
     # ---- ARMED.  Nothing below may skip, and nothing may be interpreted until
     # ---- the guard has run.  The one-shot flag is set BEFORE the access so a
@@ -1799,11 +1898,20 @@ def hio_413(adp, rec):
     rec.check("GUARD: marker 0xAD still present after the peer access",
               guard["e0_marker_ok"], got=guard["e0"].raw)
     if guard["f8_marker_ok"] and guard["e0_marker_ok"]:
-        rec.check("GUARD: xhb_stall_stuck_sticky still clear (no bridge deadlock)",
-                  guard["xhb_stall_stuck_sticky"] == 0, got="0x%08X" % guard["f8"].value)
+        rec.record("peer_post_stall_sticky_observed", guard["xhb_stall_stuck_sticky"])
+        rec.check("GUARD: the bridge is not PARKED (0x1F8[9] high AND 0x1F8[0] "
+                  "low and stuck)", not guard["parked"],
+                  got="sub_err_sticky=%d bridge_ready=%d/%d"
+                      % (guard.get("sub_err_sticky", -1),
+                         guard.get("bridge_ready", -1),
+                         guard.get("bridge_ready_2nd", -1)))
         rec.check("GUARD: data_healthy still set (no axinode wedge)",
                   guard["data_healthy"] == 1, got="0x%08X" % guard["e0"].value)
-        if guard["xhb_stall_stuck_sticky"] or guard["data_healthy"] != 1:
+        if guard["xhb_stall_stuck_sticky"]:
+            rec.note("0x1F8[10] set after the peer access is the EXPECTED signature of "
+                     "a cross-die read that actually crossed (~460 us > 4096 hclk). It "
+                     "is not evidence of a wedge, and is recorded only.")
+        if guard["parked"] or guard["data_healthy"] != 1:
             rec.note("STOP. The peer access parked the port: the witness changed. Power "
                      "cycle before any further command.")
     rec.note("One shot consumed. Do not re-run this test in this power cycle.")
