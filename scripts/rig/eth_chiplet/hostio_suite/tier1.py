@@ -752,15 +752,40 @@ def hio_107(adp, rec):
 # B5 — the rest of the identity set
 # ===========================================================================
 @test("HIO-105", tier=1, control=False, hazard=None,
-      purpose="reset_ctrl reset values, 0x2A000000 +0x00..+0x20. Nine words: seven that "
-              "must be ZERO (REMAP_CTRL and PMU_CTRL are RAZ, SYS_CTRL and +0x0C and "
-              "+0x18/+0x1C are 0, SW_RESET at +0x20 is write-only and reads 0) and TWO "
-              "that must be NON-ZERO — RESET_INFO_CPU0 (+0x10) and RESET_INFO_CPU1 "
-              "(+0x14), which record the last reset cause and carry EXTRESET (bit 3) "
-              "after a power-on. RED when: any of the seven is non-zero, OR either "
-              "RESET_INFO reads zero. The RESET_INFO pair is the discriminator — a "
-              "block that returned all-zeros unconditionally would sail through a naive "
-              "'reset values are 0' check and fail this one.")
+      purpose="reset_ctrl reset values, 0x2A000000 +0x00..+0x20. Seven words that must "
+              "be ZERO (REMAP_CTRL and PMU_CTRL are RAZ, SYS_CTRL and +0x0C and "
+              "+0x18/+0x1C are 0, SW_RESET at +0x20 is write-only and reads 0), plus "
+              "the two RESET_INFO cause registers, which are RECORDED, NOT ASSERTED — "
+              "see below. RED when: any of the seven is non-zero; or either RESET_INFO "
+              "has a bit set above [3:0], which is impossible because the read mux is "
+              "{{28{1'b0}}, reg_resetinfo_cpuN} (nanosoc_reset_ctrl.v:165-166); or "
+              "RESET_INFO_CPU0 bit[1] is set, which is impossible because CPU0 has no "
+              "WDOGRESETREQ source and the RTL ties it off — "
+              "'assign nxt_resetinfo_cpu0[1] = 1'b0' (nanosoc_reset_ctrl.v:318). "
+              "WHY RESET_INFO IS NO LONGER ASSERTED NON-ZERO (measured 0x00000000 on "
+              "the FPGA die, 2026-08-25; the plan predicted non-zero and the plan is "
+              "WRONG): the capture flop is async-cleared BY the power-on reset — "
+              "'always @(posedge FCLK or negedge PORESETn) if (~PORESETn) "
+              "reg_resetinfo_cpu0 <= 4'b0000' (nanosoc_reset_ctrl.v:326-331, and "
+              ":343-345 for CPU1) — so a power-on leaves it ZERO, it does not populate "
+              "it. Every set-source is a LATER event that has not happened on a cold "
+              "die: bit[0] cpu0_sysresetreq, bit[2] cpu0_lockup, bit[3] EXTRESET via "
+              "the ext_sysresetreq INPUT (:320,:338). And on this FPGA build that input "
+              "is hardwired off — 'wire ext_sysresetreq = 1'b0;  // no external "
+              "system-reset source on this board' "
+              "(pynq/vivado_ip/nanosoc_multicore_vivado_wrapper.v:182, wired at :231 "
+              "into .sys_sysresetreq, passed to .ext_sysresetreq at "
+              "nanosoc_multicore_soc.sv:1386) — so EXTRESET can NEVER set on this "
+              "board. Zero is the RTL-correct cold-die reading, and asserting non-zero "
+              "would red every good die. HONEST ACCOUNTING OF WHAT THIS COSTS: "
+              "RESET_INFO was this test's stuck-at-zero half, and relaxing it leaves "
+              "HIO-105 one-sided (it now fails on a bus stuck at ONES only). The "
+              "stuck-at-zero half for this same block is HIO-104, whose PID words "
+              "0x26/0xB8/0x1B/0x04 are non-zero; for the tier it is HIO-125 "
+              "(IRQ_ROUTE_CPU1 = 0x0F), HIO-127 (all-ones) and the census D rows. "
+              "ASIC NOTE: ext_sysresetreq may be bonded to a real pad on the ASIC, so "
+              "EXTRESET could legitimately read SET there. Either way it is recorded, "
+              "not asserted; do not inherit a non-zero expectation for the ASIC run.")
 def hio_105(adp, rec):
     offs = [0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20]
     names = ["REMAP_CTRL", "PMU_CTRL", "SYS_CTRL", "rsvd_0C", "RESET_INFO_CPU0",
@@ -774,18 +799,53 @@ def hio_105(adp, rec):
                  "rsvd_18", "rsvd_1C", "SW_RESET"]:
         _eq(rec, "reset_ctrl %s" % name, vals[name], 0x00000000)
 
+    # RESET_INFO: RECORDED, not asserted. The only assertions are structural ones the
+    # RTL guarantees unconditionally -- see purpose for the file:line evidence.
     for name in ("RESET_INFO_CPU0", "RESET_INFO_CPU1"):
         v = vals[name]
-        rec.check("reset_ctrl %s is NON-ZERO (last reset cause is recorded)" % name,
-                  v is not None and v != 0, got=_h(v))
-        if v is not None:
-            rec.record("%s_extreset_bit3" % name.lower(), int(bool(v & (1 << 3))))
-    rec.note("RESET_INFO is the two-sided half of this tier's reset-value tests: the "
-             "seven zeros fail on a bus stuck at ones, these two fail on a bus stuck at "
-             "zeros. CAVEAT for the report: the non-zero expectation is a function of "
-             "the die's RESET HISTORY (EXTRESET via ext_sysresetreq), not a hardwired "
-             "constant, and HIO-503 is expected to change it. A die brought up through "
-             "some other reset path could legitimately read zero here.")
+        if v is None:
+            continue
+        rec.check("reset_ctrl %s [31:4] == 0 (read mux zero-extends a 4-bit flop)"
+                  % name, _field(v, 31, 4) == 0, got=_h(v))
+        low = name.lower()
+        rec.record("%s_cause" % low, _field(v, 3, 0))
+        rec.record("%s_sysresetreq_bit0" % low, _field(v, 0, 0))
+        rec.record("%s_lockupreset_bit2" % low, _field(v, 2, 2))
+        rec.record("%s_extreset_bit3" % low, _field(v, 3, 3))
+
+    v0 = vals["RESET_INFO_CPU0"]
+    if v0 is not None:
+        # nanosoc_reset_ctrl.v:318 -- assign nxt_resetinfo_cpu0[1] = 1'b0;
+        rec.check("RESET_INFO_CPU0 bit[1] == 0 (no WDOGRESETREQ source on CPU0; "
+                  "the RTL ties this bit off)", _field(v0, 1, 1) == 0, got=_h(v0))
+    v1 = vals["RESET_INFO_CPU1"]
+    if v1 is not None:
+        rec.record("reset_info_cpu1_wdogresetreq_bit1", _field(v1, 1, 1))
+
+    both_zero = (v0 == 0 and v1 == 0)
+    rec.record("reset_info_both_zero", int(bool(both_zero)))
+    if both_zero:
+        rec.note("Both RESET_INFO words read 0x00000000. This is the EXPECTED cold-die "
+                 "state, not a defect: PORESETn async-clears the capture flop "
+                 "(nanosoc_reset_ctrl.v:326-331,343-345), so a power-on clears the "
+                 "record rather than writing to it, and on this FPGA build "
+                 "ext_sysresetreq is tied 1'b0 (vivado_ip wrapper :182) so EXTRESET "
+                 "can never set. MEANING OF A NON-ZERO VALUE, for whoever reads the "
+                 "record: bit[0] the core asked for a system reset (SYSRESETREQ, i.e. "
+                 "software called NVIC_SystemReset); bit[1] CPU1 only, the watchdog "
+                 "fired; bit[2] the core LOCKED UP and lockupreseten was on — an "
+                 "unhandled fault at the highest priority, always worth investigating; "
+                 "bit[3] an external reset arrived on the ext_sysresetreq pin. These "
+                 "are W1C, so a non-zero value is a latched history, not a live state. "
+                 "HIO-503 (CPU0 relaunch) is expected to make bit[0] appear — that is "
+                 "the positive control for this register and it belongs in Tier 5, "
+                 "because nothing in a read-only tier can make a cause bit set.")
+    else:
+        rec.note("RESET_INFO is non-zero (CPU0=%s CPU1=%s): a reset cause IS latched. "
+                 "Not a failure — decode the bits from the record. On this FPGA build "
+                 "EXTRESET (bit 3) should be unreachable, so a set bit[3] here would "
+                 "itself be a finding worth chasing to the board wiring."
+                 % (_h(v0), _h(v1)))
 
 
 @test("HIO-108", tier=1, control=False, hazard=None,
@@ -1226,12 +1286,21 @@ def hio_119(adp, rec):
               "and addr-translator sub-regions pass pready straight through with no "
               "watchdog, so every read here relies on the client's transaction timeout.")
 def hio_121(adp, rec):
+    # LINK_CAPABILITIES field packing: max_tx_lanes[3:0], max_rx_lanes[7:4], [31:8]=0.
+    # NOT the 16-bit fields wlink_regs.rdl declares -- see the note at the end.
     caps = _rd(adp, rec, 0x2E030200, "LINK_CAPABILITIES")
     rec.record("tidelink_link_capabilities", caps)
-    _eq(rec, "LINK_CAPABILITIES", caps, 0x00080008)
     if caps is not None:
-        rec.record("tidelink_max_tx_lanes", _field(caps, 31, 16))
-        rec.record("tidelink_max_rx_lanes", _field(caps, 15, 0))
+        tx = _field(caps, 3, 0)
+        rx = _field(caps, 7, 4)
+        rec.record("tidelink_max_tx_lanes", tx)
+        rec.record("tidelink_max_rx_lanes", rx)
+        rec.check("LINK_CAPABILITIES max_tx_lanes [3:0] == 8", tx == 8,
+                  got="%d (word %s)" % (tx, _h(caps)))
+        rec.check("LINK_CAPABILITIES max_rx_lanes [7:4] == 8", rx == 8,
+                  got="%d (word %s)" % (rx, _h(caps)))
+        rec.check("LINK_CAPABILITIES [31:8] == 0 (only two 4-bit RO fields exist)",
+                  _field(caps, 31, 8) == 0, got=_h(caps))
 
     align = _rd(adp, rec, 0x2E03211C, "PHY_ALIGN_ID")
     rec.record("tidelink_phy_align_id", align)
@@ -1271,7 +1340,31 @@ def hio_121(adp, rec):
         rec.record("tidelink_21e0_data_healthy_bit23", _field(axinode, 23, 23))
         rec.record("tidelink_21e0_channel_wedge_19_10", _field(axinode, 19, 10))
 
-    rec.note("The 0xB5 / 0xAD status bits are recorded, not asserted, on purpose. Plan "
+    rec.note("LINK_CAPABILITIES is asserted as 8 TX / 8 RX lanes at bits [3:0] and "
+             "[7:4], i.e. 0x00000088 -- NOT the 0x00080008 the plan's HIO-121 row "
+             "quotes. The die is RIGHT and the plan was wrong, and the disagreement is "
+             "a REGISTER-MAP DOCUMENTATION BUG, not a silicon one. Evidence: the built "
+             "RTL is generated from Chisel, not from the RDL. "
+             "wav-wlink-hw/src/main/scala/Wlink.scala:256-258 declares "
+             "'WavSWReg(0x0, \"LinkCapabilities\", ..., WavRO(numTxLanes.asUInt, "
+             "\"max_tx_lanes\", ...), WavRO(numRxLanes.asUInt, \"max_rx_lanes\", ...))' "
+             "-- and a Chisel '8.asUInt' literal is FOUR bits wide, not sixteen, so the "
+             "two fields pack into [3:0] and [7:4]. The generated Verilog hardcodes the "
+             "result: 'wire [31:0] out_out_bits_data_out_1 = _out_out_bits_data_T ? "
+             "32'h88 : ...' (Wlink.v:1342, the eth_chiplet_ip build). By contrast "
+             "tidelink/src/rdl/wlink_regs.rdl:269,274 says 'field {} max_tx_lanes[16] = "
+             "8;' -- two 16-bit fields, which would give 0x00080008. The RDL is a "
+             "hand-maintained spec that the Chisel generator does not read; where they "
+             "disagree the Chisel wins, because it is what was built. The MEANING the "
+             "plan intended (8 TX lanes, 8 RX lanes) is confirmed exactly -- only the "
+             "field offsets were wrong -- so this test still reds on a "
+             "differently-parameterised link, a constant bus or a dead one. ASIC NOTE: "
+             "this value comes from the Chisel elaboration parameters numTxLanes / "
+             "numRxLanes, NOT from the ECC/CRC/FCSM configuration that differs between "
+             "FPGA and ASIC, so 0x00000088 is expected on the ASIC too -- unless the "
+             "ASIC build elaborates a different lane count, in which case these two "
+             "checks are exactly what will catch it. "
+             "The 0xB5 / 0xAD status bits are recorded, not asserted, on purpose. Plan "
              "§0.1: the marker bytes are structural and transfer to the ASIC, but the "
              "status bits below them may legitimately differ, so first ASIC silicon is "
              "record-and-classify until an ASIC baseline exists. HIO-409 (Tier 4) is "
@@ -1401,32 +1494,88 @@ def hio_124(adp, rec):
 
 
 @test("HIO-125", tier=1, control=False, hazard=None,
-      purpose="Event-router load-bearing default — IRQ_ROUTE_CPU1 at 0x2B000004 must "
-              "reset to 0x0000000F (explicitly marked a load-bearing reset default in "
-              "evt_route_ctrl.yaml), and PID0 at 0x2B000FE0 must be 0x22. A NON-ZERO "
-              "reset default, so it fails on a bus that returns zeros — the failure "
-              "mode that makes most reset-value tests worthless. Paired with the "
-              "ADJACENT IRQ_ROUTE_CPU0 at 0x2B000000, whose reset IS zero: the pair "
-              "proves the block distinguishes two neighbouring registers, which neither "
-              "read alone can. RED when: either value is wrong, or the two neighbours "
-              "read the SAME thing (a collapsed offset decode). Never writes "
-              "0x2B000010 — ROUTE_LOCK is one-way until HRESETn; this tier writes "
-              "nothing at all.")
+      purpose="Event-router reset defaults and window shape. Asserts the four route "
+              "registers the block ACTUALLY implements — IRQ_ROUTE_CPU0 (+0x00) = 0, "
+              "IRQ_ROUTE_CPU1 (+0x04) = 0x0000000F, EVT_ROUTE_CPU0 (+0x08) = 0, "
+              "EVT_ROUTE_CPU1 (+0x0C) = 0 — plus [31:4] = 0 on all four, ROUTE_LOCK "
+              "(+0x10) [31:1] = 0, that the two adjacent IRQ_ROUTE registers DIFFER, "
+              "and the block's 32-BYTE ALIAS: 0x2B000024 must equal 0x2B000004. "
+              "IRQ_ROUTE_CPU1's 0x0F is a load-bearing NON-ZERO reset default "
+              "('IRQ_CPU1_RST = {N_SRC{1'b1}}', evt_route_ctrl.v:82,114 — all DMA-done "
+              "to CPU1), so this test fails on a bus that returns zeros, the failure "
+              "mode that makes most reset-value tests worthless; its zero neighbour "
+              "proves the block distinguishes two adjacent registers, which neither "
+              "read alone can. RED when: any value is wrong, the neighbours read the "
+              "same thing (a collapsed offset decode), any route register has a bit "
+              "above [3:0], or the 32-byte alias stops holding. "
+              "WHY THERE IS NO LONGER A PID CHECK (measured 0x00000000 at 0x2B000FE0 "
+              "on the FPGA die, 2026-08-25; the plan predicted 0x22 and the plan is "
+              "WRONG): evt_route_ctrl HAS NO CoreSight ID SPACE AT ALL. The whole "
+              "register file is a five-entry mux — OFF_IRQ_CPU0/IRQ_CPU1/EVT_CPU0/"
+              "EVT_CPU1/LOCK at word offsets 0..4 with 'default: hrdata_q = "
+              "{SYS_DATA_W{1'b0}}' (evt_route_ctrl.v:144-151) — and the file contains "
+              "no PID or CID register anywhere. Worse, the decode is "
+              "'wire [2:0] word_addr = HADDR[ADDR_MSB:ADDR_LSB]' with ADDR_MSB=4, "
+              "ADDR_LSB=2 (:71-72,91), so only HADDR[4:2] is decoded and the block "
+              "aliases every 32 bytes across the whole 0x2B window: 0x2B000FE0 has "
+              "HADDR[4:2] = 0b000, so it is not an unmapped offset at all, it is an "
+              "ALIAS OF IRQ_ROUTE_CPU0 — whose reset value is 0. The die returned "
+              "exactly what the RTL says it must. The 0x22 came from "
+              "sys_desc/register_maps/evt_route_ctrl.yaml:27 (pid0) at offset 0xFE0 "
+              "(:111-112), a register-map SPECIFICATION artefact that the implemented "
+              "RTL never realised — precisely the B-class trap plan §0 warns about. "
+              "The alias check below turns that discovery into coverage: the aliasing "
+              "IS the block's window shape, and it is now asserted rather than "
+              "mistaken for a missing peripheral. Never writes 0x2B000010 — ROUTE_LOCK "
+              "is write-1-set and one-way until HRESETn; this tier writes nothing at "
+              "all. ASIC NOTE: all of this is plain RTL with no ECC/CRC/FCSM "
+              "dependency, so the ASIC must read the same.")
 def hio_125(adp, rec):
-    cpu0 = _rd(adp, rec, 0x2B000000, "IRQ_ROUTE_CPU0")
-    cpu1 = _rd(adp, rec, 0x2B000004, "IRQ_ROUTE_CPU1")
-    pid0 = _rd(adp, rec, 0x2B000FE0, "evt_route PID0")
-    rec.record("evt_route_irq_route_cpu0", cpu0)
-    rec.record("evt_route_irq_route_cpu1", cpu1)
-    rec.record("evt_route_pid0", pid0)
+    routes = [(0x2B000000, "IRQ_ROUTE_CPU0", 0x00000000),
+              (0x2B000004, "IRQ_ROUTE_CPU1", 0x0000000F),
+              (0x2B000008, "EVT_ROUTE_CPU0", 0x00000000),
+              (0x2B00000C, "EVT_ROUTE_CPU1", 0x00000000)]
+    vals = {}
+    for addr, name, want in routes:
+        v = _rd(adp, rec, addr, "evt_route %s" % name)
+        vals[name] = v
+        _eq(rec, "evt_route %s" % name, v, want)
+        if v is not None:
+            # read mux is {{(SYS_DATA_W-N_SRC){1'b0}}, reg} with N_SRC=4 (:144-148)
+            rec.check("evt_route %s [31:4] == 0 (N_SRC=4, mux zero-extends)" % name,
+                      _field(v, 31, 4) == 0, got=_h(v))
+    rec.record("evt_route_routes", vals)
+    rec.record("evt_route_irq_route_cpu0", vals["IRQ_ROUTE_CPU0"])
+    rec.record("evt_route_irq_route_cpu1", vals["IRQ_ROUTE_CPU1"])
 
-    _eq(rec, "IRQ_ROUTE_CPU1 (load-bearing non-zero default)", cpu1, 0x0000000F)
-    _eq(rec, "IRQ_ROUTE_CPU0 (reset is zero)", cpu0, 0x00000000)
-    _eq(rec, "evt_route PID0", pid0, 0x00000022)
+    cpu0, cpu1 = vals["IRQ_ROUTE_CPU0"], vals["IRQ_ROUTE_CPU1"]
     rec.check("the two adjacent IRQ_ROUTE registers read DIFFERENT values "
               "(offset decode is not collapsed)",
               cpu0 is not None and cpu1 is not None and cpu0 != cpu1,
               got="cpu0=%s cpu1=%s" % (_h(cpu0), _h(cpu1)))
+
+    lock = _rd(adp, rec, 0x2B000010, "evt_route ROUTE_LOCK")
+    rec.record("evt_route_route_lock", lock)
+    if lock is not None:
+        rec.check("evt_route ROUTE_LOCK [31:1] == 0 (single bit, zero-extended)",
+                  _field(lock, 31, 1) == 0, got=_h(lock))
+        rec.record("evt_route_route_lock_bit0", _field(lock, 0, 0))
+        if _field(lock, 0, 0):
+            rec.note("ROUTE_LOCK bit0 is SET: the routes are frozen until HRESETn and "
+                     "no Tier-3 write test can change them. Recorded, not failed — a "
+                     "locked router is a legitimate state, but it means something has "
+                     "already written this block on this power cycle.")
+
+    # The 32-byte alias IS the window shape: HADDR[4:2] only (evt_route_ctrl.v:71-72,91).
+    alias = _rd(adp, rec, 0x2B000024, "evt_route +0x24 (alias of +0x04)")
+    rec.record("evt_route_alias_0x24", alias)
+    rec.check("0x2B000024 aliases IRQ_ROUTE_CPU1 at 0x2B000004 "
+              "(block decodes HADDR[4:2] only, so it repeats every 32 bytes)",
+              alias is not None and alias == cpu1,
+              got="+0x24=%s vs +0x04=%s" % (_h(alias), _h(cpu1)))
+    rec.note("0x2B000FE0 is NOT probed: it is not a PID register, it is another alias "
+             "of IRQ_ROUTE_CPU0 (HADDR[4:2]=0). Reading it as a peripheral ID is what "
+             "produced the 2026-08-25 false red.")
 
 
 @test("HIO-126", tier=1, control=False, hazard=None,
