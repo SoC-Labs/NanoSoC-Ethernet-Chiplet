@@ -370,7 +370,14 @@ set ::PLACED_MACROS {}
 
 place_macro {*ethmac*bd_ram*u_rf} 1053.8000000000 1117.8100000000 R180
 place_macro {*u_network_core*u_region_bootrom_0*rom_via*} 883.5350000000 1538.6000000000 MY
-place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6000000000 1339.2500000000 MY  ;## MOVED -20 y: makes room for eth_scratch_tx below it
+## [2026-08-25] 1339.25 -> 1339.20.  M3 TRACK RE-PHASE, class 4a.  The pin edge
+## was +0.050 off the escape track grid, leaving the first track outside with
+## ZERO clearance against the adjacent-cut rule -- worse than the 0.050 that
+## cost gdsrun-20260825-resynth its route.  Latent, not failing: being off grid
+## costs every pin an extra track and only becomes a marker under congestion.
+## Created, not inherited: the class-1/2 clearing move in 93ec57d snaps to the
+## manufacturing grid and knows nothing about the track grid.
+place_macro {*u_network_core*u_region_dmem_0*rf_16k*} 1058.6000000000 1339.2000000000 MY  ;## M3 TRACK RE-PHASE 2026-08-25: was 1339.25 (MOVED -20 y: makes room for eth_scratch_tx below it)
 place_macro {*region_eth_scratch_rx_0*} 590.2000000000 1338.8000000000 R0
 ## ORPHAN CORRIDORS -- why these two macros moved UP on 2026-08-13
 ##
@@ -402,7 +409,9 @@ place_macro {*region_eth_scratch_rx_0*} 590.2000000000 1338.8000000000 R0
 ## and expect IMPSP-2021 to return non-deterministically -- it depends on where
 ## the netlist happens to want a repeater, which is why the production flow has
 ## hit it on some runs and not others.
-place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1637.3100000000 MY  ;## MOVED +3.51 y: was 1633.8 (itself -20, "12.89 over the new core top")
+## [2026-08-25] 1637.31 -> 1637.40.  M3 TRACK RE-PHASE, class 4a: the pin edge
+## was -0.090 off the escape track grid (first-track clearance 0.060).
+place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1637.4000000000 MY  ;## M3 TRACK RE-PHASE 2026-08-25: was 1637.31 (MOVED +3.51 y: was 1633.8)
 ## [2026-08-13] MOVED +2.72 y, from 1503.4. See ORPHAN CORRIDORS below.
 ## [2026-08-17] 1506.12 -> 1505.60. THE 1506.12 MOVE CAUSED FOUR VDD-VSS SHORTS.
 ##
@@ -436,7 +445,12 @@ place_macro {*region_eth_scratch_tx_0*} 1049.8000000000 1637.3100000000 MY  ;## 
 ## check anywhere in this flow that a PG stripe landed inside a macro, so the
 ## next person to nudge a macro for placement reasons gets no warning at all.
 ## That gate is the real fix; this coordinate is the repair.
-place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1504.5000000000 R0  ;## was 1506.12 (shorted), before that 1503.4 (orphan corridor)
+## [2026-08-25] 1504.50 -> 1504.40.  M3 TRACK RE-PHASE, class 4a: the pin edge
+## was +0.100 off the escape track grid (first-track clearance 0.050 -- the same
+## number that failed on the cache macro).  -0.100 rather than +0.100 because it
+## also lands strictly clear of every M9 band instead of on a boundary.
+## Created by the class-1/2 clearing move in 93ec57d, same mechanism as dmem.
+place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1504.4000000000 R0  ;## M3 TRACK RE-PHASE 2026-08-25: was 1504.5 (was 1506.12 shorted, before that 1503.4 orphan corridor)
 place_macro {*way1_cache_ram_tag_ram_0_i} 911.4000000000 468.6900000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 911.2 468.69
 place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 402.0900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_data_ram_0_word_2_i} 554.4000000000 478.4000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 553.8 480.4
