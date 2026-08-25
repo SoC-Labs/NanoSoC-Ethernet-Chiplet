@@ -480,7 +480,35 @@ place_macro {*way0_cache_ram_data_ram_0_word_2_i} 554.4000000000 478.4000000000 
 ## +0.100 (not -0.100): both land on the grid, but +0.100 also WIDENS the
 ## way0_word_1 -> way0_word_3 channel 5.54 -> 5.64um instead of narrowing it,
 ## and keeps the top edge 2.20um below the M9 band at 424.6.
-place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 386.0400000000 MX  ;## M3 TRACK RE-PHASE 2026-08-25: was 385.94 (PHASE-ALIGN 2026-08-21, itself from 390.04)
+## [2026-08-25 evening] 386.04 -> 387.24.  ROW-RAIL PHASE.  This supersedes the
+## track re-phase above, which was aimed at the wrong ceiling.
+##
+## flash_cache_data obstructs its cut layers over the whole footprint, so a pin
+## leaves planar and the first layer change must sit OUTSIDE the edge.  What it
+## has to fit under is the standard-cell PG rail, and those sit on an ABSOLUTE
+## grid independent of any macro: centres at y = 205.0 + 1.8k, height 0.33.
+## So for a cut-obstructed macro the escape corridor is decided by one number,
+##      f = (pin_edge - 205.0) mod 1.8      corridor = 1.635 - f
+## and a VIA3 escape needs 0.330 (cut-to-cut 0.130 + cut 0.100 + 0.100).
+##
+## At 386.04 the pin edge was 422.400, f = 1.400, corridor 0.235 -- infeasible.
+## MEASURED: the 1-cut M3 pad top lands 0.015 INSIDE the rail plate.  That is the
+## whole defect, and it is why NanoRoute could not escape bit 123 no matter what
+## it was told: eleven router settings and blockages were tried and the pocket
+## was simply infeasible.  Note the earlier +0.100 neither caused nor cured it --
+## the binding track was already illegal at 385.94.
+##
+## Of the eight flash_cache macros this is the ONLY one in a bad phase, which is
+## why bit 123 was the only failure.  Seven more pins on this macro sit under the
+## same rail and are one stripe-phase away from it.
+##
+## +1.20 gives f = 0.800, corridor 0.835 -- EXACTLY the phase of way0 word_1,
+## whose 128 pins route clean in this same database.  An empirical control, not a
+## model.  Chosen over -0.20 because that leaves one legal track reachable only
+## with a 1-cut, while this macro's canonical escape is a 2-cut (measured on
+## Q[2], CEN and D[18]).  +1.20 also widens the design's narrowest channel,
+## 5.64 -> 6.84 um.
+place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 387.2400000000 MX  ;## ROW-RAIL PHASE 2026-08-25: was 386.04 (and 385.94, and 390.04)
 place_macro {*way0_cache_ram_data_ram_0_word_0_i} 702.4000000000 300.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_data_ram_0_word_1_i} 718.8000000000 344.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 718.8 345.04
 place_macro {*way1_cache_ram_data_ram_0_word_2_i} 634.2000000000 527.2000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 633.6 527.2
