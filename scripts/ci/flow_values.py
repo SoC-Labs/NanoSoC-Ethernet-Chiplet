@@ -1073,6 +1073,11 @@ def extract_all(root, run_dir, toolkit_dir=None, head_sha=None):
             got["stage"] = stage
             per_stage.append(got)
 
+    hook = check_post_stage_hook(root, run_dir)
+    doc["sections"]["flow"] = hook
+    doc["values"].update(hook["values"])
+    doc["values"].update(check_report_freshness(run_dir, doc["values"]))
+
     doc["coherence"]["revision_identity"] = check_revision_identity(
         root, toolkit_dir, per_stage)
     doc["coherence"]["rom_dates"] = check_rom_dates(rom["values"])
@@ -1308,6 +1313,17 @@ def summarise(doc):
         flags.append({"severity": "high",
                       "what": "LVS: the scan's coverage control never fired",
                       "detail": (cov.get("why") or "")[:300]})
+
+    hk = vals.get("flow.post_stage_hook")
+    if hk and hk.get("value") is None:
+        flags.append({"severity": "high",
+                      "what": "this run's flow CANNOT fire its post-stage targets",
+                      "detail": (hk.get("why") or "")[:340]})
+    st = vals.get("flow.previous_report_stale")
+    if st and st.get("value") is True:
+        flags.append({"severity": "medium",
+                      "what": "a STALE report was sitting in this run's reports/",
+                      "detail": st.get("note") or ""})
 
     ps = vals.get("erc.imec.pad_shorts")
     if ps and ps.get("value"):
@@ -2463,4 +2479,109 @@ def extract_rom_compile(root, run_dir):
     v["rom_compile.failed_total"] = measured(
         total_failed, "logs/gen_*.log", g, "generators",
         "generators that reported failure, over %d transcript(s)" % total_logs)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CAN THIS RUN'S FLOW EVEN FIRE ITS POST-STAGE TARGETS?
+#
+# `design.mk` sets ROUTE_POST_TARGETS = evidence run-report-auto, and the
+# toolkit runs them via `$(call post_stage_targets,route,...)` at the end of
+# the route recipe. A run that PINS the toolkit uses its own copy of
+# mk/flow.mk, and if that copy predates the mechanism THE VARIABLE IS READ BY
+# NOTHING: make expands it, nothing consumes it, and no error is produced.
+#
+# MEASURED 2026-08-25 on gdsrun-20260825-resynth. Its pinned copy is 1162 lines
+# against the live 1205 and contains no `post_stage_targets` at all. Route
+# finished at 18:23 and neither the evidence bundle nor the run report was
+# regenerated; the run_report files in that tree are from 13:18, written by
+# hand. Both mechanisms were believed to be automatic and neither had run.
+#
+# This is the failure the whole report exists to make visible: not a check that
+# failed, but a check that was never invoked, leaving artefacts on disk from an
+# earlier moment that look exactly like fresh ones. The only tell is a mtime
+# older than the stage that was supposed to trigger it.
+# ---------------------------------------------------------------------------
+
+def check_post_stage_hook(root, run_dir):
+    g = "flow"
+    out = {"pinned": False, "state": None, "detail": "", "values": {}}
+    v = out["values"]
+    if not run_dir:
+        return out
+    pinned_mk = os.path.join(run_dir, "pinned", "asic-toolkit", "mk", "flow.mk")
+    live_mk = os.path.join(root, "ASIC", "asic-toolkit", "mk", "flow.mk")
+
+    def has_hook(p):
+        try:
+            return "post_stage_targets" in open(p, errors="replace").read()
+        except OSError:
+            return None
+
+    if not os.path.isfile(pinned_mk):
+        live = has_hook(live_mk)
+        out.update(pinned=False, state="live-toolkit")
+        v["flow.post_stage_hook"] = measured(
+            "available" if live else "absent", "ASIC/asic-toolkit/mk/flow.mk", g,
+            "", "this run uses the LIVE toolkit, whose flow.mk %s the hook"
+                % ("implements" if live else "does NOT implement"))
+        return out
+
+    out["pinned"] = True
+    pin = has_hook(pinned_mk)
+    if pin:
+        out.update(state="pinned-with-hook")
+        v["flow.post_stage_hook"] = measured(
+            "available", "pinned/asic-toolkit/mk/flow.mk", g, "",
+            "this run pins the toolkit and the pinned copy implements the hook")
+        return out
+
+    out.update(state="pinned-without-hook",
+               detail="the pinned toolkit cannot fire post-stage targets")
+    v["flow.post_stage_hook"] = absent(
+        "this run PINS the toolkit and its copy of mk/flow.mk contains no "
+        "`post_stage_targets`. ROUTE_POST_TARGETS is therefore read by nothing: "
+        "make expands it, nothing consumes it, and NO ERROR IS PRODUCED. Every "
+        "post-route target the project declares -- the evidence bundle and this "
+        "report among them -- silently never runs for this run. Any such "
+        "artefact in its reports/ is from an earlier moment and was written by "
+        "hand.", g, [pinned_mk])
+    return out
+
+
+def check_report_freshness(run_dir, values):
+    """Is THIS report older than the stage that should have regenerated it?
+
+    A stale report is the shape of a fresh one. The only difference on disk is
+    an mtime, so it is compared here rather than left to a reader."""
+    g = "flow"
+    out = {}
+    if not run_dir:
+        return out
+    rj = os.path.join(run_dir, "reports", "run_report.json")
+    if not os.path.isfile(rj):
+        return out
+    r_m = os.path.getmtime(rj)
+    latest, latest_stage = None, None
+    for stage in ("route", "cts", "place", "syn"):
+        mp = os.path.join(run_dir, "reports", "%s_manifest.txt" % stage)
+        if os.path.isfile(mp):
+            m = os.path.getmtime(mp)
+            if latest is None or m > latest:
+                latest, latest_stage = m, stage
+    if latest is None:
+        return out
+    if r_m < latest - 60:
+        out["flow.previous_report_stale"] = measured(
+            True, "reports/run_report.json", g, "",
+            "the report already in this run's reports/ predates the %s manifest "
+            "by %d minute(s), so it describes an earlier state of this run. If "
+            "it was meant to regenerate automatically, the post-stage hook did "
+            "not fire -- see flow.post_stage_hook."
+            % (latest_stage, int((latest - r_m) / 60)))
+    else:
+        out["flow.previous_report_stale"] = measured(
+            False, "reports/run_report.json", g, "",
+            "the report already present is at least as new as the %s manifest"
+            % latest_stage)
     return out
