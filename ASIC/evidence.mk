@@ -8,6 +8,20 @@
 #     make evidence-selftest            prove the gates and the five rules
 #     make evidence-vars                what this will do, without doing it
 #
+# and, acting on the STORE rather than on a build:
+#
+#     make store-backup                 pull a snapshot to /research
+#     make store-backup-check           prove the latest snapshot restorable
+#     make store-retention              what retention WOULD delete (dry run)
+#     make store-retention-selftest     prove retention in both directions
+#     make store-builds                 which runs the store knows about
+#     make store-backfill               streams carrying no identity property
+#     make store-token                  what credential is in use, over what
+#
+# `--destroy` is deliberately NOT reachable from make. Everything that deletes
+# is a hand-typed script invocation, so no `make -k`, tab-completion slip or
+# recursive sub-make can trigger it. See docs/plans/ARTIFACTORY_OPERATIONS.md.
+#
 # Included from ASIC/eth-chiplet/Makefile AFTER the toolkit's mk/flow.mk, and
 # hooked into the flow by design.mk's
 #
@@ -75,7 +89,9 @@ EVIDENCE_PUBLISH ?=
 EVIDENCE_FORCE ?=
 
 .PHONY: evidence evidence-collect evidence-render evidence-publish \
-        evidence-selftest evidence-vars
+        evidence-selftest evidence-vars \
+        store-backup store-backup-check store-retention store-retention-selftest \
+        store-builds store-backfill store-token
 
 ## Run every gate, bundle the evidence, emit one report. ~7-10 min.
 ## Exit 5 means the report is REAL and does not say signed off - that is a
@@ -105,6 +121,41 @@ evidence-publish:
 	python3 $(EVIDENCE_FLOW) publish --spec $(EVIDENCE_SPEC) --out $(EVIDENCE_OUT) \
 	    $(if $(EVIDENCE_FORCE),--force,)
 
+#-----------------------------------------------------------------------------
+# The artifact store. Separate targets from `evidence`, because these act on
+# the STORE rather than on a build -- and two of them delete things.
+#-----------------------------------------------------------------------------
+
+## Pull a restorable snapshot of the store to /research. ~2 min.
+store-backup:
+	$(REPO_ROOT)/scripts/ci/artifactory_backup.sh
+
+## Prove the latest snapshot is intact, loadable, keyed and holds real bytes.
+store-backup-check:
+	$(REPO_ROOT)/scripts/ci/artifactory_restore_check.sh
+
+## What retention WOULD delete. Dry run: this target can never remove anything.
+## To actually delete, run the script with --destroy by hand -- deliberately
+## not a make target, so no `make -k` or tab-completion slip can trigger it.
+store-retention:
+	python3 $(REPO_ROOT)/scripts/ci/artifactory_retention.py
+
+## Prove retention both directions in a scratch tag it cannot escape.
+store-retention-selftest:
+	python3 $(REPO_ROOT)/scripts/ci/artifactory_retention.py --selftest
+
+## Which runs the store knows about, as build records.
+store-builds:
+	@python3 $(REPO_ROOT)/scripts/ci/artifactory.py builds
+
+## Report streams carrying no identity property. Add --apply by hand to fix.
+store-backfill:
+	python3 $(REPO_ROOT)/scripts/ci/artifactory_backfill_identity.py
+
+## What credential the store is being reached with, and over what transport.
+store-token:
+	@$(REPO_ROOT)/scripts/ci/artifactory_token.sh --show
+
 ## Prove the gates and the five report rules, in BOTH directions. Costs no
 ## licence, no PDK and no network except the store selftest. Run this first.
 evidence-selftest:
@@ -117,6 +168,8 @@ evidence-selftest:
 	    echo "NOT-MEASURED: scripts/ci/lvs_missing_connection.py is absent, so"; \
 	    echo "  the LVS gate's proof did not run. That is a gap, not a pass."; \
 	 fi
+	python3 $(REPO_ROOT)/scripts/ci/gds_canonical_hash.py --selftest
+	python3 $(REPO_ROOT)/scripts/ci/artifactory_retention.py --selftest
 	cd $(REPO_ROOT)/ASIC/asic-toolkit && tclsh test/run-tests.tcl common/router_message_gate.test
 
 ## What the targets above will do, without doing any of it.
