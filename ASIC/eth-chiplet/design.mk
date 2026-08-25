@@ -686,6 +686,32 @@ signoff-report:
 	python3 "$(SIGNOFF_REPORT_SCRIPT)" --run "$(RUN_DIR)" --json
 
 ## ---------------------------------------------------------------------------
+## POST-ROUTE OPTIMISATION MODE -- STATED HERE BECAUSE THE DEFAULT IS NOT WHAT
+## THIS DESIGN NEEDS, AND NOTHING ELSE RECORDED IT.
+##
+## The toolkit defaults ROUTE_OPT_MODE to `hold` (flow/innovus/4_route.tcl:116,
+## unchanged since the toolkit's first commit). On THIS design that means route
+## never runs post-route setup optimisation, and the design does not close setup
+## without it. MEASURED 2026-08-25 across all 14 runs that left a route
+## manifest, with no exceptions in either direction:
+##
+##     opt_mode=hold              setup FEP 1166 1193 1429 1444 1496 1789 1791
+##     opt_mode=setup_then_hold   setup FEP    0    0    0    0    0    3  101
+##
+## Until now the good runs got `setup_then_hold` FROM THE COMMAND LINE, by hand.
+## It was never written down: it is not in design.mk, not in common.mk, and --
+## the part that actually bit -- NOT IN A RUN'S OWN pins.mk, which is what
+## LAUNCH.sh and RESUME.sh rebuild their `make` arguments from. So a run started
+## by hand closed setup and the same run RESUMED by script silently did not.
+## gdsrun-20260825-resynth is exactly that: 871 failing endpoints, WNS -0.577,
+## from a route that was never asked to fix setup.
+##
+## Setting it here makes the intent survive the transport. Override on the
+## command line for a deliberate hold-only ECO pass.
+ROUTE_OPT_MODE ?= setup_then_hold
+export ROUTE_OPT_MODE
+
+## ---------------------------------------------------------------------------
 ## RUN REPORT -- every stage's VALUES, in four renderings.
 ##
 ## FOUR DOCUMENTS DESCRIBE A RUN AND NONE OF THEM IS THIS ONE:

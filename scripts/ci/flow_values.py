@@ -332,6 +332,7 @@ _PNR_KEYS = [
     ("filler_insts", "cells", int), ("antenna_diodes", "cells", int),
     ("filler_gaps", "gaps", int), ("bond_pads", "pads", int),
     ("metal_fill", "", None), ("metal_fill_owner", "", None),
+    ("opt_mode", "", None), ("ROUTE_OPT_MODE", "", None),
     ("metal_fill_shapes", "shapes", int), ("metal_fill_area", "um2", float),
     ("top_routing_layer", "", None), ("timing_analysis_type", "", None),
     ("gds_bytes", "bytes", int), ("antenna_clean", "", None),
@@ -1248,6 +1249,33 @@ def summarise(doc):
         flags.append({"severity": "high",
                       "what": "CDC: %s unsynchronised crossing(s)" % sg["value"],
                       "detail": sg.get("note") or ""})
+
+    # HOLD-ONLY ROUTE IS THE STRONGEST PREDICTOR IN THIS TREE.
+    #
+    # Measured 2026-08-25 over all 14 runs carrying a route manifest, with no
+    # exception either way:
+    #
+    #     opt_mode=hold            setup FEP 1166 1193 1429 1444 1496 1789 1791
+    #     opt_mode=setup_then_hold setup FEP    0    0    0    0    0    3  101
+    #
+    # A route that was never asked to fix setup will not have fixed it, and the
+    # resulting FEP count reads exactly like a design that cannot close timing.
+    # The two are worth telling apart before anyone re-synthesises in response.
+    om = vals.get("route.opt_mode")
+    fep = vals.get("route.setup_wns_tns_fep")
+    if om and str(om.get("value")) == "hold":
+        detail = ("post-route setup optimisation was NEVER RUN. Every run in "
+                  "this tree with opt_mode=hold has 1166-1791 failing setup "
+                  "endpoints and every run with setup_then_hold has 0-101, so "
+                  "a large setup FEP here is the missing step, not the design. "
+                  "Re-run route with ROUTE_OPT_MODE=setup_then_hold before "
+                  "concluding anything about timing")
+        if fep and fep.get("value"):
+            detail += " (this run reports %s)" % fep["value"]
+        flags.append({"severity": "high",
+                      "what": "route ran HOLD-ONLY optimisation "
+                              "(ROUTE_OPT_MODE=hold)",
+                      "detail": detail})
 
     ft = vals.get("rom_compile.failed_total")
     if ft and ft.get("value"):
