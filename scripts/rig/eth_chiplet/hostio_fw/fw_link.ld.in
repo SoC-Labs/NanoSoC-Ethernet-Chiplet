@@ -1,0 +1,64 @@
+/*-----------------------------------------------------------------------------
+ * hostio_fw -- linker script template.
+ *
+ * Preprocessed by the Makefile with -DFW_LOAD_BASE / -DFW_LOAD_SIZE, so the
+ * CPU0 (32 KB) and CPU1 (16 KB) images share one script and the addresses come
+ * from the build rather than from a second copy of the memory map.
+ *
+ * LOAD ADDRESS == RUN ADDRESS.  IMEM is SRAM and the loader uploads the whole
+ * image into it, so there is no separate load region and no .data copy: .data
+ * sits inside .text and is already initialised when the first instruction
+ * runs.  Only .bss needs zeroing, and only .bss is left out of the binary.
+ *
+ * Copyright 2026, SoC Labs (www.soclabs.org)
+ *---------------------------------------------------------------------------*/
+
+MEMORY
+{
+  IMEM (rwx) : ORIGIN = FW_LOAD_BASE, LENGTH = FW_LOAD_SIZE
+}
+
+ENTRY(FW_ENTRY)
+
+SECTIONS
+{
+  .text ORIGIN(IMEM) :
+  {
+    KEEP(*(.fw_vectors))
+    *(.text*)
+    *(.rodata*)
+    . = ALIGN(4);
+    *(.data*)
+    . = ALIGN(4);
+    __image_end__ = .;
+  } > IMEM
+
+  .bss (NOLOAD) :
+  {
+    . = ALIGN(4);
+    __bss_start__ = .;
+    *(.bss*)
+    *(COMMON)
+    . = ALIGN(8);
+    __bss_end__ = .;
+  } > IMEM
+
+  __StackTop   = ORIGIN(IMEM) + LENGTH(IMEM);
+  __StackLimit = __StackTop - FW_STACK_BYTES;
+  PROVIDE(__stack = __StackTop);
+
+  /DISCARD/ :
+  {
+    *(.ARM.exidx*)
+    *(.ARM.extab*)
+    *(.comment)
+    *(.note*)
+  }
+
+  /* The vector table must be the first thing in the image: the boot ROM reads
+   * SP and the reset PC from offset 0 and 4 of exactly this address. */
+  ASSERT(ADDR(.text) == ORIGIN(IMEM),
+         "the vector table is not at the image base")
+  ASSERT(__StackLimit >= __bss_end__,
+         "image + bss leaves no room for the stack in IMEM")
+}
