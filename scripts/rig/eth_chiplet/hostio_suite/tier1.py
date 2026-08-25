@@ -202,11 +202,35 @@ _TIER1_OTHERS = [
       purpose="Boot-gate register 0x29000000 — the boot state of the chip, read FIRST "
               "so every later Tier-1 reading is interpreted against a known "
               "CPU0-loose/CPU0-held state. RED when: the read times out; the read "
-              "reports '!' (the 0x29 decode arm is dead); or bits [31:4] are non-zero, "
+              "reports '!' (the 0x29 decode arm is dead); bits [31:4] are non-zero, "
               "which is impossible because HRDATA={28'b0, remap_q} "
               "(chip_core_remap_ctrl.v:121) — a non-zero top means something other than "
-              "the boot gate answered. NOT a write test: HZ-4 (write-1-set, irreversible "
-              "without a power cycle) applies to writes only, and this test only reads. "
+              "the boot gate answered; OR the register reads 0x00000000, which is the "
+              "ANOMALY and not the healthy state (see below). NOT a write test: HZ-4 "
+              "(write-1-set, irreversible without a power cycle) applies to writes "
+              "only, and this test only reads. "
+              "THE HEALTHY VALUE IS NON-ZERO ON BOTH TARGETS — the plan says the "
+              "opposite and the plan is WRONG. cpu1_bootgate is tied 1'b1 "
+              "(build_soc/rtl/nanosoc_multicore_soc.sv:1387-88), so CPU1 free-runs from "
+              "power-on and executes cc_rom, and cc_rom OPENS THE CPU0 GATE ON EVERY "
+              "PATH. The write is synthesised rather than taken from a literal pool — "
+              "'movs r3,#164 ; movs r2,#4 ; lsls r3,r3,#22 ; str r2,[r3]', i.e. "
+              "0xA4 << 22 = 0x29000000, value 4 — which is why grepping the ROM words "
+              "for 0x29000000 finds nothing. It appears at cc_rom byte offsets 0x4F4 "
+              "and 0x528, and 0x528 is the 'every boot candidate failed' path, so even "
+              "a total boot failure releases CPU0 and halts. THERE IS NO PATH THAT "
+              "LEAVES THE GATE CLOSED. Verified from GDS-extracted ROM bits, unanimous "
+              "across all 23 build pins including rzG and gdsrun-20260825-resynth; "
+              "cc_rom carries no sim-divergence waiver and is identical on FPGA and "
+              "ASIC. So a healthy fresh ASIC die reads 0x00000004 (CPU1 found no boot "
+              "candidate — unprovisioned flash, the expected first-silicon case) or "
+              "0x00000005 (CPU1 loaded and booted an app, bit0 also mapping CPU1's "
+              "address 0 to IMEM). The FPGA's measured 0x00000004 with an empty IMEM is "
+              "the SAME mechanism working correctly — it is cc_rom, not a stray debug "
+              "write, and plan §5.5's 'investigate before Phase F' is now ANSWERED "
+              "rather than open. A 0x00000000 reading means cc_rom did not reach either "
+              "path, which is a real anomaly and makes every reading below it "
+              "uninterpretable — hence the hard red and the VOID cascade. "
               "WHY IT GATES THE TIER, where plan §3 B1 calls it 'not a gate': this "
               "runner orders tests only on explicit gates/needs edges, and B1 is "
               "explicit that 0x29000000 is read BEFORE ANYTHING ELSE and recorded first "
@@ -231,17 +255,38 @@ def hio_106(adp, rec):
     rec.record("boot_gate_bit3", int(bool(v & 8)))
     rec.record("bus_quiescent_expected", int(not cpu0_released))
 
-    if cpu0_released:
-        rec.note("CPU0 bootgate bit2 is SET: CPU0 is released and contending for the "
-                 "bus and mutating memory. Every Tier-1 value below was read from a "
-                 "LIVE system, not a quiescent one — RAM-backed readings (HIO-107, "
-                 "HIO-114 RAM rows, HIO-118) may move between probes. Plan §5.5 saw "
-                 "exactly this on the FPGA (0x29000000 -> 0x00000004) and flags it as "
-                 "an open question to resolve before Phase F, because HIO-502 may "
-                 "already be a no-op here.")
+    # THE ONLY ASSERTION ABOUT THE VALUE IS THE NEGATIVE ONE. cc_rom opens the gate on
+    # every path on both targets, so zero is the state that needs explaining.
+    rec.check("boot gate is NOT 0x00000000 (cc_rom opens the CPU0 gate on EVERY path, "
+              "on FPGA and ASIC alike — a closed gate means cc_rom did not get there)",
+              v != 0x00000000, got=_h(v))
+
+    outcome = {0x00000004: "CPU1 found NO boot candidate (unprovisioned flash) — the "
+                           "expected fresh-silicon state",
+               0x00000005: "CPU1 loaded and booted an app (bit0 maps CPU1 address 0 "
+                           "to IMEM)",
+               0x00000000: "ANOMALY — cc_rom reached neither the success path (0x4F4) "
+                           "nor the all-candidates-failed path (0x528)",
+               }.get(v, "unrecognised encoding — record it and decode against cc_rom")
+    rec.record("cpu1_boot_outcome", outcome)
+
+    if v == 0x00000000:
+        rec.note("BOOT GATE READS 0x00000000 — this is the ANOMALY, not a cold-die "
+                 "baseline. cpu1_bootgate is tied 1'b1, so CPU1 cannot be held in "
+                 "reset, and cc_rom writes 4 to this register on both of its exit "
+                 "paths. A zero therefore means CPU1 never reached either exit: "
+                 "suspect the CPU1 clock/PRMU, cc_rom integrity, or a CPU1 hang before "
+                 "byte offset 0x4F4. Everything below this test is VOID, which is "
+                 "correct — with CPU1's boot outcome unknown, the state of the bus and "
+                 "of every RAM is unknown too.")
     else:
-        rec.note("CPU0 bootgate bit2 clear: cold die, CPU0 held in reset (plan §1.6). "
-                 "The bus is quiescent; only CPU1 is running from its own boot ROM.")
+        rec.note("Boot gate = %s: %s. CPU0 IS RELEASED and is contending for the bus "
+                 "and mutating memory, so every Tier-1 value below was read from a "
+                 "LIVE system — RAM-backed readings (HIO-107, the census RAM rows, "
+                 "HIO-118) may move between probes. This is the NORMAL condition on "
+                 "both targets, not a fault: there is no configuration of this SoC in "
+                 "which a running die presents a quiescent bus to HOSTIO."
+                 % (_h(v), outcome))
 
 
 # ===========================================================================
@@ -430,9 +475,12 @@ _CENSUS = [
 _D_ZERO_OK = {
     0x00000000: "plan §5.5 MEASURED all-zeros here: with REMAP=1 this window is IMEM, "
                 "and a cold IMEM is zeros. HIO-116 is what resolves the remap state.",
-    0x18000000: "plan §1.6: on a cold die CPU0 is held in reset, so eth DMEM is "
-                "uninitialised. Zero here is the cold-die reading. HIO-107 owns the "
-                "interpretation of this word and asserts the bit2<->DMEM agreement.",
+    0x18000000: "eth DMEM word 0 is the CPU0 image's .data[0]. On the ASIC image "
+                "(stage0_bootrom) that initialiser is impure_data — ALL ZERO — so zero "
+                "is the healthy reading there; on the FPGA image (smoke_remap) it is "
+                "0x05F5E100. Either way the value belongs to HIO-107, not to a decode "
+                "gate. NOTE the earlier reason given here — 'on a cold die CPU0 is held "
+                "in reset' — is REFUTED: cc_rom releases CPU0 on every path.",
     0x1FFFFFF0: "top of the eth DMEM window, above the 0x3C00 initial MSP — never "
                 "written by stage-0 and uninitialised on a cold die. Its purpose in "
                 "the census is the window-boundary decode, which is still asserted.",
@@ -590,7 +638,11 @@ def hio_116(adp, rec):
                 "1 (address 0 is IMEM)" if state == 1 else "INDETERMINATE"))
 
 
-_ETH_ROM_ANCHORS = {  # B-class: build/.../stage0_bootrom/stage0_bootrom.hex
+# CONFIRMED-RTL (promoted from B-class 2026-08-25 by an independent audit): these
+# seven anchors match BOTH the instantiated FPGA RTL and the ASIC eth_rom_via macro
+# image, so they are asserted, not merely recorded. They sit at words 0..15, which is
+# ahead of word 55 where the two eth ROM images first diverge.
+_ETH_ROM_ANCHORS = {
     0: 0x18003C00, 1: 0x08000189, 2: 0x080001CD, 3: 0x080001CF,
     11: 0x080001D7, 14: 0x080001DB, 15: 0x080001DD,
 }
@@ -605,10 +657,12 @@ _ETH_ROM_ANCHORS = {  # B-class: build/.../stage0_bootrom/stage0_bootrom.hex
               "reset vector) must have bit0=1 (Thumb) and lie inside "
               "0x08000000-0x080007FF (the 2 KB ROM). A garbage or unprogrammed ROM "
               "fails those regardless of which firmware image the die carries. The "
-              "remaining anchors are B-class (they come from a build artefact, not from "
-              "silicon), so a mismatch is RECORDED and flagged rather than asserted — "
-              "asserting a build constant would red a good die that carries a different "
-              "ROM image, which is the most expensive kind of false red.")
+              "remaining six anchors are now CONFIRMED-RTL — an independent audit "
+              "matched them against both the instantiated FPGA RTL and the ASIC "
+              "eth_rom_via macro image — so they are ASSERTED, not merely recorded. "
+              "They lie at words 0..15, ahead of word 55 where the FPGA and ASIC eth "
+              "ROM images first diverge, which is why one set of anchors is valid on "
+              "both targets even though 172 of the 320 words differ.")
 def hio_101(adp, rec):
     words = []
     for i in range(16):
@@ -632,19 +686,20 @@ def hio_101(adp, rec):
     else:
         rec.check("eth ROM[1] readable", False, got="no value")
 
+    for i in sorted(_ETH_ROM_ANCHORS):
+        _eq(rec, "eth ROM[%d] (CONFIRMED-RTL, both targets)" % i,
+            words[i], _ETH_ROM_ANCHORS[i])
     mismatch = {i: (_h(words[i]), _h(w)) for i, w in _ETH_ROM_ANCHORS.items()
                 if words[i] != w}
     rec.record("eth_bootrom_anchor_mismatch", {str(k): v for k, v in mismatch.items()})
     if mismatch:
-        rec.note("eth boot ROM differs from the repo build artefact at indices %s "
-                 "(got, expected-from-build). This is NOT asserted: the anchors are "
-                 "B-class. It means the die carries a different ROM image from the one "
-                 "in this checkout — a build-provenance finding to resolve against the "
-                 "image actually taped out for this die, and a hard red for the die "
-                 "ONLY once that golden image is pinned."
-                 % sorted(mismatch))
+        rec.note("eth boot ROM differs at word indices %s (got, expected). These "
+                 "anchors are CONFIRMED-RTL against both the FPGA RTL and the ASIC "
+                 "eth_rom_via macro image, so a mismatch is a HARD RED for the die: "
+                 "either the ROM macro is not the one that was taped out, or the vector "
+                 "table is corrupt." % sorted(mismatch))
     else:
-        rec.note("eth boot ROM matches every anchor in the repo build artefact.")
+        rec.note("eth boot ROM matches all seven CONFIRMED-RTL anchors.")
     # Structural, recorded not asserted: NMI/HardFault vectors should also be Thumb
     # addresses inside the ROM, but a minimal image may legitimately leave them 0.
     rec.record("eth_bootrom_vec23_thumb_in_rom",
@@ -695,57 +750,133 @@ def hio_102(adp, rec):
                  "is the assertion here, and it is build-independent." % sorted(mism))
 
 
+# ---------------------------------------------------------------------------
+# Which program the die's eth boot ROM carries. THE TWO TARGETS DIFFER.
+#
+#   "smoke_remap"     FPGA. Links SystemCoreClock; its .data[0] initialiser is
+#                     0x05F5E100 (= 100000000 = the generated SYS_CLK_FREQ_HZ), so
+#                     eth DMEM word 0 IS a positive witness that CPU0 executed.
+#   "stage0_bootrom"  ASIC. A DIFFERENT PROGRAM -- 172 of 320 words differ, first
+#                     difference at word 55. Its .data[0] is impure_data (all-zero
+#                     init) and it does not link SystemCoreClock at all, so
+#                     0x05F5E100 never appears and NO witness exists in this word.
+#   None              undeclared. Only the target-independent half is asserted.
+#
+# The divergence is known and formally waived upstream: eth.json carries an
+# allow_sim_divergence allowlist entry and is the single WARN in a 12-pass/1-warn
+# result. cc_rom has no waiver and passes 13/0, i.e. CPU1's ROM is identical on both
+# targets -- which is why HIO-106's expectation is target-independent and this one is
+# not. Set this once per rig and HIO-107 recovers its full strength.
+ETH_ROM_IMAGE = None
+
+CPU0_RAN_MARKER = 0x05F5E100        # SystemCoreClock initialiser, FPGA image only
+
+
 @test("HIO-107", tier=1, control=False, hazard=None, needs=["HIO-106"],
-      purpose="Boot-gate <-> CPU0-alive consistency: a cross-check between two "
-              "INDEPENDENT observations, so it fails if either one lies. If "
-              "0x29000000 bit2 == 1, CPU0 was released and ran its stage-0 "
-              "scatter-load, so eth DMEM word 0 MUST be 0x05F5E100 (= 100000000 = the "
-              "generated SYS_CLK_FREQ_HZ, i.e. the SystemCoreClock initialiser). If "
-              "bit2 == 0, CPU0 has never run, so that word must NOT be the initialiser. "
-              "RED when the two disagree — bit2=1 with DMEM word 0 unwritten means CPU0 "
-              "was released but never executed, a distinct and diagnosable failure; "
-              "bit2=0 with the initialiser present means something else wrote DMEM or "
-              "the boot gate is not the live gate.")
+      purpose="Boot-gate <-> CPU0-alive consistency. The half that is TRUE ON BOTH "
+              "TARGETS is asserted unconditionally; the half that is FPGA-only is "
+              "asserted only when the eth ROM image is declared. "
+              "TARGET-INDEPENDENT AND ALWAYS ASSERTED: (a) both gate reads have "
+              "[31:4] == 0; (b) NO GATE BIT IS EVER CLEARED between the two reads that "
+              "bracket the DMEM probe — remap_q is write-1-set and clears only on "
+              "PORESETn (chip_core_remap_ctrl.v:115,117), so a bit going away means "
+              "this is not the live gate or the die reset mid-test; (c) THE ONE-WAY "
+              "IMPLICATION 'marker present => gate open': if eth DMEM word 0 reads "
+              "0x05F5E100 then some CPU0 image definitely executed a scatter-load, so "
+              "bit2 MUST be set. That direction can never be wrong on either target, "
+              "and it reds on the genuine contradiction of CPU0 having executed while "
+              "the gate says it was never released. "
+              "WHY THE CONVERSE IS NOT ASSERTED BY DEFAULT: the old test read "
+              "'bit2 == 1 AND word 0 != 0x05F5E100' as 'released but never executed'. "
+              "On ASIC that combination is the HEALTHY state, because the ASIC eth ROM "
+              "is a different program (stage0_bootrom, not the FPGA's smoke_remap; 172 "
+              "of 320 words differ, first at word 55) whose .data[0] is impure_data — "
+              "all-zero init — and which does not link SystemCoreClock at all. So the "
+              "0x05F5E100 anchor went RED on a healthy ASIC die when the gate was open, "
+              "and VACUOUSLY GREEN when it was shut: the false-red and the false-green "
+              "in one test. Since HIO-106 now establishes that cc_rom opens the gate on "
+              "EVERY path, 'gate open' carries no information about CPU0 on its own and "
+              "the converse is only sound where a witness exists. Declaring "
+              "ETH_ROM_IMAGE = 'smoke_remap' restores it in full. "
+              "ON ASIC THE WITNESS IS STRUCTURALLY ABSENT and this test says so rather "
+              "than inventing one — closing that hole needs a Tier-5 firmware witness "
+              "or an image whose .data[0] is non-zero, not a wider constant here.")
 def hio_107(adp, rec):
-    SYS_CLK_INIT = 0x05F5E100
-    gate = _rd(adp, rec, 0x29000000, "boot gate")
+    rec.record("eth_rom_image_declared", ETH_ROM_IMAGE)
+
+    gate_a = _rd(adp, rec, 0x29000000, "boot gate (before)")
     dmem0 = _rd(adp, rec, 0x18000000, "eth DMEM word 0")
-    rec.record("boot_gate_word_reread", gate)
+    gate_b = _rd(adp, rec, 0x29000000, "boot gate (after)")
+    rec.record("boot_gate_word_reread", gate_a)
+    rec.record("boot_gate_word_after_dmem", gate_b)
     rec.record("eth_dmem_word0", dmem0)
-    if gate is None or dmem0 is None:
-        rec.check("both observations available", False,
-                  got="gate=%s dmem0=%s" % (_h(gate), _h(dmem0)))
+
+    if gate_a is None or gate_b is None or dmem0 is None:
+        rec.check("all three observations available", False,
+                  got="gate_a=%s dmem0=%s gate_b=%s"
+                      % (_h(gate_a), _h(dmem0), _h(gate_b)))
         return
 
-    released = bool(gate & (1 << 2))
-    ran = (dmem0 == SYS_CLK_INIT)
-    rec.record("cpu0_released", int(released))
-    rec.record("cpu0_stage0_ran", int(ran))
+    # (a) structural, both targets
+    for label, g in (("before", gate_a), ("after", gate_b)):
+        rec.check("boot gate (%s) [31:4] == 0" % label, _field(g, 31, 4) == 0, got=_h(g))
 
-    if released:
-        rec.check("bit2=1 => eth DMEM word 0 == 0x05F5E100 (SystemCoreClock init)",
-                  ran, got=_h(dmem0))
-        if ran:
-            rec.note("CPU0 was released AND ran its ROM stage-0. Plan §5.5's FPGA state "
-                     "is exactly this, with an empty IMEM: CPU0 branched into blank "
-                     "memory after stage-0.")
-        else:
-            rec.note("INCONSISTENT: the boot gate says CPU0 is released but eth DMEM "
-                     "word 0 is %s, not the SystemCoreClock initialiser. CPU0 was "
-                     "released and never executed — a distinct failure, not a test bug. "
-                     "Plan §5.5 also warns 0x29000000 may be an alias rather than the "
-                     "live gate; resolve before Phase F." % _h(dmem0))
+    # (b) write-1-set: bits can appear, never vanish. Both targets.
+    rec.check("no boot-gate bit was CLEARED across the DMEM read "
+              "(remap_q is write-1-set, clears only on PORESETn)",
+              (gate_a & ~gate_b) == 0,
+              got="before=%s after=%s" % (_h(gate_a), _h(gate_b)))
+    if gate_b != gate_a:
+        rec.note("The boot gate CHANGED during this test: %s -> %s. Bits only ever set, "
+                 "so this is CPU1 still executing cc_rom while the suite ran. Not a "
+                 "failure, but it means the die was still booting — re-read HIO-106 and "
+                 "prefer the later value for the record."
+                 % (_h(gate_a), _h(gate_b)))
+
+    released = bool(gate_b & (1 << 2))
+    witness = (dmem0 == CPU0_RAN_MARKER)
+    rec.record("cpu0_released", int(released))
+    rec.record("cpu0_stage0_witness_present", int(witness))
+
+    # (c) the one-way implication -- sound on BOTH targets.
+    rec.check("witness present => boot gate bit2 is set "
+              "(CPU0 cannot have scatter-loaded while still held in reset)",
+              (not witness) or released,
+              got="witness=%s gate=%s" % (witness, _h(gate_b)))
+
+    # ---- the FPGA-only converse, gated on a declared image --------------------
+    if ETH_ROM_IMAGE == "smoke_remap":
+        rec.record("hio107_crosscheck_strength", "full (bidirectional)")
+        rec.check("FPGA image declared: gate bit2 == 1 => eth DMEM word 0 == "
+                  "0x05F5E100 (SystemCoreClock initialiser)",
+                  (not released) or witness, got=_h(dmem0))
+        if released and not witness:
+            rec.note("INCONSISTENT on a declared smoke_remap die: the gate is open but "
+                     "the SystemCoreClock initialiser is absent (word 0 = %s). CPU0 was "
+                     "released and did not execute its scatter-load. Corroborate with "
+                     "HIO-105's reset_info_cpu0_lockupreset_bit2 — CPU0 released into "
+                     "blank IMEM faults immediately, and that latches the lockup cause "
+                     "if lockupreseten is on." % _h(dmem0))
+    elif ETH_ROM_IMAGE == "stage0_bootrom":
+        rec.record("hio107_crosscheck_strength", "one-way (no witness on this image)")
+        rec.note("ASIC image declared (stage0_bootrom): eth DMEM word 0 CANNOT witness "
+                 "CPU0 execution on this die. Its .data[0] is impure_data, an all-zero "
+                 "initialiser, and the image does not link SystemCoreClock, so "
+                 "0x05F5E100 is absent BY CONSTRUCTION and word 0 = %s is the healthy "
+                 "reading. Nothing further is asserted here, deliberately: the "
+                 "converse would be false. Whether CPU0 actually executed is OPEN on "
+                 "this target and needs a witness the ASIC image really writes — a "
+                 "Tier-5 firmware token, or HIO-105's CPU0 lockup cause bit if "
+                 "lockupreseten is on." % _h(dmem0))
     else:
-        # 'Unwritten' on real silicon SRAM is not necessarily zero. The honest
-        # assertion is that the initialiser is ABSENT, not that the word is 0.
-        rec.check("bit2=0 => eth DMEM word 0 is NOT the SystemCoreClock initialiser",
-                  not ran, got=_h(dmem0))
-        rec.record("eth_dmem_word0_nonzero_on_cold_die", int(dmem0 != 0))
-        if dmem0 != 0:
-            rec.note("Cold die (bit2=0) and eth DMEM word 0 is %s — non-zero but not "
-                     "the initialiser. On real SRAM that is an uninitialised power-up "
-                     "pattern, which the plan allows ('zeros or X-pattern'); recorded "
-                     "as part of the fingerprint." % _h(dmem0))
+        rec.record("hio107_crosscheck_strength", "one-way (image undeclared)")
+        rec.note("ETH_ROM_IMAGE is undeclared, so only the target-independent half ran. "
+                 "eth DMEM word 0 = %s, gate = %s. Set tier1.ETH_ROM_IMAGE to "
+                 "'smoke_remap' (FPGA) to restore the full bidirectional cross-check, "
+                 "or to 'stage0_bootrom' (ASIC) to record explicitly that no witness "
+                 "exists on this image. It is left undeclared by default because "
+                 "guessing the target from a ROM word would itself be the bug this "
+                 "test just had." % (_h(dmem0), _h(gate_b)))
 
 
 # ===========================================================================
@@ -886,16 +1017,16 @@ def hio_109(adp, rec):
 
 
 @test("HIO-110", tier=1, control=False, hazard=None,
-      purpose="Perf-probe ID and INFO at 0x2C200000/+0x04. THE ID CONSTANT IS DISPUTED "
-              "between two repo artefacts (0x50524631 'PRF1' vs 0x50524601 'PRF'+v1), "
-              "so this test DOES NOT ASSERT EITHER — it records the observed word and "
-              "flags which artefact it agrees with. What it DOES assert: the top three "
-              "bytes are ASCII 'PRF', which both candidates share and which no stuck or "
-              "mis-decoded bus produces; and INFO == 4 (the probe count), which is the "
-              "sound half — a mis-parameterised instance changes the probe count and a "
-              "magic-only check would miss it. RED when: 'PRF' is absent, INFO != 4, or "
-              "either read errors. It does NOT go red for reading the 'wrong' one of "
-              "two constants that this repo cannot agree on.")
+      purpose="Perf-probe ID and INFO at 0x2C200000/+0x04. Asserts ID == 0x50524631 "
+              "('PRF1', CONFIRMED-RTL) and INFO == 4 (the probe count), plus the "
+              "structural backstop that the top three bytes are ASCII 'PRF', which no "
+              "stuck or mis-decoded bus produces. RED when: any of those fails, or "
+              "either read errors. THE EARLIER 'DISPUTE' WAS NOT ONE — 0x50524631 and "
+              "0x50524601 belong to two different modules and 0x2C200000 is "
+              "unambiguously the PRF1 one, so the constant is asserted rather than "
+              "recorded; see the note for the file:line chain. INFO is the half a "
+              "magic-only check would miss: a mis-parameterised instance changes the "
+              "probe count while keeping the ID.")
 def hio_110(adp, rec):
     vid = _rd(adp, rec, 0x2C200000, "perf_probe ID")
     info = _rd(adp, rec, 0x2C200004, "perf_probe INFO")
@@ -909,22 +1040,18 @@ def hio_110(adp, rec):
         rec.check("perf_probe ID top three bytes are ASCII 'PRF' (undisputed half)",
                   _field(vid, 31, 8) == 0x505246,
                   got="%s '%s'" % (_h(vid), _ascii(vid)))
-        agrees = ("perf_probe.yaml / ctrl_ahb_perf_probe_regs.v (0x50524631)"
-                  if vid == 0x50524631 else
-                  "firmware/include/perf_probe.h (0x50524601)"
-                  if vid == 0x50524601 else "NEITHER artefact")
-        rec.record("perf_probe_id_agrees_with", agrees)
-        rec.note("DISPUTED CONSTANT, recorded not asserted. The die reads %s, which "
-                 "agrees with %s. Evidence found while writing this test, offered for "
-                 "resolution and NOT used as an assertion: the block actually "
-                 "instantiated at this address is ctrl_ahb_perf_probe_regs "
+        _eq(rec, "perf_probe ID ('PRF1', CONFIRMED-RTL)", vid, 0x50524631)
+        rec.note("THE DISPUTE IS RESOLVED and this constant is now asserted. It was "
+                 "never a real disagreement: 0x50524631 and 0x50524601 belong to two "
+                 "DIFFERENT modules, and 0x2C200000 is unambiguously the PRF1 one. The "
+                 "block instantiated at this address is ctrl_ahb_perf_probe_regs "
                  "(ctrl_dbg_group.v:244, leaf 2), whose "
                  "src/rtl/perf_probe/ctrl_ahb_perf_probe_regs.v:72 reads "
-                 "'localparam [31:0] ID_VALUE = 32'h50524631'. firmware/include/"
-                 "perf_probe.h:44 (0x50524601) appears to describe a different block. "
-                 "Resolve and pin before freezing the golden; until then a mismatch "
-                 "here is a documentation finding, not a silicon one."
-                 % (_h(vid), agrees))
+                 "'localparam [31:0] ID_VALUE = 32'h50524631'; "
+                 "firmware/include/perf_probe.h:44 (0x50524601) describes the other "
+                 "module and never applied here. The 'PRF' prefix check above is kept "
+                 "as the structural backstop, so a wrong low byte is still diagnosable "
+                 "as a version/module confusion rather than a dead bus.")
 
     rec.check("perf_probe INFO == 4 (probe count; RTL N_PROBE via OFF_INFO)",
               info == 0x00000004, got=_h(info))
@@ -980,7 +1107,9 @@ def hio_112(adp, rec):
               "peripherals share it — PID0 is what makes the claim 'this is slot 6, and "
               "slot 6 is the UART' falsifiable, and it is cross-checked against "
               "HIO-126's four-slot sweep. Proves both the 0x28xxxxxx matrix port and "
-              "its internal PADDR[15:12]==6 decode.")
+              "its internal PADDR[15:12]==6 decode. PID1/PID2/PID3 are also asserted "
+              "(CONFIRMED-RTL: 0xB8, 0x1B, 0x00 — PID3 is 0x00 because this instance "
+              "hardwires ECOREVNUM to 4'h0), giving the complete part identity.")
 def hio_113(adp, rec):
     want = [0x0000000D, 0x000000F0, 0x00000005, 0x000000B1]
     got = []
@@ -994,13 +1123,21 @@ def hio_113(adp, rec):
     rec.record("uart2_pid0", pid0)
     _eq(rec, "uart2 PID0 (part number 0x21 — slot 6 really is the UART)", pid0, 0x21)
 
+    # CONFIRMED-RTL: PID1=0xB8, PID2=0x1B, and PID3=0x00 because this instance's
+    # ECOREVNUM is hardwired 4'h0 -- so PID3 IS assertable here, unlike the general
+    # caution in HIO-126 (which does not read PID3 at all).
     pids = []
-    for i, off in enumerate((0xFE4, 0xFE8)):
-        pids.append(_rd(adp, rec, 0x28006000 + off, "uart2 PID%d" % (i + 1)))
-    rec.record("uart2_pid1_pid2", pids)
-    rec.note("PID1/PID2 are recorded, not asserted, on first use — the plan asks for "
-             "them to be read out and frozen from silicon rather than predicted. PID3 "
-             "is deliberately NOT read: it packs a revision-dependent ECOREVNUM.")
+    for want, off, idx in ((0xB8, 0xFE4, 1), (0x1B, 0xFE8, 2), (0x00, 0xFEC, 3)):
+        v = _rd(adp, rec, 0x28006000 + off, "uart2 PID%d" % idx)
+        pids.append(v)
+        _eq(rec, "uart2 PID%d (CONFIRMED-RTL)" % idx, v, want)
+    rec.record("uart2_pid1_pid2_pid3", pids)
+    rec.note("PID1/PID2/PID3 are now ASSERTED (promoted from record-only 2026-08-25). "
+             "PID3 is safe to assert for THIS instance because its ECOREVNUM field is "
+             "hardwired 4'h0; that is an instance fact, not a general one, which is why "
+             "HIO-126 still declines to read PID3 across the four cc_periph slots. "
+             "Together with PID0 = 0x21 above, this is the full CMSDK UART part "
+             "identity and it pins slot 6 by part number, not merely by CID.")
 
 
 @test("HIO-115", tier=1, control=False, hazard=None,

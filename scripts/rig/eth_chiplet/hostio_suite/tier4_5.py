@@ -15,24 +15,47 @@
 # (405, 406, 408, 412, 504, 505) is vacuous unless 401 passed, and each declares
 # `needs=["HIO-401"]` so the runner voids them rather than greening them.
 #
-# WHAT THIS FILE NEVER DOES
-#   * It never emits `U`.  `U` has no abort and no timeout (socdebug_adp_control.v
-#     :633-635): the FSM waits in ADP_UREADB for exactly <count> raw payload
-#     bytes, and 0x04/0x00 are DATA there, not escapes.  The pinned Adp API has
-#     no raw-payload transmit call (`adp.cmd` sends a command line; `adp.raw_rx`
-#     is receive-only), so a `U` issued from this file could never be satisfied
-#     and would hang the port until a host PIO resync.  HIO-501 and HIO-508
-#     therefore SKIP; see their reasons.
-#   * It never emits `F` either -- the only `F` in this plan's Tier 5 is HIO-501's
-#     IMEM pre-zero, which is pointless (and destructive) without the `U` that
-#     must follow it.
+# WHAT THIS FILE DOES WITH `U` AND `F`, AND WHAT IT STILL REFUSES
+#   * It DOES emit `U` and `F` -- from _upload() and _fill_words() only, and into
+#     eth IMEM only.  `U` has NO ABORT AND NO TIMEOUT (socdebug_adp_control.v
+#     :624-632): the FSM sits in ADP_UREADB consuming raw bytes until its counter
+#     runs out, FNexit() is not evaluated there, and 0x04/0x00 are DATA, not
+#     escapes -- so a count that does not equal the payload length parks the port
+#     until a host PIO resync.  _upload() makes that mismatch UNCONSTRUCTIBLE: it
+#     takes a payload and NO count, formats the command line from len(payload),
+#     concatenates command and payload into one byte string, then parses the count
+#     back OUT of that string and refuses unless it equals the bytes that follow
+#     it.  The transmit is adp.raw_tx(), which is byte-exact including 0x00/0x04
+#     and returns the accepted count; a short count is a resync, never "send more".
+#   * `F` appears only as HIO-501's pre-zero and post-zero.  The PRE-zero is what
+#     makes the verify mean anything -- without it a `U` that wrote nothing still
+#     verifies against whatever was already there -- and HIO-501 proves the zero
+#     landed rather than assuming it.
+#   * Both go through _check_bulk_write(), which allows exactly ONE region (eth
+#     IMEM), refuses any span that touches a hazard band, and refuses any span
+#     containing a _WRITE_WHITELIST address.  `F` and `U` are CARPET writes: one
+#     command line puts a chosen value across a whole range, so a mistyped address
+#     here is far worse than a mistyped `W`, and the guard is code, not review.
+#   * It still never uploads into CPU1 IMEM.  CPU1 cannot be held in reset
+#     (`.cpu1_bootgate (1'b1)`, nanosoc_multicore_soc.sv:1387) and its PRMU sources
+#     the fabric's HCLK/HRESETn, so overwriting its live code can take the whole
+#     SoC -- including this debug port -- down.  HIO-508 refuses the TARGET, not
+#     the mechanism; 0x90000000 is deliberately absent from _BULK_WRITE_REGIONS.
 #   * It never touches the HZ-1 quarantine band, the HZ-8 read-clearing
 #     registers, the HZ-6 XiP aperture, or the spinlock acquire pages.  That is
 #     enforced in code by _check_addr(), not by review.
 #   * It touches the HZ-2 peer aperture exactly once, from HIO-413, guarded.
 #
 # ENVIRONMENT (all optional; every one of them defaults to "skip, and say so")
-#   HOSTIO_PHC_CORE_HZ      HIO-404 expected PHC core clock (default 250000000).
+#   HOSTIO_PHC_CORE_HZ      HIO-404: the clock feeding the PHC on THIS platform.
+#                           NO DEFAULT any more -- unset means HIO-404 makes no
+#                           absolute-frequency assertion at all.  The old default
+#                           of 250000000 was wrong on every target that exists:
+#                           the ASIC signs off at 100 MHz (ASIC/common.mk:242-261
+#                           CLK_PERIOD=10.0; constraints.sdc:524-534 says so in
+#                           terms) and the KR260 FPGA runs sys_fclk at 25.011 MHz
+#                           (clk_wiz CLKOUT1 25.000 requested, routed timing
+#                           summary 39.982 ns).  See HIO-404.
 #   HOSTIO_TIMER_RELOAD     HIO-406 timer reload (default 0x18000000). Raise it if
 #                           the link is slow -- see the sizing note at the constant.
 #   HOSTIO_PEER_DIE=1       HIO-413: a peer die is powered, has passed its own
@@ -151,6 +174,44 @@ FABRIC_HZ_MIN = 1000000           # plausibility band for a measured fabric cloc
 FABRIC_HZ_MAX = 2000000000
 
 # -----------------------------------------------------------------------------
+# HIO-501's `F` / `U` upload mechanism.
+#
+# TARGET.  0x10000000 is the REMAP-INDEPENDENT alias of eth IMEM (plan section
+# 1.4): it is that 32 KB RAM whatever the eth REMAP bit says.  0x00000000 is the
+# same RAM only when remap points at IMEM -- otherwise it is the boot ROM -- so a
+# carpet write aimed there is a coin toss between RAM and ROM, and this module
+# does not aim there.  eth IMEM is real writable RAM and was EMPTY on the die
+# measured 2026-08-25 (plan section 5.5; write/read-back/restore of 0xD00DFEED at
+# 0x10001000 is HIO-313's positive write-path control).  HIO-501 re-proves both
+# in-test, before it writes anything it cannot take back.
+#
+# SIZE.  240 payload bytes + 16 guard bytes = 256 bytes = 64 words.  240 keeps
+# the whole payload inside ONE period of the pattern below (see _pattern_byte),
+# and `U` costs ~1 ms per byte where a 32-bit `A`+`R` pair costs ~130 ms -- so
+# the streamed payload is NOT the expensive part; the block-read verify is.
+# -----------------------------------------------------------------------------
+UPLOAD_BASE = ETH_IMEM
+UPLOAD_PAYLOAD_BYTES = 240
+UPLOAD_GUARD_BYTES = 16           # zeroed by `F`, must STILL be zero after `U`
+UPLOAD_REGION_BYTES = UPLOAD_PAYLOAD_BYTES + UPLOAD_GUARD_BYTES
+UPLOAD_REGION_WORDS = UPLOAD_REGION_BYTES // 4
+UPLOAD_PROBE_TAG = 0xD00DFEED     # HIO-313's tag, for the same reason
+UPLOAD_MAX_BYTES = 4096           # hard cap on any single `U` from this module.
+                                  # Raising it commits the port for ~1 ms/byte
+                                  # with no abort and no timeout -- read _upload
+                                  # before you do.
+BLOCK_READ_WORDS = 16             # words per `R x<n>` dump; caps one reply's size
+BLOCK_READ_TIMEOUT_MS = 15000     # a 16-word dump is ~240 console characters
+FILL_TIMEOUT_MS = 8000            # `F` is ONE command however many words it fills
+UPLOAD_RX_CHUNK_MS = 300          # RX drain slice while waiting for the `U` echo
+UPLOAD_ECHO_WINDOW_S = 20.0
+
+# The synthetic payload: p(off) = 1 + (0x67*off + 0x2D) mod 255.
+PATTERN_MUL = 0x67                # 103, coprime with 255 -> p is injective
+PATTERN_ADD = 0x2D
+PATTERN_MOD = 255
+
+# -----------------------------------------------------------------------------
 # Hard address blocklist (plan section 1.5).  A typo in this file must not be
 # able to wedge a die, so the guard lives in code and every access in this
 # module goes through it.
@@ -204,6 +265,55 @@ def _check_write(addr, val):
         raise HazardRefusal(
             "refusing W x%08X to 0x%08X: only %s may be written to this register "
             "from tier4_5" % (val, addr, sorted("0x%08X" % v for v in allowed)))
+
+
+# Regions this module may CARPET-write with `F` or `U`.  Exactly one entry, and
+# CPU1 IMEM (0x90000000) is deliberately NOT on it -- see HIO-508.
+_BULK_WRITE_REGIONS = (
+    (ETH_IMEM, 0x8000, "eth IMEM, 32 KB at 0x10000000 (ETH_IMEM_RAM_ADDR_W=15), "
+                       "the remap-independent alias"),
+)
+
+
+def _check_bulk_write(addr, nbytes, value=0):
+    """The address guard for `F` and `U`.  Returns the target region's name.
+
+    `F` and `U` write a whole RANGE from one command line, so this checks the
+    whole SPAN, not just the first address: a mistyped base that lands one word
+    short of a hazard band still carpets into it.  Three refusals, all in code:
+
+      * the span must lie entirely inside one _BULK_WRITE_REGIONS entry;
+      * it must not overlap any _BANDS hazard range;
+      * it must not contain any _WRITE_WHITELIST address -- those registers may
+        only ever take one exact value from this file, and a carpet write is
+        not a way around that.
+    """
+    nbytes = int(nbytes)
+    if nbytes <= 0:
+        raise HazardRefusal("refusing a bulk write of %d bytes" % nbytes)
+    _check_addr(addr)
+    _check_addr(addr + nbytes - 1)
+    _check_write(addr, value)
+    for lo, hi, why in _BANDS:
+        if addr <= hi and lo < addr + nbytes:
+            raise HazardRefusal(
+                "refusing a %d-byte `F`/`U` span at 0x%08X: it overlaps 0x%08X-0x%08X, "
+                "%s" % (nbytes, addr, lo, hi, why))
+    for wl in sorted(_WRITE_WHITELIST):
+        if addr <= wl < addr + nbytes:
+            raise HazardRefusal(
+                "refusing a %d-byte `F`/`U` span at 0x%08X: it covers 0x%08X, which is "
+                "on the single-value write whitelist and may never be carpet-written"
+                % (nbytes, addr, wl))
+    for base, size, what in _BULK_WRITE_REGIONS:
+        if base <= addr and addr + nbytes <= base + size:
+            return what
+    raise HazardRefusal(
+        "refusing a %d-byte `F`/`U` carpet write at 0x%08X: this module may bulk-write "
+        "ONLY inside %s. CPU1 IMEM (0x%08X) is deliberately not on that list -- CPU1 "
+        "cannot be held in reset and its PRMU sources the fabric clock, so overwriting "
+        "its live code can take the whole SoC down. See HIO-508."
+        % (nbytes, addr, "; ".join(w for _, _, w in _BULK_WRITE_REGIONS), CPU1_IMEM))
 
 
 # -----------------------------------------------------------------------------
@@ -323,31 +433,367 @@ def _require_okay(adp, rec, addr, label):
     return r
 
 
-def _refuse_upload(rec, what, nbytes):
-    """The one guard that keeps `U` out of this file.  Always skips."""
+# -----------------------------------------------------------------------------
+# `F` (fill) and `U` (stream-to-memory).  READ THIS BEFORE EDITING ANY OF IT.
+#
+# THE ONE FACT THAT MATTERS.  `U x<n>` has no abort and no timeout.  ADP_UCTRL
+# drops into ADP_UREADB and stays there consuming raw bytes until the counter
+# runs out (socdebug_adp_control.v:624-632); FNexit() is NOT evaluated in that
+# state, so 0x04 and 0x00 are DATA, not escapes, and there is no byte you can
+# send to get out early.  One byte short and the port is parked until a host PIO
+# resync.  One byte long and the extra byte is parsed as the next command line.
+# So the count must equal the payload length EXACTLY -- and the way to guarantee
+# that is to never have a count that could be wrong: see _upload().
+#
+# TWO RTL FACTS THE SIZING DEPENDS ON, re-derived rather than assumed:
+#
+#   * `U` forces BYTE accesses.  ADP_UCTRL sets adp_size <= 2'b00 (:624) and each
+#     beat writes {4{rx_byte}} with HADDR[1:0] = adp_addr[1:0] (:377, :627), the
+#     address stepping by 1 << adp_size = 1 (:466).  The count is therefore in
+#     BYTES: one link byte per memory byte, no padding, no alignment rule.
+#
+#   * BOTH `F` and `U` treat a count of 0 OR 1 as "nothing to do".
+#     FNcount_down_zero_next(x) is (x >> 1) == 0 (:426-429) -- true for 0 AND for
+#     1 -- and it is evaluated on the PARAMETER in ADP_ACTION (:578-580 for `U`,
+#     :592-595 for `F`).  `Ux00000001` therefore consumes NO payload bytes at all
+#     and `Fx00000001` writes nothing, in both cases echoing a perfectly clean
+#     reply.  Both helpers below refuse a count under 2 rather than emit a
+#     command whose effect is not what its parameter says.
+#
+# `F`'s fill VALUE and fill SIZE both come from `V`, not from `F`: ADP_FCTRL
+# loads adp_bus_data from adp_val and adp_size from FNparam2size(adp_val[34:33])
+# (:648), and that size is set by how many hex DIGITS the `V` parameter carried
+# (:144-167: 1-2 digits = byte, 3-4 = halfword, 5+ = word).  Eight digits,
+# always -- which is the plan's "x + exactly 8 hex digits" rule doing real work.
+#
+# NEITHER `F` NOR `U` CAPTURES HRESP ON ITS LAST BEAT.  The `adp_bus_err <=
+# adp_bus_err | HRESP_i` sits in the loop-CONTINUE branch of ADP_UWRITE (:631)
+# and ADP_FWRITE (:651), so the beat that ends the transfer skips it entirely: a
+# fill or an upload whose ONLY erroring beat is its last one echoes clean.  That
+# is why HIO-501 re-reads the last word and the last byte explicitly instead of
+# trusting the echo.
+# -----------------------------------------------------------------------------
+
+
+def _pattern_byte(off):
+    """The payload byte for offset `off`.  Position-dependent, never 0x00.
+
+        p(off) = 1 + (0x67*off + 0x2D) mod 255
+
+    Three properties, each catching a failure a CONSTANT payload cannot see:
+
+      * INJECTIVE.  0x67 (103) is coprime with 255 (= 3*5*17), so
+        off -> (103*off + 45) mod 255 is a bijection and p never repeats inside
+        one 255-offset window.  The payload is 240 bytes, inside one window, so
+        no two offsets hold the same byte.  That is what makes ADDRESS ALIASING
+        and an address that fails to increment visible: with a constant payload
+        every location holds the right value whatever the address bus did.
+
+      * NEVER ZERO.  The range is 1..255.  Combined with a PROVEN `F` pre-zero,
+        "this byte was never written" reads back as a value the payload cannot
+        produce -- which is what catches TRUNCATION, a dropped beat, and a `U`
+        that wrote nothing at all.  A payload containing 0x00 would hide all
+        three behind a legitimately-zero byte.
+
+      * ADJACENT BYTES DIFFER (by 103 mod 255).  So byte ORDERING inside a word
+        is checked too: a byte-lane swap cannot alias onto the expected word.
+    """
+    return 1 + ((PATTERN_MUL * int(off) + PATTERN_ADD) % PATTERN_MOD)
+
+
+def _pattern_payload(nbytes, base_off=0):
+    return bytes(bytearray(_pattern_byte(base_off + i) for i in range(int(nbytes))))
+
+
+def _pattern_word_le(off):
+    """The word an aligned 32-bit read at byte offset `off` must return.
+
+    LITTLE-ENDIAN, and that is a build fact, not a convention:
+    `parameter BE = 0,  // Endianness` (nanosoc_multicore_soc.sv:45), fed to both
+    CPU integrations (:846, :962).  So byte `off` lands in bits [7:0].
+    """
+    return (_pattern_byte(off)
+            | (_pattern_byte(off + 1) << 8)
+            | (_pattern_byte(off + 2) << 16)
+            | (_pattern_byte(off + 3) << 24))
+
+
+def _pattern_word_be(off):
+    """The same four bytes assembled the other way round -- computed ONLY so a
+    byte-order failure is reported as itself rather than as a generic mismatch."""
+    return (_pattern_byte(off + 3)
+            | (_pattern_byte(off + 2) << 8)
+            | (_pattern_byte(off + 1) << 16)
+            | (_pattern_byte(off) << 24))
+
+
+def _words_summary(words, limit=8):
+    if not words:
+        return "no words"
+    parts = ["None" if w is None else "0x%08X" % w for w in words[:limit]]
+    if len(words) > limit:
+        parts.append("... (%d words total)" % len(words))
+    return " ".join(parts)
+
+
+def _block_read(adp, addr, nwords, timeout_ms=BLOCK_READ_TIMEOUT_MS):
+    """`A x<addr>` ; `R x<nwords>` -- ONE command, nwords reply lines.
+
+    MEASURED 2026-08-25 (recorded in tier0's HIO-006 header): `Rx00000004` gives
+    4 lines of 8 nibbles and leaves the address +0x10.  The DIGIT COUNT sets the
+    access size and the parameter VALUE sets the number of reads (adp_count <=
+    adp_param at :536, and the ADP_LINEACK2 repeat arm at :727-729) -- which is
+    why the parameter here is always 8 digits.  This is the cheap way to read a
+    region: 16 words for one command round trip instead of 32.
+    """
+    _check_addr(addr)
+    _check_addr(addr + nwords * 4 - 1)
+    if not 1 <= nwords <= BLOCK_READ_WORDS:
+        raise HazardRefusal(
+            "refusing a %d-word `R` dump: this module caps one command's reply at %d "
+            "words so it cannot overrun the board-side RX buffer (RX_CAP), which would "
+            "truncate the dump and look like missing data"
+            % (nwords, BLOCK_READ_WORDS))
+    a = adp.cmd("Ax%08X" % addr, timeout_ms=CMD_TIMEOUT_MS)
+    r = adp.cmd("Rx%08X" % nwords, timeout_ms=timeout_ms)
+    r.prior = a
+    r.addr_ok = bool(a.ok and not a.rejected and a.letter == "A")
+    return r
+
+
+def _read_byte(adp, addr):
+    """`A x<addr>` ; `R1` -- ONE 8-bit read of exactly this byte.
+
+    MEASURED 2026-08-25 (tier0 HIO-006 header): `R1` gives 1 line of 2 nibbles
+    and leaves the address +1.  One hex digit encodes an 8-bit access
+    (FNparam2size, :144-167) and the parameter VALUE 1 is the read count.  At
+    byte size HADDR[1:0] really is adp_addr[1:0] (:377 -- a WORD read forces it
+    to 00 instead) and ADP_READ rotates HRDATA so the addressed byte lands in
+    adp_bus_data[7:0] (:607-610), so the two printed digits ARE this byte.
+    """
+    _check_addr(addr)
+    a = adp.cmd("Ax%08X" % addr, timeout_ms=CMD_TIMEOUT_MS)
+    r = adp.cmd("R1", timeout_ms=CMD_TIMEOUT_MS)
+    r.prior = a
+    return r
+
+
+def _read_region(adp, rec, addr, nwords, label):
+    """Block-read `nwords` words, in <= BLOCK_READ_WORDS chunks.
+
+    Every chunk re-issues its own `A`, so a truncated or lost reply cannot
+    silently shift the words after it -- which would turn one dropped line into
+    a whole-region mismatch and hide where the real fault was.
+
+    Returns (words, ok).  Missing words come back as None (never as 0, which
+    would be indistinguishable from a legitimately zero location).  ok is False
+    if any chunk was short, timed out, overflowed the board RX buffer, or raised
+    `!` on any beat -- and the reason is recorded, not swallowed.
+    """
+    words = []
+    ok = True
+    off = 0
+    while off < nwords:
+        n = min(BLOCK_READ_WORDS, nwords - off)
+        r = _block_read(adp, addr + off * 4, n)
+        vals = list(r.values)[:n]
+        if (not r.ok) or r.error or r.overflow or len(vals) != n:
+            ok = False
+            rec.record(
+                "%s_chunk_fault_word_%d" % (label, off),
+                "0x%08X +%d words: %r (parsed=%d want=%d error=%s overflow=%s "
+                "timed_out=%s addr_ok=%s)"
+                % (addr + off * 4, n, r.raw[:120], len(vals), n, r.error,
+                   r.overflow, r.timed_out, r.addr_ok))
+            vals = vals + [None] * (n - len(vals))
+            if r.timed_out:
+                # A bus error is a result and the sweep goes on; silence is not.
+                # Each further chunk would burn its full budget for nothing, and
+                # this helper is called three times per run.
+                words.extend(vals)
+                words.extend([None] * (nwords - off - n))
+                rec.record("%s_abandoned_at_word" % label, off)
+                return words, False
+        words.extend(vals)
+        off += n
+    return words, ok
+
+
+def _fill_words(adp, rec, addr, nwords, value, label):
+    """`V x<value>` ; `A x<addr>` ; `F x<nwords>` -- fill nwords 32-bit words.
+
+    Returns (v, a, f) so the caller asserts all three: `V` sets the value AND the
+    access size, `A` sets the base, and only then does `F` mean what it says.
+    """
+    what = _check_bulk_write(addr, nwords * 4, value)
+    if nwords < 2:
+        raise HazardRefusal(
+            "refusing `Fx%08X`: FNcount_down_zero_next (socdebug_adp_control.v"
+            ":426-429) is (x >> 1) == 0, so a count of 0 or 1 fills NOTHING while "
+            "echoing a clean reply -- the command would not do what its parameter says"
+            % nwords)
+    rec.record("%s_fill" % label,
+               "%d words of 0x%08X at 0x%08X in %s" % (nwords, value, addr, what))
+    v = adp.cmd("Vx%08X" % (value & 0xFFFFFFFF), timeout_ms=CMD_TIMEOUT_MS)
+    a = adp.cmd("Ax%08X" % addr, timeout_ms=CMD_TIMEOUT_MS)
+    f = adp.cmd("Fx%08X" % nwords, timeout_ms=FILL_TIMEOUT_MS)
+    return v, a, f
+
+
+def _upload(adp, rec, addr, payload, label):
+    """`U` -- stream `payload` into memory at `addr`, one link byte per memory byte.
+
+    THE COUNT GUARD, which is the whole point of this function.  There is no
+    count parameter here and no way to supply one:
+
+      1. n is len(payload).  It is not passed in and cannot be passed in.
+      2. the command line is formatted from n.
+      3. command line and payload are concatenated into ONE byte string, so the
+         thing that carries the count and the thing that carries the bytes are
+         the same object from here on.
+      4. the count is then PARSED BACK OUT of that byte string and required to
+         equal the number of bytes that follow the CR in the same string.
+
+    A count that disagrees with its payload cannot be built by this function --
+    not by care, by construction.  Step 4 is not redundant with steps 1-3: it is
+    what a later edit that reintroduces a separate count has to get past.
+
+    Returns a dict: sent, frame_len, reply (the `U` echo), text, addr_reply.
+    On any failure the port is resynced before returning, so the caller is never
+    handed a port parked in ADP_UREADB.
+    """
+    payload = bytes(bytearray(payload))
+    n = len(payload)
+    what = _check_bulk_write(addr, n)
+    if n < 2:
+        raise HazardRefusal(
+            "refusing `U` with %d payload bytes: FNcount_down_zero_next "
+            "(socdebug_adp_control.v:426-429) is evaluated on the PARAMETER in "
+            "ADP_ACTION (:578-580), so a count of 0 or 1 consumes NO payload at all -- "
+            "the bytes would be parsed as the next command line instead" % n)
+    if n > UPLOAD_MAX_BYTES:
+        raise HazardRefusal(
+            "refusing a %d-byte `U` from this module (cap %d bytes): `U` has no abort "
+            "and no timeout, so the size of the stream is the size of an unbreakable "
+            "commitment -- ~1 ms of link per byte during which nothing can interrupt it"
+            % (n, UPLOAD_MAX_BYTES))
+
+    frame = ("Ux%08X\r" % n).encode("ascii") + payload
+    head, sep, tail = frame.partition(b"\r")
+    if (sep != b"\r" or not head.startswith(b"Ux") or len(head) != 10
+            or int(head[2:], 16) != len(tail) or len(tail) != n):
+        raise HazardRefusal(
+            "REFUSING TO EMIT `U`: the count in the command line does not match the "
+            "payload that follows it in the very same byte string (command %r, %d bytes "
+            "after the CR, payload %d bytes). `U` has no abort and no timeout -- a "
+            "mismatch parks the port in ADP_UREADB until a host PIO resync."
+            % (head, len(tail), n))
+
+    rec.record("%s_u_command" % label, head.decode("ascii"))
+    rec.record("%s_u_payload_bytes" % label, n)
+    rec.record("%s_u_target" % label, "0x%08X in %s" % (addr, what))
+
+    a = adp.cmd("Ax%08X" % addr, timeout_ms=CMD_TIMEOUT_MS)
+    adp.raw_rx(1)                      # drop the `A` echo so the `U` echo stands alone
+    sent = adp.raw_tx(frame)
+    rec.record("%s_u_bytes_accepted" % label, sent)
+
+    out = {"sent": int(sent), "frame_len": len(frame), "addr_reply": a,
+           "text": "", "reply": Reply("", timed_out=True, sent=False,
+                                      cmd=head.decode("ascii"))}
+    if int(sent) != len(frame):
+        # adp.raw_tx stops at the first stalled chunk and its contract is
+        # explicit: a short count means resync, NOT "send the rest".  The FSM is
+        # now waiting in ADP_UREADB for bytes that will never arrive, and a
+        # resync is the only exit.
+        rec.record("%s_u_short_send" % label,
+                   "link accepted %d of %d bytes; port resynced" % (sent, len(frame)))
+        adp.resync()
+        adp.enter()
+        return out
+
+    text = ""
+    deadline = time.monotonic() + UPLOAD_ECHO_WINDOW_S
+    while time.monotonic() < deadline:
+        chunk = adp.raw_rx(UPLOAD_RX_CHUNK_MS, flush=False)
+        # RX words are 12-bit; only (w & 0xf00) == 0 are console data bytes.
+        text += "".join(chr(w & 0xFF) for w in chunk if (w & 0xF00) == 0)
+        if "]" in text:
+            break
+    out["text"] = text
+    out["reply"] = Reply(text, timed_out=("]" not in text),
+                         cmd=head.decode("ascii"))
+    if "]" not in text:
+        rec.record("%s_u_no_prompt" % label,
+                   "no ']' inside %.1f s of the last payload byte; port resynced. "
+                   "Tail: %r" % (UPLOAD_ECHO_WINDOW_S, text[-120:]))
+        adp.resync()
+        adp.enter()
+    return out
+
+
+def _refuse_cpu1_upload(rec):
+    """HIO-508's refusal.  The TARGET is refused, not the mechanism."""
     rec.skip(
-        "%s needs `U` (%d bytes of raw payload) and this suite has no way to send it. "
-        "The pinned Adp API (CONTRACT.md) has adp.cmd() for command lines and "
-        "adp.raw_rx() for receive; there is no raw-payload transmit call. `U` has NO "
-        "abort and NO timeout (socdebug_adp_control.v:633-635): the FSM waits in "
-        "ADP_UREADB for exactly the byte count given, and 0x04/0x00 are DATA there, "
-        "not escapes -- so a `U` issued without a byte-exact payload path hangs the "
-        "port until a host PIO resync. TO ENABLE: add a raw-payload transmit to the "
-        "harness (e.g. adp.raw_tx(bytes)) that writes exactly len(payload) bytes with "
-        "no CR and no escaping, then set the image path in the environment."
-        % (what, nbytes))
+        "PERMANENT REFUSAL OF THE CPU1 TARGET -- and not for want of a mechanism. The "
+        "`U` transport this test needs is built, guarded and exercised end to end by "
+        "HIO-501 (adp.raw_tx + _upload's count guard). What is refused here is writing "
+        "it into CPU1's IMEM. "
+        "CPU1 IS EXECUTING OUT OF THE MEMORY THIS WOULD OVERWRITE, AND IT CANNOT BE "
+        "STOPPED FIRST. `.cpu1_bootgate (1'b1)` is tied high at the SoC top "
+        "(nanosoc_multicore_soc.sv:1387) and cpu1_resetn = cpu1_bootgate & "
+        "~cpu1_reset_pulse (nanosoc_reset_ctrl.v:364), so there is no gate to close: "
+        "unlike CPU0 there is no hold-in-reset / load / release order available from "
+        "this port. The only way to stop CPU1 is CPU1_SWRST -- which is HZ-5 and resets "
+        "the WHOLE SoC including the ADP, so no upload survives it. "
+        "AND THE FAILURE MODE IS THE DIE, NOT ONE CORE: CPU1's PRMU sources the "
+        "fabric's HCLK and HRESETn (see HIO-509), so a CPU1 that faults or locks up on "
+        "half-overwritten code can take the fabric, the ADP and HOSTIO itself down -- "
+        "the very port that would diagnose it. That is a power cycle, not a red. "
+        "THERE IS NO SAFE SUBSET EITHER: nothing this port can read says which parts of "
+        "CPU1's 16 KB IMEM are live code, so 'write somewhere it is not running' would "
+        "be an assumption, not a measurement. "
+        "ENFORCED IN CODE, NOT BY REVIEW: 0x%08X is deliberately absent from "
+        "_BULK_WRITE_REGIONS, so _check_bulk_write() refuses any `F` or `U` aimed at it "
+        "even if this guard were deleted. "
+        "WHAT WOULD MAKE IT RUNNABLE: a build in which cpu1_bootgate is driven by "
+        "chip_core_remap_ctrl instead of tied to 1'b1, or a CPU1 boot ROM that parks in "
+        "a spin loop OUT OF ROM until told otherwise. The plan's Phase-D option (b) -- "
+        "park CPU1 in a two-instruction spin loop so it stops fighting the memory tests "
+        "-- is that idea, but loading that image needs exactly the write refused here. "
+        "No bus access attempted." % CPU1_IMEM)
 
 
 # -----------------------------------------------------------------------------
 # Decoders shared by more than one test.
 # -----------------------------------------------------------------------------
 def _decode_lane_status(v):
-    """tidelink_regs.rdl swi_lane_status @0x108 (verified against the RDL)."""
+    """swi_lane_status @0x2E032108, decoded against the RTL THAT PACKS IT.
+
+    THE RDL IS WRONG ABOUT BIT 20, AND THIS DECODER USED TO INHERIT THAT.
+    tidelink_regs.rdl:437-441 declares ``fcsm_state[4]`` spanning [20:17] with the
+    note "3b; bit[20] always 0".  The register mux that actually drives the word
+    packs ``sync_obs_fcsm_state_1`` -- declared ``reg [2:0]`` at
+    axi_chiplet_controller.sv:1796 -- at **[19:17]**, and puts
+    ``sync_obs_a2l_app_v_1`` (a2l_replay_app_valid) at **[20]**
+    (axi_chiplet_controller.sv:2904-2905).  Identical in the packaged FPGA IP that
+    built the KR260 bitstream: tidelink/imp/fpga/eth_chiplet_ip/src/
+    axi_chiplet_controller.sv:2904-2905.  Bit 20 is a live signal, not a spare,
+    and the RDL comment predates it.
+
+    MEASURED 2026-08-25 on the eth die, which is what exposed this: the old 4-bit
+    decode reported ``fcsm_state = 8`` and classified it "unknown state", outside
+    the documented 0..7.  **There is no state 8.**  8 is bit[20] set with the real
+    FCSM at 0 -- exactly right for a lone die: FCSM idle, and the a2l replay
+    buffer's app side holding a word it cannot hand to a link that is down.  An
+    operator reading "unknown state" would reasonably have read it as "broken".
+    """
     return {
         "lane_locked": _bits(v, 7, 0),
         "lane_fault": _bits(v, 15, 8),
         "calibration_done": _bits(v, 16, 16),
-        "fcsm_state": _bits(v, 20, 17),
+        "fcsm_state": _bits(v, 19, 17),          # 3 bits -- see the docstring
+        "a2l_replay_app_valid": _bits(v, 20, 20),  # NOT part of fcsm_state
         "llrx_state": _bits(v, 22, 21),
         "cr_pkt_seen_rx": _bits(v, 23, 23),
         "crack_pkt_seen_rx": _bits(v, 24, 24),
@@ -356,15 +802,24 @@ def _decode_lane_status(v):
 
 
 def _classify_fcsm(f):
+    """FCSM state is 3 bits, so 0..7 IS the whole domain -- there is no state 8.
+
+    The 4..7 band is the RTL's own definition of link-up, not a guess:
+    ``wire auto_anchor_link_up = sync_obs_fcsm_state_1[2];  // FCSM in 4..7
+    (link up)`` (axi_chiplet_controller.sv:4992, and :6404 for data_mode_o).
+    """
     if f == 1:
         return "WEDGE: credit-path bring-up failure (tidelink_regs.rdl:441)"
     if f == 2:
         return "WEDGE: stalled / no progress (axi_chiplet_controller.sv:739,891)"
     if 4 <= f <= 7:
-        return "healthy operating region"
+        return "healthy operating region (bit 2 set = link up)"
     if f == 0:
-        return "idle / not brought up"
-    return "unknown state"
+        return "idle / not brought up -- the normal state on a die with no peer"
+    if f == 3:
+        return "bring-up in progress (not yet in the 4..7 link-up band)"
+    return ("out of range: fcsm_state is 3 bits, so this value did not come from "
+            "_decode_lane_status")
 
 
 def _read_xhb_witness(adp, timeout_ms=None):
@@ -625,30 +1080,50 @@ def hio_403(adp, rec):
 
 
 @test("HIO-404", tier=4, hazard=None, needs=["HIO-403"],
-      purpose="PHC advance rate. Two shadow captures separated by a host-measured "
-              "interval; PASS = the implied core frequency is within +/-10 % of "
-              "ns_incr x the expected core clock. Detects a wrong NS_INCR strap or a "
-              "core clock at the wrong frequency -- both invisible to HIO-403, which "
-              "only asks whether the counter moved. Both {seconds, nanoseconds} are "
-              "read from the same atomic capture, so the 1e9 nanosecond rollover "
-              "cannot alias the measurement (the plan's CAP_NANOSECONDS[15:0] form "
-              "wraps every 65.5 us, far faster than the ~130 ms link). CAP_NS_FRAC is "
-              "deliberately unused: ns_incr_frac resets to 0, so it is static on a "
-              "fresh part and would be a liveness signal that can never move.")
+      purpose="PHC ADVANCE RATE -- and, on this build, the first hardware measurement "
+              "the PTP subsystem has ever had. Two shadow captures separated by a "
+              "host-measured interval give nanoseconds-of-PHC per second-of-wall. "
+              "THIS TEST NO LONGER ASSERTS A HARDCODED CORE CLOCK, and the reason is a "
+              "finding in its own right: the 250 MHz it used to assume is not this "
+              "design's frequency on ANY target that exists. The ASIC signs off at "
+              "100 MHz (ASIC/common.mk:242-261 CLK_PERIOD=10.0, and "
+              "ASIC/genus-innovus/inputs/constraints.sdc:524-534 says 'THIS DESIGN DOES "
+              "NOT RUN AT 250 MHz' in terms); the KR260 FPGA runs sys_fclk at "
+              "25.011 MHz (clk_wiz_0 CLKOUT1 requested 25.000, routed timing summary "
+              "39.982 ns) and HAPS-SX at 25 MHz. 250 MHz survives only as a comment in "
+              "the PHC IP -- 'parameter [7:0] DEFAULT_NS_INCR = 8'd4  // 4 ns for "
+              "250 MHz' (phc_apb_regs.sv:18). "
+              "WHAT IS ASSERTED INSTEAD. (a) the implied clock is a plausible clock at "
+              "all, so a garbage or frozen measurement cannot pass; (b) NS_INCR is "
+              "unchanged across the window, so the rate was computed with the "
+              "increment actually in force; (c) THE PHC KEEPS REAL TIME -- ns_incr x "
+              "f_phc must equal 1e9. (c) is the assertion the PTP subsystem exists to "
+              "satisfy and it is deliberately NOT relaxed: on the die measured "
+              "2026-08-25 it FAILS by a factor of ten, and that red is the result, not "
+              "a test defect. An absolute-frequency comparison is made only when the "
+              "operator supplies HOSTIO_PHC_CORE_HZ; with it unset, none is made. "
+              "THERE IS NO CLOCK-RATE REGISTER TO DERIVE IT FROM -- the PHC map is "
+              "CTRL/STATUS/NS_INCR/NS_INCR_FRAC/SET_*/INT_EN/CAP_*/ALARM_*/HW_CAP_*/"
+              "ETH_*_CAP_*/SERVO_* (phc_apb_regs.rdl) and none of them reports a "
+              "frequency, a period or a divider; the only divider register on the die "
+              "is the QSPI SCLK divider. The 0x05F5E100 word at 0x18000000 is NOT one "
+              "either: it is SystemCoreClock from the loaded image, i.e. a firmware "
+              "build constant, not a hardware readout. "
+              "Both {seconds, nanoseconds} come from the same atomic capture, so the "
+              "1e9 rollover cannot alias the measurement. CAP_NS_FRAC is deliberately "
+              "unused: ns_incr_frac resets to 0, so it is static on a fresh part and "
+              "would be a liveness signal that can never move.")
 def hio_404(adp, rec):
-    core_hz = _env_int("HOSTIO_PHC_CORE_HZ", 250000000)
-    rec.record("phc_expected_core_hz", core_hz)
-
-    ni = _rd(adp, PHC_NS_INCR)
-    rec.check("NS_INCR readable", _good(ni), got=ni.raw)
-    if not _good(ni):
+    ni0 = _rd(adp, PHC_NS_INCR)
+    rec.check("NS_INCR readable", _good(ni0), got=ni0.raw)
+    if not _good(ni0):
         return
-    ns_incr = _bits(ni.value, 7, 0)
+    ns_incr = _bits(ni0.value, 7, 0)
     rec.record("phc_ns_incr", ns_incr)
     if ns_incr == 0:
         rec.skip("NS_INCR reads 0, so the PHC cannot advance by construction and a "
                  "rate measurement would be meaningless. Restore NS_INCR (HIO-309 "
-                 "reads and restores it; RDL default is 4) and re-run.")
+                 "reads and restores it; the RDL/RTL default is 4) and re-run.")
 
     def capture():
         cw = _wr(adp, PHC_CTRL, PHC_CTRL_EN_CAPTURE)
@@ -664,6 +1139,7 @@ def hio_404(adp, rec):
     w0, t0, s0, n0, c0 = capture()
     time.sleep(PHC_INTERVAL_S)
     w1, t1, s1, n1, c1 = capture()
+    ni1 = _rd(adp, PHC_NS_INCR)
 
     for label, r in (("capture 0 write", w0), ("capture 1 write", w1)):
         rec.check("%s accepted" % label, _wrote(r), got=r.raw)
@@ -671,6 +1147,16 @@ def hio_404(adp, rec):
         rec.check("%s readable" % label, _good(r), got=r.raw)
     if not all(_good(r) for r in (s0, n0, s1, n1)):
         return
+
+    # The rate below is (delta PHC) / (delta NS_INCR-weighted cycles).  If NS_INCR
+    # moved mid-window -- another agent, firmware, a half-finished HIO-309 -- the
+    # arithmetic is over two different increments and every number after this is
+    # meaningless.  Cheap to prove, so prove it.
+    rec.record("phc_ns_incr_after", None if not _good(ni1) else _bits(ni1.value, 7, 0))
+    rec.check("NS_INCR is UNCHANGED across the measurement window (0x%02X), so the "
+              "rate below was computed with the increment that was actually in force "
+              "for the whole interval" % ns_incr,
+              _good(ni1) and _bits(ni1.value, 7, 0) == ns_incr, got=ni1.raw)
 
     total0 = s0.value * PHC_NS_PER_SEC + n0.value
     total1 = s1.value * PHC_NS_PER_SEC + n1.value
@@ -686,26 +1172,107 @@ def hio_404(adp, rec):
 
     rate = delta_ns / elapsed                 # nanoseconds of PHC per second of wall
     implied_core_hz = rate / ns_incr
+    realtime_ratio = rate / float(PHC_NS_PER_SEC)
+    incr_for_realtime = PHC_NS_PER_SEC / implied_core_hz
+    hz_for_realtime = PHC_NS_PER_SEC / float(ns_incr)
     rec.record("phc_ns_per_wall_s", int(rate))
     rec.record("phc_implied_core_hz", int(implied_core_hz))
+    rec.record("phc_realtime_ratio", round(realtime_ratio, 6))
+    rec.record("phc_ns_incr_for_realtime", round(incr_for_realtime, 3))
+    rec.record("phc_clock_hz_for_realtime", int(hz_for_realtime))
 
-    # Cross-check: the fabric counter was SNAP-sampled inside the same bracket.
-    # Skipped silently when the counter is in one of its not-counting states --
-    # HIO-402 is where that is diagnosed, not here.
+    # (a) The measurement is a measurement.  A frozen counter, a mis-sized read or
+    #     a rollover artefact lands outside this band; a real clock does not.
+    rec.check("the implied PHC clock is a plausible clock at all (%d Hz .. %d Hz). "
+              "This is the only check here that a garbage measurement cannot pass, "
+              "and it is NOT the real-time check below"
+              % (FABRIC_HZ_MIN, FABRIC_HZ_MAX),
+              FABRIC_HZ_MIN <= implied_core_hz <= FABRIC_HZ_MAX,
+              got="%.4f MHz (ns_incr=%d, %d ns of PHC per wall second)"
+                  % (implied_core_hz / 1e6, ns_incr, int(rate)))
+
+    # (b) Same-net cross-check against the fabric counter, RECORDED not asserted --
+    #     see the note for why the ratio is the diagnostic and not the verdict.
     if (_good(c0) and _good(c1) and c1.value > c0.value
             and c0.value not in (0x00000000, PERF_CNT_MAX)):
         fabric_hz = (c1.value - c0.value) / elapsed
+        ratio = (implied_core_hz / fabric_hz) if fabric_hz else 0.0
+        rec.record("phc_fabric_crosscheck", "available")
         rec.record("fabric_hz_during_phc_window", int(fabric_hz))
-        if fabric_hz > 0:
-            rec.record("phc_core_over_fabric_ratio", round(implied_core_hz / fabric_hz, 4))
+        rec.record("phc_core_over_fabric_ratio", round(ratio, 4))
+        if 0.9 <= ratio <= 1.1:
+            rec.note("The PHC's implied clock and the fabric counter agree (ratio "
+                     "%.4f), which is what the RTL predicts: they are the same net."
+                     % ratio)
+        else:
+            rec.note("RATIO %.4f, AND IT SHOULD BE 1.0 -- BUT THIS IS NOT EVIDENCE "
+                     "THAT THE PHC IS ON A DIFFERENT CLOCK. The path is: PHC's HCLK is "
+                     "u_network_core_sys_hclk (nanosoc_multicore_soc.sv:1033-1037), "
+                     "which is the eth subsystem's sys_hclk output (:954, :834), which "
+                     "with CLK_RST_CONSUMER=1 is sys_hclk_i passed straight through "
+                     "(ethernet_ss_ahb_rmii.sv:336-343, :387-389), which is chip_core's "
+                     "sys_hclk (:960, :978), which is `assign SYS_HCLK = SYS_FCLK;` "
+                     "(slcorem0p_prmu.v:91-93). There is NO divider, prescaler or "
+                     "gate anywhere on that path, and the PHC counter itself adds "
+                     "ns_incr every cycle with no tick divisor "
+                     "(phc_clock_core.sv:136-170). So a ratio far from 1.0 means one "
+                     "of the two MEASUREMENTS is not in the units it is assumed to be "
+                     "in, and the P0_CYC side is the one to distrust first. That is "
+                     "HIO-402's and HIO-307's question, not this test's, which is why "
+                     "it is recorded here and not asserted." % ratio)
+    else:
+        rec.record("phc_fabric_crosscheck",
+                   "unavailable (P0_CYC not counting -- diagnosed by HIO-402)")
 
-    lo, hi = core_hz * 0.9, core_hz * 1.1
-    rec.check("implied core clock within +/-10 %% of %d Hz" % core_hz,
-              lo <= implied_core_hz <= hi,
-              got="%.3f MHz (ns_incr=%d)" % (implied_core_hz / 1e6, ns_incr))
-    rec.note("If this fails but phc_core_over_fabric_ratio is ~1.0, the PHC is fine "
-             "and the expected-frequency constant is wrong for this build: set "
-             "HOSTIO_PHC_CORE_HZ to the measured fabric clock and re-run.")
+    # (c) THE FINDING.  Not relaxed, not overridable.
+    rec.check("THE PHC KEEPS REAL TIME: ns_incr x f_phc must be 1e9, i.e. the clock "
+              "must advance 1,000,000,000 ns per wall second. Measured %d ns/s = "
+              "%.4f x real time. The +/-2 %% tolerance is set by host-timing jitter "
+              "over a %.0f s window and by nothing else -- it is NOT widened to "
+              "accommodate a result. AT THE CLOCK ACTUALLY MEASURED (%.4f MHz) "
+              "NS_INCR WOULD HAVE TO BE %.1f, not %d; equivalently, NS_INCR=%d wants "
+              "a %.4f MHz clock. NS_INCR is RW (HIO-309 writes and restores it), so "
+              "the fix is a register write or a changed reset default, NOT a clock "
+              "change"
+              % (int(rate), realtime_ratio, PHC_INTERVAL_S, implied_core_hz / 1e6,
+                 incr_for_realtime, ns_incr, ns_incr, hz_for_realtime / 1e6),
+              abs(realtime_ratio - 1.0) <= 0.02,
+              got="%.6f x real time (%d ns per wall second, ns_incr=%d)"
+                  % (realtime_ratio, int(rate), ns_incr))
+    if abs(realtime_ratio - 1.0) > 0.02:
+        rec.note("THIS RED IS A RESULT ABOUT THE BUILD, NOT ABOUT THE TEST. The RTL "
+                 "reset value of NS_INCR is 4, documented as '4 ns for 250 MHz' "
+                 "(phc_apb_regs.sv:18, phc_clock_core.sv:9 'Designed for clock "
+                 "frequencies of 200-250 MHz'), and 250 MHz is not this design's "
+                 "frequency on any target: the ASIC is 100 MHz (wants NS_INCR=10) and "
+                 "the KR260/HAPS FPGA builds are 25 MHz (want NS_INCR=40). NS_INCR=4 "
+                 "is therefore wrong on BOTH platforms, not just this one -- it is not "
+                 "an FPGA-only artefact and it will not fix itself on silicon. Nothing "
+                 "in the firmware derives NS_INCR from NANOSOC_SYS_CLK_FREQ_HZ either; "
+                 "two apps hard-code 10 (a 100 MHz number) into their own tick maths. "
+                 "The PHC is otherwise healthy: HIO-403 proved it enables and counts, "
+                 "and the rate is stable -- it counts the wrong number of nanoseconds "
+                 "per cycle, which is a one-word fix, not a broken block.")
+
+    # (d) An absolute expectation ONLY if the operator supplies one.
+    exp = _env("HOSTIO_PHC_CORE_HZ")
+    if exp is None:
+        rec.record("phc_expected_core_hz", None)
+        rec.note("No HOSTIO_PHC_CORE_HZ set, so NO absolute-frequency assertion was "
+                 "made -- deliberately. A hardcoded expectation here was wrong for "
+                 "every platform and would have been believed at bring-up. If you know "
+                 "this die's PHC clock, pass it: 100000000 for the ASIC "
+                 "(ASIC/common.mk CLK_PERIOD=10.0), 25011000 for the KR260 FPGA "
+                 "(routed timing summary 39.982 ns), 25000000 for HAPS-SX.")
+    else:
+        core_hz = int(exp, 0)
+        rec.record("phc_expected_core_hz", core_hz)
+        lo, hi = core_hz * 0.9, core_hz * 1.1
+        rec.check("implied PHC clock within +/-10 %% of the OPERATOR-SUPPLIED %d Hz "
+                  "(HOSTIO_PHC_CORE_HZ). This is the only check here that depends on "
+                  "a number this suite cannot measure" % core_hz,
+                  lo <= implied_core_hz <= hi,
+                  got="%.4f MHz (ns_incr=%d)" % (implied_core_hz / 1e6, ns_incr))
 
 
 @test("HIO-405", tier=4, hazard=None, needs=["HIO-401", "HIO-311"],
@@ -871,7 +1438,14 @@ def hio_406(adp, rec):
               "lane_fault byte names the failing lane. Those checks are gated on the "
               "PHY having locked or calibrated, because on a die with no peer every "
               "one of them is legitimately in its down state -- in that case the "
-              "record carries link_present = False and only readability is asserted.")
+              "record carries link_present = False and only readability is asserted. "
+              "BIT 20 IS NOT PART OF fcsm_state, whatever the RDL says: the RTL packs "
+              "a 3-bit FCSM at [19:17] and a2l_replay_app_valid at [20] "
+              "(axi_chiplet_controller.sv:1796, :2904-2905), so fcsm_state has only "
+              "eight legal values and there is no state 8. This test read 8 on the eth "
+              "die 2026-08-25 under the old 4-bit decode and called it 'unknown state'; "
+              "it was FCSM 0 (idle, correct for a die with no peer) with bit 20 set. "
+              "See _decode_lane_status.")
 def hio_407(adp, rec):
     r = _rd(adp, TL_LANE_STATUS)
     rec.check("swi_lane_status readable", _good(r), got=r.raw)
@@ -890,6 +1464,15 @@ def hio_407(adp, rec):
                  "are not interpretable in that state (a lone die legitimately sits "
                  "there), so they are recorded and not asserted. On a die that is "
                  "supposed to be paired, this line IS the finding.")
+        if f["a2l_replay_app_valid"]:
+            rec.note("a2l_replay_app_valid (bit 20) is SET with the link down. That is "
+                     "the APP side of the a2l replay buffer holding a word it cannot "
+                     "hand to a link that is not up -- expected here, and NOT a wedge. "
+                     "The wedge signature is this bit set while the LINK side stays "
+                     "empty ON A LIVE LINK, which is read from A2L_REPLAY_OBS, not "
+                     "from here (axi_chiplet_controller.sv:2626-2636). Under the old "
+                     "4-bit fcsm decode this bit read as 'fcsm_state = 8, unknown "
+                     "state' -- a bit-field error, not a die fault.")
         return
 
     rec.check("no lane reports a sticky fault", f["lane_fault"] == 0,
@@ -1280,34 +1863,328 @@ def hio_415(adp, rec):
 # =============================================================================
 
 @test("HIO-501", tier=5, hazard=HZ.DESTRUCTIVE,
-      destroys="eth IMEM, 32 KB at 0x10000000 (F zero-fill, then the image)",
-      purpose="Preload CPU0 IMEM and verify byte-exact. The F pre-zero is what makes "
-              "the verify meaningful: without it a U that wrote nothing would still "
-              "verify against whatever was already there. The final byte is verified "
-              "explicitly (A x10000fff ; R) because F and U do not capture HRESP on "
-              "their last beat -- the capture sits in the else branch, so a fill or "
-              "upload whose only erroring beat is the last one reports clean.")
+      destroys="the first %d bytes of eth IMEM at 0x%08X: zeroed by `F`, overwritten by "
+               "`U`, then zeroed again -- so the region is LEFT ZEROED, which is the "
+               "cold-die state (plan section 5.5), and is NOT restored to its prior "
+               "contents. Those contents are block-read into the record first, but only "
+               "the first and last four words are archived. Nothing else on the die is "
+               "written: no boot gate, no reset, no peripheral register, and one word "
+               "of eth IMEM is written and restored as a pre-flight control."
+               % (UPLOAD_REGION_BYTES, UPLOAD_BASE),
+      purpose="THE UPLOAD MECHANISM: `F` zero-fill, `U` stream-to-memory, and the "
+              "block-read verify -- exercised end to end with a SYNTHETIC payload, so "
+              "it needs no firmware and runs on any die. NOTHING ELSE IN THIS SUITE "
+              "EMITS `F` OR `U` AT ALL, and until this test ran neither had ever been "
+              "exercised on hardware. "
+              "TARGET is eth IMEM at 0x%08X, the REMAP-INDEPENDENT alias of that 32 KB "
+              "RAM (plan section 1.4). Not 0x00000000: that window is bootrom OR IMEM "
+              "depending on the eth REMAP bit, so a carpet write aimed there is a coin "
+              "toss between RAM and ROM. Same physical RAM either way. "
+              "SEQUENCE. (1) block-read the region and record what was there. "
+              "(2) POSITIVE CONTROL, before anything destructive: write a tag to word "
+              "0, read it back, restore it. That proves the target is writable RAM and "
+              "that the ADP write path lands data -- and a die that fails it is left "
+              "EXACTLY as found, because no `F` has been issued yet. "
+              "(3) `Vx00000000` ; `A` ; `Fx%08X` -- zero %d words. (4) verify every one "
+              "of them reads zero. (5) `A` ; `Ux%08X` + %d payload bytes. (6) verify "
+              "every payload word, the guard words past it, and the final byte twice. "
+              "(7) `F` again, leaving the region zeroed. "
+              "WHY THE PRE-ZERO IS NOT OPTIONAL, AND WHY STEP 4 EXISTS: without it a "
+              "`U` that wrote nothing verifies perfectly against whatever was already "
+              "there, and 'the tail is still zero, so the upload was short' is not a "
+              "valid inference. Step 4 is what turns the pre-zero from an assumption "
+              "into a measurement. "
+              "WHY THE FINAL BYTE IS RE-READ ON ITS OWN, TWICE: `F` and `U` OR HRESP "
+              "into adp_bus_err only in the loop-CONTINUE branch "
+              "(socdebug_adp_control.v:631 and :651), so the beat that ENDS the "
+              "transfer skips the capture entirely -- a fill or an upload whose only "
+              "erroring beat is its last one echoes perfectly clean. The last beat is "
+              "exactly where a silent failure hides, so it is read back as an aligned "
+              "32-bit access AND as an 8-bit access of that byte alone (`R1`, the form "
+              "measured in HIO-006), neither of which depends on the block dump. "
+              "THE PAYLOAD IS POSITION-DEPENDENT, AND EACH PROPERTY CATCHES A DIFFERENT "
+              "FAILURE. p(off) = 1 + (0x67*off + 0x2D) mod 255. (a) INJECTIVE: 0x67 is "
+              "coprime with 255 and the payload is inside one 255-offset window, so no "
+              "two offsets hold the same byte -- which is what makes ADDRESS ALIASING "
+              "and an address that fails to increment visible. A constant pattern "
+              "cannot see either, because every location then holds the right value "
+              "whatever the address bus did. (b) NEVER ZERO: the range is 1..255, so "
+              "combined with the PROVEN pre-zero 'this byte was never written' reads "
+              "back as a value the payload cannot produce -- which is what catches "
+              "TRUNCATION and dropped beats. (c) ADJACENT BYTES DIFFER, so byte "
+              "ORDERING inside a word is checked too; and if every word matches the "
+              "byte-reversed assembly instead, that is reported as the named finding "
+              "rather than as a generic mismatch (BE = 0, nanosoc_multicore_soc.sv:45). "
+              "(d) the %d GUARD words past the payload must still read zero, which "
+              "catches an OVERRUN. "
+              "THE COUNT GUARD: `U` has no abort and no timeout, so the count must "
+              "equal the payload length exactly or the port parks in ADP_UREADB until a "
+              "host PIO resync. _upload() takes a payload and NO count, and re-parses "
+              "the count out of the very byte string it is about to transmit -- a "
+              "mismatch is unconstructible, not merely avoided. "
+              "COST: ~50 command round trips plus %d streamed bytes. At the measured "
+              "1 CU ~= 65 ms and ~1 ms per streamed byte that is ~4 s; the twelve "
+              "16-word block dumps are the only replies much larger than one line, so "
+              "budget 5-10 s. Note this is nowhere near %d x 130 ms: `U` streams one "
+              "byte per link byte, `F` fills the whole region in ONE command, and a "
+              "block dump reads 16 words in one. "
+              "WHAT THIS TEST DOES NOT DO: it does not load firmware. That half needs "
+              "an image, none exists in this tree, and it is recorded as not-run rather "
+              "than silently folded in -- see the notes and HIO-502."
+              % (UPLOAD_BASE, UPLOAD_REGION_WORDS, UPLOAD_REGION_WORDS,
+                 UPLOAD_PAYLOAD_BYTES, UPLOAD_PAYLOAD_BYTES,
+                 UPLOAD_GUARD_BYTES // 4, UPLOAD_PAYLOAD_BYTES,
+                 UPLOAD_REGION_BYTES // 4))
 def hio_501(adp, rec):
-    image = _env("HOSTIO_CPU0_IMAGE")
-    if image is None:
-        rec.skip("no CPU0 image. REQUIRED: a raw binary (not ELF, not hex) of at most "
-                 "32768 bytes to be written at 0x10000000, its path in "
-                 "HOSTIO_CPU0_IMAGE. The image must be a complete Cortex-M vector "
-                 "table plus code, because HIO-502 releases CPU0 straight into it and "
-                 "that release is irreversible within a power cycle. No such image "
-                 "exists in this tree today. No bus access attempted -- in particular "
-                 "the destructive F pre-zero is NOT issued, since zeroing IMEM without "
-                 "the upload that must follow it would leave the die worse than found.")
-    if not os.path.isfile(image):
-        rec.skip("HOSTIO_CPU0_IMAGE=%s does not exist. No bus access attempted." % image)
-    size = os.path.getsize(image)
-    rec.record("cpu0_image_path", image)
-    rec.record("cpu0_image_bytes", size)
-    if size == 0 or size > 32768:
-        rec.skip("HOSTIO_CPU0_IMAGE is %d bytes; eth IMEM is 32 KB "
-                 "(ETH_IMEM_RAM_ADDR_W=15). Refusing to size a `U` from it." % size)
-    # Reached only with a real image, and still refused: see the guard's text.
-    _refuse_upload(rec, "HIO-501 (CPU0 IMEM preload)", size)
+    base = UPLOAD_BASE
+    nbytes = UPLOAD_PAYLOAD_BYTES
+    region_words = UPLOAD_REGION_WORDS
+    payload_words = nbytes // 4
+    guard_words = region_words - payload_words
+    payload = _pattern_payload(nbytes)
+
+    rec.record("upload_base", "0x%08X" % base)
+    rec.record("upload_payload_bytes", nbytes)
+    rec.record("upload_guard_bytes", UPLOAD_GUARD_BYTES)
+    rec.record("upload_region_words", region_words)
+    rec.record("upload_pattern",
+               "p(off) = 1 + (0x%02X*off + 0x%02X) mod %d, off = 0..%d"
+               % (PATTERN_MUL, PATTERN_ADD, PATTERN_MOD, nbytes - 1))
+    rec.record("upload_payload_first8",
+               ["0x%02X" % b for b in bytearray(payload[:8])])
+    rec.record("upload_payload_last_byte", "0x%02X" % _pattern_byte(nbytes - 1))
+
+    # -- 1. what was there.  Recorded BEFORE anything is written. -------------
+    before, before_ok = _read_region(adp, rec, base, region_words, "pre")
+    rec.check("the target region block-reads cleanly BEFORE anything is written "
+              "(%d words at 0x%08X, in 16-word `R x<n>` dumps)"
+              % (region_words, base), before_ok, got=_words_summary(before))
+    if not before_ok:
+        rec.note("STOP -- and nothing destructive was issued. Without a clean read "
+                 "there is no pre-state to record and no baseline to compare against, "
+                 "so the `F` was not sent. Fix the read path first.")
+        return
+    rec.record("pre_region_first4", ["0x%08X" % w for w in before[:4]])
+    rec.record("pre_region_last4", ["0x%08X" % w for w in before[-4:]])
+    nonzero = sum(1 for w in before if w)
+    rec.record("pre_region_nonzero_words", nonzero)
+    rec.record("pre_region_all_zero", nonzero == 0)
+    if nonzero:
+        rec.note("THE REGION WAS NOT EMPTY: %d of %d words held data, and this test "
+                 "destroys them. On a cold die eth IMEM is all zeros (plan section 5.5) "
+                 "and that costs nothing; on a die where firmware had been loaded it "
+                 "does. Only the first and last four words are archived above -- this "
+                 "test does not back IMEM up." % (nonzero, region_words))
+
+    # -- 2. positive control.  The last moment at which nothing has changed. --
+    orig = before[0]
+    tag = (UPLOAD_PROBE_TAG if orig != UPLOAD_PROBE_TAG
+           else (~UPLOAD_PROBE_TAG) & 0xFFFFFFFF)
+    pw = _wr(adp, base, tag)
+    pr = _rd(adp, base)
+    landed = _wrote(pw) and _good(pr) and pr.value == tag
+    rec.record("probe_tag", "0x%08X" % tag)
+    rec.record("probe_write_reply", pw.raw)
+    rec.record("probe_read_reply", pr.raw)
+    rec.check("POSITIVE CONTROL: 0x%08X is WRITABLE RAM and the ADP write path lands "
+              "data on it (0x%08X written, read back bit for bit). Without this the "
+              "whole test can pass vacuously against ROM or a dead write path, and it "
+              "runs BEFORE the destructive `F` so a die that fails it is left untouched"
+              % (base, tag), landed, got="W=%s R=%s" % (pw.raw, pr.raw))
+    rw = _wr(adp, base, orig)
+    rec.record("probe_restore_reply", rw.raw)
+    if not landed:
+        rec.note("STOP. No `F` and no `U` were issued. The word at 0x%08X did not take "
+                 "a plain 32-bit write, so this is not writable RAM -- and the eth "
+                 "REMAP bit cannot explain it at 0x10000000, which is IMEM whatever "
+                 "remap says (plan section 1.4). Suspect the write path (HIO-313) or "
+                 "the decode, not the upload mechanism." % base)
+        return
+
+    destructive = False
+    raised = False
+    try:
+        # -- 3. the `F` pre-zero ------------------------------------------------
+        destructive = True
+        v, a, f = _fill_words(adp, rec, base, region_words, 0x00000000, "prezero")
+        rec.record("prezero_v_reply", v.raw)
+        rec.record("prezero_a_reply", a.raw)
+        rec.record("prezero_f_reply", f.raw)
+        rec.check("`Vx00000000` accepted -- it sets the fill VALUE and, through its "
+                  "digit count, the 32-bit fill SIZE that `F` then uses",
+                  v.ok and v.letter == "V" and not v.error, got=v.raw)
+        rec.check("`Ax%08X` accepted (the fill base)" % base,
+                  a.ok and a.letter == "A" and not a.error, got=a.raw)
+        rec.check("`Fx%08X` returned a well-formed reply with no bus-error flag"
+                  % region_words,
+                  f.ok and f.letter == "F" and not f.error, got=f.raw)
+
+        # -- 4. prove the pre-zero.  This is what makes step 6 mean anything. ---
+        zeroed, zero_ok = _read_region(adp, rec, base, region_words, "postfill")
+        all_zero = zero_ok and all(w == 0 for w in zeroed)
+        rec.check("EVERY one of the %d words reads back 0x00000000 after `F`. This is "
+                  "what makes the upload verify meaningful: without a PROVEN pre-zero, "
+                  "a `U` that wrote nothing still verifies against whatever was already "
+                  "there, and 'the tail is still zero so the upload was short' is not a "
+                  "valid inference" % region_words,
+                  all_zero, got=_words_summary(zeroed))
+        last_f = _rd(adp, base + (region_words - 1) * 4)
+        rec.record("prezero_last_word_reply", last_f.raw)
+        rec.check("the LAST word of the fill, re-read on its own, is 0x00000000. `F` "
+                  "ORs HRESP into adp_bus_err only in its loop-CONTINUE branch "
+                  "(socdebug_adp_control.v:651), so a fill whose only erroring beat is "
+                  "its last one echoes clean -- this read is what catches that",
+                  _good(last_f) and last_f.value == 0, got=last_f.raw)
+        if not all_zero:
+            rec.note("STOP before `U`. The pre-zero did not hold, so any upload verify "
+                     "after it would be uninterpretable: a matching word could be the "
+                     "upload or could be what was there already. The region is "
+                     "re-zeroed on the way out.")
+            return
+
+        # -- 5. the upload -----------------------------------------------------
+        up = _upload(adp, rec, base, payload, "upload")
+        u = up["reply"]
+        rec.record("upload_echo_raw", u.raw)
+        rec.record("upload_echo_text_tail", up["text"][-80:])
+        rec.check("the link accepted every byte of the command line plus the %d-byte "
+                  "payload. A SHORT COUNT IS THE ONE FAILURE THAT MATTERS HERE: `U` has "
+                  "no abort and no timeout, so a short stream leaves the FSM parked in "
+                  "ADP_UREADB waiting for bytes that never come" % nbytes,
+                  up["sent"] == up["frame_len"],
+                  got="%d of %d bytes accepted" % (up["sent"], up["frame_len"]))
+        rec.check("`U` echoed a well-formed reply and returned to the prompt, so the "
+                  "FSM consumed exactly the byte count it was given and left "
+                  "ADP_UREADB of its own accord",
+                  u.ok and u.letter == "U", got=u.raw)
+        rec.check("`U` echoed back the count it was given (0x%08X = %d bytes)"
+                  % (nbytes, nbytes), u.value == nbytes, got=u.raw)
+        rec.check("`U` raised no bus-error flag. Note this covers every beat EXCEPT the "
+                  "last, whose HRESP is not captured (socdebug_adp_control.v:631) -- "
+                  "which is why the final byte is read back separately below",
+                  u.ok and not u.error, got=u.raw)
+
+        # -- 6. verify ---------------------------------------------------------
+        got, got_ok = _read_region(adp, rec, base, region_words, "postupload")
+        rec.check("the region block-reads cleanly after the upload", got_ok,
+                  got=_words_summary(got))
+        body = got[:payload_words]
+        want_le = [_pattern_word_le(i * 4) for i in range(payload_words)]
+        want_be = [_pattern_word_be(i * 4) for i in range(payload_words)]
+        matched_le = (body == want_le)
+        matched_be = (body == want_be)
+        first_bad = next((i for i in range(payload_words) if body[i] != want_le[i]),
+                         None)
+        rec.record("upload_first_mismatch_word", first_bad)
+        if first_bad is not None:
+            rec.record("upload_first_mismatch",
+                       "word %d at 0x%08X: got %s, want 0x%08X"
+                       % (first_bad, base + first_bad * 4,
+                          "None" if body[first_bad] is None
+                          else "0x%08X" % body[first_bad], want_le[first_bad]))
+        rec.check("all %d payload words read back BYTE-EXACT against the "
+                  "position-dependent pattern. Because p() is injective across the "
+                  "payload this also rules out address aliasing and a non-incrementing "
+                  "address; because p() is never zero it also rules out a short or "
+                  "dropped write hiding behind a legitimately zero byte"
+                  % payload_words,
+                  matched_le,
+                  got=("all match" if matched_le else
+                       "first mismatch at word %s" % first_bad))
+        if matched_be and not matched_le:
+            rec.note("EVERY word matches the BYTE-REVERSED assembly of the same "
+                     "pattern. That is not a corrupt upload -- it is a byte-order "
+                     "result, and a surprising one: this build is little-endian by "
+                     "construction (`parameter BE = 0` at "
+                     "nanosoc_multicore_soc.sv:45, fed to both CPU integrations at "
+                     ":846 and :962). Either the `U` byte lane select is wrong "
+                     "(HADDR[1:0] = adp_addr[1:0] at socdebug_adp_control.v:377) or "
+                     "the read rotation is. Do not re-run before resolving it.")
+
+        tail = got[payload_words:]
+        rec.check("the %d GUARD words past the payload are STILL 0x00000000, so `U` "
+                  "wrote exactly %d bytes and not one more" % (guard_words, nbytes),
+                  all(w == 0 for w in tail), got=_words_summary(tail))
+
+        want_last = _pattern_byte(nbytes - 1)
+        lw = _rd(adp, base + (payload_words - 1) * 4)
+        rec.record("final_word_reply", lw.raw)
+        rec.check("THE FINAL BYTE, part 1: the last payload WORD re-read on its own at "
+                  "0x%08X carries 0x%02X in its top byte. `U` does not capture HRESP on "
+                  "its last beat (socdebug_adp_control.v:631), so an upload whose only "
+                  "erroring beat is the last one echoes clean; this read uses nothing "
+                  "but the proven `A` + `R` form"
+                  % (base + (payload_words - 1) * 4, want_last),
+                  _good(lw) and ((lw.value >> 24) & 0xFF) == want_last,
+                  got="%s (top byte %s, want 0x%02X)"
+                      % (lw.raw,
+                         "n/a" if lw.value is None else "0x%02X" % ((lw.value >> 24) & 0xFF),
+                         want_last))
+        lb = _read_byte(adp, base + nbytes - 1)
+        rec.record("final_byte_reply", lb.raw)
+        rec.record("final_byte_width_nibbles", lb.width)
+        rec.check("THE FINAL BYTE, part 2: read as an 8-bit access of that byte alone "
+                  "(`A x%08X` ; `R1`) it is 0x%02X, in a 2-nibble reply. This is the "
+                  "byte-precise form -- an aligned word read cannot distinguish which "
+                  "byte lane failed"
+                  % (base + nbytes - 1, want_last),
+                  lb.ok and lb.letter == "R" and not lb.error
+                  and lb.value == want_last and lb.width == 2,
+                  got="%s (value=%s width=%s nibbles, want 0x%02X in 2)"
+                      % (lb.raw, lb.value, lb.width, want_last))
+
+        # -- the half that still needs firmware --------------------------------
+        image = _env("HOSTIO_CPU0_IMAGE")
+        rec.record("cpu0_image_configured", image is not None)
+        rec.record("cpu0_image_loaded", False)
+        if image is None:
+            rec.note("NO FIRMWARE WAS LOADED, AND HIO-502 NEEDS TO KNOW THAT. This test "
+                     "proved the transport, not a boot image: it leaves eth IMEM "
+                     "ZEROED. If HIO-502 is run now it releases CPU0 into an empty "
+                     "IMEM -- which is survivable (CPU0 does not source the fabric "
+                     "clock; it faults or locks up) and is the state plan section 5.5 "
+                     "already observed on the FPGA, but it is not a firmware test. "
+                     "To load an image, set HOSTIO_CPU0_IMAGE: a raw binary (not ELF, "
+                     "not hex) of at most 32768 bytes, a complete Cortex-M vector table "
+                     "plus code. No such image exists in this tree today.")
+        else:
+            rec.record("cpu0_image_path", image)
+            if os.path.isfile(image):
+                rec.record("cpu0_image_bytes", os.path.getsize(image))
+            rec.note("HOSTIO_CPU0_IMAGE IS SET BUT WAS NOT LOADED, and eth IMEM is left "
+                     "ZEROED -- do not run HIO-502 expecting that image to be there. "
+                     "This test deliberately covers the MECHANISM only: loading a real "
+                     "image means zeroing all 32 KB and verifying a region whose size "
+                     "and cost are set by the image, which is a different test with a "
+                     "different runtime. The transport it would use is exactly the one "
+                     "just proved here -- _upload() with the same count guard.")
+        return
+    except BaseException:
+        raised = True
+        raise
+    finally:
+        # -- 7. leave it clean -------------------------------------------------
+        if destructive and not raised:
+            cv, ca, cf = _fill_words(adp, rec, base, region_words, 0x00000000,
+                                     "cleanup")
+            z0 = _rd(adp, base)
+            z1 = _rd(adp, base + (region_words - 1) * 4)
+            rec.record("cleanup_f_reply", cf.raw)
+            rec.record("cleanup_first_word", z0.raw)
+            rec.record("cleanup_last_word", z1.raw)
+            rec.check("THE REGION IS LEFT ZEROED: the cleanup `F` reported no bus "
+                      "error and the first and last words both read 0x00000000. This "
+                      "test leaves eth IMEM in the cold-die state, not holding a test "
+                      "pattern -- but it does NOT restore the prior contents, which are "
+                      "gone",
+                      cv.ok and ca.ok and cf.ok and not cf.error
+                      and _good(z0) and z0.value == 0
+                      and _good(z1) and z1.value == 0,
+                      got="F=%s first=%s last=%s" % (cf.raw, z0.raw, z1.raw))
+        elif destructive:
+            rec.record("cleanup", "NOT RUN -- the test raised, so no further commands "
+                                  "were issued; the region holds whatever the last "
+                                  "completed step wrote")
 
 
 @test("HIO-502", tier=5, hazard=HZ.IRREVERSIBLE, needs=["HIO-313", "HIO-501"],
@@ -1323,7 +2200,15 @@ def hio_501(adp, rec):
               "(a broken write path, which HIO-313 has already ruled out) -- and CPU0 "
               "showing no life afterwards is then a firmware or reset-tree result, "
               "not a debug-port result. Boot gates are write-1-set only "
-              "(remap_q <= remap_q | HWDATA[3:0]) and reset only on PORESETn.")
+              "(remap_q <= remap_q | HWDATA[3:0]) and reset only on PORESETn. "
+              "READ THIS BEFORE ARMING IT: `needs=HIO-501` no longer means an image "
+              "was loaded. HIO-501 now PASSes on the upload MECHANISM alone, with a "
+              "synthetic pattern, and LEAVES ETH IMEM ZEROED unless a firmware image "
+              "was supplied -- check its cpu0_image_loaded record. Releasing CPU0 into "
+              "a zeroed IMEM is survivable (CPU0 does not source the fabric clock, and "
+              "it is the state plan section 5.5 already observed on the FPGA) but it "
+              "is a bus-contention experiment, not a firmware test, and it is still "
+              "irreversible for this power cycle.")
 def hio_502(adp, rec):
     before = _rd(adp, BOOTGATE)
     alias_before = _rd(adp, BOOTGATE_ALIAS_PROBE)
@@ -1619,37 +2504,42 @@ def hio_507(adp, rec):
 
 @test("HIO-508", tier=5, hazard=[HZ.IRREVERSIBLE, HZ.RESET, HZ.DESTRUCTIVE],
       needs=["HIO-313"],
-      destroys="CPU1 IMEM (16 KB at 0x90000000); sets boot-gate bit 0 (irreversible, "
-               "HZ-4); and its CPU1 restart resets the WHOLE SoC including the fabric, "
-               "the ADP and HOSTIO itself (HZ-5)",
-      purpose="CPU1 memory preload -- the other core. 0x90000000 is a "
-              "remap-independent alias of CPU1 IMEM, so the preload works whatever "
-              "CPU1's REMAP bit currently says: you do not have to know the boot state "
-              "to load the image, and it fails visibly if the alias is wrong (HIO-118 "
-              "would already have caught that). Carries TWO hazards that the "
-              "single-valued `hazard` field cannot both express: HZ-4 on the "
-              "0x29000000 bit-0 remap write (irreversible without a power cycle) and "
-              "HZ-5 on the CPU1 restart, which resets the whole SoC because CPU1's "
-              "PRMU sources HCLK/HRESETn -- so it declares BOTH, plus DESTRUCTIVE for "
-              "the IMEM it overwrites, and needs all three runner flags before it may "
-              "run at all.")
+      destroys="NOTHING -- it makes no bus access at all. The hazards stay declared "
+               "because they describe what this test WOULD do if its target were "
+               "safe: overwrite CPU1 IMEM (16 KB at 0x90000000), set boot-gate bit 0 "
+               "(irreversible, HZ-4), and restart CPU1, which resets the WHOLE SoC "
+               "including the ADP and HOSTIO itself (HZ-5). Removing them would let a "
+               "future edit re-enable the upload without an operator opting in.",
+      purpose="CPU1 memory preload -- REFUSED AT THE TARGET, NOT FOR WANT OF A "
+              "MECHANISM. Structured exactly like HIO-501, and it would use the same "
+              "_upload() with the same count guard against the same `U`; 0x90000000 is "
+              "a remap-independent alias of CPU1 IMEM, so the preload would work "
+              "whatever CPU1's REMAP bit says. What stops it is that CPU1 IS EXECUTING "
+              "OUT OF THE MEMORY IT WOULD OVERWRITE AND CANNOT BE STOPPED FIRST: "
+              "`.cpu1_bootgate (1'b1)` is tied high at the SoC top "
+              "(nanosoc_multicore_soc.sv:1387) and cpu1_resetn = cpu1_bootgate & "
+              "~cpu1_reset_pulse (nanosoc_reset_ctrl.v:364), so unlike CPU0 there is no "
+              "hold-in-reset / load / release order available from this port. And the "
+              "failure mode is the whole die rather than one core: CPU1's PRMU sources "
+              "the fabric's HCLK and HRESETn, so a CPU1 faulting on half-overwritten "
+              "code can take the fabric, the ADP and HOSTIO down with it -- the very "
+              "port that would diagnose it. THE REFUSAL IS IN CODE, NOT IN THIS TEXT: "
+              "0x90000000 is deliberately absent from _BULK_WRITE_REGIONS, so "
+              "_check_bulk_write() rejects any `F` or `U` aimed at it even if the guard "
+              "in the body were deleted. It reports SKIP with that reasoning rather "
+              "than being dropped, so 'CPU1 preload untested, and why' stays in the "
+              "coverage record.")
 def hio_508(adp, rec):
     image = _env("HOSTIO_CPU1_IMAGE")
-    if image is None:
-        rec.skip("no CPU1 image. REQUIRED: a raw binary of at most 16384 bytes for "
-                 "0x90000000 (CC_IMEM_RAM_ADDR_W=14), its path in HOSTIO_CPU1_IMAGE. "
-                 "Note the plan's Phase-D option (b) uses this same mechanism to PARK "
-                 "CPU1 in a two-instruction spin loop so it stops fighting the memory "
-                 "tests -- that is the most useful image to build first. No such image "
-                 "exists in this tree today. No bus access attempted.")
-    if not os.path.isfile(image):
-        rec.skip("HOSTIO_CPU1_IMAGE=%s does not exist. No bus access attempted." % image)
-    size = os.path.getsize(image)
-    rec.record("cpu1_image_path", image)
-    rec.record("cpu1_image_bytes", size)
-    if size == 0 or size > 16384:
-        rec.skip("HOSTIO_CPU1_IMAGE is %d bytes; CPU1 IMEM is 16 KB." % size)
-    _refuse_upload(rec, "HIO-508 (CPU1 IMEM preload)", size)
+    rec.record("cpu1_image_configured", image is not None)
+    if image is not None:
+        rec.record("cpu1_image_path", image)
+        if os.path.isfile(image):
+            rec.record("cpu1_image_bytes", os.path.getsize(image))
+        else:
+            rec.record("cpu1_image_bytes", None)
+    rec.record("cpu1_upload_target", "0x%08X (NOT in _BULK_WRITE_REGIONS)" % CPU1_IMEM)
+    _refuse_cpu1_upload(rec)
 
 
 @test("HIO-509", tier=5, hazard=[HZ.RESET, HZ.DESTRUCTIVE], needs=["HIO-010"],

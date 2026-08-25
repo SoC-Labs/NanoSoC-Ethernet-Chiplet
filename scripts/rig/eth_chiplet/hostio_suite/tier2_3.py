@@ -59,6 +59,78 @@ does instead (it re-issues ``A`` before every access, via ``adp.read`` /
     safety of Abort Gate 8 should not rest on an address-decode accident.
     See ``_bootgate_noop_write`` below for the guard used instead.
 
+**Every hazard band was transcribed from prose, and two of the four were SHORT.**
+The bands in ``_NEVER_TOUCH`` were copied from the test plan's hazard note, which
+names individual offsets, rather than derived from the decode that defines the
+aperture.  Re-derived from RTL:
+
+  * **HZ-1 was short by one slot.**  The note names ``0x1AC``/``0x1B0``/``0x1B4``
+    and the band was written ``0x1A0``-``0x1B8``.  Region D is selected by
+    ``paddr[8:5] == 4'b1101`` (``axi_chiplet_controller.sv:244``) = offsets
+    ``0x1A0``-``0x1BF``, **eight** word slots.  Slot 7 (``0x2E0321BC``) was
+    outside the quarantine and **HIO-310 was sweeping it** -- into a bank the
+    project documents as an uninterruptible hang.  Only the ``WEDGE_RISK`` gate
+    kept it from ever running.
+  * **HZ-6 was short by 48 MB.**  The note says ``0x24000000``-``0x24FFFFFF``;
+    the ``debug_m`` decode arm routes all of ``0x24000000``-``0x27FFFFFF`` to
+    MI5, the stalling XiP slave
+    (``multicore_matrix_decode_DEBUG_M.v:475-477``), and the 4 MB aperture
+    aliases across the whole arm.
+  * **HZ-3 is exact.**  ``a_tx = in_2e & (blk==4'h0) & off_tx`` with
+    ``blk = haddr[19:16]`` and ``off_tx = (haddr[15:14]==2'b00)``
+    (``chiplet_d2d_decode.sv:117,160,182``) -> ``0x2E000000``-``0x2E003FFF``.
+  * **HZ-2 is exact.**  ``a_peer = haddr[24]``, no further qualifier (:187).
+  * **HZ-7 is correct, for a reason that is not local.**  ``hw_spinlock``
+    decodes only ``HADDR[9:2]``, so its three acquire pages would alias every
+    1 KB across the 1 MB leaf; what bounds them is the wrapper's
+    ``win_ok = (HADDR[19:10] == 10'd0)`` (``ctrl_dbg_group.v:129``).  Relax that
+    gate and the acquire list becomes short too.
+
+**An aperture may only be inferred from the decode arm that selects the slave**,
+never from a prose summary of it -- the same lesson as the port-vs-register
+error below.
+
+**Port width is not register width -- a general trap, and one this file fell
+into.**  HIO-312 originally asserted that QSPI ``ADDR`` reads back
+``0x003FFFFF``, derived from ``assign QSPI_ADDR = reg3[21:0]``
+(``apb_qspi_regs.v:136``).  That line narrows the **derived output port** to the
+flash controller and says nothing about the APB readback: the storage is
+``reg [31:0] reg3`` (:112), written ``reg3 <= PWDATA`` unmasked (:188) and read
+``PRDATA = reg3`` whole (:220).  The wrong expectation FAILED A GOOD DIE on
+silicon.  **A register width may be inferred only from the storage declaration
+and the read mux, never from an ``assign <port> = reg[N:0]``.**
+
+Audit of every other register this file writes, for the same shape:
+
+  * ``reg2`` / QSPI ``CMD`` -- has ``assign QSPI_N_RW_BYTES = reg2[19:16]``,
+    the identical trap, but is a full-width RW store; safe here because the test
+    asserts only the ``0x00000003`` it actually wrote.
+  * ``lock_reg`` / IPC ``LOCK`` -- has ``assign slot0_lock = lock_reg[0]``;
+    full-width RW store, asserted only on the ``0x00000001`` written.
+  * Narrowed **read muxes** are a different thing and ARE observable over the
+    bus: ``reset_ctrl`` SYS_CTRL ``{31'b0, reg_lockupreset}``, RESET_INFO
+    ``{28'b0, ...}``, the boot gate's ``{28'b0, remap_q}``, the spinlock's
+    packed OWNER word.  No test here asserts a full-width readback of any of
+    them; each asserts only bits it wrote or bits the RTL packs.
+
+No other instance of the port-vs-register inference was found.
+
+**A verdict must name the register it actually read.**  HIO-303 originally
+skipped with the text *"no dual_root, no timeouts"*.  The address was right --
+TC_ERROR really is ``0x2E04002C`` (waddr ``7'h0B``,
+``tidechart_apb_regs.sv:631``) and ``0x2E040004`` is a different register,
+``TC_BEST_CLAIM`` (waddr ``7'h01``, :621), whose ``0xFFFFFFFF`` is the
+documented no-claim-yet sentinel.  But the *verdict* was still wrong: bits
+``[0]`` election_timeout, ``[1]`` enum_timeout and ``[2]`` dual_root are
+documented at :189 and **have no setter anywhere in this build** -- the only
+assignment to ``error_reg_r`` besides reset and the W1C clear is
+``error_reg_r[3] <= 1'b1`` on ``cap_timeout_err`` (:512-513).  So a clear
+TC_ERROR was structurally guaranteed and said nothing at all about dual-root, a
+known open defect.  HIO-303 now records that non-observability, refuses to issue
+the all-clear, and carries address-provenance anchors -- including
+``TC_ERROR[31:4] == 0``, which goes red if the test is ever pointed at
+TC_BEST_CLAIM.
+
 Two register mislabels, also fixed:
 
   * **HIO-311** calls ``0x28000004`` RELOAD and ``0x28000008`` VALUE.  The CMSDK
@@ -231,12 +303,36 @@ class HazardGuard(Exception):
 
 
 #: (lo, hi, why) — never read, never write.
+#:
+#: EVERY BOUND HERE IS DERIVED FROM THE DECODE RTL, not from the plan's prose.
+#: Two of the four bands were originally transcribed from the hazard note and
+#: were SHORT — see the module docstring. Each entry carries its derivation so
+#: the next reader can re-check it against the same line rather than trusting
+#: this table.
 _NEVER_TOUCH = (
-    (0x2E0321A0, 0x2E0321B8, "HZ-1 TideLink SYNC_DIST band: uninterruptible AXI hang, power cycle to recover"),
-    (0x2F000000, 0x2FFFFFFF, "HZ-2 peer aperture: a failed read parks the peer port and the next access wedges the host"),
-    (0x2E000000, 0x2E003FFF, "HZ-3 TideLink TX aperture: wedges on a write while the link is up"),
-    (0x24000000, 0x24FFFFFF, "HZ-6 QSPI XiP aperture: 1.3 ms stall minimum, livelock with flash fitted"),
+    # Region D is selected by paddr[8:5] == 4'b1101 (axi_chiplet_controller.sv:244),
+    # i.e. offsets 0x1A0..0x1BF = EIGHT word slots, not seven. Slot 7 (0x1BC) sits
+    # in the same decoded bank as SYNC_DIST_OBS/SEL and SWI_PHASE_LSB.
+    (0x2E0321A0, 0x2E0321BF, "HZ-1 TideLink Region D (paddr[8:5]==4'b1101, slots 0x1A0-0x1BF): "
+                             "uninterruptible AXI hang, power cycle to recover"),
+    # a_peer = haddr[24] with no further qualifier (chiplet_d2d_decode.sv:187):
+    # the whole of 0x2F is the peer window and has no default responder.
+    (0x2F000000, 0x2FFFFFFF, "HZ-2 peer aperture (a_peer = haddr[24]): a failed read parks the peer port "
+                             "and the next access wedges the host"),
+    # a_tx = in_2e & (blk==4'h0) & off_tx, blk = haddr[19:16], off_tx =
+    # (haddr[15:14]==2'b00) (chiplet_d2d_decode.sv:117,160,182) -> 16 KB exactly.
+    (0x2E000000, 0x2E003FFF, "HZ-3 TideLink TX aperture (blk 0, haddr[15:14]==00, 16 KB): "
+                             "wedges on a write while the link is up"),
+    # The debug_m decode arm routes 0x24000000-0x27FFFFFF to MI5, the XiP slave
+    # (multicore_matrix_decode_DEBUG_M.v:475-477). The 4 MB aperture ALIASES
+    # across all 64 MB of that arm, so every address in it stalls.
+    (0x24000000, 0x27FFFFFF, "HZ-6 QSPI XiP decode arm (0x24000000-0x27FFFFFF -> MI5): "
+                             "1.3 ms stall minimum, livelock with flash fitted"),
 )
+
+#: HZ-1 Region D, enumerated word slots. HIO-310 skips these BY NAME rather than
+#: relying on a band happening to line up with its address step.
+_HZ1_REGION_D_SLOTS = tuple(range(0x2E0321A0, 0x2E0321C0, 4))
 
 #: HZ-8 — a read *is* a write here (read-clearing / auto-incrementing).
 _READ_CLEARING = frozenset(
@@ -246,6 +342,14 @@ _READ_CLEARING = frozenset(
 #: HZ-7 — a read of one of these pages ACQUIRES a lock.  Page = HADDR[9:8];
 #: 0 = CPU0, 1 = CPU1, 2 = DBG.  Page 3 (0x2C100300, DIAG) is not an acquire
 #: page and is safe (``hw_spinlock.v:154-156``, verified).
+#:
+#: RE-DERIVED FROM RTL AND CORRECT — but for a non-obvious reason worth
+#: recording. ``hw_spinlock`` decodes ONLY ``HADDR[9:2]`` and never qualifies
+#: the bits above, so on its own the three acquire pages would alias every 1 KB
+#: across the whole 1 MB leaf. What bounds them is the wrapper:
+#: ``ctrl_dbg_group`` gates the leaf on ``win_ok = (HADDR[19:10] == 10'd0)``
+#: (``ctrl_dbg_group.v:129``), so anything above offset 0x3FF is DECERR'd
+#: rather than acquiring. If that gate is ever relaxed, THIS LIST BECOMES SHORT.
 _SPINLOCK_ACQUIRE_PAGES = ((0x2C100000, 0x2C1000FF), (0x2C100100, 0x2C1001FF), (0x2C100200, 0x2C1002FF))
 
 #: Writes that are irreversible or that reset the SoC.  Nothing in Tier 2/3
@@ -920,7 +1024,18 @@ def hio_211(adp, rec):
 
 RESET_CTRL_SYS_CTRL = 0x2A000008        # bit 0 LOCKUPRESETEN (nanosoc_reset_ctrl.v:19-20)
 RESET_INFO_CPU0 = 0x2A000010            # W1C, 4 bits (nanosoc_reset_ctrl.v:21-23, 316-320)
-TC_ERROR = 0x2E04002C                   # TideChart W1C: [0] election_timeout [1] enum_timeout [2] dual_root
+TC_STATUS = 0x2E040000                  # RO [0] election_done [1] is_root [2] enum_done
+                                        #    [7:3] local_id [12:8] total_chiplets  (waddr 7'h00)
+TC_BEST_CLAIM = 0x2E040004              # RO [31:16] device_class [15:0] random_id (waddr 7'h01)
+TC_DEVICE_CLASS = 0x2E040010            # RO [15:0] per-die strap              (waddr 7'h04)
+TC_ERROR = 0x2E04002C                   # R/W1C                                (waddr 7'h0B)
+#: TC_ERROR bits DOCUMENTED in the header comment (tidechart_apb_regs.sv:189).
+TC_ERROR_DOC_MASK = 0x0000000F
+#: TC_ERROR bits that ANY RTL in this build can actually set.  VERIFIED: the
+#: only assignment to `error_reg_r` other than reset and the W1C clear is
+#: `error_reg_r[3] <= 1'b1` on `cap_timeout_err` (:512-513).  Bits [0]
+#: election_timeout, [1] enum_timeout and [2] dual_root HAVE NO SETTER.
+TC_ERROR_SETTABLE_MASK = 0x00000008
 SPINLOCK_OWNER = 0x2C100300             # DIAG page, RO, 2 bits per lock, lock 0 in [1:0]
 SPINLOCK_FORCE_RELEASE = 0x2C100304     # DIAG page, WO, write bit n frees lock n
 SPINLOCK_DBG_PAGE = 0x2C100200          # HZ-7: a READ here acquires; a WRITE releases what DBG owns
@@ -1027,40 +1142,132 @@ def hio_302(adp, rec):
 
 
 @test("HIO-303", tier=3, hazard=HZ.DESTRUCTIVE,
-      destroys="TideChart TC_ERROR sticky flags, INCLUDING [2] dual_root — the sticky evidence of the known "
-               "TideChart dual-root behaviour. Its pre-clear value is recorded first; it cannot be recovered.",
+      destroys="TideChart TC_ERROR sticky flags — in this build only [3] cap_timeout can ever be set, so "
+               "that is the only record at risk. The pre-clear value is recorded first; it cannot be "
+               "recovered. NOT [2] dual_root: that bit has no setter in this RTL (see purpose).",
       purpose="TideChart TC_ERROR W1C — the same shape as HIO-302 on a SECOND, INDEPENDENT W1C "
               "implementation, with the same write-0 negative control. RED when write-0 changes the value or "
-              "when write-1 fails to clear. Bits: [0] election_timeout, [1] enum_timeout, [2] dual_root. "
-              "READING [2] NON-ZERO BEFORE CLEARING IT IS A REAL RESULT, NOT A TEST ARTEFACT — it is recorded "
-              "explicitly. SKIPs rather than passing vacuously when TC_ERROR already reads 0 (nothing to "
-              "clear); the recorded value survives the skip and 'no errors latched' is the good outcome. "
-              "(The plan's literal sequence writes 0x00000007 to 0x2E040030, the PUF seed word, because R "
-              "auto-increments.) Budget: 10 CU ~= 0.7 s.")
+              "when write-1 fails to clear. "
+              "TC_ERROR IS AT 0x2E04002C — waddr 7'h0B, `apb_prdata = error_reg_r` "
+              "(tidechart_apb_regs.sv:631); every copy of that file in the tree is md5-identical. "
+              "0x2E040004 is a DIFFERENT REGISTER, TC_BEST_CLAIM (waddr 7'h01, :621), RO "
+              "[31:16] device_class [15:0] random_id, whose reset/idle value is 0xFFFFFFFF — the "
+              "'no claim seen yet' sentinel (best_class_r/best_random_r <= 16'hFFFF, "
+              "tidechart_election_fsm.sv:266-267, with lower-wins compare at :188-189). It is read and "
+              "recorded here under its own name so the two can never be confused from the record. "
+              "THE DUAL-ROOT ALL-CLEAR IS NOT AVAILABLE FROM THIS REGISTER. Bits [0] election_timeout, "
+              "[1] enum_timeout and [2] dual_root are DOCUMENTED in the header comment (:189) but HAVE NO "
+              "SETTER ANYWHERE IN THIS BUILD: the only assignment to error_reg_r besides reset and the W1C "
+              "clear is `error_reg_r[3] <= 1'b1` on cap_timeout_err (:512-513). So TC_ERROR[2] reads 0 on "
+              "every die unconditionally, and a clear TC_ERROR IS NOT EVIDENCE THAT DUAL-ROOT DID NOT "
+              "HAPPEN. This test records that non-observability explicitly and never issues a clean bill of "
+              "health for dual-root. "
+              "ADDRESS-PROVENANCE ANCHORS run first and are what make the rest interpretable: TC_STATUS "
+              "(+0x00) must have bits [31:13] clear, TC_DEVICE_CLASS (+0x10) must have [31:16] clear, the "
+              "two must differ (no collapsed decode), and TC_ERROR itself must have [31:4] clear. That last "
+              "check is the specific guard against reading the wrong register: pointed at TC_BEST_CLAIM it "
+              "sees 0xFFFFFFFF and goes RED instead of reporting a clean result about a register it never "
+              "read. If an anchor fails the test does NOT skip, so the failure is reported as RED. "
+              "SKIPs only when the anchors passed and TC_ERROR genuinely reads 0, and the skip text names "
+              "the exact address and value read and claims nothing beyond them. "
+              "(The plan's literal sequence writes 0x00000007 to 0x2E040030, the PUF-status word, because R "
+              "auto-increments.) Budget: ~18 CU ~= 1.2 s.")
 def hio_303(adp, rec):
+    # ---- address-provenance anchors -------------------------------------
+    # Prove the block decodes where this test thinks it does BEFORE reading
+    # anything into TC_ERROR's fields.  Reporting a verdict about a register
+    # you did not actually read is the failure mode these guard against.
+    st = _r(adp, TC_STATUS)
+    bc = _r(adp, TC_BEST_CLAIM)
+    dc = _r(adp, TC_DEVICE_CLASS)
+    sv = st.value if st.value is not None else -1
+    bv = bc.value if bc.value is not None else -1
+    dv = dc.value if dc.value is not None else -1
+
+    rec.record("tc_status", "0x%08X" % sv)
+    rec.record("tc_best_claim", "0x%08X" % bv)
+    rec.record("tc_device_class_strap", "0x%08X" % dv)
+    if sv >= 0:
+        rec.record("tc_election_done", bool(sv & 0x1))
+        rec.record("tc_is_root", bool(sv & 0x2))
+        rec.record("tc_enum_done", bool(sv & 0x4))
+        rec.record("tc_local_id", (sv >> 3) & 0x1F)
+        rec.record("tc_total_chiplets", (sv >> 8) & 0x1F)
+
+    a1 = st.ok and not st.error and sv >= 0 and (sv & 0xFFFFE000) == 0
+    a2 = dc.ok and not dc.error and dv >= 0 and (dv & 0xFFFF0000) == 0
+    a3 = sv != dv
+    rec.check("ANCHOR: TC_STATUS (0x%08X) has bits [31:13] clear — the read mux zero-fills above bit 12, so "
+              "a shifted or collapsed decode shows up here" % TC_STATUS, a1, got=st.raw)
+    rec.check("ANCHOR: TC_DEVICE_CLASS (0x%08X) has bits [31:16] clear" % TC_DEVICE_CLASS, a2, got=dc.raw)
+    rec.check("ANCHOR: TC_STATUS and TC_DEVICE_CLASS return DIFFERENT values — the two offsets are not "
+              "aliased onto one register", a3, got="status=0x%08X device_class=0x%08X" % (sv, dv))
+
+    if bv == 0xFFFFFFFF:
+        rec.note("TC_BEST_CLAIM (0x%08X) reads 0xFFFFFFFF. That is its documented NO-CLAIM-YET SENTINEL "
+                 "(best_class_r/best_random_r reset to 16'hFFFF, lower-wins compare), not a sticky error "
+                 "register and not an unimplemented float. Do not read it as TC_ERROR."
+                 % TC_BEST_CLAIM)
+    if sv >= 0 and not (sv & 0x1):
+        rec.note("TC_STATUS = 0x%08X: election_done=0, is_root=0, enum_done=0, local_id=0x%02X. The election "
+                 "has NEVER COMPLETED on this die, so no root has been claimed and the election-related "
+                 "sticky bits could not have fired even if they were implemented."
+                 % (sv, (sv >> 3) & 0x1F))
+
+    # ---- TC_ERROR itself -------------------------------------------------
     r0 = _r(adp, TC_ERROR)
     v = r0.value if r0.value is not None else -1
+    rec.record("tc_error_addr", "0x%08X" % TC_ERROR)
     rec.record("tc_error_before", "0x%08X" % v)
-    rec.record("tc_error_dual_root", bool(v > 0 and (v & 0x4)))
-    rec.record("tc_error_election_timeout", bool(v > 0 and (v & 0x1)))
-    rec.record("tc_error_enum_timeout", bool(v > 0 and (v & 0x2)))
     rec.check("TC_ERROR read is well-formed and unflagged", r0.ok and not r0.error, got=r0.raw)
-    if v > 0 and (v & 0x4):
-        rec.note("TC_ERROR[2] dual_root IS SET before this test cleared it — the known TideChart dual-root "
-                 "behaviour is present on this die. That is a finding, not a test artefact.")
-    if v <= 0:
-        rec.skip("TC_ERROR reads 0x00000000 — no sticky error latched, so W1C semantics cannot be exercised. "
-                 "Recorded as a clean result (no dual_root, no timeouts) rather than a vacuous PASS.")
 
+    a4 = v >= 0 and (v & ~TC_ERROR_DOC_MASK & 0xFFFFFFFF) == 0
+    rec.check("ANCHOR: TC_ERROR (0x%08X) has bits [31:4] clear — only [3:0] are documented and only [3] has "
+              "a setter, so anything above bit 3 means this is NOT TC_ERROR. Pointed at TC_BEST_CLAIM this "
+              "check sees 0xFFFFFFFF and goes RED, instead of reporting a clean result about a register the "
+              "test never read" % TC_ERROR, a4, got=r0.raw)
+
+    anchors_ok = bool(a1 and a2 and a3 and a4)
+
+    # ---- what this register CAN and CANNOT tell you ----------------------
+    rec.record("tc_error_cap_timeout_bit3", bool(v > 0 and (v & 0x8)))
+    rec.record("tc_error_dual_root_observable", False)
+    rec.record("tc_error_settable_mask", "0x%08X" % TC_ERROR_SETTABLE_MASK)
+    rec.note("DUAL-ROOT IS NOT OBSERVABLE FROM THIS REGISTER IN THIS BUILD. TC_ERROR[0] election_timeout, "
+             "[1] enum_timeout and [2] dual_root are documented at tidechart_apb_regs.sv:189 but have NO "
+             "SETTER: the only assignment to error_reg_r besides reset and the W1C clear is "
+             "`error_reg_r[3] <= 1'b1` on cap_timeout_err (:512-513). TC_ERROR[2] therefore reads 0 on every "
+             "die unconditionally. A CLEAR TC_ERROR IS NOT EVIDENCE THAT DUAL-ROOT DID NOT OCCUR, and this "
+             "test issues no such all-clear. Dual-root must be diagnosed from TC_STATUS[1] is_root read on "
+             "BOTH dies (HIO-410), not from here.")
+
+    if v > 0 and (v & 0x4):
+        rec.note("TC_ERROR[2] dual_root reads SET. Given that this bit has no setter in the RTL read above, "
+                 "treat this as a MAP OR BUILD DISCREPANCY to investigate — either the die carries different "
+                 "RTL from the tree, or this is not TC_ERROR — not as a confirmed dual-root event.")
+
+    if v == 0 and anchors_ok:
+        rec.skip("TC_ERROR at 0x%08X read 0x00000000 (anchors passed: TC_STATUS=0x%08X, "
+                 "TC_DEVICE_CLASS=0x%08X, TC_BEST_CLAIM=0x%08X). With no bit set, W1C semantics cannot be "
+                 "exercised, so the write-0 negative control and the write-1 clear are NOT RUN and this test "
+                 "measures nothing about them. NO CLAIM IS MADE ABOUT DUAL-ROOT: bits [2:0] have no setter "
+                 "in this build and read 0 unconditionally."
+                 % (TC_ERROR, sv, dv, bv))
+    if v == 0:
+        return          # anchors failed -- leave the RED, do not mask it with a SKIP
+
+    # ---- W1C, exercisable only because some bit is actually set ----------
     w0 = _w(adp, TC_ERROR, 0x00000000)
     r1 = _r(adp, TC_ERROR)
-    rec.check("NEGATIVE CONTROL: writing 0x00000000 leaves TC_ERROR unchanged at 0x%08X" % v,
+    rec.check("NEGATIVE CONTROL: writing 0x00000000 leaves TC_ERROR unchanged at 0x%08X (a plain-RW register "
+              "would have been cleared here)" % v,
               w0.ok and not w0.error and r1.value == v, got="W=%s R=%s" % (w0.raw, r1.raw))
 
-    w1 = _w(adp, TC_ERROR, 0x00000007)
+    w1 = _w(adp, TC_ERROR, TC_ERROR_DOC_MASK)
     r2 = _r(adp, TC_ERROR)
-    rec.check("writing 0x00000007 clears TC_ERROR[2:0]",
-              w1.ok and not w1.error and r2.value is not None and (r2.value & 0x7) == 0,
+    rec.check("writing 0x%08X clears every documented TC_ERROR bit [3:0]" % TC_ERROR_DOC_MASK,
+              w1.ok and not w1.error and r2.value is not None
+              and (r2.value & TC_ERROR_DOC_MASK) == 0,
               got="W=%s R=%s" % (w1.raw, r2.raw))
 
 
@@ -1420,35 +1627,67 @@ def hio_309(adp, rec):
               "the port — HZ-1 is an uninterruptible AXI hang needing a power cycle — and per "
               "03_addrmap_param.md:105-112 SIMULATION CAN NEVER CATCH THAT MISTAKE, because in RTL those "
               "addresses are combinational reads with pready=1. So the skip list is DRY-RUN IN PROCESS "
-              "BEFORE A SINGLE COMMAND IS SENT: the generated list is asserted to contain exactly 115 "
-              "addresses, to exclude the whole 0x1A0-0x1B8 band (HZ-1, quarantined as a BAND, not as three "
-              "offsets), and to exclude the six HZ-8 read-clearing registers where a read IS a write. That "
-              "pre-flight assertion is itself a check that can go red, at zero bus cost. Every access "
-              "additionally passes the module's hazard guard, which raises rather than transacting. "
+              "BEFORE A SINGLE COMMAND IS SENT: the generated list is asserted to contain exactly 114 "
+              "addresses, to exclude all EIGHT HZ-1 Region D slots 0x1A0-0x1BF BY ENUMERATION, to exclude "
+              "the six HZ-8 read-clearing registers where a read IS a write, and to contain no address the "
+              "module's own hazard guard would refuse. "
+              "THE REGION D BAND WAS SHORT AND THIS SWEEP READ INTO IT. Region D is selected by "
+              "paddr[8:5]==4'b1101 (axi_chiplet_controller.sv:244) = offsets 0x1A0-0x1BF, EIGHT word slots; "
+              "the band was transcribed from the hazard note's three named offsets and stopped at 0x1B8, so "
+              "slot 7 (0x2E0321BC) was swept. The quarantine is now enumerated per slot rather than left to "
+              "a band lining up with the address step. "
+              "The pre-flight proves the sweep matches the blocklist and the guard; it CANNOT prove the "
+              "blocklist matches the hardware, which is the claim that was wrong. That one rests on the "
+              "decode RTL cited beside each band. "
               "The double read separates STABLE registers from LIVE counters without needing a golden file. "
               "RED on a NO-REPLY (a stall) or a failed pre-flight; differing values are CLASSIFIED, not "
               "failed. Marked WEDGE_RISK because a blocklist error costs a power cycle: never unattended. "
               "Budget: 460 CU ~= 30 s.")
 def hio_310(adp, rec):
-    hz1_lo, hz1_hi = 0x2E0321A0, 0x2E0321B8
+    # The quarantine is skipped by ENUMERATED SLOT, not by a band that happens
+    # to line up with the step. Region D is 8 word slots (0x1A0-0x1BF); the
+    # original band stopped at 0x1B8 and this sweep read slot 7 (0x1BC), which
+    # is in the same decoded bank as SYNC_DIST_OBS.
+    quarantine = set(_HZ1_REGION_D_SLOTS) | set(_READ_CLEARING)
     addrs = [a for a in range(TIDELINK_SWEEP_BASE, TIDELINK_SWEEP_LAST + 1, 4)
-             if not (hz1_lo <= a <= hz1_hi) and a not in _READ_CLEARING]
+             if a not in quarantine]
 
     # ---- pre-flight dry run of the skip list: no bus traffic ----
-    band = [a for a in addrs if hz1_lo <= a <= hz1_hi]
+    missed_d = [a for a in _HZ1_REGION_D_SLOTS
+                if TIDELINK_SWEEP_BASE <= a <= TIDELINK_SWEEP_LAST and a in addrs]
     rc = [a for a in addrs if a in _READ_CLEARING]
     aligned = all(a % 4 == 0 for a in addrs)
     in_window = all(TIDELINK_SWEEP_BASE <= a <= TIDELINK_SWEEP_LAST for a in addrs)
+
+    # The stronger cross-check: every swept address must survive the module's
+    # own hazard guard. This ties the sweep to the guard rather than to a second
+    # hand-maintained copy of the same list, so the two cannot drift apart.
+    refused = []
+    for a in addrs:
+        try:
+            _guard(a, write=False)
+        except HazardGuard:
+            refused.append(a)
+
     rec.record("hio310_sweep_count", len(addrs))
     rec.record("hio310_skipped", 128 - len(addrs))
-    rec.check("PRE-FLIGHT: the generated sweep excludes the whole HZ-1 band 0x2E0321A0-0x2E0321B8",
-              not band, got=_hexl(band[:8]))
-    rec.check("PRE-FLIGHT: the generated sweep excludes all six HZ-8 read-clearing registers",
+    rec.record("hio310_region_d_slots", _hexl(_HZ1_REGION_D_SLOTS))
+    rec.check("PRE-FLIGHT: the sweep excludes all EIGHT HZ-1 Region D slots 0x2E0321A0-0x2E0321BF "
+              "(paddr[8:5]==4'b1101). The band was previously short by one slot and this sweep read "
+              "0x2E0321BC",
+              not missed_d, got=_hexl(missed_d))
+    rec.check("PRE-FLIGHT: the sweep excludes all six HZ-8 read-clearing registers",
               not rc, got=_hexl(rc))
-    rec.check("PRE-FLIGHT: the sweep is exactly 115 word-aligned addresses inside 0x2E032000-0x2E0321FC "
-              "(128 candidates minus 7 HZ-1 minus 6 HZ-8)",
-              len(addrs) == 115 and aligned and in_window,
+    rec.check("PRE-FLIGHT: no swept address is refused by the module hazard guard — the sweep and the "
+              "guard cannot drift apart",
+              not refused, got=_hexl(refused[:8]))
+    rec.check("PRE-FLIGHT: the sweep is exactly 114 word-aligned addresses inside 0x2E032000-0x2E0321FC "
+              "(128 candidates minus 8 HZ-1 Region D minus 6 HZ-8)",
+              len(addrs) == 114 and aligned and in_window,
               got="n=%d aligned=%s in_window=%s" % (len(addrs), aligned, in_window))
+    rec.note("SCOPE OF THE PRE-FLIGHT: it proves the sweep matches the blocklist and the guard. It CANNOT "
+             "prove the blocklist matches the hardware — that claim rests on the decode RTL cited beside "
+             "each band in _NEVER_TOUCH, and it is the claim that was wrong when HZ-1 stopped at 0x1B8.")
 
     stable, live, errored, no_reply = [], [], [], []
     values = {}
@@ -1523,16 +1762,25 @@ def hio_311(adp, rec):
 
 @test("HIO-312", tier=3, hazard=None,
       purpose="QSPI register RW with NO flash activity. CMD (0x21000008) takes 0x00000003 — the command byte "
-              "only — and reads back; ADDR (0x2100000C) is written 0xFFFFFFFF and must read back 0x003FFFFF, "
-              "then 0x00123456 and must read back exactly. RED on any of the three. "
-              "The 0xFFFFFFFF -> 0x003FFFFF step is the sharper version the plan recommends: it proves ADDR's "
-              "22-bit width (apb_qspi_regs.v:136) as well as its writability, so a full-width register or a "
-              "truncated one are told apart, which the 0x00123456 pattern alone cannot do. "
+              "only — and reads back. ADDR (0x2100000C) is written 0xFFFFFFFF, then 0x00123456, then 0, and must "
+              "read each back EXACTLY. RED on any of them. "
+              "THE ADDR REGISTER IS A FULL 32-BIT RW SCRATCH FROM THE BUS SIDE. Do not re-derive a 22-bit "
+              "expectation from `assign QSPI_ADDR = reg3[21:0]` (apb_qspi_regs.v:136): that narrowing is on "
+              "the DERIVED OUTPUT PORT to the flash controller and is NOT OBSERVABLE OVER APB. The storage is "
+              "`reg [31:0] reg3` (:112), the write is `reg3 <= PWDATA` unmasked (:188), and the readback is "
+              "`PRDATA = reg3` whole (:220) — so 0xFFFFFFFF in gives 0xFFFFFFFF out, and that is RTL-correct. "
+              "CONFIRMED ON SILICON: an earlier version of this test asserted 0x003FFFFF and FAILED A GOOD "
+              "DIE. Port width is not register width — see the module docstring. "
+              "The all-ones pattern remains the sharp discriminator the plan asks for, with the opposite "
+              "expectation: 32 ones in and 32 ones out proves every bit of the register is writable AND "
+              "readable, so a full-width register and a truncating one are still told apart — which the "
+              "0x00123456 pattern alone cannot do. Pairing it with the all-zeros restore makes the stuck-bit "
+              "coverage two-sided: all-ones catches a stuck-low bit, all-zeros catches a stuck-high one. "
               "CMD[8] IS NEVER SET — a module-level guard raises if any write to 0x21000008 carries bit 8, so "
               "no flash transaction can start and the test is safe with or without a device fitted. HZ-6 "
-              "still forbids 0x24xxxxxx and the hazard guard enforces it. Both registers restored to 0 in a "
-              "finally block. (The plan's literal restores land one word past their registers.) "
-              "Budget: ~18 CU ~= 1.2 s.")
+              "still forbids 0x24xxxxxx and the hazard guard enforces it. Both registers are restored to 0 in a "
+              "finally block and the ADDR restore is ASSERTED. (The plan's literal restores land one word "
+              "past their registers.) Budget: ~22 CU ~= 1.4 s.")
 def hio_312(adp, rec):
     ctrl = _r(adp, QSPI_CTRL)
     rec.record("qspi_ctrl", "0x%08X" % (ctrl.value if ctrl.value is not None else -1))
@@ -1548,16 +1796,23 @@ def hio_312(adp, rec):
         wa = _w(adp, QSPI_ADDR, 0xFFFFFFFF)
         ra = _r(adp, QSPI_ADDR)
         rec.record("qspi_addr_all_ones_readback", "0x%08X" % (ra.value if ra.value is not None else -1))
-        rec.check("QSPI ADDR is 22 bits wide: writing 0xFFFFFFFF reads back 0x003FFFFF",
-                  wa.ok and not wa.error and ra.value == 0x003FFFFF, got=ra.raw)
+        rec.check("QSPI ADDR is a FULL 32-BIT RW register from the bus side: writing 0xFFFFFFFF reads back "
+                  "0xFFFFFFFF, proving all 32 bits are writable and readable (a truncating register returns "
+                  "a masked value here). The 22-bit QSPI_ADDR field is on the derived OUTPUT PORT and is not "
+                  "observable over APB",
+                  wa.ok and not wa.error and ra.value == 0xFFFFFFFF, got=ra.raw)
 
         wa2 = _w(adp, QSPI_ADDR, 0x00123456)
         ra2 = _r(adp, QSPI_ADDR)
         rec.check("QSPI ADDR accepts 0x00123456 and reads it back exactly",
                   wa2.ok and not wa2.error and ra2.value == 0x00123456, got=ra2.raw)
     finally:
-        _w(adp, QSPI_ADDR, 0x00000000)
+        wz = _w(adp, QSPI_ADDR, 0x00000000)
+        rz = _r(adp, QSPI_ADDR)
         _w(adp, QSPI_CMD, 0x00000000)
+        rec.check("QSPI ADDR restored to 0x00000000 and reads back all zeros — the complementary polarity to "
+                  "the all-ones pattern, so the pair catches a stuck bit in either direction",
+                  wz.ok and not wz.error and rz.value == 0x00000000, got=rz.raw)
         rec.note("QSPI CMD and ADDR restored to 0. CMD[8] was never set.")
 
 
