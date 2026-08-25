@@ -65,7 +65,10 @@ if {[info commands say] ne ""} {
     say "post_powerplan: floorplan/power-plan geometry gate -> $_fpg_check"
 }
 source $_fpg_check
-unset _fpg_hook_dir _fpg_asic_dir _fpg_check
+# -nocomplain: _fpg_hook_dir exists only on the climb branch and _fpg_gi only
+# ever on one of the two, so a bare unset errors on whichever path did not set
+# it -- and flow_hook re-raises, killing the stage ~50 minutes in.
+unset -nocomplain _fpg_hook_dir _fpg_gi _fpg_check
 
 ################################################################################
 # PG DRC GEOMETRY EDITS -- M8.S.3 x2 and VIA4.R.4:M5 / Innovus MINCUT x1
