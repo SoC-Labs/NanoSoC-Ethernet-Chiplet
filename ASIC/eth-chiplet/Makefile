@@ -24,6 +24,17 @@ ASIC_DIR := $(CURDIR)
 include $(ASIC_DIR)/design.mk
 include $(ASIC_FLOW_DIR)/mk/flow.mk
 
+# The pre-P&R floorplan hazard gate. After flow.mk, because it APPENDS a
+# prerequisite to the toolkit's `place` target and an included fragment can only
+# do that once the target exists. Its four target names were checked against
+# mk/*.mk, design.mk, common.mk, evidence.mk and the root Makefile first; an
+# include guard cannot see a target collision.
+#
+#     make floorplan-hazards            ~3 s, no licence, also runs before place
+#     make floorplan-hazards-selftest   prove every class BOTH directions
+#     make floorplan-hazards-vars       what it will do, without doing it
+include $(ASIC_DIR)/../floorplan-hazards.mk
+
 # The evidence flow: gates, one report, publish. LAST, and after flow.mk on
 # purpose - an include earlier would let a name here silently REPLACE a toolkit
 # recipe, and an include guard cannot see a target collision. Every target it
