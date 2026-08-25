@@ -440,12 +440,46 @@ place_macro {*u_network_core*u_region_imem_0*rf_32k*} 290.8000000000 1504.500000
 place_macro {*way1_cache_ram_tag_ram_0_i} 911.4000000000 468.6900000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 911.2 468.69
 place_macro {*way0_cache_ram_tag_ram_0_i} 898.8000000000 402.0900000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_data_ram_0_word_2_i} 554.4000000000 478.4000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 553.8 480.4
-place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 385.9400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 516.6 390.04
+## [2026-08-25] 385.94 -> 386.04.  M3 TRACK RE-PHASE.  MEASURED, see below.
+##
+## flash_cache_data obstructs VIA1, VIA2 and VIA3 over 100% of its footprint, so
+## a pin can only be reached PLANAR on M1/M2/M3 through its 0.46um slot, and the
+## first layer change must sit OUTSIDE the footprint.  That first via is a VIA3,
+## it must land on an M3 track -- M3 runs horizontally on a 0.200um grid with a
+## zero origin -- and its 0.10um cut must clear the macro's VIA3 obstruction by
+## the adjacent-cut clearance, 0.13um.  All three come from the tech LEF.
+##
+## The macro is 36.36um tall = 181.8 M3 pitches, so under MX the pin edge lands
+## OFF the track grid unless the placement y compensates.  At y=385.94 the pin
+## edge was 422.30, exactly half a pitch off: the first track outside (422.40)
+## leaves the cut only 0.05 clear of the obstruction, so the cheapest LEGAL
+## escape costs 422.60 - one extra track - and two pins never found it.  They
+## took the last track INSIDE the footprint (422.20) instead, which is the five
+## Regular Wire violations on cache data bit 123 in gdsrun-20260825-resynth.
+##
+## MEASURED on that run's routed database: of 1238 vias inside the 10
+## flash_cache footprints, exactly 2 are on an obstructed cut layer, and both
+## are these.  The first-via offset histogram is quantised on the M3 pitch and
+## follows the pin-edge phase exactly - the ON-GRID macros use 0.20, 0.40,
+## 0.60 ... the 2 OFF-GRID macros use 0.30, 1.10, 1.30 ... and NEVER 0.10.
+##
+## +0.100 (not -0.100): both land on the grid, but +0.100 also WIDENS the
+## way0_word_1 -> way0_word_3 channel 5.54 -> 5.64um instead of narrowing it,
+## and keeps the top edge 2.20um below the M9 band at 424.6.
+place_macro {*way0_cache_ram_data_ram_0_word_3_i} 516.6000000000 386.0400000000 MX  ;## M3 TRACK RE-PHASE 2026-08-25: was 385.94 (PHASE-ALIGN 2026-08-21, itself from 390.04)
 place_macro {*way0_cache_ram_data_ram_0_word_0_i} 702.4000000000 300.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
 place_macro {*way0_cache_ram_data_ram_0_word_1_i} 718.8000000000 344.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 718.8 345.04
 place_macro {*way1_cache_ram_data_ram_0_word_2_i} 634.2000000000 527.2000000000 R0  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 633.6 527.2
 place_macro {*way1_cache_ram_data_ram_0_word_3_i} 564.4000000000 435.0400000000 MX  ;## MOVED +20 y: QSPI cache stack moves up as one block
-place_macro {*way1_cache_ram_data_ram_0_word_0_i} 709.8000000000 211.7400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 708.6 210.04
+## [2026-08-25] 211.74 -> 211.84.  TWO defects with one move.
+##  * M3 TRACK RE-PHASE, same arithmetic as way0_word_3 above: pin edge 248.10
+##    was half a pitch off grid.  This macro carries almost no routing over it
+##    (88 route objects vs 1292 on way0_word_3), which is the only reason it has
+##    not produced the same violations yet.
+##  * CLASS 1 M9 TAP-FLOOR STRADDLE: check_floorplan_hazards.py flags this macro
+##    at HEAD -- top edge 248.1 is 0.1um inside the VDD band 244.6..248.2, whose
+##    own prescription is "SMALLEST CLEARING MOVE: dy = +0.100 um".  Same move.
+place_macro {*way1_cache_ram_data_ram_0_word_0_i} 709.8000000000 211.8400000000 MX  ;## M3 TRACK RE-PHASE + class-1 clearance 2026-08-25: was 211.74 (PHASE-ALIGN 2026-08-21, itself from 210.04)
 place_macro {*way1_cache_ram_data_ram_0_word_1_i} 726.6000000000 255.0400000000 MX  ;## PHASE-ALIGN nx01gSX 2026-08-21: was 727.8 255.04
 place_macro {*u_chip_core*u_region_imem_0*rf_16k*} 1059.2000000000 209.9500000000 R180  ;## MOVED +6 y: was 1.05 below the new core bottom
 place_macro {*u_shared_sram_0*rf_08k*} 1052.4000000000 506.7100000000 R180  ;## MOVED +6 y: follows chip imem rf_16k, keeps the 11.51 gap
