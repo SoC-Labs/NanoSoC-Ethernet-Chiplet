@@ -1,13 +1,20 @@
 # imec round-trip — send by Wed 27 August
 
     status   DRAFT for review. Not sent.
-    basis    Final Report on the rzG merged + dummy + seal-ring stream, 24 Aug 14u27
-    scope    three asks. NO GDS re-spin is required for any of them.
+    basis    Final Report on the PINFIX merged + dummy + seal-ring stream,
+             25 Aug 14u10, on our submission candidate md5 3215cbe1...
+             (re-anchored 25 Aug: the rzG stream this was first written against
+             is superseded and carries a functional defect -- do not ask imec to
+             act on it.)
+    scope    four asks. NO GDS re-spin is required for any of them.
 
-The 24 August run reports six rule families we had not classified. All six have
-now been triaged. **None requires a geometry change on our side.** Four are
-imec-side, two need a sentence in the submission letter. What this mail asks for
-is a re-run with the correct pitch switch, and two confirmations in writing.
+The wire-bond and custom-DRC results report six rule families we had not
+classified. All six have now been triaged. **None requires a geometry change on
+our side.** Four are imec-side, two need a sentence in the submission letter.
+
+The 25 August run also closed the outstanding blocker: `PO.R.8` went 14 -> 0 on
+the merged database, and eight other rules with it. Thank you -- that settles it.
+The asks below are what remains.
 
 Send to the tape-out submission mailbox. This supersedes Q7 of the 19 August set,
 which contained an error of ours — see §1.
@@ -55,10 +62,12 @@ is actionable by us. Our reasoning, so you can check it rather than take it:
 - The rule's own seal-ring exclusion is derived from holes in the CB layer. Our CB
   openings are simple octagons with no holes, so that exclusion evaluates empty
   and the rule fires across the ring itself.
-- `PM.W.1` reads 889 / 919 / 903 / 893 across your four runs (17, 18, 21, 24
-  August) on four materially different streams — including the 17 August one,
-  where our stream carried no CB at all. A count that barely moves across four
-  different designs is not measuring our design.
+- `PM.W.1` reads 889 / 919 / 903 / 893 / 893 across your five runs (17, 18, 21,
+  24, 25 August) on five materially different streams — including the 17 August
+  one, where our stream carried no CB at all. A count that barely moves across
+  five different designs is not measuring our design. The 24th and 25th are
+  **bit-identical** on every wire-bond rule, on a pair of streams where nine
+  other rulechecks went from non-zero to zero.
 - All 46 `AP.S.4` results sit exactly at the die/seal-ring interface, each 3.5 µm
   deep and 0.315 µm from a bond-pad opening. The AP side comes from the pad
   masters *you* substitute at merge; the PM side is your seal ring. Neither side
@@ -76,11 +85,25 @@ these rules can be evaluated.
 ## 3. Which merge and library configuration will the FINAL run use?
 
 The pad-master replacement source and the seal-ring script between them determine
-most of the numbers above. Your per-run configuration has differed at least once
-across the four runs so far.
+most of the numbers above. The 24 and 25 August runs used identical configuration
+— same three replacement libraries, identical IP set — so this is a forward-looking
+question, not a complaint.
 
-**Ask:** please confirm which configuration the 1 September run will use, and
-tell us if it differs from the 24 August one.
+**Ask:** please confirm the 1 September run will use that same configuration, and
+tell us if anything changes.
+
+## 4. Please run ERC / LVS / PadShorts on the candidate itself.
+
+The 25 August archive contains no LVS section, and its `erc/` report is the
+13-line bail ("No labels found in topcell"). The only pad-short and floating-pad
+data we hold is from the **24 August rzG** run -- a stream that is now superseded.
+
+So the stream we intend to ship has, at present, **no ERC and no LVS result of its
+own**. The DRC, antenna and padring checks all ran on it and all pass; those three
+are not in question.
+
+**Ask:** please run the pad-short / ERC / LVS set on the pinfix candidate, or
+confirm it will run on the final 1 September stream before acceptance.
 
 ---
 
@@ -91,18 +114,21 @@ submission letter.
 
 | result | n | our position |
 |---|---:|---|
-| `IM.FLOAT.AP` | 86 | **This is the chip logo**, at x 320.0–1047.8, y 859.9–1180.1, which matches the logo cell bbox exactly. Intentionally unconnected AP artwork. Your own ERC agrees the pads are fine — it reports no floating pad. Your rule text anticipates this: "Possibly it's a logo." |
+| `IM.FLOAT.AP` | 85 | **This is the chip logo**, at x 320.0–1047.8, y 859.9–1180.1, which matches the logo cell bbox exactly. Intentionally unconnected AP artwork. Your own ERC agrees the pads are fine — it reports no floating pad. Your rule text anticipates this: "Possibly it's a logo." |
 | `IM.POLYIMIDE.1` | 82 | One per bond pad. This part is **wire bond, no bumping**, as declared in the BEOL option. The rule is conditional on bumping. |
-| `IM.LOGO.R.1:WARN` | 1 | The logo *recognition* layer is deliberately omitted; your rule text says it is not mandatory. A visible AP logo is present — it is what generates the 86 results above. We are **not** re-adding the recognition layer: on a placed-and-routed die it has no legal placement and it resurrects two capped rulechecks. |
+| `IM.LOGO.R.1:WARN` | 1 | The logo *recognition* layer is deliberately omitted; your rule text says it is not mandatory. A visible AP logo is present — it is what generates the 85 results above. We are **not** re-adding the recognition layer: on a placed-and-routed die it has no legal placement and it resurrects two capped rulechecks. |
 
 ---
 
 ## Notes for us, not for the mail
 
-- Counts in the Final Report are **`n (flat)`** — the parenthesised figure is the
-  placement-expanded count, not a pre-cap total. Verified by decomposition and by
-  a control elsewhere in the archive where the parenthesised value exceeds the
-  1000 cap. Nothing in the 24 August archive is capped (max 913).
+- Counts are **`hierarchical (flat)`** — imec's own `How_to_read_the_final_report`
+  PDF says so. **The 1000 cap applies to the FIRST column**, not the second;
+  column 2 is the absolute placement-expanded count and is uncapped (`ESD.23g`
+  = 468 (5616) proves it). Cross-checked: the DevCheck parenthesised column sums
+  to exactly the report's own device total. So the truncation-risk number is
+  `PM.W.1` at **893 of 1000 (89%)** — nothing is capped, but that is the closest
+  approach and it is worth watching on the final run.
 - All six findings **transfer unchanged** to the pinfix candidate — confirmed by
   layer census against both streams, not assumed. The only deltas between the two
   streams are routing layers and cell names.
