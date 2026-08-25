@@ -685,6 +685,58 @@ signoff-report:
 	    echo "FAIL: $(SIGNOFF_REPORT_SCRIPT) is not readable."; exit 1; }
 	python3 "$(SIGNOFF_REPORT_SCRIPT)" --run "$(RUN_DIR)" --json
 
+## ---------------------------------------------------------------------------
+## RUN REPORT -- every stage's VALUES, in four renderings.
+##
+## FOUR DOCUMENTS DESCRIBE A RUN AND NONE OF THEM IS THIS ONE:
+##
+##   ci/collect-results.py     DID each check run, and did it pass?  STATUS
+##   asic-flow-design-report   what IS this design?                  METRICS
+##   evidence_flow.py          can this STREAM be bound to a run?    GDS EVIDENCE
+##   run_report.py             what NUMBER did each check produce?   VALUES
+##
+## The gap it closes: a reader handed `drc: pass` cannot tell 0 from
+## 12-under-a-budget-of-12, and this project has shipped both. It reads the
+## stage manifests, the stage gate files and the tools' OWN message summaries --
+## never a grep over a tool log, because Genus and Innovus both echo their own
+## Tcl source and a grep for an error ID matches the flow's comments.
+##
+## Writes $(RUN_DIR)/reports/run_report.{json,yaml,html,md}. The JSON is the
+## document; the other three are rendered FROM it and read nothing else, so they
+## cannot disagree with it or with each other.
+##
+## IT CANNOT FAIL A BUILD -- `|| true`, same contract as design-report. `make`
+## decides whether a run was good; this says what the run WAS. Two verdicts on
+## one run disagree eventually and the fuzzier one gets quoted.
+##
+## Read-only, no licence, seconds to run, safe on a finished run at any time.
+RUN_REPORT_SCRIPT ?= $(DESIGN_HOME)/scripts/ci/run_report.py
+
+## Set to 0 to stop the route stage regenerating it. `make run-report` still works.
+RUN_REPORT_AUTO ?= 1
+
+.PHONY: run-report run-report-auto run-report-publish
+run-report:
+	@test -d "$(RUN_DIR)" || { \
+	    echo "FAIL: no run at $(RUN_DIR) -- set RUN_TAG to a build that exists."; \
+	    exit 1; }
+	@python3 "$(RUN_REPORT_SCRIPT)" --root "$(DESIGN_HOME)" --run-dir "$(RUN_DIR)"
+
+## The route stage's hook. Silent when disabled, and incapable of failing.
+run-report-auto:
+	@if [ "$(RUN_REPORT_AUTO)" = "1" ] && [ -d "$(RUN_DIR)" ]; then \
+	    python3 "$(RUN_REPORT_SCRIPT)" --root "$(DESIGN_HOME)" \
+	        --run-dir "$(RUN_DIR)" --quiet || true; \
+	fi
+
+## PUBLISHING IS A CLAIM, so it is never fired by a build. The report goes to
+## asic-record; --klass names the stream repo a matching evidence publish would
+## use and is recorded as a property so the two can be joined later.
+## Measured 2026-08-25: asic-release is EMPTY -- no release has ever been made.
+run-report-publish:
+	@python3 "$(RUN_REPORT_SCRIPT)" --root "$(DESIGN_HOME)" --run-dir "$(RUN_DIR)" \
+	    --publish --klass "$(or $(RUN_REPORT_KLASS),candidate)"
+
 .PHONY: legacy-paths asic-flist romlibs-check rom-ensure cpf-patch
 
 # ── STAGE ORDERING, AND THE ROM WRITE-WRITE RACE ────────────────────────────
@@ -1364,4 +1416,4 @@ DESIGN_REPORT_SUBTITLE := A dual-Cortex-M0+ networking chiplet: 10/100 Ethernet 
 #
 # Publishing is deliberately NOT enabled from the flow. Set EVIDENCE_PUBLISH=1
 # to push, or run `make evidence-publish` when the bundle has been looked at.
-ROUTE_POST_TARGETS = evidence
+ROUTE_POST_TARGETS = evidence run-report-auto
