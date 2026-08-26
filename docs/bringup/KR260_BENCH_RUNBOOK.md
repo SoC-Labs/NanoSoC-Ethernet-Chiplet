@@ -78,7 +78,12 @@ PL load, not persisted).
 
 > **🔴 WEDGE HAZARD — the defining eth-chiplet difference (learned the hard way).**
 > On the eth-chiplet the PS can reach **only** the SoC's AHB via the `eth_ss_0`
-> backdoor at HPM0 `0x8000_0000`. **Any PS read of a PL address the SoC does not
+> backdoor at the **HPM0_FPD HIGH aperture, PS phys `0x4_0000_0000`** — a SoC
+> address `A` is reached at `0x4_0000_0000 + A`. It is **NOT** `0x8000_0000`;
+> that value appeared here until 2026-08-24 and contradicted §4 of this same
+> file. `0x8000_0000` is undecoded on this design and reading it wedges the PS.
+> Verified against the shipped `tidelink.hwh`: `BASEVALUE=0x400000000
+> HIGHVALUE=0x4FFFFFFFF SLAVEBUSINTERFACE="eth_ss_0"`. **Any PS read of a PL address the SoC does not
 > decode hangs the ZynqMP PS AXI bus with no timeout** — the board goes to 100 %
 > packet loss and only a **JTAG POR** recovers it (see §2 recovery gotcha). This
 > is not hypothetical: the bare-link AFI *canaries* (`0x8403_xxxx`) wedged
@@ -253,6 +258,44 @@ Blocked on three things, none needed for the link demo above:
 ---
 
 ## 8. Known state / caveats going in
+
+> **Added 2026-08-24 after a session that wedged a board twice. Read these first.**
+>
+> - **A PL load does not survive a reboot.** `fpgautil` loads are not persisted to
+>   the boot image. If the board reboots after your deploy, the fabric holds
+>   something else and the backdoor addresses below are undecoded — the "safe"
+>   read in §4 then wedges the PS. **Always compare board boot time against
+>   bitstream load time before any backdoor access** (`uptime -s` vs the deploy
+>   timestamp). This costs nothing and needs no bus transaction. It is what
+>   wedged kr260_01 on 2026-08-23: staged 11:34:42, board booted 11:36, then sat
+>   two days with someone else's design in the PL.
+> - **`fpga_manager` reads `operating` regardless of WHOSE design is loaded.** It
+>   is not evidence that your bitstream is in the fabric. Only a fresh deploy is.
+> - **`kr260_01` hard-resets ~1 min after a PL load** (reboots 21 Aug
+>   11:04/11:06/11:33/11:36, 23 Aug 20:09/21:36/22:23; no panic, no journal trace
+>   — power/PMU level). `kr260_02` has been stable since 13 Aug under the same
+>   deploys. Suspect hardware: re-deploy immediately before testing, and treat
+>   bring-up non-convergence on this board as the board until proven otherwise.
+> - **`~/td/rd21f8.py` staged on the boards reads `0x8403_21F8`** — the bare-link
+>   family, undecoded here. Running it wedges the board. Use an eth-chiplet copy
+>   addressed at `0x4_0000_0000 + 0x2E0321F8`.
+> - **Read the right witness register.** `health_snapshot.py` reads `0x21E0`
+>   (marker `0xAD`) and reports `HEALTHY` through a completely dead read path.
+>   The read-path stickies are at **`0x21F8` (marker `0xB5`)**: bit[9]
+>   `sub_err_sticky`, bit[10] `xhb_stall_stuck_sticky`, bit[0] `hreadyout_raw`.
+>   **Check the top byte is `0xB5` before trusting any other bit.** Never read
+>   `0x21AC`/`0x21B0`/`0x21B4` — they hard-stall the CPU.
+> - **A failed cross-die READ parks the peer port** — `hreadyout_raw` goes to 0
+>   and stays there, and the **next transaction of any kind wedges the host**.
+>   Measured 2026-08-24. If a read bus-errors, stop and POR; do not "try a write
+>   to see if the link is still good", because that is the access that kills it.
+> - **Leases cannot identify a session.** They are held under a shared Unix
+>   account, so `fpgahub lease show` will report your own username for someone
+>   else's run. Re-acquire explicitly; coordinate before taking a board.
+> - **POR recipe:** `ssh mapstone-dev.ecs.soton.ac.uk 'fpgahub target reset
+>   kr260_01 --method default'`. The **group** `fpgahub board reset` fails HTTP
+>   400 on the `_pl` member — use the per-target form. ~50 s to ping; SSH lags
+>   ping by ~20 s, so do not deploy the instant it answers.
 
 - **First silicon.** Neither the eth-chiplet nor the bare-link KR260 image has
   ever been on a bench. Expect PHY-eye / deskew surprises at the ~3 MHz link rate.

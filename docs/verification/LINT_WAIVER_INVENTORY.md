@@ -295,7 +295,7 @@ Listed so that "we looked" is a fact and not a feeling.
 Reviewable, therefore reviewed. All in `src/rtl/`:
 
 - `nanosoc_eth_chiplet.sv:335` `d2d_ahb_s_hprot[6:4]` — AHB5 `hprot[6:0]` into an AHB-Lite consumer.
-- `nanosoc_eth_chiplet.sv:375` `tcapb_paddr[11:8]` — bridge instantiated `ADDRWIDTH(12)`, the TideChart shim consumes `[7:0]`. Mild over-provisioning; `ADDRWIDTH(8)` would match.
+- `nanosoc_eth_chiplet.sv:375` `tcapb_paddr[11:8]` — bridge instantiated `ADDRWIDTH(12)`, the TideChart shim consumes `[7:0]`. **Do not narrow to `ADDRWIDTH(8)`** (the pre-2026-08-26 suggestion): bit 8 is what the subtree register block at 0x100-0x124 needs to decode, and discarding it at the shim is why that region aliases today. The widening fix is parked on `next/tidechart-apb-width`.
 - `nanosoc_eth_chiplet.sv:445-486` — 20 named `*_nc` sinks (D2D `hmastlock`, two `APBACTIVE`, `PSTRB`/`PPROT`, 11 unused I²C AXI responses whose request side is tied inactive at the same instance, 4 IRQC AXI-Stream ports for a block not instantiated here).
 - `chiplet_d2d_decode.sv:68` `haddr[31:25,23:20,15:0]` — the decoder decodes `haddr[24]` and `[19:16]` only; the full address fans out to slaves at the top.
 - `chiplet_d2d_decode.sv:69` `htrans[0]` — the decoder qualifies on `htrans[1]`.

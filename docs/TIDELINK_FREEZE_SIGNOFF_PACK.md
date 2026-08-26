@@ -221,6 +221,57 @@ safe to use (a real directory, not a worktree of this repo) is
 **Record the triple with the result — chiplet `1ef68f1` / tidechart `4b4b8982` / tidelink
 `5e8bdb5a`.** A gate result that does not name all three is not evidence for this row.
 
+---
+
+### 4b RESOLVED — 2026-08-25. Gate closes at **56 PASS / 0 FAIL / 3 XFAIL**.
+
+Ran on the pinned triple above: **54 PASS / 2 FAIL / 3 XFAIL**. Both FAILs were
+`ValueError: Cannot convert Logic('X') to int` at 75040 ns on `m_data_mode`
+(= tidelink's `tl_data_mode_o`).
+
+**Cause: the freeze commit deleted two testbench connections, and the rationale
+comment that warned against deleting them, in one hunk.**
+
+```
+git diff 3620af33 5e8bdb5a -- cocotb/tidechart_tidelink_pair/tb_tc_pair.sv
+
+-        // I6 per-die strap tiebreak. Added to tidechart_shim by the dual-root
+-        // hardening (tidechart 3005d11) and NEVER wired here, so device_strap
+-        // floated: own_random_r = {device_strap, lfsr[7:0]} was X, the claim
+-        // TX word was X-poisoned and never crossed, best_claim/own_random read
+-        // back as X, and is_root compared X==X => 0.
+-        .device_strap         (8'h00),
+-        .device_strap         (8'h01),   // I6 — see u_tc_master above
+```
+
+**The RTL is not implicated.** `src/rtl` is **byte-identical** between `3620af33`
+and `5e8bdb5a` (diffed on disk; compiled top `v2_tidelink_top.sv` md5
+`953c16288a36` both sides). Elaboration commands and the 38-file compile lists
+match apart from PIDs.
+
+| arm | result |
+|---|---|
+| `3620af33` | **PASS 4/4** |
+| `5e8bdb5a` | **FAIL 4/4** — same deps, tidechart, `CHIPLET_HOME`, env, clean builds |
+| `5e8bdb5a` + patch | `tc_pair_smoke` **PASS** 26s · `tc_pair_election_datamode` **PASS** 7s |
+
+**THE ASIC IS NOT AFFECTED.** `nanosoc_eth_chiplet.sv:1215` wires
+`.device_strap({7'b0, role_strap_i})` — a real per-die input. The shipping RTL
+already makes the one-net swap the deleted comment instructed. **Testbench-only,
+no tapeout impact.**
+
+Patch handed to the tidelink session, not landed here (their repo; `5e8bdb5a` is
+tagged `v0.90`). **Until it lands, this row reads 54/2/3 with the cause known and
+the RTL exonerated — not "green".**
+
+**Open, and not ours to close:** the deleted comment describes unwired strap →
+`own_random_r` X → X-poisoned claim word → `is_root` compares `X==X` ⇒ 0 → **both
+dies root**. TideChart dual-rooting on silicon is a live finding. The X path
+should not exist on silicon (`role_strap_i` is driven), but the signature matches
+and the election stage is the same — **worth confirming `role_strap_i` is strapped
+DIFFERENTLY per die on the bring-up vehicle**, since equal straps give no tiebreak
+by a different route to the same outcome.
+
 ## 5. Hardware re-validation ON THE FROZEN POINTER
 
 Vehicle `kr260-eth-chiplet` (die_a kr260-01, die_b kr260-02 flip). **Rebuilt from the frozen pin —
