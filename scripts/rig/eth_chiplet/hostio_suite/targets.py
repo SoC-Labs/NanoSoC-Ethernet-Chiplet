@@ -259,6 +259,33 @@ class TargetIndependent(object):
                 if not k.startswith("_") and k != "to_dict"}
 
 
+# Notes every profile carries, `unknown` included. A hazard that appears on two
+# of three profiles will be missed on the third -- which is the one the operator
+# who knows least is running.
+_UNIVERSAL_NOTES = [
+    "RUNNING TIER 2 DESTROYS ANY LOADED FIRMWARE. HIO-203/HIO-204 overwrite all "
+    "32 KB of eth IMEM and HIO-208 carpets shared SRAM, and NOTHING in tiers 0-4 "
+    "pulses CPU0_SWRST to restart the core afterwards. So a firmware-dependent "
+    "test (tier 5, and anything reading a firmware witness) must run BEFORE "
+    "tier 2 in a power cycle, or the image must be reloaded after it with "
+    "scripts/rig/eth_chiplet/hostio_fw/fw_load.py. Ordering is not a "
+    "preference here; a tier-5 run after a tier-2 run is measuring a wiped die.",
+
+    "THE WRITE-PATH CONTROL IS NOT A RAM WORD, deliberately. It is the QSPI "
+    "ADDR scratch at 0x2100000C: reg [31:0] reg3, written unmasked "
+    "(apb_qspi_regs.v:188) and read back whole and combinationally (:220), so "
+    "any 32-bit tag round-trips exactly -- the reg3[21:0] narrowing at :136 is "
+    "on the derived OUTPUT PORT to the flash controller and is not observable "
+    "over APB. It is in NO core's instruction fetch, and it cannot start a "
+    "flash transaction: that needs the CMD enable bit, which the tier module "
+    "guards. Better still, qspi_controller_mux.v:55-63 muxes EVERY APB control "
+    "input -- CMD, ENABLE, READ, WRITE, ADDR_EN, ADDR, WDATA -- away from the "
+    "flash controller whenever XIP_ACTIVE is 1, which is the FPGA's measured "
+    "state (CTRL = 0x00000100). So on the vehicle where XiP is armed the APB "
+    "path is not merely idle, it is disconnected.",
+]
+
+
 # ---------------------------------------------------------------------------
 # Target
 # ---------------------------------------------------------------------------
@@ -318,9 +345,13 @@ class Target(object):
 
         # things a test needs that are properties of the VEHICLE, discovered
         # while auditing the tiers (see tp_TIER_MIGRATION.md)
-        "write_path_control_addr":   (None, "a RAM word that is safe to use as a "
-                                            "write-path POSITIVE CONTROL, i.e. one "
-                                            "no live core is executing from"),
+        "write_path_control_addr":   (None, "a word that is safe to use as a "
+                                            "write-path POSITIVE CONTROL. It must "
+                                            "not be reachable by ANY core's "
+                                            "instruction fetch or data path -- see "
+                                            "the note on both profiles"),
+        "write_path_control_tag":    (None, "the value that control writes. Must "
+                                            "read back EXACTLY at that address"),
         "rom_distinct_offsets":      (None, "{rom name: byte offset} at which the "
                                             "ROM image is known to differ from "
                                             "offset 0 -- the DISTINCT-DATA control"),
@@ -328,9 +359,16 @@ class Target(object):
                                             "macro read-modify-write correctly? "
                                             "CRC-at-reset makes this a real "
                                             "question on the ASIC"),
-        "eth_imem_live_code":        (None, "is eth IMEM the instruction memory a "
-                                            "RUNNING CPU0 is fetching from? If "
-                                            "so, nothing may carpet-write it"),
+        # RUN-TIME STATE, NOT A DIE PROPERTY. Whether eth IMEM holds live code
+        # depends on whether anyone loaded an image THIS POWER CYCLE, and a
+        # debug operation can flip it at any moment. None therefore means
+        # "unknown -- assume code MAY be live", the SAFE reading, and the only
+        # value that permits an overwrite is an explicit False. Use
+        # eth_imem_safe_to_overwrite(); `if t.eth_imem_live_code:` is falsy on
+        # None and reads "unknown" as "safe", which is backwards.
+        "eth_imem_live_code":        (None, "RUN-TIME: is a core fetching from eth "
+                                            "IMEM right now? None = unknown, and "
+                                            "unknown must be treated as YES"),
         "timer0_owned_by_firmware":  (None, "does firmware own cc_periph timer0? "
                                             "If so, HIO-405/406 fight it"),
         "dma_powered":               (None, "is the DMA-250 powered, or gated "
@@ -396,8 +434,7 @@ class Target(object):
             self.sources = {}
         if self.settled_absent is None:
             self.settled_absent = {}
-        if self.notes is None:
-            self.notes = []
+        self.notes = list(self.notes or []) + list(_UNIVERSAL_NOTES)
         if self.label is None:
             self.label = name
         self.independent = TargetIndependent
@@ -459,6 +496,15 @@ class Target(object):
         if self.fabric_hz is None:
             return None
         return int(round(float(s) * self.fabric_hz))
+
+    def eth_imem_safe_to_overwrite(self):
+        """True ONLY on an explicit `eth_imem_live_code = False`.
+
+        `None` -- nobody has declared it -- returns False, because "no one told
+        me" and "no core is running there" are not the same claim, and a loader
+        can make the second one false between one test and the next.
+        """
+        return self.eth_imem_live_code is False
 
     def perf_counter_saturation_seconds(self, width_bits=32):
         """How long P0_CYC takes to saturate from a fresh CLR.
@@ -617,10 +663,17 @@ def _fpga_kr260():
         crc_enabled_at_reset=False,
         fcsm_recovery_present=True,
         census_value_class_asserted=True,
-        write_path_control_addr=0x10001000,
+        # NOT an eth IMEM word. See the shared note below -- this was
+        # 0x10001000 and that was a hazard, not a convenience.
+        write_path_control_addr=0x2100000C,
+        write_path_control_tag=0x0BADC0DE,
         rom_distinct_offsets={"eth_rom": 0x0E4, "cpu1_rom": 0x0E4},
         subword_rmw_supported=True,
-        eth_imem_live_code=False,
+        # NOT False. An operator can load an image into eth IMEM over the ADP
+        # `U` command and pulse CPU0_SWRST at any point in a power cycle, and
+        # that is a normal bring-up action, not an exotic one. The old False
+        # asserted a run-time fact that a debug operation invalidates.
+        eth_imem_live_code=None,
         timer0_owned_by_firmware=False,
         dma_powered=True,
         phy_oui=0x0007C0,
@@ -662,6 +715,23 @@ def _fpga_kr260():
             "bootgate_values": "measured 0x00000004 on this build -- CPU1 found "
                                "no boot candidate. 0x00000005 would also be "
                                "healthy if flash were provisioned",
+            "write_path_control_addr":
+                "WAS 0x10001000 (eth IMEM), justified on the premise that eth "
+                "IMEM is empty. THAT PREMISE IS FALSE: a 1128-byte image was "
+                "loaded at 0x10000000 over the ADP `U` command and CPU0 was "
+                "pulsed and ran it, writing shared SRAM at ~1 kHz. The write "
+                "landed past that image's .text+.bss and corrupted nothing -- "
+                "which is luck about one image's size, not a property of the "
+                "profile, and a larger image reaches it. The address is used by "
+                "HIO-313, ABORT GATE 8, whose job is to prove the write path "
+                "before the IRREVERSIBLE CPU0 release: a control that can "
+                "perturb a running core is the wrong control.",
+            "eth_imem_live_code":
+                "WAS False, MEASURED empty on this die 2026-08-25. That is a "
+                "run-time fact with a shelf life, not a die property -- see the "
+                "property comment. Now None (unknown, assume live); the loader "
+                "at hostio_fw/fw_load.py, or HOSTIO_ETH_IMEM_LIVE, can declare "
+                "it per run.",
             "dma_powered":
                 "MEASURED PRESENT. 0x20000FC8 (IIDR) = 0x2500043b, read "
                 "independently with an ad-hoc client AND reported by HIO-124 "
@@ -736,12 +806,14 @@ def _asic_tsmc65():
         crc_enabled_at_reset=True,
         fcsm_recovery_present=False,
         census_value_class_asserted=True,
-        # DELIBERATELY None: eth IMEM is not empty here. cc_rom releases CPU0, so
-        # 0x10001000 -- the FPGA's write-path control word, chosen because eth
-        # IMEM was MEASURED empty on that die -- may hold code a live core is
-        # executing. The tests that need one must defer until a word is pinned,
-        # not borrow the FPGA's.
-        write_path_control_addr=None,
+        # The SAME control as the FPGA, and for the same reason: the QSPI ADDR
+        # scratch is on a decode arm present on both vehicles and is in no
+        # core's instruction fetch. This was None -- forcing ABORT GATE 8 to
+        # defer on silicon -- only because the FPGA's control was an eth IMEM
+        # word that could not be borrowed. Moving the FPGA off IMEM closes the
+        # ASIC gap as a side effect.
+        write_path_control_addr=0x2100000C,
+        write_path_control_tag=0x0BADC0DE,
         # cc_rom releases CPU0, so eth IMEM is (or becomes) live instruction
         # memory. The exact argument that makes HIO-508 refuse CPU1 IMEM now
         # applies to eth IMEM here.
@@ -813,6 +885,16 @@ def _asic_tsmc65():
                              "power-on, and cc_rom releases CPU0. There is no "
                              "configuration of this SoC in which a running ASIC "
                              "die presents a quiescent bus to HOSTIO",
+            "write_path_control_addr":
+                "The QSPI ADDR scratch, same as the FPGA. Present on both "
+                "vehicles, in no core's instruction fetch, and RTL-verified as a "
+                "full 32-bit RW store -- so ABORT GATE 8 no longer has to defer "
+                "on silicon for want of a control word.",
+            "eth_imem_live_code":
+                "True: cc_rom releases CPU0, so eth IMEM is or becomes live "
+                "instruction memory. Unlike the FPGA's, this one is a "
+                "consequence of the ROM and does not depend on an operator "
+                "loading anything.",
             "subword_rmw_supported":
                 "UNESTABLISHED. With CRC ON at reset and FCSM recovery stripped, "
                 "a byte write into a word-granular protected macro needs a "
@@ -933,6 +1015,10 @@ ENV_OVERRIDES = {
     "HOSTIO_PHC_CORE_HZ":  ("phc_core_hz", "int"),
     "HOSTIO_PHC_NS_INCR":  ("phc_ns_incr_for_realtime", "int"),
     "HOSTIO_CPU1_PARKED":  ("bus_quiescent", "bool"),
+    # Set by the operator, or by hostio_fw/fw_load.py, which knows exactly when
+    # an image was installed. 0 asserts "I have not loaded anything this power
+    # cycle"; absent leaves it unknown, which is treated as live.
+    "HOSTIO_ETH_IMEM_LIVE": ("eth_imem_live_code", "bool"),
     "HOSTIO_SOAK_SECONDS": ("soak_seconds", "int"),
     "HOSTIO_ECC":          ("ecc_enabled", "bool"),
     "HOSTIO_CRC":          ("crc_enabled_at_reset", "bool"),
