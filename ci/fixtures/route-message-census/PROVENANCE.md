@@ -90,9 +90,81 @@ this site contains: every occurrence in the build tree reads `There were 4 open
 nets`, 16 of them. It is here to prove the gate does not fire on a router
 reporting no open nets, and it is flagged rather than passed off as observed.
 
+---
+
+## The ECHO PAIR — added 2026-08-26, and both halves are real bytes
+
+| fixture | source log | source shape | expected verdict |
+|---|---|---|---|
+| `pass-echoed-continuation/innovus_route_echoed_body_rc1.log` | `gdsrun-20260826-rc1/work/innovus.log2:24444-24554` plus that log's own `Options:` line, 3 routing markers and 5 router messages | one complete echoed `try_step` command: **1 prefixed line, 107 BARE continuation lines**, two of them quoting `There were 4 open nets` and `NRDR-27 ... is not globally routed` | **PASS** |
+| `fail-real-after-echoed-continuation/innovus_route_echoed_body_then_real.log` | byte-identical, plus `gdsrun-20260824-valid4/work/innovus.log2:25200` and `:25204` appended | the same echoed block followed by the two **genuine** router messages | **FAIL** |
+
+### Why the pair, and why the old echo arm was not enough
+
+`pass-echoed-source-only` proved that a line beginning `@file <n>: ` is not the
+tool speaking. That is half the truth. **Innovus prefixes only the FIRST line of
+each complete Tcl command; the remaining lines of a multi-line command are
+echoed verbatim, with no prefix at all.** Measured in the same rc1 log:
+
+```
+6414:@file 1459: proc pnr_session_logs {dir} {
+6415:    set out {}                                <- no prefix
+...                                               <- 7 bare lines, src 1460-1466
+6422:@file 1467:                                  <- next command, src 1467
+```
+
+`1459 + 1 prefixed + 7 bare = 1467`. The arithmetic closes exactly.
+
+So a filter keyed on `^@file` caught every top-level comment — each is its own
+one-line command — and kept every line of every proc body and every braced
+block. `4_route.tcl`'s regwire-repair comment, which quotes both router messages
+verbatim *to document the rzG defect*, lives inside a braced `if`. It was echoed
+bare, read as tool output, and hard-failed a run whose cache bit 123 is routed
+both ways (RDATA 24 wires / 5 vias, WDATA 23 / 9). The `...` in
+`Net ...RAMCLD0WDATA_123` is the tell: the tool prints the full hierarchical net
+name and never an ellipsis.
+
+The replacement treats **the command, not the line**, as the unit: an `@file`
+line opens a region, and the region runs until the accumulated text is a
+complete Tcl command — the same question the tool's own reader was waiting on,
+answered by `info complete` in the Tcl gate and by `_tcl_complete` in the Python
+one. Measured 2026-08-26 over all 63 non-verbose session logs under 6 MB on this
+site, that drops **8 findings across 4 logs and adds none**, and all 8 are the
+`...` comment text. The two implementations agree line for line: 11,136 echoed
+of 26,765 on rc1's route log, 10,323 of 27,497 on valid4's.
+
+**The FAIL half is the load-bearing one.** A region that over-runs its command
+would swallow real output, and the gate would go quiet on exactly the defect it
+was built for. That arm is byte-identical to the PASS arm up to its last two
+lines, so nothing but the region boundary separates them.
+
+### The runaway guard is NOT a fixture here, deliberately
+
+Tripping it needs an echoed region longer than `ECHO_MAX_RUN` (5,000 lines;
+longest real region measured over 63 logs on this site is 1,692, in
+`bscan-probe/work/innovus.log2`, and no log runs away). A 5,000-line file of synthetic
+filler is precisely the invented specimen this document exists to keep out of
+this directory, so `--selftest` generates that log in a temp dir instead and
+says so in its output. The same guard is proved in the toolkit with the limit
+lowered: `ASIC/asic-toolkit/test/common/router_message_gate.test`,
+`unterminated-echo-region-is-notmeasured`, mutation `router.echo-runaway-guard`.
+
 ## Mutation result
 
-8 mutations, 8 caught, each by a different arm. The table is in the script's
+11 mutations, 11 caught, each by a different arm. The table is in the script's
 own header so it travels with the code. Re-run it whenever a rule changes:
 a fixture set that catches fewer than all of them is a fixture set that has
 stopped proving something it used to.
+
+M11 is the one to read. With the runaway guard removed, a log whose echoed
+region never closes reads as a clean PASS while carrying a genuine `NRDR-27`
+twelve lines further down — the echo tracker without its guard is a bigger hole
+than the false positive it fixes.
+
+## A sibling fixture set, for the other half of the same false red
+
+The same run also hard-failed on its `check_drc` report, for an unrelated
+reason: Innovus writes no `Total Violations` trailer when a design is clean.
+Those fixtures are real check_drc reports rather than session logs, so they live
+in the toolkit beside the parser they prove —
+`ASIC/asic-toolkit/test/fixtures/route_drc/`, with its own PROVENANCE.md.

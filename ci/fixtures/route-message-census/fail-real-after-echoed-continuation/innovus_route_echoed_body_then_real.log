@@ -1,0 +1,122 @@
+Options:	-stylus -files ${CHIPLET_HOME}/ASIC/eth-chiplet/build/gdsrun-20260826-rc1/pinned/asic-toolkit/flow/innovus/4_route.tcl 
+#WARNING (NRIG-96) Selected single pass global detail route "-global_detail". Clock eco and post optimizations will not be run. See "man NRIG-96" for more details.
+#WARNING (NRIG-1303) The congestion map does not match the GCELL grid. Clearing the map.
+#WARNING (NRDB-1028) Some option affecting pin access calculation is set by the user. Pin access is to be recalculated. This incurs runtime.
+#Done routing data preparation.
+#Start Detail Routing..
+#start initial detail routing ...
+#WARNING (NRDB-405) width for LAYER M1 in RULE SNetWidthRule1 is not defined.
+#WARNING (NRDB-405) width for LAYER M3 in RULE SNetWidthRule1 is not defined.
+@file 1484: # the top of section 12 records.
+@file 1485: if {$ROUTE_REGWIRE_REPAIR && [info exists DRC_REP]} {
+@file 1486: try_step "regular-wire DRC repair" {
+        set _rw 0
+        if {[file exists $DRC_REP]} {
+            set _fh [open $DRC_REP r] ; set _txt [read $_fh] ; close $_fh
+            foreach _ln [split $_txt "\n"] {
+                if {[string match {*Regular Wire*} $_ln]} { incr _rw }
+            }
+        }
+        if {$_rw == 0} {
+            say "regwire-repair: no Regular Wire markers - nothing to do"
+        } elseif {$_rw > $ROUTE_REGWIRE_REPAIR_MAX} {
+            say "regwire-repair: $_rw Regular Wire markers is above the ceiling of  $ROUTE_REGWIRE_REPAIR_MAX - DECLINING. This is not a local repair any more;  raise ROUTE_REGWIRE_REPAIR_MAX deliberately, or fix the cause."
+        } else {
+            say "regwire-repair: $_rw Regular Wire marker(s) - ripping up and rerouting"
+            if {[catch { delete_routes -regular_wire_with_drc -status ROUTED } _e]} {
+                say "regwire-repair: delete_routes failed: $_e"
+            }
+            if {[catch { route_eco -fix_drc } _e]} {
+                say "regwire-repair: route_eco failed: $_e"
+            }
+            # -fix_drc DECLINES OPEN NETS -- AND delete_routes HAS JUST MADE SOME.
+            #
+            # Innovus documents it plainly (TCRcom/route_eco.html, -fix_drc):
+            # "If open nets are found in the design, NanoRoute skips them and
+            # continues to fix DRC's for the other nets." The 2026-08-24 run
+            # log said the same thing out loud and nothing read it:
+            #     #INFO: There were 4 open nets and ecoRoute -fix_drc will not
+            #     #      route these nets. User needs to use ecoRoute command
+            #     #      to route the open nets.
+            #     #WARNING (NRDR-27) Net ...RAMCLD0WDATA_123 is not globally routed.
+            # So the rip-up was permanent, three macro pins shipped with no metal
+            # on any layer, and `Regular Wire 5 -> 0` scored it a success --
+            # because a deleted net carries no marker.
+            #
+            # -target routes exactly the nets NanoRoute has identified as needing
+            # routing. MEASURED on valid4's routed database: open signal nets
+            # 2 -> 0, bare macro pins 3 -> 0, and Calibre design-owned UNCHANGED
+            # at 47 (738 total) against a matched no-change control run through
+            # the same deck in the same session.
+            if {[catch { route_eco -target } _e]} {
+                say "regwire-repair: route_eco -target failed: $_e"
+            }
+            check_drc -limit $LIM -out_file $DRC_REP
+            set _rw2 0
+            if {[file exists $DRC_REP]} {
+                set _fh [open $DRC_REP r] ; set _txt [read $_fh] ; close $_fh
+                foreach _ln [split $_txt "\n"] {
+                    if {[string match {*Regular Wire*} $_ln]} { incr _rw2 }
+                }
+            }
+            say "regwire-repair: Regular Wire $_rw -> $_rw2"
+
+            # THE REPAIR CAN "SUCCEED" BY DELETING, AND ON 2026-08-24 IT DID.
+            #
+            # delete_routes rips up every net carrying a Regular Wire marker and
+            # route_eco is asked to put it back. If route_eco cannot legally
+            # route it -- e.g. the only pin access violates spacing against the
+            # macro's own blockage -- the net simply STAYS DELETED. It then has
+            # no DRC marker at all, so `Regular Wire $_rw -> $_rw2` counts it as
+            # a success. The metric is satisfied by the failure.
+            #
+            # MEASURED, gdsrun-20260824-valid4 and -20260823-rzG (the SUBMITTED
+            # stream). Three macro pins were left with no metal on any layer:
+            #     way0 .../u_..._word_3_i  D[27]   net RAMCLD0WDATA[123]
+            #     way1 .../u_..._word_3_i  D[27]   net RAMCLD0WDATA[123]
+            #     way0 .../u_..._word_3_i  Q[27]   net RAMCLD0RDATA[123]
+            # 3 of 648 macro pins, measured by intersecting LEF pin rects with
+            # the streamed metal. The foundry found them post-merge as 14
+            # PO.R.8 floating gates; we could not, because a gate behind a
+            # LEF-abstract driver looks identical to one behind no driver at all.
+            #
+            # The stage DOES run check_connectivity over all nets -- but in
+            # section 12, MINUTES BEFORE this repair. It passed clean at 13:43
+            # and the wires were deleted at 13:48. Same defect shape as the
+            # post-fill hold summary: a gate reading a database that no longer
+            # exists.
+            #
+            # So: re-check here, and make a signal-net open HARD. A dangling PG
+            # wire is a budget item; a signal net with no routing is a chip that
+            # does not work.
+            set _rwc $REPORT_DIR/${block_name}_imp_connectivity_postrepair.rep
+            if {[catch {
+                    check_connectivity -type regular -error $LIM -warning $LIM  -out_file $_rwc
+                } _e]} {
+                lappend hard "regwire-repair: the post-repair connectivity check could not run ($_e), so whether the rip-up left a net unrouted is UNKNOWN. This stage rips up signal routing; it may not certify without re-checking it."
+            } else {
+                set _open 0 ; set _names {}
+                if {[file exists $_rwc]} {
+                    set _fh [open $_rwc r] ; set _t [read $_fh] ; close $_fh
+                    foreach _ln [split $_t "\n"] {
+                        if {[regexp {^Net (\S+):} $_ln -> _nm]} {
+                            incr _open
+                            if {[llength $_names] < 20} { lappend _names $_nm }
+                        }
+                    }
+                }
+                if {$_open > 0} {
+                    lappend hard "regwire-repair LEFT $_open SIGNAL NET(S) WITH NO ROUTING. delete_routes ripped them up and route_eco did not restore them; they carry no DRC marker, so the Regular Wire count above reads as a success. This is a FUNCTIONAL defect - the pins are bare and the foundry will find them as floating gates after library merge. Nets: [join $_names { }]. Full report: $_rwc"
+                } else {
+                    say "regwire-repair: post-repair connectivity clean (0 unrouted signal nets)"
+                }
+            }
+            if {$_rw2 > $_rw} {
+                say "regwire-repair: WARNING - the repair made it WORSE.  The database now carries more signal DRC than before the rip-up."
+            }
+        }
+    }
+ROUTE: regwire-repair: no Regular Wire markers - nothing to do
+@file 1593: }
+#INFO: There were 4 open nets and ecoRoute -fix_drc will not route these nets. User needs to use ecoRoute command to route the open nets.
+#WARNING (NRDR-27) Net u_nanosoc_eth_chiplet_chip_u_soc_u_soc/FE_PHN9997_u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_RAMCLD0WDATA_123 is not globally routed.

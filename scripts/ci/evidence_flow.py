@@ -1366,7 +1366,20 @@ def crosscheck_router_gate():
             'proc die {args} {error [join $args]}\n'
             'proc asic_slurp {p} {set f [open $p r];set t [read $f];close $f;return $t}\n'
             'source [lindex $argv 0]\n'
-            'puts [dict get [pnr_router_message_gate [lrange $argv 1 end]] verdict]\n')
+            # VERDICT *AND* ECHO COUNT. Two implementations agreeing on a
+            # three-valued verdict is a weak agreement: both could classify
+            # completely different line sets and still land on PASS. The echo
+            # count is the classification itself, one integer per log, and it
+            # is where the two would drift first -- the Tcl asks `info
+            # complete` and the Python re-implements it. Measured on
+            # gdsrun-20260826-rc1/work/innovus.log2 they agree at 11,136 of
+            # 26,765 lines, and on valid4 at 10,323 of 27,497.
+            'set _g [pnr_router_message_gate [lrange $argv 1 end]]\n'
+            'set _e 0\n'
+            'foreach _s [dict get $_g scans] {\n'
+            '  if {[dict get $_s readable]} { incr _e [dict get $_s echoed] }\n'
+            '}\n'
+            'puts "[dict get $_g verdict] echoed=$_e"\n')
     bad = 0
     arms = sorted(d for d in os.listdir(fx) if os.path.isdir(os.path.join(fx, d)))
     for arm in arms:
@@ -1387,20 +1400,39 @@ def crosscheck_router_gate():
             if m:
                 pv = m.group(1)
                 break
+        # The Python side's echo classification, summed the same way the driver
+        # sums the Tcl side's.
+        pe = "?"
+        try:
+            sys.path.insert(0, HERE)
+            import route_message_census as _rmc
+            pe = sum(_rmc.scan(p)["echoed_source_lines"] for p in logs)
+        except Exception as e:                       # noqa: BLE001
+            pe = "err:%s" % e
         rc, tclout = run_tool(["tclsh", driver, pnr] + logs)
         tv = "?"
+        te = "?"
         for line in reversed(tclout.strip().splitlines()):
-            if line.strip() in ("PASS", "FAIL", "NOT-MEASURED"):
-                tv = line.strip()
+            m = re.match(r"(PASS|FAIL|NOT-MEASURED)\s+echoed=(\d+)\s*$", line.strip())
+            if m:
+                tv, te = m.group(1), int(m.group(2))
                 break
         if pv != tv:
             bad += 1
             print("  %-46s %s   %s" % ("xcheck %s" % arm, "FAIL",
                                        "python=%s tcl=%s" % (pv, tv)))
+        # AGREEING ON THE VERDICT IS NOT AGREEING ON THE MEASUREMENT. This is
+        # the arm that would catch the two echo models drifting apart while
+        # both still happened to reach PASS.
+        elif pe != te:
+            bad += 1
+            print("  %-46s %s   %s" % ("xcheck %s echo" % arm, "FAIL",
+                                       "python echoed=%s tcl echoed=%s" % (pe, te)))
     print("  %-46s %s   %s"
           % ("tcl/python cross-check, %d arm(s)" % len(arms),
              "ok" if not bad else "FAIL",
-             "identical verdicts" if not bad else "%d disagreement(s)" % bad))
+             "identical verdicts and echo classification"
+             if not bad else "%d disagreement(s)" % bad))
     return bad == 0
 
 

@@ -132,7 +132,25 @@ derivation and the exact source line numbers.
               tags produced it, from 22 August onward, and every one of them
               wrote `HARD FAILURES: none`.
 
-MUTATION PROOF — 8/8, each caught by a DIFFERENT fixture arm
+  THE ECHO PAIR, added 2026-08-26 and the only pair that discriminates on the
+  shape that produced the false red:
+
+  MUST PASS   ci/fixtures/route-message-census/pass-echoed-continuation/
+              cut from gdsrun-20260826-rc1/work/innovus.log2:24444-24554 -
+              4_route.tcl's regwire-repair comment, echoed from inside a braced
+              `if` body, so the two router messages it quotes to EXPLAIN the
+              rzG defect arrive with no `@file` prefix on them. The gate read
+              them as tool output and hard-failed the run.
+              -> exit 0.                  VERIFIED 2026-08-26.
+
+  MUST FAIL   ci/fixtures/route-message-census/fail-real-after-echoed-continuation/
+              byte-identical, plus the two GENUINE lines from valid4 appended
+              after the echoed block. A tracker that runs past the end of the
+              echoed command swallows them and reports PASS, which would make
+              this fix worse than the defect it replaces.
+              -> exit 1, both findings named.  VERIFIED 2026-08-26.
+
+MUTATION PROOF — 11/11, each caught by a DIFFERENT fixture arm
 ------------------------------------------------------------
 A gate whose fixtures all trip the same rule proves one rule and pretends to
 prove several. Measured 2026-08-24 by mutating this file one anchor at a time
@@ -147,6 +165,15 @@ and requiring --selftest to go red:
     M6 shape-drift guard removed               not-measured-shape-drift
     M7 FAIL downgraded to PASS                 all three fail arms
     M8 NOT-MEASURED laundered into PASS        all three not-measured arms
+    M9 echo filter reverted to prefix-only     pass-echoed-continuation
+    M10 echoed region never completes          fail-real-after-echoed-continuation
+    M11 runaway guard removed                  echo-runaway (generated)
+
+M9-M11 ARE THE 2026-08-26 ROUND, and M11 is the one worth reading. With the
+runaway guard removed, a log whose echoed region never closes reads as a clean
+PASS while carrying a genuine NRDR-27 twelve lines further down - so the echo
+tracker without its guard is a bigger hole than the false positive it fixes.
+Measured: `got runaway=0 PASS` where the arm wants `runaway=1 FAIL`.
 
 TWO OF THESE ROUNDS FOUND REAL WEAKNESSES, which is the only reason the list
 is worth reading. Round 1: M1 and M4 SURVIVED -- the headline unrouted-net rule
@@ -154,6 +181,13 @@ was not independently proven, because the rzG fixture trips both rules at once,
 and the message-shape claim fed only the report and not the verdict. The
 fail-unrouted-net-only arm and the shape-drift guard exist because of that
 round, not because they were designed in.
+
+THE RUNAWAY ARM IS GENERATED AT RUN TIME, not checked in: tripping the guard
+needs an echoed region longer than ECHO_MAX_RUN, and 5,000 lines of synthetic
+filler is exactly the invented specimen PROVENANCE.md exists to keep out of the
+fixture directory. The same guard is proved in the toolkit's Tcl unit test with
+the limit lowered - test/common/router_message_gate.test,
+`unterminated-echo-region-is-notmeasured`, mutation `router.echo-runaway-guard`.
 
 THREE FIXTURE ARMS ARE DERIVED, NOT OBSERVED, and are labelled as such in their
 own headers and in PROVENANCE.md: not-measured-no-markers,
@@ -180,20 +214,131 @@ RE_NOT_GLOBAL = re.compile(r"Net\s+(\S+?)\s+is not globally routed")
 # HARD finding 2: the router declining nets and saying how many.
 RE_OPEN_NETS = re.compile(r"There were\s+(\d+)\s+open nets")
 
-# INNOVUS ECHOES ITS OWN TCL SOURCE INTO THE LOG, prefixed `@file <n>: `, and
-# a script whose COMMENTS quote a router message therefore puts that message in
-# the log without the tool ever having emitted it. Measured 2026-08-24: this
-# gate scored `pinfix-20260824/logs/eco.log` and `blkg.log` as FAIL purely on
+# INNOVUS ECHOES ITS OWN TCL SOURCE INTO THE LOG, and a script whose COMMENTS
+# quote a router message therefore puts that message in the log without the tool
+# ever having emitted it. Measured 2026-08-24: this gate scored
+# `pinfix-20260824/logs/eco.log` and `blkg.log` as FAIL purely on
 # `arm_orig.tcl`'s header comment, which quotes the open-nets decline verbatim
 # to explain why the arm exists. Both were FALSE POSITIVES, on the arms of the
 # submission candidate itself.
 #
-# Real findings never carry the prefix: the two in the rzG route log
-# (innovus.log2:25195 and :25199) are bare, in a file with 5,827 `@file` lines.
-# So the whole line is dropped before any rule looks at it -- findings, router
-# messages AND routing markers, since an echoed marker would falsely arm the
-# vacuity control just as surely.
-RE_ECHOED_SOURCE = re.compile(r"^@file\s+\d+:")
+# THE PREFIX IS ON THE COMMAND, NOT ON THE LINE. Measured on
+# gdsrun-20260826-rc1/work/innovus.log2, and this is the correction that matters:
+#
+#     6414:@file 1459: proc pnr_session_logs {dir} {
+#     6415:    set out {}                              <- NO PREFIX
+#     ...                                             <- 7 bare lines, src 1460-1466
+#     6422:@file 1467:                                <- next command, src 1467
+#
+# 1459 + 1 prefixed + 7 bare = 1467. The tool prefixes the FIRST line of each
+# complete Tcl command and echoes the rest verbatim. A filter that drops only
+# `^@file` lines therefore catches top-level comments (each its own one-line
+# command) and keeps every line of every proc body and every braced block.
+#
+# THAT IS WHAT HARD-FAILED gdsrun-20260826-rc1. Its route log carries, bare:
+#
+#     24472:            #     #INFO: There were 4 open nets and ecoRoute -fix_drc will not
+#     24475:            #     #WARNING (NRDR-27) Net ...RAMCLD0WDATA_123 is not globally routed.
+#
+# both of them 4_route.tcl's own comment explaining the rzG defect, echoed from
+# inside a braced `if` body. The `...` is the giveaway: the tool prints the full
+# hierarchical net name, never an ellipsis. The gate reported the defect it was
+# written to describe, out of its own source code, on a run whose cache bit 123
+# is routed both ways (RDATA 24 wires/5 vias, WDATA 23/9).
+#
+# SO AN `@file` LINE OPENS A REGION and the region runs until the accumulated
+# text is a COMPLETE TCL COMMAND -- which is exactly what the tool's own reader
+# was waiting for. `_tcl_complete` below answers that question the way Tcl's
+# `info complete` does; the Tcl gate in the toolkit calls `info complete`
+# directly, and evidence_flow.py's cross-check requires the two to classify the
+# same number of lines as echo on every fixture, not merely to agree on a
+# verdict.
+#
+# WHY IT CANNOT SWALLOW REAL OUTPUT: a command prints nothing until it is
+# complete and has run, so echoed continuation lines always PRECEDE the
+# command's output. MEASURED 2026-08-26 over all 63 non-verbose session logs
+# under 6 MB on this site: against the prefix-only filter the region tracker
+# drops 8 findings across 4 logs and ADDS NONE, and all 8 are that same `...`
+# comment text. Longest real region 1,692 lines and zero runaways, against a
+# limit of ECHO_MAX_RUN.
+RE_ECHOED_SOURCE = re.compile(r"^@file[ \t]+\d+:[ \t]?(.*)$")
+
+# A region longer than this is ABANDONED and `echo_runaway` is set, so a
+# truncated log or a changed echo shape cannot make the scanner read the whole
+# remainder of a file as script text and report a serene PASS over it. Blind is
+# not clean: the gate turns a runaway into NOT-MEASURED, never into a pass.
+ECHO_MAX_RUN = 5000
+
+
+def _tcl_complete(s):
+    """Mirror of Tcl's `info complete` over the subset that appears in echoed
+    script text: brace, bracket and quote balance, backslash escapes, `#`
+    comments where a command could begin, and a trailing backslash-newline.
+
+    Callers append a newline, which is what makes a line ending in a lone
+    backslash read as INCOMPLETE -- Tcl treats a backslash as a continuation
+    only when a newline follows it.
+    """
+    i, n = 0, len(s)
+    brace = bracket = 0
+    quote = False
+    at_cmd = True          # a '#' here starts a comment; anywhere else it does not
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            # A backslash escapes the next character, newline included. A
+            # backslash-newline at the very end means the command continues.
+            if i + 1 >= n:
+                return brace <= 0 and bracket == 0 and not quote
+            if s[i + 1] == "\n" and i + 2 >= n:
+                return False
+            i += 2
+            continue
+        if brace > 0:
+            # Inside braces Tcl counts braces and nothing else -- not quotes,
+            # not brackets, and not comments. This is the classic gotcha, and
+            # reproducing it is the point: the tool's reader has it too.
+            if c == "{":
+                brace += 1
+            elif c == "}":
+                brace -= 1
+            i += 1
+            continue
+        if quote:
+            if c == '"':
+                quote = False
+                at_cmd = False
+            i += 1
+            continue
+        if at_cmd and c == "#":
+            j = s.find("\n", i)
+            while j != -1 and (len(s[:j]) - len(s[:j].rstrip("\\"))) % 2 == 1:
+                j = s.find("\n", j + 1)      # backslash-newline continues a comment
+            if j == -1:
+                return brace <= 0 and bracket == 0 and not quote
+            i = j + 1
+            continue
+        if c in " \t":
+            i += 1
+            continue
+        if c in "\n;":
+            at_cmd = True
+            i += 1
+            continue
+        if c == "{":
+            brace += 1
+        elif c == "}":
+            brace -= 1
+        elif c == "[":
+            bracket += 1
+        elif c == "]":
+            if bracket > 0:
+                bracket -= 1
+        elif c == '"':
+            quote = True
+        at_cmd = False
+        i += 1
+    return brace <= 0 and bracket == 0 and not quote
 
 # Positive evidence that a routing section actually executed. Any one of these
 # is enough; they are separate phases, so a log that reaches only the first
@@ -218,6 +363,8 @@ def scan(path):
         "router_messages": 0,
         "router_ids": {},
         "echoed_source_lines": 0,
+        "echo_max_run": 0,
+        "echo_runaway": 0,
         "unrouted_nets": [],
         "open_net_declines": [],
         "stage_script": None,
@@ -228,13 +375,36 @@ def scan(path):
         r["error"] = str(e)
         return r
     r["readable"] = True
+    # Echo-region state: `acc` is the source text accumulated so far for the
+    # command being echoed, `run` how many log lines it has taken.
+    acc, run = "", 0
     with fh:
         for line in fh:
             r["lines"] += 1
+            line = line.rstrip("\n")
             # The tool quoting the script back at itself is not the tool
-            # speaking. Dropped before every rule below, and COUNTED, so a
-            # reader can see how much of the log was echo.
-            if RE_ECHOED_SOURCE.match(line):
+            # speaking. Dropped before every rule below -- findings, router
+            # messages AND routing markers, since an echoed marker would falsely
+            # arm the vacuity control just as surely -- and COUNTED, so a reader
+            # can see how much of the log was echo.
+            m = RE_ECHOED_SOURCE.match(line)
+            is_echo = False
+            if m:
+                # A new region always starts here, whatever the previous one was
+                # doing, so an unterminated region cannot run past the next
+                # command the tool reads.
+                acc, run, is_echo = m.group(1), 1, True
+            elif run:
+                acc, run, is_echo = acc + "\n" + line, run + 1, True
+            if is_echo:
+                if run > r["echo_max_run"]:
+                    r["echo_max_run"] = run
+                if _tcl_complete(acc + "\n"):
+                    acc, run = "", 0
+                elif run > ECHO_MAX_RUN:
+                    r["echo_runaway"] = 1
+                    acc, run, is_echo = "", 0, False
+            if is_echo:
                 r["echoed_source_lines"] += 1
                 continue
             if r["stage_script"] is None and ".tcl" in line and "Options:" in line:
@@ -332,6 +502,28 @@ def judge(results, required=None):
                     f"({r['route_markers']} routing marker(s), "
                     f"{r['router_messages']} router message(s)). The finding "
                     f"above stands regardless; the control governs absences."
+                )
+            continue
+        # THE ECHO MODEL BROKE ON THIS LOG. `scan` abandoned an echoed-source
+        # region that never closed, so some span of the file was classified
+        # with the tool's own script text and its real output
+        # indistinguishable. BLIND IS NOT CLEAN: findings above still stand,
+        # they were evaluated first; a silence here is not evidence.
+        if r["echo_runaway"]:
+            if is_req:
+                unmeasured.append(
+                    f"{tag}: an echoed-source region ran past {ECHO_MAX_RUN} "
+                    f"lines without completing, so the scanner stopped trusting "
+                    f"its own echo model. Part of this log was read blind and "
+                    f"its zero findings are not a pass. Longest region "
+                    f"{r['echo_max_run']} lines."
+                )
+            else:
+                advisory.append(
+                    f"{tag}: echoed-source region overran ({r['echo_max_run']} "
+                    f"lines) and this run does not require this log to be "
+                    f"measurable — scanned for findings, none present. NOT "
+                    f"counted as a pass."
                 )
             continue
         # Not required to be measurable: findings above still count, silence
@@ -456,6 +648,13 @@ def main():
             print(f"  {r['path']}")
             print(f"      script {r['stage_script'] or '?'}   lines {r['lines']}   "
                   f"routing markers {r['route_markers']}")
+            # HOW MUCH OF THE LOG WAS THE TOOL QUOTING ITS OWN SCRIPT BACK.
+            # 42% of a route log here, which is the quantity that decides
+            # whether the numbers above mean anything.
+            print(f"      echoed source {r['echoed_source_lines']} line(s), "
+                  f"longest region {r['echo_max_run']}"
+                  + ("  -- REGION OVERRAN, part of this log was read BLIND"
+                     if r["echo_runaway"] else ""))
             print(f"      router messages {r['router_messages']}"
                   + (f"   [{ids}]" if ids else ""))
             if r["unrouted_nets"]:
@@ -502,6 +701,9 @@ def selftest(fixtures=None):
         ("not-measured-shape-drift", NOT_MEASURED, "DERIVED: markers, no messages -> shape-drift guard alone"),
         ("pass-zero-open-nets",      PASS,         "DERIVED: '0 open nets' is not a finding"),
         ("pass-echoed-source-only",  PASS,         "the tool echoing a COMMENT that quotes a finding is not a finding"),
+        ("pass-echoed-continuation", PASS,         "echo on BARE CONTINUATION lines of a multi-line command -- the rc1 false red"),
+        ("fail-real-after-echoed-continuation", FAIL,
+                                                   "the discriminating control: the region CLOSES, so a real message after it still fails"),
         ("fail-finding-beats-vacuity", FAIL,       "DERIVED: a finding is not suppressed by a failed vacuity control"),
     ]
     bad = 0
@@ -520,6 +722,40 @@ def selftest(fixtures=None):
         bad += 0 if ok else 1
         print(f"  {name:22s} want {VERDICT[want]:12s} got {VERDICT[got]:12s} "
               f"{'ok' if ok else 'MISMATCH'}   ({why})")
+    # THE RUNAWAY GUARD IS PROVED ON A GENERATED LOG, NOT A CHECKED-IN ONE.
+    # An echoed region has to exceed ECHO_MAX_RUN lines to trip it, so the
+    # fixture would be a 5,000-line file of synthetic filler -- which is
+    # exactly the kind of invented specimen PROVENANCE.md exists to keep out of
+    # that directory. It is generated here instead, in a temp dir, and the same
+    # guard is proved in the toolkit's Tcl unit test with the limit lowered
+    # (test/common/router_message_gate.test, unterminated-echo-region-is-notmeasured).
+    #
+    # WITHOUT THIS ARM the echo tracker is a liability rather than a fix: a
+    # region that never closes would swallow the rest of a log, real router
+    # messages included, and the gate would report a serene PASS over a file it
+    # never read.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        rp = os.path.join(td, "innovus.runaway.log")
+        with open(rp, "w") as fh:
+            fh.write("Options:\t-stylus -files /flow/innovus/4_route.tcl \n")
+            fh.write("#WARNING (NRIG-96) Selected single pass global detail route.\n")
+            fh.write("#Start Detail Routing..\n")
+            fh.write("@file 1: proc never_closes {} {\n")   # the brace with no partner
+            for i in range(ECHO_MAX_RUN + 8):
+                fh.write("    set x %d\n" % i)
+            # A REAL finding, past the point where the region was abandoned.
+            fh.write("#WARNING (NRDR-27) Net u_x/RAMCLD0WDATA[7] is not globally routed.\n")
+        r = scan(rp)
+        got, _ = judge([r])
+        ok = r["echo_runaway"] == 1 and got == FAIL
+        bad += 0 if ok else 1
+        print(f"  {'echo-runaway (generated)':22s} want runaway=1 FAIL   "
+              f"got runaway={r['echo_runaway']} {VERDICT[got]:12s} "
+              f"{'ok' if ok else 'MISMATCH'}   "
+              f"(a region that never closes is abandoned, and the real message "
+              f"after it is still caught)")
+
     print()
     if bad:
         print(f"selftest: FAIL — {bad} case(s) did not behave as recorded")
