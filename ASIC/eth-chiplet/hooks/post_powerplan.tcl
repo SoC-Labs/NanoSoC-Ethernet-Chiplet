@@ -168,3 +168,100 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     # branch -- which is the branch a pinned run actually executes.
     unset -nocomplain _pgd_hook_dir _pgd_gi _pgd_eco
 }
+
+################################################################################
+# VIA3.R.4:M4 -- CENSUS AND GUARD.  THERE IS NO EDIT ARM AND THIS EXPLAINS WHY.
+#
+# The two edits above are made here because both defects are between two pieces
+# of OUR geometry, so a seeker can find every party in the database.
+# VIA3.R.4:M4 is the third PG DRC defect this design has and it is NOT like
+# that: the offending VIA3 cut is VENDOR geometry inside a merged memory macro,
+# reaching the stream through `write_stream -merge`.  Innovus has no object for
+# it -- get_obj_in_area over the marker box returns 0 vias and 0 special_vias --
+# and the deck's escape clause,
+#       GoodBranch = (Branch AND M3) INTERACT VIA3 > 1
+# counts exactly those invisible cuts.  We cannot evaluate the rule, so we
+# cannot say which candidate site is the violation.
+#
+# THE MEASUREMENT, on THIS FLOW'S OWN power-plan database (2026-08-26,
+# gdsrun-20260826-rc1 work/nanosoc_eth_chiplet_pads_fplan, written 02:43:57 --
+# i.e. after this hook's own artefact at 02:43:22, so it is this state):
+#      36029  wide PG M4 pads within 0.800 um of a merged-GDS macro
+#       4273  of OUR M4 rectangles crossing a merged macro's footprint
+#         11  narrow crossings carrying a strictly-wide M4 region within 0.800
+#          1  is what Calibre reports
+# An edit arm built on the best predicate available would narrow ELEVEN mesh
+# nodes and remove 330 PG cuts to fix one.  That is not a fix, it is damage
+# with a fix inside it, so it is not shipped.  Full derivation, including why
+# the 11 is a deck-faithful NECESSARY condition and not a heuristic, is in the
+# header of pg_drc_v3r4_census.tcl.
+#
+# WHAT CLOSES THE DEFECT is the marker-driven POST-ROUTE ECO,
+# ASIC/genus-innovus/scripts/pg_drc_via3r4_m4_narrow.tcl, fed the run's OWN
+# Calibre .drc.results.  IT IS NOT OPTIONAL AND IT IS NOT IN THIS FLOW: every
+# run that streams without it ships VIA3.R.4:M4 = 1, and imec does not waive
+# that rule.  Proven on two lineages -- eco-20260826-via3r4 and
+# rc1eco-20260826 -- 738 -> 737 each time, no other rulecheck moving, against a
+# matched control that still reports the violation.
+#
+# WHAT THIS CENSUS IS FOR, then, since it fixes nothing: the failure it closes
+# is "nobody noticed the topology moved".  It writes the candidate set as an
+# artefact and REFUSES outside a measured range, so a floorplan or power-plan
+# change that creates a NEW family of these sites says so here -- at power-plan
+# time, for the price of a few seconds -- instead of at the foundry, nineteen
+# hours and one round trip later.
+#
+# EXPECTATIONS ARE WIDENED TO ALLOW ZERO in-flow, for the same reason the block
+# above widens its own: standalone, a census that finds nothing is a refusal,
+# because a silent no-op is the failure this project fears most.  In-flow, a
+# grid that legitimately comes out with no candidates must not cost five hours.
+################################################################################
+
+if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "1"} {
+    if {[info commands warn] ne ""} {
+        warn "post_powerplan: EVP_NO_PG_DRC_EDITS=1 -- VIA3.R.4:M4 census SKIPPED\
+              along with the edits. This run has no record of its candidate topology."
+    }
+} else {
+    # Same LEGACY_ASIC_DIR resolution as the two blocks above, and for the same
+    # reason: a pinned run copies these hooks into the run dir and the two-level
+    # climb lands somewhere else entirely.
+    if {[info exists ::env(LEGACY_ASIC_DIR)] && $::env(LEGACY_ASIC_DIR) ne ""} {
+        set _v3c_gi $::env(LEGACY_ASIC_DIR)
+    } else {
+        set _v3c_hook_dir [file dirname [file normalize [info script]]]
+        set _v3c_gi [file join [file dirname [file dirname $_v3c_hook_dir]] genus-innovus]
+    }
+    set _v3c_scr [file join $_v3c_gi scripts pg_drc_v3r4_census.tcl]
+    if {![file readable $_v3c_scr]} {
+        error "post_powerplan hook: cannot read $_v3c_scr.\
+             \n  This census is the only in-flow record that the VIA3.R.4:M4\
+             \n  candidate topology has not changed. Fix the path; do not delete\
+             \n  the call -- a gate that cannot run must not look like a gate that\
+             \n  ran and found nothing."
+    }
+    set PG_V3R4_CENSUS 1
+    # In-flow floor 0, as justified above. The ceiling is 20 against 11 MEASURED
+    # on 2026-08-26: enough room for a floorplan nudge, not enough to hide a new
+    # family of sites.
+    set PG_V3R4_EXPECT {0 20}
+    # THE SCRIPT REFUSES WITHOUT AN ARTEFACT PATH, deliberately -- a census
+    # nobody can read afterwards is not evidence. In-flow that refusal must not
+    # become a way to lose a five-hour build to an unset variable, so the same
+    # trade the block above makes for REPORT_DIR is made here: warn and skip,
+    # rather than abort the stage. This gate reports, it does not repair, so
+    # skipping it costs a record and nothing else.
+    if {![info exists REPORT_DIR]} {
+        if {[info commands warn] ne ""} {
+            warn "post_powerplan: REPORT_DIR is not set, so the VIA3.R.4:M4\
+                  census would leave NO artefact. SKIPPED. This run has no\
+                  record of its candidate topology."
+        }
+    } else {
+        if {[info commands say] ne ""} {
+            say "post_powerplan: VIA3.R.4:M4 candidate census (NO EDIT) -> $_v3c_scr"
+        }
+        source $_v3c_scr
+    }
+    unset -nocomplain _v3c_hook_dir _v3c_gi _v3c_scr
+}

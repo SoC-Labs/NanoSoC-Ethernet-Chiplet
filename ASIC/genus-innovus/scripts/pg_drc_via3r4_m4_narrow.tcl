@@ -18,10 +18,34 @@
 # build/pinfix-20260824/arm_orig.tcl.  Source this one explicitly, and only
 # once a Calibre arm has been decided.
 #
-#   THIS EDIT IS NOT ACCEPTED.  As of 2026-08-25 the standing recommendation is
-#   to WAIVE VIA3.R.4:M4 for the 27-Aug round trip: the offending cut is vendor
-#   geometry inside flash_cache_data and our own plate is legal.  This script
-#   exists so the option stays open, not because it is required.
+#   HEADER CORRECTED 2026-08-26.  The two paragraphs this one replaces said
+#   "THIS EDIT IS NOT ACCEPTED" and recommended WAIVING VIA3.R.4:M4 instead.
+#   That recommendation was written on 25 Aug, BEFORE the edit had been priced
+#   on a real stream, and it is now STALE.  It was superseded the same night:
+#
+#     THE EDIT IS ACCEPTED AND IS THE STANDING ANSWER.  Applied to the _pgeco
+#     database and re-streamed, Calibre signoff DRC moved VIA3.R.4:M4 1 -> 0
+#     and NOT ONE of the other 1,925 executed rulechecks moved in either
+#     direction (drc_v3r4_sign_0826 vs the matched control drc_v3r4_ctl_0826;
+#     737 vs 738 total).  The edit is free.  A fix that costs nothing does not
+#     need a waiver argument to compete against.
+#
+#     AND THE WAIVER WAS NEVER AVAILABLE TO BEGIN WITH.  imec does not waive
+#     this rule.  MEASURED over the whole 25-Aug pinfix archive:
+#     `grep -rniE 'waiv' ASIC/imec_results/Archive_..._pinfix_..._25Aug26_14u10/`
+#     returns exactly ONE line, and it is a GDS LAYER NAME in the layer table
+#     ("SRAMDMY waive 186 0") -- there is no waiver column, field or
+#     disposition anywhere in the rulecheck results.  Worse, in that same
+#     report's RULECHECK RESULTS STATISTICS (BY CELL) section, our top cell
+#     `nanosoc_eth_chiplet_pads_dummy_WithSealRing` carries TOTAL Result
+#     Count = 2, and VIA3.R.4:M4 is ONE OF THE TWO (the other is DRM.R.1, an
+#     informational reminder).  This result is not lost in a crowd; it is
+#     half of everything the foundry attributes to us.
+#
+#     The "the cut is vendor geometry, so it is theirs" argument is still
+#     TRUE as a statement about the cut, and it is still recorded below.  It
+#     is simply no longer a REASON to leave the rule firing, because our own
+#     plate is the other half of the interaction and narrowing it is free.
 #
 # THIS SCRIPT DOES NOT STREAM AND DOES NOT write_db.  It edits the in-memory
 # design and nothing else.  Run it on a COPY of the routed database.
@@ -62,8 +86,11 @@
 # M4Wide_0.7_VIA3 does not exist here, Branch1 is empty, and the rule cannot
 # fire -- without touching the vendor cut at all.
 #
-# BECAUSE THE CUT IS THEIRS AND OUR SHAPE IS LEGAL, A WAIVER IS A LIVE OPTION.
-# This edit competes against a written statement, not against a broken design.
+# THE CUT IS THEIRS AND OUR SHAPE IS LEGAL IN ISOLATION -- BUT A WAIVER IS NOT
+# A LIVE OPTION.  See the corrected note at the top: imec's report has no
+# waiver mechanism for this rule, and this result is one of only two the
+# foundry attributes to our top cell.  Narrowing our plate is measured free,
+# so this edit does not have to win an argument -- it just has to run.
 #
 # ---------------------------------------------------------------------------
 # TWO MASTERS, NOT ONE.  THIS IS THE PART THAT KILLS THE NAIVE FIX.
