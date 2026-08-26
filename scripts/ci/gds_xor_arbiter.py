@@ -66,9 +66,10 @@ which is the same layout as _v3r4 before the VIA3.R.4:M4 post-route ECO:
 
     ARM       A vs B                     rc  layers  differences
     primary   rc1v3r4 vs v3r4             0      49  NONE, on any layer
-    control   rc1v3r4 vs pgeco            1      49  differences on exactly the
-                                                     three layers the VIA3.R.4
-                                                     ECO touched (M4, VIA3, VIA4)
+    control   rc1v3r4 vs pgeco            1      49  M4    4 shapes
+                                                     VIA3 45 shapes
+                                                     VIA4 45 shapes
+                                                     every other layer zero
 
 The control's three layers are exactly the three that ECO touched: it narrowed
 one M4 pad 0.330 -> 0.290 on two cloned via masters and re-cut each of the
@@ -288,6 +289,8 @@ def selftest():
         return 1
 
     LAYERS = [(6, 0), (17, 0), (31, 0), (32, 0), (33, 0)]
+    MOVED = LAYERS[-1]                      # the one the fixtures perturb
+    MOVED_KEY = "%d/%d" % MOVED             # how the tool names it in its table
     d = tempfile.mkdtemp(prefix="gds-xor-selftest-")
     a = os.path.join(d, "a.gds")
     b = os.path.join(d, "b.gds")        # same layout, different write clock
@@ -295,8 +298,8 @@ def selftest():
     e = os.path.join(d, "e.gds")        # one layer absent entirely
     _gds(a, LAYERS)
     _gds(b, LAYERS, when=(2019, 1, 1, 3, 4, 5))
-    _gds_shifted(c, LAYERS, (33, 0), 10)
-    _gds(e, [l for l in LAYERS if l != (33, 0)])
+    _gds_shifted(c, LAYERS, MOVED, 10)
+    _gds(e, [l for l in LAYERS if l != MOVED])
     try:
         r_same = xor(a, b, threads=2)
         say("a clock-only difference reports IDENTICAL",
@@ -312,13 +315,13 @@ def selftest():
             r_diff["measured"] and r_diff["identical"] is False,
             "rc=%s" % r_diff["rc"])
         say("...on the layer that moved, and only that layer",
-            len(r_diff["layer_differences"]) == 1,
+            list(r_diff["layer_differences"]) == [MOVED_KEY],
             str(r_diff["layer_differences"]))
 
         r_miss = xor(a, e, threads=2)
         say("a layer present on ONE side only is a difference, not a skip",
             r_miss["measured"] and r_miss["identical"] is False
-            and "33/0" in r_miss["layer_differences"],
+            and MOVED_KEY in r_miss["layer_differences"],
             str(r_miss["layer_differences"])
             + "  (this is what -l buys; without it KLayout ignores the layer)")
 
