@@ -6,11 +6,16 @@
              (re-anchored 25 Aug: the rzG stream this was first written against
              is superseded and carries a functional defect -- do not ask imec to
              act on it.)
-    scope    four asks. NO GDS re-spin is required for any of them.
+    scope    five asks. NO GDS re-spin is required for any of them. The fifth
+             is a collateral question, not a result on this stream.
 
 The wire-bond and custom-DRC results report six rule families we had not
 classified. All six have now been triaged. **None requires a geometry change on
 our side.** Four are imec-side, two need a sentence in the submission letter.
+
+The fifth ask is unrelated to the report: it is about timing collateral for the
+node, and it is the one thing on this list that could still change a number we
+sign off on.
 
 The 25 August run also closed the outstanding blocker: `PO.R.8` went 14 -> 0 on
 the merged database, and eight other rules with it. Thank you -- that settles it.
@@ -104,6 +109,44 @@ are not in question.
 
 **Ask:** please run the pad-short / ERC / LVS set on the pinfix candidate, or
 confirm it will run on the final 1 September stream before acceptance.
+
+## 5. Does TSMC supply OCV or AOCV derating guidance for this node through the programme?
+
+We sign timing off with a flat on-chip-variation derate that has no external
+authority behind it, and we would rather ask than keep guessing. Nothing in the
+65 nm design kit as installed here carries statistical derate data: no advanced
+or statistical derate views alongside any of the timing libraries, no
+depth-dependent derate tables, and no recommended flat figure in any design-rule
+or application document we have been able to find. The mini@sic manual is silent
+on timing sign-off, which is entirely reasonable — it is a GDS-deliverable
+document — so it is not the place we would expect to find one either. What makes
+us ask rather than conclude is the contrast with the neighbouring nodes on the
+same site: the 28 nm kit ships advanced-OCV data in directories named for it,
+and the 16 nm memory compilers can generate it, while the 65 nm compilers offer
+no equivalent. That reads like a node-era gap rather than an installation we have
+got wrong, but we cannot tell the two apart from where we sit.
+
+There is one concrete thread to pull. The standard-cell application note in our
+kit points the reader at *sign-off guidelines supplied with the TSMC reference
+flow* when deciding which worst-case conditions to time at. No such document is
+in our delivery — the documentation set we hold is IO, e-fuse, bump and
+wire-bond design rules, an SRAM redundancy rule and the standard-cell note
+itself, and the utility archive is wire-bond decks only. If those sign-off
+guidelines exist for this node, they are the most likely home for the figure we
+are missing, and we do not have them.
+
+The same note is also explicit that the library setup and hold constraints carry
+**no** built-in margin and that the designer is expected to add one. We would
+like to add the margin TSMC has in mind rather than one of our own devising.
+
+**Ask:** please tell us whether TSMC provides on-chip-variation guidance for this
+node through the MPW programme — characterised derate data for the standard-cell,
+IO and memory libraries, a recommended flat derate, or the reference-flow
+sign-off guidelines the standard-cell note refers to — and if any of it exists,
+where on Querio to look. If it does not exist for this node, a sentence saying so
+is just as useful to us: it lets us record the figure we chose as a declared
+engineering assumption with a stated basis, rather than as a number with no
+provenance.
 
 ---
 
