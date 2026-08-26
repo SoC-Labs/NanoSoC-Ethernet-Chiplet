@@ -1,0 +1,145 @@
+{
+  "design": "nanosoc_eth_chiplet_pads",
+  "run_tag": "gdsrun-20260826-rc1",
+  "stream": "ASIC/submissions/nanosoc_eth_chiplet_pads_DRYRUN_20260826_rc1v3r4.gds",
+  "supersedes": "cc78971f3fdd2766f382adbe6fdb65d6 (_DRYRUN_20260825_pgeco) and 70858177e4b9cca11daf201f52eeb45d (_DRYRUN_20260826_v3r4) -- not on any DRC number, which is identical to _v3r4's, but on PROVENANCE. Both of those candidates descend from gdsrun-20260825-resynth. This one is a FULL FLOW RUN FROM RTL with every input pinned (synthesis 02:36, place 03:23, CTS 04:18, route 05:28 on 26 Aug), and the M8.S.3 x2 and VIA4.R.4:M5 x1 edits landed IN-FLOW at power-plan time through hooks/post_powerplan.tcl rather than as hand ECOs. THE REPRODUCIBILITY EVIDENCE: this run's own un-ECO'd stream (544bd56561c8b8da7837931f7407e3da) matches the 25-Aug _pgeco stream (32a265a68becfb62ccf6a0562934ea8d) on 1,926 of 1,926 executed Calibre rulechecks -- zero differences, count for count, including the 691 PO.R.8 -- while 189,939,304 of 309,265,400 bytes differ between them (`cmp -l A B | wc -l`). Two independent syntheses, placements, CTSs and routes, run a day apart from independently pinned inputs, converge on the same manufacturable result. The one remaining defect, VIA3.R.4:M4 = 1 at DBU 1029865 344205, was then cleared by the marker-driven post-route ECO (ASIC/genus-innovus/scripts/pg_drc_via3r4_m4_narrow.tcl) fed THIS RUN'S OWN Calibre results file: 738 -> 737, VIA3.R.4:M4 1 -> 0, and not one of the other 1,925 rulechecks moved in either direction, against a matched no-change control (drc_rc1v3r4_ctl_0826) that still reports 738 and the violation.",
+  "base_run": "ASIC/eth-chiplet/build/gdsrun-20260826-rc1",
+  "eco_tree": "ASIC/eth-chiplet/build/rc1eco-20260826",
+  "session_logs": [
+    "ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/innovus.log",
+    "ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/innovus.log1",
+    "ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/innovus.log2"
+  ],
+  "require_measurable": [
+    "innovus.log2"
+  ],
+  "lef_root": "ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/nanosoc_eth_chiplet_pads_routed/libs/lef",
+  "calibre_run": "ASIC/genus-innovus/calibre_runs/drc_rc1v3r4_logo_0826",
+  "connectivity_reps": [
+    "ASIC/eth-chiplet/build/gdsrun-20260826-rc1/reports/nanosoc_eth_chiplet_pads_imp_connectivity_prestream.rep"
+  ],
+  "lvs_report": "ASIC/eth-chiplet/build/rc1eco-20260826/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep",
+  "sta_run": "ASIC/sta/work/gdsrun-20260826-rc1",
+  "publish": {
+    "project": "ethchip",
+    "block": "nanosoc_eth_chiplet_pads",
+    "klass": "candidate"
+  },
+  "known_bad": [
+    {
+      "id": "via3r4-m4-CLEARED-by-post-route-eco",
+      "what": "The un-ECO'd rc1 stream carried VIA3.R.4:M4 = 1 at DBU 1029865 344205 / 1029965 344305, byte-identical to the coordinate the 26-Aug _v3r4 ECO cleared on the pgeco lineage. MEASURED on THIS run: drc_rc1_sign_0826 and drc_rc1_logo_0826 both 738 total with VIA3.R.4:M4 = 1. The in-flow post_powerplan hook covers M8.S.3 x2 and VIA4.R.4:M5 x1 and does NOT cover VIA3.R.4:M4.",
+      "decision": "CLEARED, not waived. pg_drc_via3r4_m4_narrow.tcl was applied to a cp -a copy of this run's own routed database, fed THIS RUN'S OWN drc_rc1_sign_0826/nanosoc_eth_chiplet_pads.drc.results. It located exactly 1 site (MATCHES-LINEAGE), cloned both coincident masters VIAGEN34_3 and VIAGEN45_22 at (1031.100,343.600), narrowed the M4 pad 3.600 x 0.330 -> 3.600 x 0.290 and re-cut each array 2 rows of 15 -> one centred row of 15, min enclosure 0.0000 -> 0.0950. Re-measured on the foundry deck: 738 -> 737, VIA3.R.4:M4 1 -> 0, four-tier 738/47/14/1 -> 737/46/13/0, and NOT ONE of the other 1,925 executed rulechecks moved in either direction. The matched control arm (same db copy, V3R4_DRY_RUN=1, everything else identical) re-streamed and still measures 738 with the violation present, so the gate discriminates. check_connectivity -type regular and -type special and check_power_vias {M1 M9} and {M1 AP} are byte-identical between the ECO'd and control databases apart from each report's own timestamp and filename: removing 30 PG cuts orphaned nothing. The 25-Aug 'waive it as vendor-macro context' recommendation is WITHDRAWN: imec's report has no waiver mechanism for this rule (one `waiv` hit in the whole pinfix archive and it is a GDS layer name, SRAMDMY waive 186 0), and in that report's BY CELL section our top cell carries TOTAL Result Count = 2 of which VIA3.R.4:M4 is one.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "WITHDRAWN 2026-08-26 -- kept here as the record of what was cleared and how. It re-opens only if a future run streams without the ECO: there is still NO in-flow arm for this rule, and a geometric one is not available (see ASIC/genus-innovus/scripts/pg_drc_v3r4_census.tcl for the measurement that says so -- the deck-faithful necessary condition yields 11 candidate sites on this run's power-plan database and only 1 is a violation)."
+    },
+    {
+      "id": "route-message-census-false-red",
+      "what": "The route stage HARD-FAILED on two router messages -- `1 NET(S) WITH NO GLOBAL ROUTE ... RAMCLD0WDATA_123` and `the router DECLINED open nets (4 open nets)` -- and on a third, `the check_drc report has no 'Total Violations' trailer`. All three are artefacts. The two router messages are Innovus echoing its own Tcl SOURCE into innovus.log2: every raw hit carries an `@file NNNN: #` source-echo marker or a leading `#`. MEASURED on this run: `grep -nE 'RAMCLD0WDATA_123|is not globally routed|There were [0-9]+ open nets' work/innovus.log2 | grep -vE ':\\s*#|@file [0-9]+:'` leaves 3 lines, and all 3 are the census script's own regex literal (:6456) and the gate's own output text echoed back (:26747, :26759) -- no router message survives. The check_drc trailer complaint is Innovus omitting `Total Violations` from a report with zero violations.",
+      "decision": "WITHDRAWN 2026-08-26 08:27. The gate now PASSES on this candidate: `0 net(s) with no global route; 0 open net(s) declined`. It read FAIL on the 07:49 collection over the SAME innovus logs, and scripts/ci/route_message_census.py is modified in the working tree between those two times by another session that owns that fix -- THIS session did not touch it. So the reversal is a tool change, not a design change, and the entry is kept as the record of a false red that was real. Independent evidence the route is sound, unchanged: check_drc on the routed DB is 3 (all MINCUT Pin of Cell on the rf SRAM), check_connectivity -type regular is `Found no problems or warnings`, Calibre finds 0 results at the cache-bit site, and the LVS discrepancy list carries 0 sub-top missing connections.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "WITHDRAWN -- the gate passes. Re-open if it reverts."
+    },
+    {
+      "id": "lvs-verdict-incorrect",
+      "what": "The LVS VERDICT is permanently INCORRECT: `.GLOBAL VSS` floods ~18k unmatched source nets and the pad ring has no LEF PINs, so declared pins extract as extra ports. MEASURED here: ports 52/52 matched with 0 unmatched either side, instances 17267/17267 with 0 unmatched, nets 270804 matched / 189 unmatched layout / 18053 unmatched source.",
+      "decision": "Grade the DISCREPANCY LIST, not the verdict -- specifically the sub-top `missing connection` count, which is 0 here (18117 rows scanned, 0 unattributed, coverage control u_cache_subsystem x4341).",
+      "person": "flow owner",
+      "date": "2026-08-19",
+      "withdraw_when": "the pad ring gains LEF PINs and .GLOBAL VSS is scoped, at which point the verdict itself becomes gradable"
+    },
+    {
+      "id": "innovus-drc-3-macro-pin-mincut",
+      "what": "Three Innovus MINCUT markers, all `Pin of Cell .../u_eth_top_wishbone_bd_ram_u_sram_u_rf (M4)` at (1127.220,1174.700), (1128.210,1161.660) and (1157.470,1174.700). MEASURED on THIS run in reports/pg_post_drc_edits.rep, written by the post_powerplan hook at 02:43 -- i.e. at power-plan time, before placement -- so they are a power-plan product and not a routing outcome.",
+      "decision": "Carried. They are a PG-via-to-macro-pin cut count against the rf SRAM's LEF ABSTRACT; Calibre over the merged stream, which carries the macro's real geometry, is the adjudicator, and the four-tier count is where they are answered.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "Calibre reports a real-geometry result at any of the three coordinates, or the power plan stops landing a single-cut VIA4 array on that macro pin"
+    },
+    {
+      "id": "hold-fep",
+      "what": "hold FEP 16, WNS -0.012 ns, per this run's own route_gate.txt. max_transition FEP 6, worst -1.331. Setup did not fail its budget.",
+      "decision": "Carried, as on the 25-Aug lineage. Reported, not gated, and measured PRE-FILL.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "before a production tapeout, or if setup WNS goes negative"
+    },
+    {
+      "id": "pg-opens-and-dangling",
+      "what": "check_connectivity on the streamed DB reports 51 IMPVFC-200 (special-wire pieces not connected) and 727 IMPVFC-94 (dangling PG wires), 778 info lines total. The same 778 the 26-Aug v3r4 arm measured, before and after its edit.",
+      "decision": "Carried, unchanged in kind. `-type regular` -- the signal check -- is clean on this run: `Found no problems or warnings`.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "the power plan stops leaving VDDIO/VSSIO stripe fragments unjoined"
+    },
+    {
+      "id": "no-in-flow-arm-for-via3r4",
+      "what": "hooks/post_powerplan.tcl now runs a VIA3.R.4:M4 CENSUS (pg_drc_v3r4_census.tcl) but NOT an edit arm. MEASURED on this run's own power-plan database (work/nanosoc_eth_chiplet_pads_fplan, written 02:43:57, after the hook's artefact at 02:43:22): 36,029 wide PG M4 pads lie within 0.800 um of one of the 21 merged-GDS macros; 4,273 of our M4 rectangles cross a merged macro footprint; 11 of those are narrow crossings carrying a strictly-wide (>= 0.305) M4 region within 0.800 um; all 11 have fewer than 2 of OUR OWN VIA3 cuts on the branch. Calibre reports 1. The deciding fact -- how many VIA3 cuts the VENDOR's pin stub carries in the shadow -- is inside merged macro GDS and Innovus has no object for it.",
+      "decision": "The marker-driven POST-ROUTE ECO remains the answer and must be applied to every stream this flow produces, as it was here. The census is a guard, not a fix: it writes reports/pg_v3r4_candidates.rep and hard-fails if the candidate count leaves its measured range, so a floorplan change that creates a NEW family of these sites is caught at power-plan time rather than at the foundry.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "a tool exists that reads VIA3 cuts out of the merged macro GDS and transforms them per instance, so the deck's GoodBranch test can be evaluated in flow; at that point the census becomes a seeker and the edit arm can be added"
+    },
+    {
+      "id": "canonical-hash-is-not-a-layout-comparison",
+      "what": "Every published stream in this project carries an Artifactory property named `layout.canonical_hash`, written by scripts/ci/gds_canonical_hash.py. The name reads like a layout identity and the value cannot support that reading. MEASURED 2026-08-26 on this candidate and its reference: KLayout strmxor 0.30.10 reports NO DIFFERENCES between _DRYRUN_20260826_rc1v3r4 and _DRYRUN_20260826_v3r4 across all 49 layer/datatype pairs, while the two canonical hashes are DIFFERENT (48891f86d4865fab0d607a56... vs 3f90ad3babba0298ca521098...) at identical byte count (302,688,050) and identical record count (34,791,830). The cause is known and is not in the tool: write_stream is not order-deterministic. Re-streaming one database on 26 Aug produced 26,842 differing bytes, 12,600 of them BGNLIB/BGNSTR clocks and 14,242 decoding as padring filler SREFs (PFILLER5_G, PFILLER20_G, PCORNER_G) emitted in another order in the top cell.",
+      "decision": "NOT withdrawn and NOT rewritten. The digest is CORRECT for what it computes and the raw md5/sha256 beside it are load-bearing -- a foundry Final Report cites the md5. What is wrong is the DIRECTION anyone may read into it, so the direction is now carried with the number instead of being left to the reader: gds_canonical_hash.py returns a `claim` field saying a MATCH implies the same layout and a MISMATCH implies nothing, and its --selftest gained an arm that proves the order sensitivity in a fixture (two files holding the same two rectangles in opposite record order: identical byte and record counts, different digest). The layout question is now answered properly and separately, by a geometric arbiter: scripts/ci/gds_xor_arbiter.py, wired in as the `gds-layout-identity` gate and proved both directions in its own selftest. An order-insensitive element-multiset digest IS the right cheap streaming answer if one is ever wanted -- it was run ad hoc on 26 Aug and returned IDENTICAL for 2,267 structures and 6,210,067 elements -- but it is a second approximation of a question the arbiter now answers exactly, so none was implemented. THE PUBLISH PATH WAS NOT TOUCHED: renaming a live store property is a store change, it would orphan the key on already-published artifacts, and a republish is being co-ordinated separately.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "the store stops publishing this digest under a `layout.*` name -- either renamed to something that says RECORD SEQUENCE, or accompanied by the gds-layout-identity gate's verdict as a sibling property so a consumer reading the store sees the geometric answer next to the record one. Until then, treat a `layout.canonical_hash` mismatch as a prompt to run the arbiter and never as a finding."
+    }
+  ],
+  "not_measured": [
+    {
+      "id": "electromigration",
+      "asserts": "electromigration on any net of this design",
+      "why": "NO EM analysis exists for this design on ANY lineage. pg_capacity.rep rates the grid's EM CEILING and computes no current density. Nothing in ci/signoff.yaml runs an EM solve."
+    },
+    {
+      "id": "ir-drop",
+      "asserts": "static IR drop on the database this stream came from",
+      "why": "the ir-drop stage in ci/signoff.yaml is pinned to build fp1505. The 1.32%-worst figure on the record was measured on the rzG lineage and does NOT cover this run: this is a fresh synthesis, placement, CTS and route, so neither the instance set nor the power grid it solved over is the one here."
+    },
+    {
+      "id": "upf-power-intent",
+      "asserts": "the CPF/UPF power intent this run emitted is consistent with the netlist",
+      "why": "check_cpf does not run: the Conformal Low Power licence is not available on this site. outputs/..._gate1.cpf and ..._gate2.upf are written and shipped UNVERIFIED."
+    },
+    {
+      "id": "antenna-foundry-deck",
+      "asserts": "the foundry antenna deck is clean on this stream",
+      "why": "the router-level check_process_antenna is NOT the foundry deck, and no foundry antenna run exists for this stream. imec's 204/204 zero belongs to the pinfix lineage."
+    },
+    {
+      "id": "lec-rtl-to-gate",
+      "asserts": "RTL and the gate netlist this stream was built from are equivalent",
+      "why": "this run re-synthesised from RTL and no LEC covers its netlist. outputs/lec.dofile was written; no LEC was run against it."
+    },
+    {
+      "id": "po-r8-post-merge",
+      "asserts": "zero PO.R.8 floating gates after the foundry's library merge",
+      "why": "691 here, as on every stream in this lineage -- the stream carries LEF abstracts, not real standard-cell polysilicon. Only another foundry run closes it. imec's 24-Aug run on rzG found 14 REAL post-merge floating gates, which is a separate and still-open finding."
+    },
+    {
+      "id": "erc-padshorts",
+      "asserts": "ERC and pad-short results for this stream",
+      "why": "no imec run has seen this candidate."
+    },
+    {
+      "id": "bnd-sealring",
+      "asserts": "bond-pad / seal-ring BEOL rules on this stream",
+      "why": "not in the design data; the local BND deck runs over empty layers."
+    },
+    {
+      "id": "metal-density",
+      "asserts": "the stream meets the foundry density rules",
+      "why": "METAL_FILL is 0 on this run and METAL_FILL_OWNER is foundry. 6117 failing density windows are MEASURED and DECLARED, not fixed: the stream carries no dummy metal by design."
+    }
+  ],
+  "xor_reference": {
+    "stream": "ASIC/submissions/nanosoc_eth_chiplet_pads_DRYRUN_20260826_v3r4.gds",
+    "why": "CHOSEN, not defaulted, and the choice is the claim. The two available references answer different questions. (a) A RE-STREAM of this run's own ECO'd database would prove only that write_stream renders that database faithfully -- a self-consistency check that can catch a writer bug and nothing else, and it needs an Innovus session on a read-only tree. (b) _DRYRUN_20260826_v3r4 (md5 70858177e4b9cca11daf201f52eeb45d) is the SAME INTENDED LAYOUT REACHED BY A DIFFERENT ROUTE: it descends from gdsrun-20260825-resynth via a hand ECO on the pgeco database, while this candidate is a full flow from RTL a day later with the same edits landed in-flow through hooks/post_powerplan.tcl plus one marker-driven post-route ECO. A zero XOR between them is therefore a REPRODUCIBILITY result, and it is the stronger of the two: it says two independent syntheses, placements, CTSs and routes converge on the same polygons, and it carries every geometric measurement made on _v3r4 -- its Calibre four-tier 737/46/13/0 and its LVS -- across to these bytes unchanged. WHAT A ZERO DOES NOT PROVE, either way: that either stream is CORRECT (DRC, LVS and LEC answer that, and lec-rtl-to-gate is still NOT-MEASURED here), and nothing about the foundry's merged view, which adds dummy fill and a seal ring that are not in these bytes."
+  }
+}

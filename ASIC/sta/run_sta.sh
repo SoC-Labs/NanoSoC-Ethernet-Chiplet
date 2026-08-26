@@ -63,10 +63,16 @@ else
 fi
 
 export STA_DB="${1:-$REPO/ASIC/eth-chiplet/build/full-20260814/work/nanosoc_eth_chiplet_pads_routed}"
-export STA_OUT="$STA_ROOT/outputs"
-export STA_REP="$STA_ROOT/reports"
+# Per-run output roots. Defaulted, NOT hardcoded: analysing a second build used
+# to mean overwriting the first build's reports in place, which is how a
+# manifest ends up describing one database and a timing report another. Set
+# STA_OUT/STA_REP/STA_WORK (and STA_MMMC, read by run_signoff_sta.tcl) to keep
+# each build's evidence in its own directory.
+export STA_OUT="${STA_OUT:-$STA_ROOT/outputs}"
+export STA_REP="${STA_REP:-$STA_ROOT/reports}"
+STA_WORK="${STA_WORK:-$STA_ROOT/work}"
 
-mkdir -p "$STA_OUT" "$STA_REP" "$STA_ROOT/work"
+mkdir -p "$STA_OUT" "$STA_REP" "$STA_WORK"
 
 if [ ! -d "$STA_DB" ]; then
     echo "FATAL: routed DB not found: $STA_DB" >&2
@@ -81,7 +87,7 @@ if [ -n "$newest" ]; then
     [ -z "${STA_FORCE:-}" ] && exit 1
 fi
 
-cd "$STA_ROOT/work" || exit 1
+cd "$STA_WORK" || exit 1
 
 echo "STA_DB  = $STA_DB"
 echo "tempus  = $TEMPUS"

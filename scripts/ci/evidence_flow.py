@@ -83,6 +83,10 @@ SPEC_FIELDS = {
     "calibre_run":    "repo-relative Calibre DRC rundir whose Layout Path is `stream`",
     "connectivity_reps": "list of check_connectivity reports for the streamed DB",
     "lvs_report":     "repo-relative .lvs.rep graded against `stream`",
+    "sta_run":        "repo-relative dir holding a Tempus run's reports/ for THIS build",
+    "xor_reference":  "{stream, why} the OTHER side of the geometric XOR -- the "
+                      "reference IS the claim, so it is named and justified, "
+                      "never inferred",
     "publish":        "{project, block, klass} for the artifact store",
     "known_bad":      "list of deliberately-accepted defects",
     "not_measured":   "list of {id, asserts, why} for things nothing on this site can measure",
@@ -294,7 +298,8 @@ def gate_macro_pins(spec, bundle, identity):
     in_bare = [b for b in bare if b.get("cell") in scope]
     out_pins = sum(i.get("pins", 0) for i in insts if i.get("cell") not in scope)
     out_bare = [b for b in bare if b.get("cell") not in scope]
-    out_cells = sorted({b.get("cell", "?") for b in out_bare})
+    out_cells = sorted({i.get("cell", "?") for i in insts
+                        if i.get("cell") not in scope})
 
     gates = []
     # THE VACUITY CONTROL. Zero bare of zero pins is the emptiest pass there is,
@@ -336,22 +341,137 @@ def gate_macro_pins(spec, bundle, identity):
                     for b in in_bare][:8]))
 
     if out_pins:
-        gates.append(Gate(
-            id="macro-pin-connected-wider-scope", verdict=NOT_MEASURED, blocking=False,
-            asserts="every signal pin of every OTHER placed macro also has "
-                    "routing metal",
-            why="%d bare of %d pins outside the proven scope, on %s. This gate "
-                "has never been proven at this scope, and the same %d were "
-                "reported on the superseded rzG stream too -- a constant that "
-                "does not move across a known defect and its repair is a "
-                "standing background, not a finding. An unused ROM output "
-                "legitimately has no route. NOTHING HAS ADJUDICATED THESE: they "
-                "are neither a pass nor a failure until somebody reads them."
-                % (len(out_bare), out_pins, ", ".join(out_cells) or "-", len(out_bare)),
-            cites=[jc, log_cite],
-            detail=["%s %s" % (b.get("instance", "?"), b.get("pin", "?"))
-                    for b in out_bare][:10]))
+        n_out_inst = sum(1 for i in insts if i.get("cell") not in scope)
+        gates.append(_wider_scope_gate(out_pins, n_out_inst, out_bare,
+                                       out_cells, scope, jc, log_cite))
     return gates
+
+
+def _wider_scope_gate(out_pins, n_out_inst, out_bare, out_cells, scope,
+                      jc, log_cite):
+    """The second row of gate 2: the macros OUTSIDE the cache pair.
+
+    ADJUDICATED 2026-08-26, having stood NOT-MEASURED since the gate was
+    written. It carried 20 bare pins of 1250, unchanged across four candidate
+    streams (pinfix, pgeco, v3r4, rc1v3r4), and the standing note said an
+    unused ROM output legitimately has no route -- plausible, and nobody had
+    checked. What the check found:
+
+      WHICH 20.  AY[8:0] and CENY, all ten of the address/chip-enable MIRROR
+      outputs, on each of the two boot ROMs -- rom_via (the CPU-core ROM) and
+      eth_rom_via. Not a scatter: the complete set, twice, and nothing else.
+      Q[31:0] and every input are connected on both.
+
+      WHAT THE NETLIST SAYS.  Every one is bound to a dangling net --
+      `.CENY(UNCONNECTED632)`, `.AY({UNCONNECTED641 ... UNCONNECTED633})` --
+      and each of those nets occurs exactly twice in the P&R netlist, one
+      `wire` declaration and one port binding, so it has no second terminal.
+      There is no net to route. The RTL says so on purpose: both tech wrappers
+      instantiate the macro with `//unconnected` above `.CENY(), .AY()`.
+
+      WHAT THE STREAM CONTAINS.  Not nothing. The ROM macros are MERGED with
+      their real geometry (252 structures under /rom/, poly and diffusion
+      included), and the macro's own metal covers 100% of every declared port
+      rectangle on every declared layer -- measured on all ten pins of BOTH
+      macros, 32 port rectangles in total, every one at 100%, which is the
+      same full coverage as the CONNECTED controls Q[0], Q[31], A[0] and CLK
+      and sits on the same 2-cut via stack. `bare` here means exactly what
+      this gate's docstring says it means: OUR router put nothing on a pin
+      that the netlist never asked it to reach.
+
+      AND THE CLASSIFIER DISCRIMINATES ON THIS DESIGN, not just in fixtures.
+      Run over all 21 placed macros, the dangling set is 10 on rom_via and 10
+      on eth_rom_via and ZERO on every other cell -- flash_cache_data,
+      flash_cache_tag, rf_01k, rf_08k, rf_16k, rf_32k. D[27] on a cache
+      instance maps to a real net (FE_OFN2417_..._RAMCLD0WDATA_27), so the
+      exclusion this gate applies would NOT have excused the 23-August
+      defect.
+
+      WHY IT IS NOT THE 23-AUGUST DEFECT.  That one was cache-macro pins the
+      netlist DID connect -- D[27] on two instances, an INPUT, which leaves
+      the macro's internal gate undriven, which is a floating gate. These are
+      outputs on nets with no load at all, so there is no gate anywhere left
+      undriven; the only unloaded node is a driver's own output, which is not
+      what PO.R.8 means.
+
+      THE FOUNDRY AGREES, ON A STREAM THAT CARRIED THESE SAME 20.  imec ran
+      the full TSMC deck post-merge on the pinfix candidate on 25 Aug 2026:
+      PO.R.8 does not appear in that report at all, i.e. zero. Their 24 Aug
+      run on rzG, whose cache pins were still bare, reported PO.R.8 = 14. The
+      20 were present in BOTH streams. A defect present in the clean run is
+      not the cause of the dirty one.
+
+    SO THE ASSERTION CHANGES, and that is the substance of the adjudication.
+    "Every pin has routing metal" was never the right claim outside the cache
+    pair: it asks the router to wire a port with no net. The claim is now
+    "every pin the NETLIST connects has routing metal", which is the claim
+    that would have caught D[27], and the dangling ones are counted, named and
+    excluded rather than waved past. A dangling pin that is not an OUTPUT
+    still fails: an input with no net is a floating gate whoever left it."""
+    def dangling(b):
+        return str(b.get("netlist", "")).startswith("dangling:")
+
+    labelled = all("netlist" in b for b in out_bare)
+    bare_cells = sorted({b.get("cell", "?") for b in out_bare})
+    dang = [b for b in out_bare if dangling(b)]
+    real = [b for b in out_bare if not dangling(b)]
+    # A dangling INPUT is the floating-gate shape. Only outputs are excusable.
+    bad_dir = [b for b in dang if (b.get("direction") or "").upper() != "OUTPUT"]
+    over = ("%d signal pins over %d placed instance(s) outside the proven "
+            "cache scope (%s), intersected against PATH/BOUNDARY metal and "
+            "SREF'd via masters, layer matched, fill datatypes excluded; each "
+            "bare pin then classified against the P&R netlist as dangling "
+            "(no net, both terminals proven absent by an occurrence count) or "
+            "driven"
+            % (out_pins, n_out_inst,
+               "+".join(sorted(out_cells)) or "-"))
+    detail = ["%s %s [%s] %s" % (b.get("instance", "?"), b.get("pin", "?"),
+                                 b.get("direction", "?"), b.get("netlist", "?"))
+              for b in (real or bad_dir or dang)][:10]
+
+    if out_bare and not labelled:
+        return Gate(
+            id="macro-pin-connected-wider-scope", verdict=NOT_MEASURED,
+            asserts="every signal pin the NETLIST connects, on every placed "
+                    "macro outside the proven cache scope, has routing metal",
+            why="%d bare of %d pins outside the proven scope, on %s, and this "
+                "census carries no netlist classification for them -- it was "
+                "written by a build of gds_macro_pin_connected.py from before "
+                "the adjudication. Re-run the census; a bare pin whose net is "
+                "unknown cannot be excused."
+                % (len(out_bare), out_pins, ", ".join(bare_cells) or "-"),
+            cites=[jc, log_cite], detail=detail)
+
+    if real or bad_dir:
+        return Gate(
+            id="macro-pin-connected-wider-scope", verdict=FAIL,
+            asserts="every signal pin the NETLIST connects, on every placed "
+                    "macro outside the proven cache scope, has routing metal",
+            got="%d bare on a driven or unclassifiable net%s"
+                % (len(real),
+                   "; %d dangling but not an OUTPUT" % len(bad_dir)
+                   if bad_dir else ""),
+            required="0 of %d" % out_pins,
+            measured_over=over, cites=[jc, log_cite], detail=detail)
+
+    return Gate(
+        id="macro-pin-connected-wider-scope", verdict=PASS,
+        asserts="every signal pin the NETLIST connects, on every placed macro "
+                "outside the proven cache scope, has routing metal -- and "
+                "every pin with no metal is an OUTPUT the netlist leaves "
+                "dangling on purpose",
+        got="0 bare on a driven net; %d dangling by design" % len(dang),
+        required="0 of %d driven pins" % (out_pins - len(dang)),
+        measured_over=over + ".  The %d excluded are all OUTPUT, all on nets "
+                             "with exactly one terminal: %s"
+                             % (len(dang),
+                                ", ".join(sorted({"%s %s" % (b.get("cell", "?"),
+                                                             b.get("pin", "?"))
+                                                  for b in dang}))[:400]),
+        cites=[jc, log_cite],
+        detail=["excluded (dangling OUTPUT): %s %s -> %s"
+                % (b.get("instance", "?"), b.get("pin", "?"),
+                   b.get("netlist", "?")) for b in dang][:10])
 
 
 def gate_connectivity(spec, bundle):
@@ -719,6 +839,293 @@ def _layout_of(summary):
     return "unknown"
 
 
+# ---------------------------------------------------------------------------
+# SIGNOFF STA. The row that was NOT-MEASURED for the wrong reason.
+#
+# Its `why:` read "Tempus 21.11 is installed and has run, but against build
+# full-20260814 -- a different and superseded build", and that was true. The
+# manifest it was quoting from, ci/signoff.yaml, said something else and false:
+# "No Tempus or PrimeTime installed", behind the probe `command -v tempus`,
+# which tests PATH and not installation. Tempus is installed here, has now run
+# seven times, and needs only ASIC/sta/site.env to be found.
+#
+# So the gap was never the tool. It was that nothing pointed the tool at THIS
+# build. This gate closes that by reading a Tempus run's own manifest and
+# refusing it unless the database it read is this run's routed database.
+#
+# WHAT IT WILL NOT DO. It will not report a timing number over parasitics that
+# did not come from an extractor, and it will not report one from a run that
+# did not finish. Both come back NOT-MEASURED with the reason, because a
+# cap-table WNS and a signoff WNS are different quantities that print the same.
+# ---------------------------------------------------------------------------
+_STA_VIEW_ROW = re.compile(
+    r"^\s*View\s*:\s*(?P<view>\S+)\s+"
+    r"(?P<wns>-?\d+\.\d+)\s+(?P<tns>-?\d+\.\d+)\s+(?P<fep>\d+)\s*$", re.M)
+
+# The four flat OCV factors the flow uses, and that run_signoff_sta.tcl
+# re-issues rather than inherits. THEY ARE NOT CHARACTERISED. No AOCV/SOCV
+# table ships with this tech pack; these are generic numbers a human chose,
+# so the derated result is precise and not thereby accurate. Stated in the
+# row's own scope, never left for the reader to discover.
+_STA_DERATE = {"derate_data_early": "0.95", "derate_data_late": "1.05",
+               "derate_clk_early": "0.97", "derate_clk_late": "1.03"}
+
+
+def _sta_manifest(path):
+    m = {}
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if "=" in line:
+                k, _, v = line.partition("=")
+                m[k.strip()] = v.strip()
+    return m
+
+
+def _sta_summary(path):
+    """-> (wns, tns, fep) from the `View : ALL` row, or None."""
+    if not os.path.isfile(path):
+        return None
+    for mo in _STA_VIEW_ROW.finditer(open(path, errors="replace").read()):
+        if mo.group("view") == "ALL":
+            return float(mo.group("wns")), float(mo.group("tns")), int(mo.group("fep"))
+    return None
+
+
+def _flow_timing(spec):
+    """The Innovus in-flow numbers this run reported for itself, for contrast.
+
+    Not a check -- a comparison. An in-flow number is an optimisation-side
+    estimate and a signoff number is a measurement, and when they disagree the
+    interesting fact is the size of the gap."""
+    p = os.path.join(ROOT, spec.get("base_run", ""), "reports", "route_manifest.txt")
+    if not os.path.isfile(p):
+        return {}
+    out = {}
+    for line in open(p, errors="replace"):
+        f = line.split()
+        if len(f) == 4 and f[0] == "setup_wns_tns_fep":
+            out["setup"] = (float(f[1]), float(f[2]), int(f[3]))
+        elif len(f) == 4 and f[0] == "hold_wns_tns_fep":
+            out["hold"] = (float(f[1]), float(f[2]), int(f[3]))
+    return out
+
+
+
+def _sta_si_state(rep, man):
+    """-> (short state, one paragraph). MEASURED from the run's own report
+    headers, never asserted.
+
+    THE MANIFEST LIES ABOUT THIS AND THE LIE IS INSTRUCTIVE. run_signoff_sta.tcl
+    records `si_analysis = off (mmmc -si stripped for IMPESI-3490)` whenever it
+    loads a generated MMMC, and make_sta_mmmc.py's header says in capitals that
+    crosstalk analysis is off. What make_sta_mmmc.py actually removes is the
+    `-si` LIBRARY SET -- the Celtic .cdb noise models -- and Tempus goes right
+    on doing SI-aware delay calculation from the coupling capacitance in the
+    SPEF: measured on gdsrun-20260826-rc1, every report header reads
+    `Signoff Settings: SI On` and every one is preceded by two SI iterations
+    over 95.4% of 223,169 nets. A record that says a check did not happen, when
+    it did, is the same defect class as a probe that says a tool is absent when
+    it is installed -- so this reads the headers instead of the manifest."""
+    hdr = ""
+    for f in ("timing_summary_hold.rpt", "timing_summary.rpt"):
+        p = os.path.join(rep, f)
+        if os.path.isfile(p):
+            hdr += open(p, errors="replace").read()[:20000]
+    on = "Signoff Settings: SI On" in hdr
+    off = "Signoff Settings: SI Off" in hdr
+    iters = len(re.findall(r"Starting SI iteration", hdr))
+    pct = re.findall(r"([\d.]+) percent of the nets selected for SI analysis", hdr)
+    # `si_analysis` is the old key and carried the wrong claim; `si_noise_libs`
+    # is what run_signoff_sta.tcl records since the correction. Read either, so
+    # this grades a run from before the fix as well as after it.
+    claim = man.get("si_analysis") or man.get("si_noise_libs") or "<not recorded>"
+    if not on and not off:
+        return ("SI state UNREADABLE",
+                "no `Signoff Settings:` line in either summary, so whether "
+                "crosstalk was analysed cannot be read off this run's own "
+                "artefacts; the manifest claims %r and nothing corroborates it."
+                % claim)
+    if off:
+        return ("SI OFF",
+                "SI is OFF: the report headers read `Signoff Settings: SI Off`. "
+                "The in-flow post-route report claims SI On, so this is not "
+                "like-for-like on SI-sensitive paths.")
+    return ("SI ON (%d iteration(s), %s%% of nets)"
+            % (iters, pct[0] if pct else "?"),
+            "SI IS ON, and the manifest says otherwise -- read the headers, not "
+            "the manifest. Every report here carries `Signoff Settings: SI On` "
+            "with %d SI iteration(s) over %s%% of nets, computed from the "
+            "coupling capacitance in the Quantus SPEF. What make_sta_mmmc.py "
+            "strips is the `-si` Celtic .cdb noise LIBRARY (Tempus rejects it "
+            "under concurrent MMMC, IMPESI-3490), which costs characterised "
+            "noise/glitch analysis, not SI-aware delay. The manifest records "
+            "%r and is wrong about it."
+            % (iters, pct[0] if pct else "?", claim))
+
+
+def gate_sta_signoff(spec, bundle):
+    """Gate 7. A signoff STA over THIS build's netlist and THIS build's parasitics."""
+    ASSERTS = ("a signoff static timing analysis over THIS build's routed "
+               "database and extracted parasitics closes setup and hold")
+    run = spec.get("sta_run")
+
+    def nm(why, extra_cites=()):
+        return Gate(id="sta-signoff", verdict=NOT_MEASURED, asserts=ASSERTS,
+                    why=why, cites=list(extra_cites) or
+                    [bundle.write("sta/absent.txt",
+                                  "spec.sta_run = %r\n%s\n" % (run, why))])
+
+    if not run:
+        return nm("the spec names no `sta_run`. Timing here would then come only "
+                  "from Innovus in-flow reports, which are an optimisation-side "
+                  "estimate over cap-table parasitics and not a signoff STA.")
+    rep = os.path.join(ROOT, run, "reports")
+    mpath = os.path.join(rep, "sta_manifest.txt")
+    if not os.path.isfile(mpath):
+        return nm("no sta_manifest.txt under %s. run_signoff_sta.tcl records every "
+                  "step's outcome there; without it a report directory is a pile of "
+                  "files with no statement about which run produced them." % rel(rep))
+    mc = bundle.add(mpath, "sta/sta_manifest.txt",
+                    note="the Tempus run's own step-by-step record")
+    man = _sta_manifest(mpath)
+
+    # 1. DID IT FINISH. `sta_finished` is written last. A truncated run leaves
+    #    real-looking .rpt files from the steps that did complete.
+    if "sta_finished" not in man:
+        return nm("the Tempus manifest has no `sta_finished` line: the run did not "
+                  "reach its end, so whatever reports are on disk are a partial run "
+                  "and not a measurement.", [mc])
+
+    # 2. DID IT READ THIS BUILD. The whole reason this row was NOT-MEASURED
+    #    before: six Tempus runs existed and every one had read full-20260814.
+    want_db = os.path.abspath(os.path.join(ROOT, spec.get("base_run", ""), "work"))
+    got_db = man.get("sta_db", "")
+    if not os.path.abspath(got_db).startswith(want_db + os.sep):
+        return nm("the Tempus run read %s, which is NOT under this build's work "
+                  "directory (%s). A signoff STA of another build is not evidence "
+                  "about this one, however clean." % (got_db or "<no sta_db>",
+                                                      rel(want_db)), [mc])
+    if man.get("step.read_db") != "ok" or int(man.get("inst_count") or 0) == 0:
+        return nm("read_db did not load a design (step.read_db=%r, inst_count=%s). "
+                  "Tempus prints ERROR and returns cleanly on a failed netlist read."
+                  % (man.get("step.read_db"), man.get("inst_count")), [mc])
+    if man.get("design_name") != spec.get("design"):
+        return nm("the loaded design is %r, the spec is about %r."
+                  % (man.get("design_name"), spec.get("design")), [mc])
+
+    # 3. WERE THE PARASITICS REAL. A WNS over a cap table and a WNS over a QRC
+    #    extraction print identically and are not the same number. Innovus
+    #    silently downgrades post-route extraction to effort `low` at 65nm with
+    #    no QRC deck (IMPEXT-3518); this refuses to call that signoff.
+    qrc = {k[len("extract.qrc_set."):]: v
+           for k, v in man.items() if k.startswith("extract.qrc_set.")}
+    no_qrc = sorted(k for k, v in qrc.items() if v != "yes")
+    spefs = {k[len("spef."):-len(".bytes")]: int(v or 0)
+             for k, v in man.items()
+             if k.startswith("spef.") and k.endswith(".bytes")}
+    biggest = max(spefs.values()) if spefs else 0
+    if man.get("step.extract_parasitics") != "ok" or not qrc or no_qrc or biggest < 1_000_000:
+        return nm("extraction is not signoff-grade: step.extract_parasitics=%r, "
+                  "%d RC corner(s) with a QRC deck%s, largest SPEF %d bytes. A "
+                  "timing number over cap-table parasitics is not a signoff number."
+                  % (man.get("step.extract_parasitics"), len(qrc) - len(no_qrc),
+                     (" (no deck on: %s)" % ", ".join(no_qrc)) if no_qrc else "",
+                     biggest), [mc])
+
+    # 4. WAS THE ANALYSIS SET UP AS THE FLOW'S. The routed DB persists a
+    #    timingderate.sdc for typical_delay_corner ONLY -- neither signoff
+    #    corner -- so a Tempus run that INHERITS derate analyses the corners
+    #    that matter with none at all and reports better timing than the flow.
+    setup_bad = [k for k, v in _STA_DERATE.items() if man.get(k) != v]
+    mode_bad = (man.get("timing_analysis_type") != "ocv"
+                or man.get("timing_analysis_cppr") != "both")
+    if setup_bad or mode_bad:
+        return nm("the run's analysis setup is not the flow's: %s%s. Re-issued "
+                  "derate and OCV+CPPR are what make this comparable to the "
+                  "in-flow number at all."
+                  % ("derate wrong on " + ", ".join(setup_bad) if setup_bad else "",
+                     (" ; " if setup_bad and mode_bad else "") +
+                     ("analysis_type=%s cppr=%s" % (man.get("timing_analysis_type"),
+                                                    man.get("timing_analysis_cppr"))
+                      if mode_bad else "")), [mc])
+
+    # 5. THE NUMBERS.
+    sp = os.path.join(rep, "timing_summary.rpt")
+    hp = os.path.join(rep, "timing_summary_hold.rpt")
+    setup, hold = _sta_summary(sp), _sta_summary(hp)
+    cites = [mc]
+    for p, nme in ((sp, "sta/timing_summary_setup.rpt"),
+                   (hp, "sta/timing_summary_hold.rpt"),
+                   (os.path.join(rep, "analysis_coverage.rpt"), "sta/analysis_coverage.rpt"),
+                   (os.path.join(rep, "timing_derate.rpt"), "sta/timing_derate.rpt")):
+        c = bundle.add(p, nme)
+        if c:
+            cites.append(c)
+    if setup is None or hold is None:
+        return nm("no `View : ALL` row in %s. report_timing_summary defaults to "
+                  "LATE only and refuses -early and -late together (TCLCMD-1130), "
+                  "so a hold summary that was never asked for silently does not "
+                  "exist -- which is exactly how a design ships with an unexamined "
+                  "hold number."
+                  % (rel(sp) if setup is None else rel(hp)), cites)
+
+    # Coverage. "All analysed paths pass" is worth nothing if half the design was
+    # not analysed, and on this design 90% of ClockPeriod and 100% of
+    # DataCheckSetup are untested.
+    cov, untested = os.path.join(rep, "analysis_coverage.rpt"), []
+    if os.path.isfile(cov):
+        for line in open(cov, errors="replace"):
+            mo = re.match(r"\s*(\S.*?)\s{2,}(\d+)\s+\d+ \(\s*\d+%\)\s+"
+                          r"\d+ \(\s*\d+%\)\s+(\d+) \(\s*(\d+)%\)\s*$", line)
+            if mo and int(mo.group(3)) > 0:
+                untested.append("%s: %s of %s untested (%s%%)"
+                                % (mo.group(1).strip(), mo.group(3),
+                                   mo.group(2), mo.group(4)))
+
+    si_state, si_detail = _sta_si_state(rep, man)
+    flow = _flow_timing(spec)
+    detail = []
+    for kind, sta in (("setup", setup), ("hold", hold)):
+        f = flow.get(kind)
+        if f:
+            detail.append(
+                "%s: signoff STA WNS %+.3f TNS %+.3f FEP %d  vs  this run's own "
+                "in-flow Innovus report WNS %+.3f TNS %+.3f FEP %d"
+                % (kind, sta[0], sta[1], sta[2], f[0], f[1], f[2]))
+    detail.append(si_detail)
+    detail.append("OCV derates are FLAT and UNCHARACTERISED: data 0.95/1.05, clock "
+                  "0.97/1.03, chosen by hand. No AOCV/SOCV table ships with this "
+                  "tech pack, so these numbers are precise, not thereby accurate.")
+    if man.get("step.report_analysis_coverage_hold") == "FAILED":
+        detail.append("hold-side coverage is UNMEASURED: report_analysis_coverage "
+                      "-check_type hold failed, so the untested counts below are "
+                      "the LATE side only.")
+    detail += untested[:6]
+
+    ok = setup[2] == 0 and hold[2] == 0
+    return Gate(
+        id="sta-signoff", verdict=PASS if ok else FAIL, asserts=ASSERTS,
+        got="setup WNS %+.3f / TNS %+.3f / FEP %d ; hold WNS %+.3f / TNS %+.3f / FEP %d"
+            % (setup[0], setup[1], setup[2], hold[0], hold[1], hold[2]),
+        required="0 failing endpoints on setup and 0 on hold",
+        measured_over=(
+            "%s %s over %s, finished %s. Views: setup=%s, hold=%s of %s. "
+            "Parasitics: Quantus, QRC deck on %d of %d RC corner(s), largest SPEF "
+            "%d bytes. Analysis: %s, CPPR %s, derate data %s/%s clock %s/%s "
+            "(flat, uncharacterised). %s. %s instances, %s nets, %s clocks."
+            % (man.get("sta_tool", "?"), man.get("sta_tool_version", "?"),
+               rel(got_db), man.get("sta_finished", "?"),
+               man.get("analysis_views_setup", "?"), man.get("analysis_views_hold", "?"),
+               man.get("analysis_views_all", "?"),
+               len(qrc) - len(no_qrc), len(qrc), biggest,
+               man.get("timing_analysis_type"), man.get("timing_analysis_cppr"),
+               man.get("derate_data_early"), man.get("derate_data_late"),
+               man.get("derate_clk_early"), man.get("derate_clk_late"),
+               si_state,
+               man.get("inst_count"), man.get("net_count"), man.get("clock_count"))),
+        cites=cites, detail=detail[:12])
+
+
 def gate_evidence_complete(bundle, gates, drc):
     """Gate 6. Every artefact cited by a row exists in the bundle.
 
@@ -742,6 +1149,220 @@ def gate_evidence_complete(bundle, gates, drc):
                               "resolved against the bundle directory and hashed"
                               % (len(cites), len(gates)),
                 detail=[c.bundle_path for c in missing][:10])
+
+
+def _selftest_wider_scope(say):
+    """The wider-scope row, mutated one property at a time.
+
+    The arm that matters is not "does it pass on the ROMs". It is: a bare pin
+    the netlist DRIVES must still fail, and a dangling INPUT must still fail.
+    An adjudication that excused those would have excused the 23 August defect
+    -- D[27] was a driven input with no metal."""
+    ok = True
+
+    def pin(cell="rom_via", name="AY[0]", d="OUTPUT",
+            net="dangling:UNCONNECTED1"):
+        b = {"instance": "u_x_%s" % cell, "cell": cell, "pin": name,
+             "direction": d}
+        if net is not None:
+            b["netlist"] = net
+        return b
+
+    def run(bare, pins=1250, n_inst=8):
+        return _wider_scope_gate(pins, n_inst, bare,
+                                 ["rom_via", "eth_rom_via"],
+                                 ["flash_cache_data", "flash_cache_tag"],
+                                 Cite(bundle_path="evidence/macro_pins.json",
+                                      source="selftest"),
+                                 Cite(bundle_path="evidence/macro_pins.log",
+                                      source="selftest"))
+
+    cases = [
+        ("20 dangling OUTPUT pins PASS", [pin(name="AY[%d]" % i) for i in range(9)]
+         + [pin(name="CENY")]
+         + [pin(cell="eth_rom_via", name="AY[%d]" % i) for i in range(9)]
+         + [pin(cell="eth_rom_via", name="CENY")], PASS),
+        ("one DRIVEN bare pin still FAILS",
+         [pin(), pin(name="Q[3]", net="net:RAMDATA_3")], FAIL),
+        ("a dangling INPUT still FAILS -- that is a floating gate",
+         [pin(name="A[3]", d="INPUT")], FAIL),
+        ("an UNMAPPED bare pin still FAILS, never excused",
+         [pin(name="TQ[7]", net="unmapped")], FAIL),
+        ("a census with no netlist labels is NOT-MEASURED",
+         [pin(net=None)], NOT_MEASURED),
+        ("zero bare pins PASS", [], PASS),
+    ]
+    for name, bare, want in cases:
+        try:
+            g = run(bare)
+            good, detail = g.verdict == want, "got %s" % g.verdict
+        except Exception as e:                          # noqa: BLE001
+            good, detail = False, "raised %s: %s" % (type(e).__name__, e)
+        say(name, good, detail)
+        ok = ok and good
+    return ok
+
+
+def _selftest_layout_identity(say):
+    """The XOR row. Its own arbiter is proved in gds_xor_arbiter --selftest;
+    what is proved here is that the GATE refuses the shapes that would let an
+    unmeasured row read like a measured one."""
+    import tempfile
+    ok = True
+    tmp = tempfile.mkdtemp(prefix="evi-xor-gate-")
+    try:
+        b = Bundle(tmp)
+        idy = Identity(design="d", run_tag="t", stream_path="x.gds",
+                       stream_md5="0" * 32, stream_sha256="0" * 64,
+                       stream_bytes=1, build_host="h")
+        g = gate_layout_identity({"stream": "x.gds"}, b, idy)
+        say("no xor_reference is NOT-MEASURED, never a pass",
+            g.verdict == NOT_MEASURED, g.verdict)
+        ok = ok and g.verdict == NOT_MEASURED
+        g = gate_layout_identity(
+            {"stream": "x.gds",
+             "xor_reference": {"stream": "nope/absent.gds", "why": "w"}},
+            b, idy)
+        say("a reference that is not on disk is NOT-MEASURED",
+            g.verdict == NOT_MEASURED, g.verdict)
+        ok = ok and g.verdict == NOT_MEASURED
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return ok
+
+
+def gate_layout_identity(spec, bundle, identity):
+    """Are these bytes the LAYOUT we intend, independent of write time?
+
+    THE THREE QUESTIONS, WHICH ARE NOT THE SAME QUESTION.
+
+        md5(stream)             is this the FILE I shipped
+        layout.canonical_hash   is this the same RECORD SEQUENCE, clocks aside
+        this gate               are these the same POLYGONS
+
+    Until now only the first two were ever computed, and the second was
+    published on every candidate under a name -- `layout.canonical_hash` --
+    that reads like the third. It is not the third, and on 26 August it was
+    measured to be unsound even as the second: re-streaming the very database
+    that wrote the shipped _pgeco bytes produced a DIFFERENT canonical hash at
+    identical byte and record counts, because `write_stream` emits padring
+    filler SREFs in a different order on a second invocation. See
+    scripts/ci/gds_xor_arbiter.py's header for the decode.
+
+    So this row is answered by a geometric arbiter or it is not answered.
+
+    WHAT IT COMPARES, AND WHY THAT REFERENCE. The spec names one, with its
+    reason, in `xor_reference`. The comparison is only as interesting as the
+    reference is independent: XOR against a copy of yourself proves the
+    filesystem works. A reference from a DIFFERENT lineage -- a separate
+    synthesis, placement, CTS and route -- turns a zero into a reproducibility
+    result and lets every geometric measurement made on that candidate (its
+    Calibre four-tier, its LVS) transfer to this one intact.
+
+    WHAT A ZERO DOES NOT PROVE. That either stream is CORRECT. Two streams can
+    agree and both be wrong; DRC, LVS and LEC answer that. And it says nothing
+    about the foundry's merged view, which adds dummy fill and a seal ring
+    that are not in these bytes.
+
+    COST. About 11 minutes on a 300 MB pair, 2.5 GB peak. A stamp keyed on
+    BOTH md5s re-uses a previous run, the same way the macro-pin walk does; a
+    stamp that does not match forces a fresh XOR."""
+    import gds_xor_arbiter                                    # noqa: E402
+
+    ref = spec.get("xor_reference") or {}
+    refpath = ref.get("stream", "")
+    why_ref = ref.get("why", "")
+    asserts = ("the shipped bytes describe the same polygons, on every layer, "
+               "as an independently produced reference stream -- measured "
+               "geometrically, so record order, hierarchy and encoding cannot "
+               "affect the answer")
+    if not refpath:
+        return Gate(id="gds-layout-identity", verdict=NOT_MEASURED,
+                    asserts=asserts,
+                    why="the spec names no `xor_reference`. An arbiter needs "
+                        "two sides, and which second side it is IS the claim: "
+                        "a re-stream of the same database proves the writer is "
+                        "deterministic, a stream from another lineage proves "
+                        "the flow reproduces. Neither is assumed.",
+                    cites=[bundle.write("xor_no_reference.txt",
+                                        "no xor_reference in the spec\n")])
+    ref_abs = os.path.join(ROOT, refpath)
+    if not os.path.isfile(ref_abs):
+        return Gate(id="gds-layout-identity", verdict=NOT_MEASURED,
+                    asserts=asserts,
+                    why="the reference stream named by the spec is not on "
+                        "disk: %s" % refpath,
+                    cites=[bundle.write("xor_no_reference.txt",
+                                        "missing reference %s\n" % refpath)])
+
+    ref_md5 = md5_of(ref_abs)
+    out_json = os.path.join(bundle.dir, "gds_xor.json")
+    stamp = os.path.join(bundle.dir, "gds_xor.stamp")
+    key = "%s %s" % (identity.stream_md5, ref_md5)
+    reused = (os.path.isfile(out_json) and os.path.isfile(stamp)
+              and open(stamp).read().strip() == key)
+    if reused:
+        r = json.load(open(out_json))
+    else:
+        r = gds_xor_arbiter.xor(os.path.join(ROOT, spec["stream"]), ref_abs,
+                                threads=8, tile_um=200, timeout=7200)
+        r["a_md5"], r["b_md5"] = identity.stream_md5, ref_md5
+        r["reference_why"] = why_ref
+        with open(out_json, "w") as fh:
+            json.dump({k: v for k, v in r.items() if k != "digest_log"},
+                      fh, indent=2)
+        with open(stamp, "w") as fh:
+            fh.write(key + "\n")
+    bundle.index["gds_xor.json"] = sha256_of(out_json)
+    jc = Cite(bundle_path="evidence/gds_xor.json", source="generated",
+              sha256=bundle.index["gds_xor.json"])
+    log_cite = bundle.write(
+        "gds_xor.log",
+        "argv: %s\n\n%s\n" % (" ".join(r.get("argv") or []),
+                              r.get("digest_log") or r.get("tail") or
+                              "(re-used a stamped run; see gds_xor.json)"))
+    nlay = len(r.get("layers_processed") or [])
+    over = ("%s vs %s (md5 %s vs %s), %s, %d layer/datatype pair(s) XORed and "
+            "named in the log: %s%s"
+            % (os.path.basename(spec["stream"]), os.path.basename(refpath),
+               identity.stream_md5[:12], ref_md5[:12],
+               r.get("tool_version") or "KLayout strmxor",
+               nlay, ", ".join((r.get("layers_processed") or [])[:60]),
+               "  [re-used a stamped run of the same md5 pair]"
+               if reused else ""))
+
+    if not r.get("measured"):
+        return Gate(id="gds-layout-identity", verdict=NOT_MEASURED,
+                    asserts=asserts,
+                    why=r.get("why") or "the arbiter returned no verdict",
+                    cites=[jc, log_cite])
+    # THE VACUITY CONTROL. "No differences found" over zero layers is the
+    # emptiest zero there is, and it is what a layer-map mistake produces.
+    if not nlay:
+        return Gate(id="gds-layout-identity", verdict=NOT_MEASURED,
+                    asserts=asserts,
+                    why="the arbiter reported no differences and names ZERO "
+                        "layers in its log, so nothing was compared. A zero "
+                        "over an empty scope is not a pass.",
+                    cites=[jc, log_cite])
+    if not r.get("identical"):
+        diffs = r.get("layer_differences") or {}
+        return Gate(
+            id="gds-layout-identity", verdict=FAIL, asserts=asserts,
+            got="%d layer(s) differ, %d difference shape(s)"
+                % (len(diffs), r.get("total_difference_shapes", 0)),
+            required="0", measured_over=over, cites=[jc, log_cite],
+            detail=["%s: %d shape(s)" % kv for kv in sorted(diffs.items())][:12])
+    return Gate(
+        id="gds-layout-identity", verdict=PASS, asserts=asserts,
+        got="0 difference shapes on any layer", required="0",
+        measured_over=over
+        + (".  REFERENCE: %s" % why_ref if why_ref else ""),
+        cites=[jc, log_cite],
+        detail=["wall clock %.0fs" % (r.get("wall_clock_s") or 0),
+                "`-l` was passed, so a layer present on one side only is "
+                "emitted in full rather than ignored -- a layer cannot be "
+                "skipped into agreement"])
 
 
 def declared_not_measured(spec, bundle):
@@ -915,6 +1536,16 @@ def collect(spec, out):
 
     print("evidence_flow: gate    drc-tiers ...", flush=True)
     drc, g = gate_drc(spec, bundle)
+    print("evidence_flow:         -> %s" % g.verdict)
+    gates.append(g)
+
+    print("evidence_flow: gate    sta-signoff ...", flush=True)
+    g = gate_sta_signoff(spec, bundle)
+    print("evidence_flow:         -> %s" % g.verdict)
+    gates.append(g)
+
+    print("evidence_flow: gate    gds-layout-identity ...", flush=True)
+    g = gate_layout_identity(spec, bundle, identity)
     print("evidence_flow:         -> %s" % g.verdict)
     gates.append(g)
 
@@ -1321,6 +1952,20 @@ def selftest():
     # a proof instead.
     ok = crosscheck_router_gate() and ok
 
+    # 5. THE STA GATE, mutated one property at a time.
+    #
+    # This gate replaced a NOT-MEASURED row, and the row it replaced had been
+    # wrong for a reason no fixture would have caught: the tool existed and had
+    # run, against ANOTHER BUILD. So the arm that matters most here is not
+    # "does it fail on bad timing" -- it is "does it refuse a perfectly clean
+    # Tempus run of the wrong database". A gate that graded that as PASS would
+    # be a fifth zero that measured nothing.
+    ok = _selftest_sta(say) and ok
+
+    # 6. THE TWO ROWS ADJUDICATED ON 26 AUGUST, both directions.
+    ok = _selftest_wider_scope(say) and ok
+    ok = _selftest_layout_identity(say) and ok
+
     # A DEFINITION SHADOWED BY A LATER ONE OF THE SAME NAME IS SILENT. Python
     # keeps the last, imports nothing, warns about nothing, and the first
     # symptom is a TypeError in an unrelated function months later. It happened
@@ -1343,6 +1988,164 @@ def selftest():
 
     print("\nevidence_flow selftest: %s" % ("OK" if ok else "FAILED"))
     return 0 if ok else 1
+
+
+
+_STA_FIX_MANIFEST = """\
+sta_tool = tempus
+sta_tool_version = 21.11
+sta_db = {db}
+sta_started = 2026-08-26T09:56:24
+step.read_db = ok
+design_name = nanosoc_eth_chiplet_pads
+inst_count = 365998
+net_count = 223168
+clock_count = 52
+analysis_views_all = default_analysis_view_setup,default_analysis_view_hold
+analysis_views_setup = default_analysis_view_setup
+analysis_views_hold = default_analysis_view_hold
+timing_analysis_type = ocv
+timing_analysis_cppr = both
+derate_data_early = 0.95
+derate_data_late = 1.05
+derate_clk_early = 0.97
+derate_clk_late = 1.03
+extract.qrc_set.default_rc_corner_best = yes
+extract.qrc_set.default_rc_corner_typical = yes
+extract.qrc_set.default_rc_corner_worst = yes
+step.extract_parasitics = ok
+spef.default_rc_corner_best.bytes = 318347227
+sta_finished = 2026-08-26T10:12:00
+"""
+
+# Column layout copied from a real Tempus 21.11 report_timing_summary, so a
+# format drift breaks this selftest instead of quietly turning the parse into
+# "no violations found".
+_STA_FIX_SETUP = """\
+#  Generated by:      Cadence Tempus 21.11-s131_1
+# SETUP                   WNS     TNS   FEP
+#--------------------------------------------
+ View : ALL            {wns}  {tns}     {fep}
+    Group : reg2reg    {wns}  {tns}     {fep}
+"""
+_STA_FIX_HOLD = """\
+#  Generated by:      Cadence Tempus 21.11-s131_1
+Starting SI iteration 1 using Infinite Timing Windows
+# Analysis Mode: MMMC OCV
+# Parasitics Mode: SPEF/RCDB
+# Signoff Settings: SI {si}
+AAE_INFO-618: Total number of nets in the design is 223169,  95.4 percent of the nets selected for SI analysis
+Starting SI iteration 2
+# HOLD                    WNS     TNS   FEP
+#--------------------------------------------
+ View : ALL            {wns}  {tns}     {fep}
+    Group : reg2reg    {wns}  {tns}     {fep}
+"""
+
+
+def _selftest_sta(say):
+    """Mutate a known-good Tempus run one property at a time; assert the verdict."""
+    import tempfile
+    root = tempfile.mkdtemp(prefix="evidence-sta-selftest-")
+    good = True
+    try:
+        base = os.path.join(root, "build", "thisrun")
+        db = os.path.join(base, "work", "nanosoc_eth_chiplet_pads_routed")
+        os.makedirs(os.path.join(base, "reports"), exist_ok=True)
+        os.makedirs(db, exist_ok=True)
+        with open(os.path.join(base, "reports", "route_manifest.txt"), "w") as fh:
+            fh.write("setup_wns_tns_fep        0.009 0.000 0\n"
+                     "hold_wns_tns_fep         -0.012 -0.036 16\n")
+
+        def build(man_edit=None, setup=("0.012", "0.000", "0"),
+                  hold=("0.004", "0.000", "0"), drop=(), si="On"):
+            d = tempfile.mkdtemp(prefix="sta-case-", dir=root)
+            rep = os.path.join(d, "reports")
+            os.makedirs(rep)
+            man = _STA_FIX_MANIFEST.format(db=db)
+            if man_edit:
+                man = man_edit(man)
+            if "manifest" not in drop:
+                open(os.path.join(rep, "sta_manifest.txt"), "w").write(man)
+            if "setup" not in drop:
+                open(os.path.join(rep, "timing_summary.rpt"), "w").write(
+                    _STA_FIX_SETUP.format(wns=setup[0], tns=setup[1], fep=setup[2]))
+            if "hold" not in drop:
+                open(os.path.join(rep, "timing_summary_hold.rpt"), "w").write(
+                    _STA_FIX_HOLD.format(wns=hold[0], tns=hold[1], fep=hold[2], si=si))
+            return d
+
+        def verdict(sta_dir, **kw):
+            b = Bundle(tempfile.mkdtemp(prefix="sta-bundle-", dir=root))
+            spec = {"design": "nanosoc_eth_chiplet_pads",
+                    "base_run": os.path.relpath(base, ROOT),
+                    "sta_run": os.path.relpath(sta_dir, ROOT) if sta_dir else None}
+            spec.update(kw)
+            return gate_sta_signoff(spec, b)
+
+        cases = [
+            ("a clean Tempus run of THIS build passes", build(), PASS),
+            ("setup FEP > 0 fails", build(setup=("-0.049", "-0.137", "4")), FAIL),
+            ("hold FEP > 0 fails", build(hold=("-0.053", "-2.309", "394")), FAIL),
+            ("a run of ANOTHER build is NOT-MEASURED, however clean",
+             build(man_edit=lambda m: m.replace(db, "/elsewhere/full-20260814/work/x")),
+             NOT_MEASURED),
+            ("a run that never finished is NOT-MEASURED",
+             build(man_edit=lambda m: "\n".join(
+                 l for l in m.splitlines() if not l.startswith("sta_finished"))),
+             NOT_MEASURED),
+            ("cap-table parasitics are NOT-MEASURED, not a timing number",
+             build(man_edit=lambda m: m.replace(
+                 "extract.qrc_set.default_rc_corner_worst = yes",
+                 "extract.qrc_set.default_rc_corner_worst = no")),
+             NOT_MEASURED),
+            ("a SPEF too small to be an extraction is NOT-MEASURED",
+             build(man_edit=lambda m: m.replace("318347227", "512")), NOT_MEASURED),
+            ("derate INHERITED rather than re-issued is NOT-MEASURED",
+             build(man_edit=lambda m: m.replace("derate_clk_late = 1.03",
+                                                "derate_clk_late = 1.00")),
+             NOT_MEASURED),
+            ("a missing hold summary is NOT-MEASURED, not a setup-only pass",
+             build(drop=("hold",)), NOT_MEASURED),
+            ("no manifest is NOT-MEASURED", build(drop=("manifest",)), NOT_MEASURED),
+        ]
+        for name, d, want in cases:
+            g = verdict(d)
+            hit = g.verdict == want
+            good = good and hit
+            say("sta gate: " + name, hit,
+                "%s%s" % (g.verdict, "" if hit else " (wanted %s)" % want))
+        g = verdict(None)
+        hit = g.verdict == NOT_MEASURED
+        good = good and hit
+        say("sta gate: a spec with no sta_run is NOT-MEASURED", hit, g.verdict)
+
+        # SI. The manifest claims OFF on every run that loads a generated MMMC.
+        # The row must report what the report HEADERS say, in both directions,
+        # or it inherits the manifest's wrong answer.
+        g = verdict(build(si="On"))
+        hit = "SI ON" in (g.measured_over or "") and any(
+            "SI IS ON" in d for d in (g.detail or []))
+        good = good and hit
+        say("sta gate: SI On in the header beats `si_analysis = off` in the manifest",
+            hit, (g.measured_over or "")[-70:])
+        g = verdict(build(si="Off"))
+        hit = "SI OFF" in (g.measured_over or "")
+        good = good and hit
+        say("sta gate: SI Off in the header is reported as OFF", hit,
+            (g.measured_over or "")[-70:])
+
+        # The comparison against the flow's own number must actually be made,
+        # or the row loses the only thing that makes a signoff STA worth
+        # running: the size of its disagreement with the in-flow estimate.
+        g = verdict(build(setup=("-0.049", "-0.137", "4")))
+        seen = any("in-flow Innovus report" in d for d in (g.detail or []))
+        good = good and seen
+        say("sta gate: the row states the in-flow number beside its own", seen,
+            (g.detail or ["<no detail>"])[0][:80])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return good
 
 
 def crosscheck_router_gate():

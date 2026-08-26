@@ -817,16 +817,97 @@ def cmd_prove(args):
                                 f"{log.relative_to(ROOT)}, sandbox kept: "
                                 f"{sand.relative_to(ROOT)})"))
 
+    bad += _prove_gaps(m, base, args, results, want)
+
     print(f"\n{'stage':<16}{'case':<44}{'result':<11}detail")
     print("-" * 110)
     for sid, case, verdict, detail in results:
         print(f"{sid:<16}{case:<44}{verdict:<11}{detail}")
     checks = [s["id"] for s in m.get("stages", []) if s.get("check")]
-    print(f"\n{len(results)} case(s) over {len(checks)} check(s); {bad} problem(s)")
+    ngap = len([u for u in m.get("unsupported", [])
+                if (ROOT / GAP_FIXTURE_ROOT / f"gap-{u.get('id')}").is_dir()])
+    print(f"\n{len(results)} case(s) over {len(checks)} check(s) and "
+          f"{ngap} gap probe(s); {bad} problem(s)")
     if bad:
         print("\nA `check:` that cannot fail is not a gate. Fix the check, or the "
               "fixture if the fixture is the thing that is wrong.")
     return 1 if bad else 0
+
+
+# -----------------------------------------------------------------------------
+# GAP PROBES ARE GATES TOO, and they were the only ones nothing could prove.
+#
+# `lint` executes each `unsupported:` entry's `refuted_by:` and reads exit 1 as
+# "the gap is still real". That is only worth something if the probe would have
+# exited 0 had the gap closed — and one of them never could. `sta-signoff`
+# declared "No Tempus or PrimeTime installed" behind `command -v tempus`, which
+# tests PATH, not installation: Tempus was installed and had run six times while
+# lint printed "still real" every single time. A false declaration, an
+# executable probe, and no contradiction available anywhere.
+#
+# So a gap probe gets the same treatment as a `check:`: run it against a fixture
+# where the gap is REAL (must exit 1) and one where it has CLOSED (must exit 0).
+# Fixtures are found BY CONVENTION at
+#
+#     ci/fixtures/gap-<id>/still-real/    probe must exit 1
+#     ci/fixtures/gap-<id>/refuted/       probe must exit 0
+#
+# and NOT declared in the manifest, so `GAP_KEYS` stays exactly {id, reason,
+# refuted_by} and lint keeps rejecting stray keys. A gap with no fixture
+# directory is reported as unproven rather than failed: nine of the ten gaps
+# here are host-relative facts (a tool, a licence, a foundry package) that a
+# fixture cannot honestly stage, and turning those into red would only teach
+# people to stop reading this output.
+# -----------------------------------------------------------------------------
+GAP_FIXTURE_ROOT = Path("ci/fixtures")
+
+
+def _prove_gaps(m, base, args, results, want):
+    """Run each declared gap's refuted_by against both fixtures. -> problem count."""
+    if want:
+        return 0                       # `prove <stage>` named stages, not gaps
+    bad = 0
+    for u in m.get("unsupported", []):
+        uid = u.get("id", "<no id>")
+        cmd = u.get("refuted_by")
+        fixdir = ROOT / GAP_FIXTURE_ROOT / f"gap-{uid}"
+        if not cmd:
+            continue                   # lint already calls this UNFALSIFIABLE
+        if not fixdir.is_dir():
+            results.append((uid, "gap_proof", "NO FIXTURE",
+                            f"no {GAP_FIXTURE_ROOT}/gap-{uid}/ — the probe is executed "
+                            f"by lint but has never been shown to discriminate"))
+            continue
+        for case, want_rc in (("still-real", 1), ("refuted", 0)):
+            fixture = fixdir / case
+            label = f"gap:{case}"
+            if not fixture.is_dir():
+                results.append((uid, label, "NO FIXTURE", str(fixture.relative_to(ROOT))))
+                bad += 1
+                continue
+            sand = base / f"gap-{uid}" / case
+            if sand.exists():
+                _rmtree_no_follow(sand)
+            sand.mkdir(parents=True, exist_ok=True)
+            _sandbox(fixture, sand)
+            log = base / f"gap-{uid}" / f"{case}.log"
+            rc, secs = sh(cmd, log, cwd=sand, timeout=args.timeout)
+            if rc == want_rc:
+                results.append((uid, label, "ok", f"rc={rc}  {secs}s"))
+                if not args.keep_sandboxes:
+                    _rmtree_no_follow(sand)
+            else:
+                bad += 1
+                why = ("the probe says the gap is CLOSED over evidence where it is "
+                       "still open — lint would delete a real gap"
+                       if case == "still-real" else
+                       "the probe says the gap is STILL REAL over evidence where it "
+                       "has closed — this declaration can never expire")
+                results.append((uid, label, "BROKEN",
+                                f"rc={rc}, wanted {want_rc}: {why}  (log: "
+                                f"{log.relative_to(ROOT)}, sandbox kept: "
+                                f"{sand.relative_to(ROOT)})"))
+    return bad
 
 
 def _as_list(v):

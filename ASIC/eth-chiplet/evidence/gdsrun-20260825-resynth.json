@@ -1,0 +1,122 @@
+{
+  "design": "nanosoc_eth_chiplet_pads",
+  "run_tag": "gdsrun-20260825-resynth",
+  "stream": "ASIC/submissions/nanosoc_eth_chiplet_pads_DRYRUN_20260825_pgeco.gds",
+  "supersedes": "3215cbe15fa373b4112fb6631b2c660d (pinfix-20260824) -- superseded on lineage, not on a defect: pinfix descends from gdsrun-20260824-valid4 whose bit-123 wires were RESTORED from a pre-repair checkpoint. This candidate is a full from-RTL run whose bit-123 pins ROUTE, by a floorplan move (way0_word_3 y 386.04 -> 387.24, ROW-RAIL PHASE), and it carries the single-D2D-TX-word-clock _syn.sdc.",
+  "base_run": "ASIC/eth-chiplet/build/gdsrun-20260825-resynth",
+  "eco_tree": "ASIC/eth-chiplet/build/eco-20260825-cand",
+  "session_logs": [
+    "ASIC/eth-chiplet/build/gdsrun-20260825-resynth/work/innovus.log7",
+    "ASIC/eth-chiplet/build/gdsrun-20260825-resynth/work/innovus.log8",
+    "ASIC/eth-chiplet/build/gdsrun-20260825-resynth/work/innovus.log9",
+    "ASIC/eth-chiplet/build/eco-20260825-cand/logs/eco.log",
+    "ASIC/eth-chiplet/build/eco-20260825-cand/logs/eco2.log"
+  ],
+  "require_measurable": [
+    "innovus.log9"
+  ],
+  "lef_root": "ASIC/eth-chiplet/build/gdsrun-20260825-resynth/work/nanosoc_eth_chiplet_pads_routed/libs/lef",
+  "calibre_run": "ASIC/genus-innovus/calibre_runs/drc_pgeco_logo_0825",
+  "connectivity_reps": [
+    "ASIC/eth-chiplet/build/eco-20260825-cand/reports/conn_after_eco.rep",
+    "ASIC/eth-chiplet/build/eco-20260825-cand/reports/conn_before_eco.rep"
+  ],
+  "lvs_report": "ASIC/eth-chiplet/build/eco-20260825-cand/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep",
+  "publish": {
+    "project": "ethchip",
+    "block": "nanosoc_eth_chiplet_pads",
+    "klass": "candidate"
+  },
+  "known_bad": [
+    {
+      "id": "route-message-census-false-red",
+      "what": "The route-message-census gate FAILS on innovus.log9 with `1 NET(S) WITH NO GLOBAL ROUTE ... RAMCLD0WDATA_123` and `the router DECLINED open nets (4 open nets)`. Every one of those hits is an ECHOED TCL COMMENT: Innovus writes its own Tcl source into the log, and 4_route.tcl carries a comment block -- added after rzG to document that defect -- quoting the exact strings the census greps for. Hits are at innovus.log9 lines 24111-24117 (all '#'-prefixed) and line 24221 ('@file 1633: #'). Filtering comment echoes leaves NO occurrence: grep -nE 'RAMCLD0WDATA_123|is not globally routed|There were [0-9]+ open nets' work/innovus.log9 | grep -vE ':\\s*#|@file [0-9]+:' is empty.",
+      "decision": "Recorded as a false red, NOT silenced and NOT worked around -- the gate still reports FAIL in this bundle and the census tool was not edited. The destructive repair provably did not run on this route: the only EMITTED regwire line is `ROUTE: regwire-repair: no Regular Wire markers - nothing to do` (innovus.log9:24195), against positive controls in gdsrun-20260824-valid4 (`5 Regular Wire marker(s) - ripping up and rerouting` then `Regular Wire 5 -> 0`) and in this run's own attempt 2 (innovus.log6, `Regular Wire 5 -> 6`, `the repair made it WORSE`). Independent evidence that the nets ARE routed: the bit-123 census with 121/122/124 controls, check_connectivity -type regular clean, zero LVS discrepancies naming a cache net, and zero Calibre results at the site.",
+      "person": "flow owner",
+      "date": "2026-08-26",
+      "withdraw_when": "route_message_census.py stops matching Innovus's echo of its own Tcl comments -- e.g. by skipping lines whose payload is preceded by '#' or by an '@file N:' source-echo marker"
+    },
+    {
+      "id": "lvs-verdict-incorrect",
+      "what": "The LVS VERDICT is permanently INCORRECT: `.GLOBAL VSS` floods ~17k unmatched source nets and the pad ring has no LEF PINs, so 5 declared pins extract as 33 ports.",
+      "decision": "Grade the DISCREPANCY LIST, not the verdict -- specifically the sub-top `missing connection` count. A gate that is always red teaches its reader to skip it, and on 23 August the reader skipped the one line that mattered.",
+      "person": "flow owner",
+      "date": "2026-08-19",
+      "withdraw_when": "the pad ring gains LEF PINs and .GLOBAL VSS is scoped, at which point the verdict itself becomes gradable"
+    },
+    {
+      "id": "innovus-drc-3-macro-pin-mincut",
+      "what": "Three Innovus MINCUT markers remain after the PG ECO, all `Pin of Cell .../u_eth_top_wishbone_bd_ram_u_sram_u_rf (M4)` at (1157.470,1174.700), (1127.220,1174.700) and (1128.210,1161.660). They are NOT introduced by the ECO: pg_post_residue.rep records all three at 19:43:56, at the end of the power-plan stage and before placement.",
+      "decision": "Carried. They are a PG-via-to-macro-pin cut count against the rf SRAM's LEF ABSTRACT; Calibre over the merged stream, which carries the macro's real geometry, is the adjudicator and the four-tier count below is where they are answered. Fixing them is a power_plan.tcl change, which another session owns and which would cost a full re-route.",
+      "person": "flow owner",
+      "date": "2026-08-25",
+      "withdraw_when": "Calibre reports a real-geometry result at any of the three coordinates, or the power plan stops landing a single-cut VIA4 array on that macro pin"
+    },
+    {
+      "id": "run-drc-number-undercounts-by-three",
+      "what": "The run's own reports/nanosoc_eth_chiplet_pads_imp_drc.rep (22:18) and reports/route_manifest.txt (`drc_total 3`, `drc_pin_only 0`) report THREE violations. A fresh read_db of the database that same session wrote five minutes later reports SIX -- the same three plus the three macro-pin MINCUTs above, which the same run had already reported itself at 19:43 in pg_post_residue.rep.",
+      "decision": "The six-marker reading is the one used here; every before/after number in this bundle is measured on a fresh read of the saved database, with a matched no-change control. The flow's own gate reads the three-marker file, so ROUTE_BUDGET_DRC cannot see the other three.",
+      "person": "flow owner",
+      "date": "2026-08-25",
+      "withdraw_when": "the route stage's final check_drc is shown to agree with a fresh read of the database it writes"
+    },
+    {
+      "id": "hold-fep",
+      "what": "hold WNS -0.012 ns, TNS -0.036, FEP 16 on gdsrun-20260825-resynth (setup +0.009 / 0.000 / 0 FEP)",
+      "decision": "accepted for a dry-run submission; hold is fixable by ECO and does not affect geometry acceptance. This is the best setup/hold pair this design has produced.",
+      "person": "flow owner",
+      "date": "2026-08-25",
+      "withdraw_when": "before a production tapeout, or if setup WNS goes negative"
+    },
+    {
+      "id": "m8s3-margin-is-one-grid",
+      "what": "Both M8.S.3 trims open their gap from 1.495 to 1.505 um against a 1.500 limit -- one 0.005 um manufacturing grid of margin. The script's own near-miss report lists both sites afterwards, by design.",
+      "decision": "Accepted. The trim is bounded on the other side by the VIA8 enclosure floor: the M8 face has 0.300 of enclosure against a 0.080 floor (0.220 slack) and the M9 face has 0.300 against a 0.300 floor (ZERO slack), so M9 is never touched and M8 is trimmed by the smallest legal amount rather than the largest available.",
+      "person": "flow owner",
+      "date": "2026-08-25",
+      "withdraw_when": "the power plan stops producing a 1.495 um M8 gap, at which point no trim is needed at all"
+    }
+  ],
+  "not_measured": [
+    {
+      "id": "sta-signoff",
+      "asserts": "a signoff STA run over THIS build's netlist and SPEF",
+      "why": "ci/signoff.yaml has 24 stages and none of them times anything. Tempus 21.11 IS installed and has run, but against build full-20260814 -- a different and superseded build. Nothing in this bundle is a signoff timing result; the setup/hold figures quoted come from Innovus post-route reports in the run's own route_manifest.txt."
+    },
+    {
+      "id": "antenna-foundry-deck",
+      "asserts": "the foundry antenna deck is clean on this stream",
+      "why": "the router-level check_process_antenna is NOT the foundry deck, and no foundry antenna run exists for this stream. imec ran 204/204 zero on the PINFIX stream, which is a different lineage."
+    },
+    {
+      "id": "ir-drop",
+      "asserts": "static IR drop on the database this stream came from",
+      "why": "the ir-drop stage in ci/signoff.yaml is pinned to build fp1505. The 1.32%-worst figure measured on 24 August belongs to rzG, not to this database."
+    },
+    {
+      "id": "lec-rtl-to-gate",
+      "asserts": "RTL and the gate netlist this stream was built from are equivalent",
+      "why": "this run re-synthesised from RTL on 2026-08-25 (new netlist md5 cd85a16af1) and no LEC run covers that gate.v. The lec.dofile in the run's outputs was written but no LEC was executed against it."
+    },
+    {
+      "id": "po-r8-post-merge",
+      "asserts": "zero PO.R.8 floating gates after the foundry's library merge",
+      "why": "our evidence is pins-have-metal plus connectivity clean plus the Calibre tiers. Only another foundry run closes it: no standard-cell layout exists on this site, so the merge cannot be reproduced locally. imec returned PO.R.8 = 0 on the PINFIX stream; that result does not transfer to a re-synthesised, re-placed, re-routed lineage."
+    },
+    {
+      "id": "gds-layout-identity",
+      "asserts": "these bytes are the layout we intend, independent of write time",
+      "why": "a GDS embeds its write clock in BGNLIB and in every BGNSTR, so two byte-different streams can be the same layout. md5 and sha256 identify the WRITE, not the LAYOUT. The three logo_aponly.gds copies in this project all differ in md5 at identical size for exactly this reason."
+    },
+    {
+      "id": "erc-padshorts",
+      "asserts": "ERC and pad-short results for this stream",
+      "why": "ERC is device-based and the only transistors in this stream are the merged memory and ROM macros. imec's ERC arrives via their PadShorts report, and no imec run has seen this candidate."
+    },
+    {
+      "id": "bnd-sealring",
+      "asserts": "bond-pad / seal-ring BEOL rules on this stream",
+      "why": "no `make bnd` run was executed against this candidate, and the local BND deck is vacuous anyway -- 187 of 205 rulechecks run over layers this stream does not carry."
+    }
+  ]
+}

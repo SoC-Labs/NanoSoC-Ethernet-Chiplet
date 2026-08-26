@@ -115,20 +115,35 @@ if {![file isdirectory $STA_DB]} {
 # Tempus rejects under concurrent MMMC (IMPESI-3490) and then ABORTS the
 # design load. make_sta_mmmc.py derives an SI-stripped copy.
 #
-# CONSEQUENCE, RECORDED NOT HIDDEN: crosstalk analysis is OFF in this run,
-# whereas the P&R post-route report claims "Signoff Settings: SI On". So this
-# run is not a like-for-like replacement for the in-flow number on SI-sensitive
-# paths. Getting SI back means SMSC (one view per invocation) or non-.cdb
-# noise data — a morning decision, see docs/tapeout/40-signoff-sta-plan.md.
+# CONSEQUENCE — CORRECTED 2026-08-26, AND THE CORRECTION MATTERS.
+#
+# The line here used to read "crosstalk analysis is OFF in this run" and the
+# manifest recorded `si_analysis = off`. THAT IS NOT WHAT HAPPENS. Measured on
+# gdsrun-20260826-rc1 with exactly this generated MMMC: every Tempus report
+# header reads "Signoff Settings: SI On", and each is preceded by two SI
+# iterations — "Starting SI iteration 1 using Infinite Timing Windows", 95.4%
+# of 223,169 nets selected, then iteration 2 at 2.3–2.9%. Tempus does SI-aware
+# delay calculation off the coupling capacitance in the Quantus SPEF
+# (extract_rc_coupled is true above), with or without a noise library.
+#
+# What stripping `-si` actually costs is the CELTIC .cdb NOISE MODELS: the
+# characterised glitch/noise data behind report_noise and behind noise-model
+# SI delay. That is a real reduction and it is still recorded. It is not
+# "crosstalk analysis is off", and recording it as such is the same defect as
+# a probe that reports a tool absent because it is not on PATH — a record
+# saying a check did not happen when it did.
+#
+# So the manifest now records what was removed, not a claim about what ran,
+# and anything grading this run reads SI state from the report HEADERS.
 set MMMC [envdef STA_MMMC $STA_ROOT/work/mmmc_sta.tcl]
 rec mmmc_file [file tail $MMMC]
 if {[file exists $MMMC]} {
-    rec si_analysis "off (mmmc -si stripped for IMPESI-3490)"
+    rec si_noise_libs "stripped (Celtic .cdb rejected under concurrent MMMC, IMPESI-3490) - SI DELAY STILL RUNS; read `Signoff Settings:` in the report headers for the SI state, not this line"
     step read_db {
         read_db $STA_DB -physical_data -mmmc_file $MMMC
     }
 } else {
-    rec si_analysis "db_default"
+    rec si_noise_libs "db_default (the DB's own viewDefinition, noise libraries included)"
     step read_db {
         read_db $STA_DB -physical_data
     }

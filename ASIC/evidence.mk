@@ -184,6 +184,7 @@ evidence-selftest:
 	    echo "  the LVS gate's proof did not run. That is a gap, not a pass."; \
 	 fi
 	python3 $(REPO_ROOT)/scripts/ci/gds_canonical_hash.py --selftest
+	python3 $(REPO_ROOT)/scripts/ci/gds_xor_arbiter.py --selftest
 	python3 $(REPO_ROOT)/scripts/ci/artifactory_retention.py --selftest
 	cd $(REPO_ROOT)/ASIC/asic-toolkit && tclsh test/run-tests.tcl common/router_message_gate.test
 

@@ -144,7 +144,7 @@ import re
 import struct
 import sys
 from bisect import bisect_left
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 # ---------------------------------------------------------------- GDS records
 R_UNITS, R_BGNSTR, R_STRNAME, R_ENDSTR = 0x03, 0x05, 0x06, 0x07
@@ -268,6 +268,106 @@ def read_inst_cells(path, wanted):
             if m.group(2) in want:
                 found.setdefault(m.group(2), m.group(1))
     return found
+
+
+# A dangling net, as Innovus names one. The name alone is a CONVENTION and
+# conventions lie, so every candidate is then required to occur exactly twice
+# in the netlist -- one `wire` declaration and one port binding. A net with a
+# second terminal is not dangling however it is spelled.
+_DANGLING_NAME = re.compile(r"^UNCONNECTED\d+$")
+_INST_HEAD = re.compile(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_$]*)\s+\\?(\S+)\s*\(")
+
+
+def _balanced(txt, open_at):
+    """Text between txt[open_at] == '(' and its matching ')'. None if unclosed."""
+    depth = 0
+    for i in range(open_at, len(txt)):
+        c = txt[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return txt[open_at + 1:i]
+    return None
+
+
+def read_unconnected_ports(path, lef_pins_by_inst):
+    """-> {instance: {lef_pin_name: net_or_empty}} for ports left DANGLING.
+
+    WHY THIS EXISTS. `bare` means "our router put no metal on it". That is the
+    right question for a pin the netlist CONNECTS -- the cache-macro defect of
+    23 August was exactly that -- and it is the wrong question for a pin the
+    netlist deliberately leaves open. A ROM's address-mirror outputs have no
+    net at all: there is nothing to route, and a gate that demands metal on
+    them is asking the router to invent a wire.
+
+    So this reads what the netlist says, per pin, and lets the caller separate
+    "no metal on a connected pin" (a defect) from "no metal on a pin with no
+    net" (a design decision, which is then judged on its own terms).
+
+    ERRS TOWARDS UNKNOWN. A port whose expression cannot be mapped bit-for-bit
+    onto the LEF's pin names -- a constant like 9'd0, a bus written by name, a
+    width that disagrees -- is dropped from BOTH return values, so it reads as
+    `unmapped` rather than as either verdict. Only an exact match adjudicates,
+    and an unmapped bare pin stays a defect.
+
+    Returns (dangling, mapped): both {instance: {lef_pin: net}}. `mapped` is
+    every pin whose bit-mapping succeeded; `dangling` is the subset with no
+    other terminal.
+    """
+    txt = open(path, errors="replace").read()
+    want = set(lef_pins_by_inst)
+    out, candidates = {}, set()
+    for m in _INST_HEAD.finditer(txt):
+        inst = m.group(2)
+        if inst not in want:
+            continue
+        body = _balanced(txt, m.end() - 1)
+        if body is None:
+            continue
+        lefpins, res = lef_pins_by_inst[inst], {}
+        for pm in re.finditer(r"\.(\w+)\s*\(", body):
+            expr = _balanced(body, pm.end() - 1)
+            if expr is None:
+                continue
+            port, expr = pm.group(1), expr.strip()
+            if expr.startswith("{") and expr.endswith("}"):
+                nets = [x.strip() for x in expr[1:-1].split(",")]
+            else:
+                nets = [expr]
+            # LEF bit names for this port, MSB first -- a Verilog concatenation
+            # is written MSB first and the two have to be lined up, not zipped
+            # in whatever order the set iterates.
+            bits = sorted((int(x) for p in lefpins
+                           for x in re.findall(r"^%s\[(\d+)\]$"
+                                               % re.escape(port), p)),
+                          reverse=True)
+            if not bits and len(nets) == 1:
+                res[port] = nets[0]
+            elif len(bits) == len(nets):
+                for j, n in enumerate(nets):
+                    res["%s[%d]" % (port, bits[j])] = n
+            else:
+                for j, n in enumerate(nets):
+                    res["%s[?%d]" % (port, j)] = n
+        out[inst] = res
+        candidates |= {v for v in res.values() if _DANGLING_NAME.match(v)}
+    # THE CONTROL on the naming convention: count every occurrence of each
+    # candidate name in the whole file. Exactly two -- declaration plus the one
+    # binding -- is the only count that means "no other terminal".
+    occ = Counter()
+    for m in re.finditer(r"\bUNCONNECTED\d+\b", txt):
+        if m.group(0) in candidates:
+            occ[m.group(0)] += 1
+    dangling, mapped = {}, {}
+    for inst, res in out.items():
+        keep = {p: n for p, n in res.items() if "[?" not in p}
+        mapped[inst] = keep
+        dangling[inst] = {p: n for p, n in keep.items()
+                          if n == "" or (_DANGLING_NAME.match(n)
+                                         and occ.get(n) == 2)}
+    return dangling, mapped
 
 
 # ------------------------------------------------------------------------ LEF
@@ -921,6 +1021,30 @@ def main():
     bare = sorted(u for u in pin_meta if u not in connected)
     viaonly = sorted(u for u in pin_meta if u in via and u not in wire)
 
+    # WHAT THE NETLIST SAYS about each bare pin. Read only for the instances
+    # that actually contributed pins, and only used to LABEL a bare pin -- it
+    # never removes one from the census, and a pin it cannot map stays
+    # unlabelled. See read_unconnected_ports.
+    lef_pins_by_inst = defaultdict(set)
+    for _u, (i, c, p, _d, _o) in pin_meta.items():
+        lef_pins_by_inst[i].add(p)
+    try:
+        dangling, mapped = read_unconnected_ports(netlist,
+                                                  dict(lef_pins_by_inst))
+    except (OSError, ValueError) as e:            # never fail the census on this
+        sys.stderr.write("warning: could not read the netlist for dangling "
+                         "ports (%s); bare pins will read `unmapped`\n" % e)
+        dangling, mapped = {}, {}
+    label = {}
+    for u, (i, _c, p, _d, _o) in pin_meta.items():
+        if p in dangling.get(i, {}):
+            label[u] = "dangling:%s" % (dangling[i][p] or "(no net)")
+        elif p in mapped.get(i, {}):
+            label[u] = "net:%s" % mapped[i][p]
+        else:
+            label[u] = "unmapped"
+    n_bare_dangling = sum(1 for u in bare if label[u].startswith("dangling:"))
+
     per_inst = defaultdict(lambda: [0, 0])
     for u, (inst, _c, _p, _d, _o) in pin_meta.items():
         per_inst[inst][0] += 1
@@ -972,11 +1096,15 @@ def main():
                 "dbu_per_um": dbu, "bare_count": len(bare),
                 "via_only_count": len(viaonly), "pin_count": total,
                 "srefs_resolved": not a.no_srefs,
+                "netlist": os.path.relpath(netlist, run),
+                "bare_netlist_dangling": n_bare_dangling,
+                "bare_netlist_driven_or_unmapped": len(bare) - n_bare_dangling,
                 "instances": [{"instance": i, "cell": c, "pins": per_inst[i][0],
                                "bare": per_inst[i][1]}
                               for i, c, _n in sorted(scope)],
                 "bare_pins": [{"instance": pin_meta[u][0], "cell": pin_meta[u][1],
                                "pin": pin_meta[u][2], "direction": pin_meta[u][3],
+                               "netlist": label[u],
                                "ports": [{"layer": l, "llx": x1, "lly": y1,
                                           "urx": x2, "ury": y2}
                                          for l, x1, y1, x2, y2 in pin_meta[u][4]]}

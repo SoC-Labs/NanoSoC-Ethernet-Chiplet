@@ -24,19 +24,26 @@ removed, and with ::IMEX::dataVar pinned to the DB directory (the original
 derives it from `info script`, which would resolve to THIS file's directory
 and silently break every library path).
 
-WHAT IT COSTS — STATE IT, DO NOT BURY IT
-----------------------------------------
-Dropping `-si` means SIGNAL-INTEGRITY (crosstalk) ANALYSIS IS OFF. The P&R
-flow's own post-route report header reads "Signoff Settings: SI On", so this
-is a real reduction in scope relative to the in-flow number, not a
-like-for-like comparison. A signoff that ships must either
+WHAT IT COSTS — CORRECTED 2026-08-26
+-----------------------------------
+This section used to say "SIGNAL-INTEGRITY (crosstalk) ANALYSIS IS OFF". It is
+not. Measured on gdsrun-20260826-rc1 with an MMMC this script generated: every
+Tempus report header reads "Signoff Settings: SI On", each preceded by two SI
+iterations (infinite timing windows over 95.4% of 223,169 nets, then a refined
+pass over 2.3–2.9%). Tempus computes SI-aware delay from the coupling
+capacitance in the SPEF and needs no noise library to do it.
+
+What dropping `-si` DOES cost is the CELTIC .cdb NOISE MODELS: characterised
+glitch/noise data, i.e. report_noise and noise-model-based SI delay. That is a
+real reduction in scope and it is why the option exists —
 
   (a) run SMSC — one view per Tempus invocation, `.cdb` retained, two runs; or
   (b) replace the Celtic .cdb noise libraries with the ECSM/CCS noise data
       Tempus prefers, if the vendor package has it.
 
-Both are morning decisions. This script exists so that tonight's run produces
-a real, honest number with a NAMED limitation rather than no number at all.
+— but "no noise models" and "no crosstalk analysis" are different claims, and
+the wrong one was in this header for eight days. Read SI state off the report
+headers, never off this file or the manifest.
 
 The generated file is written under ASIC/sta/ and touches nothing in the
 build tree, the P&R scripts, or inputs/*.sdc.
@@ -122,10 +129,11 @@ def main():
         f"# Source: {vd}\n"
         f"# -si (Celtic .cdb noise) sections removed: {n}\n"
         "#\n"
-        "# SI/CROSSTALK ANALYSIS IS OFF IN THIS CONFIGURATION.\n"
-        "# The P&R flow reports 'Signoff Settings: SI On'; this does not.\n"
-        "# See the header of make_sta_mmmc.py for why, and for the two ways\n"
-        "# to get SI back.\n"
+        "# NOISE (GLITCH) MODELS ARE ABSENT FROM THIS CONFIGURATION.\n"
+        "# SI-aware DELAY still runs -- Tempus computes it from the coupling\n"
+        "# capacitance in the SPEF, and its report headers read 'SI On'.\n"
+        "# What is gone is report_noise and noise-model SI delay. See the\n"
+        "# header of make_sta_mmmc.py for the two ways to get them back.\n"
         "################################################################\n"
         "if {![namespace exists ::IMEX]} { namespace eval ::IMEX {} }\n"
         f"set ::IMEX::dataVar {db_abs}\n"
