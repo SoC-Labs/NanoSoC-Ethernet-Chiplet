@@ -145,7 +145,7 @@ ETH_FIRMWARE ?= $(REPO)/nanosoc-multicore-system/build/cmake/gcc-m0plus-le/firmw
 BONDPAD_STUBS := $(REPO)/ASIC/genus-innovus/scripts/lec/bondpad_stubs.v
 
 # -- the table ---------------------------------------------------------------
-GLSN_ITEMS := fp1505_cc full0814_cc gdsrun_cc
+GLSN_ITEMS := fp1505_cc full0814_cc gdsrun_cc rzg_cc
 
 GLSN_NETLIST_fp1505_cc := $(REPO)/ASIC/eth-chiplet/build/fp1505/outputs/nanosoc_eth_chiplet_pads_pnr.v
 GLSN_TOP_fp1505_cc     := nanosoc_eth_chiplet_pads
@@ -358,7 +358,8 @@ GLSN_EVIDENCE_gdsrun_cc := $(REPO)/ASIC/eth-chiplet/build/gdsrun-20260819/report
 # strip report names the source, and the signoff stage's SECONDARY block asserts
 # the chain: report source under the declared run's outputs/, report `out` equal
 # to the netlist inputs.txt actually simulated.
-GLSN_EVIDENCE_FILES += strip_leaf_defs.txt
+# (the strip report is added to the evidence list AFTER the include - see the
+# note there. Appending here would defeat the toolkit's own `?=` default.)
 
 gls-netlist-publish-%: ; @$(call glsn_publish,$*)
 GLSN_BUILD_TIMEOUT_gdsrun_cc := 7200
@@ -413,7 +414,95 @@ GLSN_LIBDIRS_full0814_cc :=
 GLSN_BUILD_TIMEOUT_full0814_cc := 7200
 GLSN_RUN_TIMEOUT_full0814_cc   := 7200
 
+
+#-----------------------------------------------------------------------------
+# ITEM 4: gdsrun-20260823-rzG - THE SHIPPING LINEAGE.
+#
+# WHY THIS EXISTS. Until 2026-08-24 no gate-level simulation covered the design
+# actually being submitted. The newest GLS'd netlist was 2026-08-19 18:53; the
+# D2D HPROT tie-down that closes the cross-die wedge landed 2026-08-20 11:54, and
+# seven newer P&R runs existed with zero GLS. ci/signoff.yaml moved EVERY
+# physical pin to gdsrun-20260823-rzG on 2026-08-24, so that is the tree a GLS
+# has to name for its verdict to be about the shipping part.
+#
+# PG-COMPLETE AS WRITTEN, AND MEASURED - NOT ASSUMED. Same `write_netlist
+# -include_pg` path as gdsrun_cc. Verified 2026-08-24 with the control the item
+# above insists on, because pg_complete.py returns a cheerful 0 when it resolved
+# nothing:
+#   _pnr.v     -> 17,211 instances fixed, 75 cell types   (invocation DOES resolve)
+#   _pnr_pg.v  ->      0 instances fixed                  (genuinely complete)
+# A zero on the PG file alone would have been worthless. It is meaningful only
+# because the plain netlist through the SAME invocation came back non-zero.
+#
+# MODELS COME FROM rzG's OWN romlibs. They are full-20260814's, re-declared into
+# this tree by ci/signoff.yaml on 2026-08-24 - a re-declaration, not a
+# re-measurement: the macros are byte-identical across full-20260814, fp1505 and
+# rzG (.memlib md5 ebda9620… / 5f563b8e…). gdsrun-20260819 is the odd one out
+# because it regenerated its own, which is exactly why models must never be
+# borrowed across runs. MEASURED 2026-08-24: rzG's rom_via.v differs from
+# gdsrun-20260819's (md5 1f2f2d11… vs 1163dc55…).
+#
+# SYNTHESIS PROVENANCE. rzG did not run its own synthesis; it copied
+# gdsrun-20260821-slpads' (_gate.v byte-identical, a7076071…). That is why `lec`
+# points at slpads while the physical stages point here. It does not affect this
+# item, which simulates the ROUTED netlist.
+#-----------------------------------------------------------------------------
+RZG_ROOT      := $(REPO)/ASIC/eth-chiplet/build/gdsrun-20260823-rzG
+RZG_ROMLIB    := $(RZG_ROOT)/romlibs
+ROM_V_RZG     := $(RZG_ROMLIB)/cc_rom/rom_via.v $(RZG_ROMLIB)/eth_rom/eth_rom_via.v
+RZG_PG_RAW      := $(RZG_ROOT)/outputs/nanosoc_eth_chiplet_pads_pnr_pg.v
+RZG_PG_STRIPPED := $(REPO)/build/gls-netlist/rzg_cc/nanosoc_eth_chiplet_pads_pnr_pg_stripped.v
+
+$(RZG_PG_STRIPPED): $(RZG_PG_RAW) $(THIS_DIR)/strip_leaf_defs.py
+	@mkdir -p $(dir $@)
+	python3 $(THIS_DIR)/strip_leaf_defs.py --netlist $< \
+	    $(foreach m,$(GLSN_MODELS_rzg_cc) $(GLSN_STUBS_rzg_cc),--model $(m)) \
+	    --out $@ --report $(dir $@)strip_leaf_defs.txt
+
+gls-netlist-rzg_cc gls-netlist-build-rzg_cc: $(RZG_PG_STRIPPED)
+
+GLSN_NETLIST_rzg_cc    := $(RZG_PG_STRIPPED)
+GLSN_TOP_rzg_cc        := nanosoc_eth_chiplet_pads
+GLSN_SPEC_rzg_cc       := $(THIS_DIR)/bench/eth_chiplet_fp1505_cc.json
+GLSN_MODELS_N_rzg_cc   := 10
+GLSN_MODELS_rzg_cc     := $(STDCELL_V) $(IOCELL_V) $(MEM_V) $(ROM_V_RZG)
+GLSN_STUBS_rzg_cc      := $(BONDPAD_STUBS)
+GLSN_STUB_CELLS_rzg_cc := PAD70GU_SL PAD70NU_SL
+GLSN_CONTENT_rzg_cc    := \
+    $(RZG_ROMLIB)/cc_rom/rom_via.v=$(RZG_ROMLIB)/cc_rom/rom_via_verilog.rcf \
+    $(RZG_ROMLIB)/eth_rom/eth_rom_via.v=$(RZG_ROMLIB)/eth_rom/eth_rom_via_verilog.rcf
+GLSN_STAGE_rzg_cc      := $(CC_FIRMWARE) $(ETH_FIRMWARE) $(FLASH_IMAGE)
+GLSN_DEFINES_rzg_cc    := ARM_UD_MODEL ARM_UD_DP ARM_UD_CP ARM_UD_SEQ INITIALIZE_MEMORY POWER_PINS
+GLSN_LIBDIRS_rzg_cc    :=
+GLSN_PG_PAIRS_rzg_cc   := VDD:VSS VDDE:VSSE
+GLSN_COMPILE_ARGS_rzg_cc := $(SST26_V) $(FLASH_ATTACH)
+GLSN_EVIDENCE_rzg_cc := $(RZG_ROOT)/reports/gls/rzg_cc
+GLSN_BUILD_TIMEOUT_rzg_cc := 7200
+GLSN_RUN_TIMEOUT_rzg_cc   := 7200
+
 include $(ASIC_FLOW_DIR)/mk/gls_netlist.mk
+
+#-----------------------------------------------------------------------------
+# THIS APPEND MUST COME AFTER THE INCLUDE, AND IT DID NOT.
+#
+# MEASURED 2026-08-24: `GLSN_EVIDENCE_FILES` resolved to exactly
+# `[strip_leaf_defs.txt]` - the toolkit's six defaults were NOT in it.
+#
+# WHY. gls_netlist.mk:113 sets the default with `?=`, which assigns only when the
+# variable is UNDEFINED. A `+=` earlier in THIS file defined it first, so the
+# `?=` became a no-op and the default list was silently discarded. The publish
+# loop (gls_netlist.mk:123) then copied one file.
+#
+# WHY IT MATTERS RATHER THAN BEING COSMETIC: the signoff check greps for
+# verdict.txt by name and, not finding it, reports
+#   "gls-netlist: FAIL - no verdict at <path>. Either nothing ran, or
+#    GLSN_EVIDENCE_<item> is unset ... UNVERIFIED IS NOT A PASS."
+# So a GLS run could PASS 27/27 with zero forces and still grade as UNVERIFIED,
+# because its verdict never left build/. That is a false RED, and the sibling
+# failure mode - a stale verdict left behind by an earlier run being graded as
+# this one's - is a false GREEN.
+#-----------------------------------------------------------------------------
+GLSN_EVIDENCE_FILES += strip_leaf_defs.txt
 
 #-----------------------------------------------------------------------------
 # THE IMAGE IS A PREREQUISITE, NOT AN INSTRUCTION IN A COMMENT.
@@ -490,6 +579,13 @@ flash-selftest: $(FLASH_IMAGE)
 # target, so it can neither overwrite the shipped item's evidence nor publish its
 # own into reports/.
 #-----------------------------------------------------------------------------
+# WHICH ITEM THE CONTROL PROVES. Until 2026-08-24 this target was hardwired to
+# fp1505_cc, so it demonstrated discrimination for THAT item and no other -- a
+# newly-added item could pass its own bench with nobody having shown that bench
+# could fail on it. Parameterised so each item can be proven in turn:
+#   make negative-control                  # fp1505_cc, as before
+#   make negative-control NEG_ITEM=rzg_cc  # the shipping lineage
+NEG_ITEM  ?= fp1505_cc
 NEG_DIR   := $(BUILD_DIR)/gls-netlist-negative
 NEG_IMG   := $(FLASH_OUT)/blank/flash_image.hex
 NEG_BYTES ?= 524288
@@ -503,12 +599,13 @@ $(NEG_IMG):
 ## Run the gate against a deliberately blank flash and require it to FAIL.
 negative-control: $(NEG_IMG)
 	@echo "== NEGATIVE CONTROL: a blank (erased) flash, which still releases CPU0 =="
-	$(MAKE) --no-print-directory gls-netlist-build-fp1505_cc \
-	    GLSN_DIR=$(NEG_DIR) GLSN_STAGE_fp1505_cc="$(CC_FIRMWARE) $(ETH_FIRMWARE) $(NEG_IMG)"
-	@rc=0; $(MAKE) --no-print-directory gls-netlist-run-fp1505_cc \
-	    GLSN_DIR=$(NEG_DIR) GLSN_STAGE_fp1505_cc="$(CC_FIRMWARE) $(ETH_FIRMWARE) $(NEG_IMG)" \
+	@echo "   item under control: $(NEG_ITEM)"
+	$(MAKE) --no-print-directory gls-netlist-build-$(NEG_ITEM) \
+	    GLSN_DIR=$(NEG_DIR) GLSN_STAGE_$(NEG_ITEM)="$(CC_FIRMWARE) $(ETH_FIRMWARE) $(NEG_IMG)"
+	@rc=0; $(MAKE) --no-print-directory gls-netlist-run-$(NEG_ITEM) \
+	    GLSN_DIR=$(NEG_DIR) GLSN_STAGE_$(NEG_ITEM)="$(CC_FIRMWARE) $(ETH_FIRMWARE) $(NEG_IMG)" \
 	    || rc=$$?; \
-	v=$(NEG_DIR)/fp1505_cc/verdict.txt; \
+	v=$(NEG_DIR)/$(NEG_ITEM)/verdict.txt; \
 	echo ""; echo "-- negative-control verdict ($$v) --"; \
 	[ -s "$$v" ] || { echo "FAIL: the blank-flash run wrote no verdict at all."; \
 	                  echo "  That is a crashed run, not a discriminating gate."; exit 1; }; \
@@ -609,3 +706,6 @@ build:      gls-netlist-build-fp1505_cc
 run:        gls-netlist-run-fp1505_cc
 gls:        gls-netlist
 help:       gls-netlist-help
+.PHONY: __showevid
+__showevid:
+	@echo "GLSN_EVIDENCE_FILES=[$(GLSN_EVIDENCE_FILES)]"

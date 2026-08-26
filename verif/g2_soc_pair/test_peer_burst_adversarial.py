@@ -231,6 +231,11 @@ async def test_a4_read_between_writes(dut):
     log.info(f"  burst after read     = {[hex(x) for x in got]} want={[hex(x) for x in d]}")
     log.info("=" * 74)
     assert landed_first == 0x6AAA_0001, f"A4 FAIL: single = 0x{landed_first:08x}"
+    # The peer READ is the point of this test and was previously logged but never
+    # checked, so A4 passed on any read value including a bus error or all-zeroes.
+    # Hardware 2026-08-24: cross-die reads fail (SIGBUS) on a link whose writes are
+    # byte-exact, and this bench could not have caught it. Assert the value.
+    assert rd == 0x6AAA_0001, f"A4 FAIL: peer read returned 0x{rd:08x}, want 0x6aaa0001"
     assert got == d, f"A4 FAIL: burst after a read {[hex(x) for x in got]} != {[hex(x) for x in d]}"
 
 

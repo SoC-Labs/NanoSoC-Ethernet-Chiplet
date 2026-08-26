@@ -1443,3 +1443,34 @@ DESIGN_REPORT_SUBTITLE := A dual-Cortex-M0+ networking chiplet: 10/100 Ethernet 
 # Publishing is deliberately NOT enabled from the flow. Set EVIDENCE_PUBLISH=1
 # to push, or run `make evidence-publish` when the bundle has been looked at.
 ROUTE_POST_TARGETS = evidence run-report-auto
+
+# SIGNOFF STA IS DELIBERATELY NOT IN THAT LIST, and the reason is measured, not
+# a preference. Asked and answered 2026-08-26.
+#
+# The case FOR putting it here is strong: STA needs a routed database and
+# parasitics, this hook fires exactly once a route has finished and its verdict
+# exists, and 12 minutes on a 4-hour route is 5%. Every route would then be
+# timed automatically, which is the whole point.
+#
+# It cannot go here as the harness stands. ASIC/sta/run_sta.sh:83-87 refuses a
+# database whose files changed in the last 20 minutes -- a guard that exists
+# because reading a half-written route produces a corrupt-DB report that reads
+# like a design defect. This hook fires SECONDS after the route wrote that
+# database, so the guard would fire on every single invocation and STA would
+# never run. The only way to make it run from here is STA_FORCE, i.e. switching
+# off the guard for the one caller most likely to trip it legitimately, which
+# is papering over rather than plumbing.
+#
+# So it is a signoff STAGE instead -- ci/signoff.yaml's sta-signoff, in the
+# physical phase, with needs_implementation naming this build's routed database
+# AND its route_manifest.txt. That encodes "the route must have FINISHED"
+# declaratively, which is the property the 20-minute wall clock was
+# approximating, and it does it without a timer. The blocking half is
+# sta-binding: a candidate with no timing result of its own fails signoff.
+#
+# WHAT WOULD CHANGE THIS. Give run_sta.sh a route_manifest.txt test in place of
+# (or ahead of) the mtime test -- the manifest is written at the END of the
+# route, so its presence answers "is this database finished" exactly, with no
+# window to be wrong about. Then this line can gain `sta` and every route gets
+# timed with no operator step at all. That change belongs in ASIC/sta/, not
+# here.

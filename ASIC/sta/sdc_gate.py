@@ -344,6 +344,53 @@ C2_SOLO = [
 C2_OBS = ["asl", "ioen", "oae", "sop", "grant", "cnt", "idaw", "idsb"]
 
 
+# =============================================================================
+# GATE 2a / 2b -- STATUS: EXPECTED RED BY CONSTRUCTION SINCE 2026-08-18.
+#
+# READ THIS BEFORE ACTING ON A 0/69 OR 0/22.  Those are the CORRECT answers on
+# the current tree.  They are not a regression, and nothing is broken.
+#
+# WHY.  Both gates below assert a FIXED anchor population -- 69 synchroniser
+# pins and 22 datapath instances -- that existed only because of commit
+# b34f55f ("C2 - merge the transmit group, it is not asynchronous to clk").
+# That commit was REVERTED to clear a synthesis blocker: its two set_max_delay
+# commands could never apply (`"set_max_delay" - successful 0, failed 2`, on
+# every run), which tripped strict mode and aborted `make syn` for everyone at
+# that HEAD.  Full account: docs/tapeout/46-why-gate1-aborted.md.
+#
+# The revert removed the whole C2 block -- the demet false paths AND the
+# datapath bound together, as constraints.sdc's own guard demands (backing out
+# one without the other is the two-mechanism defect the [C5] block explains).
+# So the objects these gates look for are DELIBERATELY ABSENT from the inputs,
+# and will stay absent until C2 is re-landed in some form.
+#
+# NOTE the premise stated in this file's own header (~line 64): "If C2 lands,
+# all 69 must appear."  C2 did not land.  It was reverted instead.  That
+# sentence is the assumption this whole section was built on, and it no longer
+# holds.
+#
+# WHAT TO READ INSTEAD.  GATE 1a is the live check and is UNAFFECTED -- the TX
+# word-clock `-source` fix lives in tidelink_constraints.sdc, which the revert
+# does not touch, so it survives by construction rather than by luck.  Expect
+# GATE 1a PASS 8/8 on user_hsclk.  GATE 1b returns NOT MEASURED on a
+# synthesis-only run, which is also correct and is not a pass.
+#
+# WHY THIS IS A COMMENT AND NOT A DELETION.  A gate that cannot pass is worth
+# exactly as much as one that cannot fail, and it decays the same way: it sits
+# red, readers learn to skip the line, and the day it goes red for a real
+# reason nobody looks.  This project already carries a named class of checks
+# that were green having measured nothing; a permanently-red gate is that same
+# defect wearing the other sign.  The logic is left intact so that re-landing
+# C2 makes these gates meaningful again with no code change.
+#
+# OWNER: whoever owns D2D timing intent (this section was authored by the
+# session that measured the 0/2 failure, 2026-08-18).
+# REOPEN TRIGGER: C2 re-lands in ANY form -- merge, re-anchored -from, or a
+# replacement bound.  At that point delete this block and expect 69/69 and
+# 22/22.  If C2 re-lands and these still read 0, that IS a real failure.
+# =============================================================================
+
+
 def build_c2_pins() -> list[str]:
     """Mirror constraints.sdc:491-496 exactly.  69 synchroniser anchors."""
     pins: list[str] = []
