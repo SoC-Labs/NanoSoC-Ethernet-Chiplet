@@ -1,0 +1,4 @@
+date                     2026-08-26 05:28:45
+runtime_s                4200
+stage                    route
+run_tag                  gdsrun-20260826-rc1

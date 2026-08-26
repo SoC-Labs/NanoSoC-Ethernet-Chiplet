@@ -1,0 +1,13 @@
+#################################################################################
+# Design Name: nanosoc_eth_chiplet_pads
+# Design Mode: 65nm
+# Analysis Mode: MMMC OCV
+# Parasitics Mode: SPEF/RCDB
+# Signoff Settings: SI On
+#################################################################################
+     Check Type                      No. of   Met              Violated         Untested
+                                     Checks
+    Clock Gating Setup             2         2 (100%)         0 (0%)           0 (0%)
+    ClockPeriod                    42        4 (9%)           0 (0%)           38 (90%)
+    Recovery                       43284     40286 (93%)      0 (0%)           2998 (6%)
+    Setup                          68303     65505 (95%)      421 (0%)         2377 (3%)

@@ -290,16 +290,65 @@ if {$SKIP_EXT} {
 
     # One SPEF per RC corner. There is currently NO SPEF anywhere in this repo
     # — measured, zero files matching *.spef — so these are the first.
+    # WHY THIS LOOP IS OVER THE ACTIVE CORNERS AND CATCHES PER CORNER.
+    # Corrected 2026-08-26. It used to walk `get_db rc_corners`, which is every
+    # corner the .mmmc DEFINES, and let one failure abort the whole step:
+    #
+    #   ERROR (IMPEXT-2900): Unable to find the rc-corner name
+    #     'default_rc_corner_typical' in the active rc-corner list ...
+    #     make sure the correct RC corner is bound to an active delay corner
+    #     and analysis view.
+    #   ERROR (IMPEXT-3185): Call extract_rc again.
+    #
+    # default_rc_corner_typical is bound only to typical_delay_corner and
+    # default_delay_corner_ocv, and set_analysis_view activates NEITHER. So the
+    # corner is defined, unextracted and unwritable BY DESIGN, and asking for
+    # its SPEF has always failed. Two consequences, both bad:
+    #   1. step.write_parasitics recorded FAILED on every run ever made, for a
+    #      reason that says nothing about extraction quality -- a permanent red
+    #      that trains the reader to skip the line.
+    #   2. The loop died at corner 2 of 3, so the SETUP corner's SPEF
+    #      (default_rc_corner_worst) was NEVER WRITTEN. The 318 MB that did land
+    #      is default_rc_corner_best, which is the HOLD corner. The evidence
+    #      bundle therefore carried parasitics for the hold view only, while the
+    #      headline number quoted from it is a setup number.
+    # Extraction itself was fine throughout: extract_parasitics returned ok for
+    # all three and the in-memory RCDB the timing runs on was never in doubt.
     step write_parasitics {
-        foreach rc [get_db rc_corners .name] {
-            set f $OUT/${BLOCK}.${rc}.spef
-            write_parasitics -rc_corner $rc -spef_file $f
-            if {[file exists $f]} {
-                rec "spef.$rc.bytes" [file size $f]
-            } else {
-                rec "spef.$rc.bytes" 0
+        # A delay_corner has NO `rc_corner` attribute. It has `early_rc_corner`
+        # and `late_rc_corner` (doc/DBcom/delay_corner.html, 21.11), and a
+        # single-library corner like default_delay_corner_min sets both to the
+        # same object. Reading `.delay_corner.rc_corner.name` raises, and inside
+        # a `step` that would record FAILED for a NEW wrong reason -- so the
+        # traversal is caught and falls back to the old behaviour, which is
+        # never worse than what it replaces.
+        set _active {}
+        foreach v [concat [get_db analysis_views -if {.is_setup}] \
+                          [get_db analysis_views -if {.is_hold}]] {
+            foreach _a {early_rc_corner late_rc_corner} {
+                if {[catch {set _n [get_db $v .delay_corner.$_a.name]}]} { continue }
+                if {$_n ne "" && [lsearch -exact $_active $_n] < 0} { lappend _active $_n }
             }
         }
+        if {[llength $_active] == 0} {
+            rec spef.active_rc_corners "<traversal failed - falling back to every defined corner>"
+            set _active [get_db rc_corners .name]
+        } else {
+            rec spef.active_rc_corners [join $_active ","]
+        }
+        set _skipped {}
+        foreach rc [get_db rc_corners .name] {
+            if {[lsearch -exact $_active $rc] < 0} { lappend _skipped $rc ; continue }
+            set f $OUT/${BLOCK}.${rc}.spef
+            # Per corner, so one corner cannot take the others down with it.
+            if {[catch {write_parasitics -rc_corner $rc -spef_file $f} _e]} {
+                rec "spef.$rc.error" [string map {"\n" " | "} $_e]
+            }
+            rec "spef.$rc.bytes" [expr {[file exists $f] ? [file size $f] : 0}]
+        }
+        # Recorded, not silently dropped: a corner that is defined but bound to
+        # no active view is a real statement about what this run signs off.
+        rec spef.skipped_inactive_rc_corners [expr {$_skipped eq "" ? "<none>" : [join $_skipped ","]}]
     }
 }
 
@@ -361,9 +410,47 @@ step report_timing_summary_hold {
 # lists no Hold row at all, so hold coverage would otherwise be unmeasured -
 # and hold is precisely the check that the 5-of-33 source-latency writeback
 # makes fictional on the D2D word clocks.
+#
+# WHY THIS STEP USED TO FAIL, AND THE ONE-LINE FIX. Every run before
+# 2026-08-26 recorded step.report_analysis_coverage_hold = FAILED on
+#
+#   ERROR (TCLCMD-1056): 'early check types checkTypeName cannot be reported
+#                        in Late Analysis Mode'
+#
+# which reads like a limitation and is not one. `timing_analysis_check_type`
+# is a plain db attribute whose DEFAULT IS setup (Tempus 21.11 stylus man
+# page, share/tempus/stylus/man/man1/timing_analysis_check_type.1: "Syntax:
+# {setup | hold}. Default: setup"). Flip it, report, flip it back. MEASURED on
+# gdsrun-20260826-rc1: the report lands, 1191 bytes, Hold 68304 checks /
+# 65550 met / 377 violated / 2377 untested -- so hold coverage was 97% all
+# along and nobody could see it.
+#
+# THE SAME MODE FLAG SILENTLY TRUNCATES TWO OTHER REPORTS, and this is the
+# more important half. In Late Analysis Mode:
+#   * report_timing_derate prints ONLY the setup corner. On this design it
+#     shows default_delay_corner_max and nothing else even when the derate has
+#     demonstrably been applied to default_delay_corner_min -- proven by
+#     toggling the derate and watching hold move from 6 failing endpoints to
+#     394 while the derate report did not change one character. So that report
+#     CANNOT be used to answer "is the hold corner derated". It is a
+#     late-side-only view, not a census.
+#   * report_clocks prints only the setup view's rows, which is why
+#     `get_db clocks` returns exactly twice the SDC's clock count (one object
+#     per clock per active analysis view; this MMMC activates two).
+# Neither is a defect in the design. Both are reports that measure less than
+# their name suggests.
 step report_analysis_coverage_hold {
+    set _ct_restore "setup"
+    catch { set _ct_restore [get_db timing_analysis_check_type] }
+    set_db timing_analysis_check_type hold
+    rec analysis_coverage_hold_mode [get_db timing_analysis_check_type]
+    # -check_type hold is the focused row; the unqualified call in hold mode
+    # gives the whole early side (Removal, Clock Gating Hold, DataCheckHold,
+    # ExternalDelay(Early)), whose violated counts sum to the hold FEP.
     report_analysis_coverage -check_type hold > $REP/analysis_coverage_hold.rpt
+    catch { report_analysis_coverage > $REP/analysis_coverage_early_all.rpt }
     rec analysis_coverage_hold_bytes [expr {[file exists $REP/analysis_coverage_hold.rpt] ? [file size $REP/analysis_coverage_hold.rpt] : 0}]
+    set_db timing_analysis_check_type $_ct_restore
 }
 
 # Per-view worst paths. Signing off means naming the view, so each view gets

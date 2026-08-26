@@ -84,6 +84,13 @@ SPEC_FIELDS = {
     "connectivity_reps": "list of check_connectivity reports for the streamed DB",
     "lvs_report":     "repo-relative .lvs.rep graded against `stream`",
     "sta_run":        "repo-relative dir holding a Tempus run's reports/ for THIS build",
+    "clp_runs":       "{kind: repo-relative dir} of Conformal Low Power runs over "
+                      "THIS build's emitted power intent -- kind is `cpf` or `upf`, "
+                      "and BOTH are worth having: they are different files and on "
+                      "this lineage they fail differently",
+    "antenna_run":    "repo-relative Calibre rundir for the FOUNDRY antenna deck "
+                      "over `stream`. Not the router's check_process_antenna, "
+                      "which is a different check over a different database",
     "xor_reference":  "{stream, why} the OTHER side of the geometric XOR -- the "
                       "reference IS the claim, so it is named and justified, "
                       "never inferred",
@@ -1365,6 +1372,361 @@ def gate_layout_identity(spec, bundle, identity):
                 "skipped into agreement"])
 
 
+# ===========================================================================
+# POWER INTENT and FOUNDRY ANTENNA. Both of these rows were NOT-MEASURED on
+# every run this project has produced, and both reasons on the record were
+# FACTUALLY WRONG rather than merely stale -- one named a licence this site
+# owns 41 of, the other a deck this site has installed. They are gates now.
+# ===========================================================================
+
+def _kv_manifest(path):
+    """`key = value` lines. Shared with the STA gate's parser in shape but not
+    in code: this one keeps DUPLICATE keys as a list, because run_clp.sh emits
+    repeated `  macro_model_miss` lines and losing all but the last of them
+    would understate a finding."""
+    m = {}
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip()
+            if k in m:
+                m[k] = (m[k] if isinstance(m[k], list) else [m[k]]) + [v]
+            else:
+                m[k] = v
+    return m
+
+
+def gate_upf_power_intent(spec, bundle):
+    """Gate 9. The power intent this run EMITTED, checked against the gate
+    netlist this run PRODUCED, by Conformal Low Power.
+
+    WHAT THIS ROW USED TO SAY, and why it is worth writing down: "check_cpf
+    does not run: the Conformal Low Power licence is not available on this
+    site". Measured 2026-08-26 -- Conformal_Low_Power_GXL has 41 seats and 0
+    in use, `lec -LPGXL` checks one out in under two seconds, and check_cpf
+    HAD ALREADY RUN in this very build, writing 126 KB of Conformal rule
+    output to logs/syn_cpf_check.log. The reason was not stale. It was never
+    true. See ASIC/genus-innovus/scripts/conformal/run_clp.sh for the whole
+    RCLP-208/RCLP-203 sequence and what each message actually means.
+
+    THE ARM THAT MATTERS is not "does it fail on violations". It is
+    `intent_elaborated` / `checks_ran`: the emitted UPF on this lineage
+    reports FOUR error-severity violations against the CPF's 138, and that is
+    not better -- it is a power intent that does not compile, so Conformal
+    never ran a single power-domain check over it. A gate that ranked those
+    two by violation count would prefer the file that measured nothing."""
+    ASSERTS = ("the CPF/UPF power intent this run emitted elaborates against "
+               "this run's gate netlist and carries no error-severity "
+               "Conformal Low Power violation")
+    runs = spec.get("clp_runs") or {}
+
+    def nm(why, cites=()):
+        return Gate(id="upf-power-intent", verdict=NOT_MEASURED, asserts=ASSERTS,
+                    why=why, cites=list(cites) or
+                    [bundle.write("clp/absent.txt",
+                                  "spec.clp_runs = %r\n%s\n" % (runs, why))])
+
+    if not runs:
+        return nm("the spec names no `clp_runs`. Genus's own check_cpf still "
+                  "runs inside synthesis and is still allowlisted by "
+                  "SYN_SOFT_CPF, so its findings reach nobody: a check whose "
+                  "only record is a warning in an 8000-line log is not "
+                  "evidence. Run "
+                  "`ASIC/genus-innovus/scripts/conformal/run_clp.sh <build> cpf`.")
+
+    findings, cites, worst = [], [], PASS
+    detail, over = [], []
+    for kind in sorted(runs):
+        rundir = os.path.join(ROOT, runs[kind])
+        mpath = os.path.join(rundir, "clp_manifest.txt")
+        if not os.path.isfile(mpath):
+            return nm("no clp_manifest.txt under %s. run_clp.sh writes one "
+                      "last; without it the reports there belong to no stated "
+                      "run." % rel(rundir))
+        man = _kv_manifest(mpath)
+        cites.append(bundle.add(mpath, "clp/%s/clp_manifest.txt" % kind,
+                                note="the Conformal Low Power run's own record"))
+        for f, as_name in (("clp_rulecheck_design.rpt", "rulecheck_design.rpt"),
+                           ("clp_rulecheck_errors.rpt", "rulecheck_errors.rpt")):
+            c = bundle.add(os.path.join(rundir, f), "clp/%s/%s" % (kind, as_name))
+            if c:
+                cites.append(c)
+
+        # 1. DID IT READ THIS BUILD'S NETLIST. Same lesson as the STA gate: a
+        #    perfectly clean Conformal run of another build's netlist is not
+        #    evidence about this one.
+        want = os.path.abspath(os.path.join(ROOT, spec.get("base_run", ""),
+                                            "outputs"))
+        got = man.get("netlist", "")
+        if not os.path.abspath(got).startswith(want + os.sep):
+            return nm("the %s run read %s, which is not in this build's outputs "
+                      "(%s)." % (kind, got or "<no netlist>", rel(want)),
+                      cites)
+        if man.get("design_name") != spec.get("design"):
+            return nm("the %s run's design is %r, the spec is about %r."
+                      % (kind, man.get("design_name"), spec.get("design")), cites)
+        if not man.get("clp_finished"):
+            return nm("the %s run has no clp_finished: it did not reach its "
+                      "reports, so what is on disk is a partial run." % kind,
+                      cites)
+        if int(man.get("instance_total") or 0) < 1000:
+            return nm("the %s run loaded %s instances. A netlist that did not "
+                      "read produces a rule report with nothing in it and no "
+                      "error." % (kind, man.get("instance_total")), cites)
+
+        # 2. DID THE INTENT ELABORATE, AND DID THE CHECKS RUN. The vacuity arm.
+        if man.get("intent_elaborated") != "yes" or man.get("checks_ran") != "yes":
+            worst = FAIL
+            findings.append(
+                "%s: the power intent DOES NOT ELABORATE "
+                "(intent_elaborated=%s, checks_ran=%s), so Conformal ran no "
+                "power-domain check over it at all. Its %s error-severity "
+                "violation(s) are the elaboration failing, not a clean design."
+                % (kind, man.get("intent_elaborated"), man.get("checks_ran"),
+                   man.get("violations_error")))
+            over.append("%s: NOT ELABORATED" % kind)
+            detail.extend("%s  %s = %s" % (kind, k, v) for k, v in sorted(man.items())
+                          if k.startswith("error."))
+            continue
+
+        nerr = int(man.get("violations_error") or 0)
+        over.append("%s: %s instances, %s libraries, %s rule(s) reported"
+                    % (kind, man.get("instance_total"), man.get("library_count"),
+                       man.get("rules_reported")))
+        if nerr:
+            worst = FAIL if worst != FAIL else FAIL
+            findings.append("%s: %d error-severity violation(s) over %s rule(s): %s"
+                            % (kind, nerr, man.get("rules_error"),
+                               ", ".join("%s=%s" % (k[len("error."):], v)
+                                         for k, v in sorted(man.items())
+                                         if k.startswith("error."))))
+        mm = man.get("macro_model_domain_misses") or "0"
+        if mm != "0":
+            detail.append("%s: %s macro liberty set_macro_model domain(s) not "
+                          "found in the intent" % (kind, mm))
+
+    cites = [c for c in cites if c]
+    if worst == PASS:
+        return Gate(id="upf-power-intent", verdict=PASS, asserts=ASSERTS,
+                    got="0 error-severity violations", required="0",
+                    measured_over="; ".join(over), cites=cites, detail=detail)
+    return Gate(id="upf-power-intent", verdict=FAIL, asserts=ASSERTS,
+                got="; ".join(findings), required="0 error-severity violations",
+                measured_over="; ".join(over), cites=cites, detail=detail)
+
+
+# The project-owned control rulechecks run_ant.sh appends to the foundry deck.
+# Named here so a deck assembled without them, or with a renamed one, is a
+# NOT-MEASURED rather than a silently uncontrolled zero.
+_ANT_CONTROLS = ("ANTCTL.GATE.POPULATION", "ANTCTL.SD.POPULATION",
+                 "ANTCTL.POLY.POPULATION", "ANTCTL.OD.POPULATION",
+                 "ANTCTL.M1.POPULATION", "ANTCTL.M9.POPULATION",
+                 "ANTCTL.AP.POPULATION")
+
+_ANT_RULECHECK = re.compile(
+    r'^RULECHECK\s+(\S+)\s+\.*\s*TOTAL Result Count\s*=\s*(\d+)\s*\((\d+)\)')
+
+
+def _ant_summary(path):
+    """-> {rulecheck: (count, total)} from a Calibre DRC summary report."""
+    # BOUNDED AT BOTH ENDS. A Calibre summary carries the per-rulecheck
+    # section AND a `(BY CELL)` section that repeats every rulecheck name once
+    # per cell it fired in. Reading past the boundary and keying by name means
+    # the LAST per-cell count silently replaces the total -- and a per-cell
+    # count of 0 in the control rows would then read as an empty layer and
+    # turn a good run into a NOT-MEASURED. Today the per-cell rows are indented
+    # and would not match the anchored pattern anyway; that is luck, not a
+    # design, so the section end is explicit.
+    out, inside = {}, False
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if line.startswith("--- RULECHECK RESULTS STATISTICS (BY CELL)"):
+                break
+            if line.startswith("--- RULECHECK RESULTS STATISTICS"):
+                inside = True
+                continue
+            if not inside:
+                continue
+            m = _ANT_RULECHECK.match(line)
+            if m:
+                out[m.group(1)] = (int(m.group(2)), int(m.group(3)))
+    return out
+
+
+def gate_antenna(spec, bundle, identity):
+    """Gate 10. The FOUNDRY antenna deck, over the stream that is being shipped.
+
+    WHAT THIS ROW USED TO SAY: "the router-level check_process_antenna is NOT
+    the foundry deck, and no foundry antenna run exists for this stream. imec's
+    204/204 zero belongs to the pinfix lineage."
+
+    THE FIRST CLAUSE IS TRUE AND STAYS TRUE. The second was true as literally
+    written and read as something much stronger, which is the failure mode
+    worth naming: nobody reading it concluded "a run has not been done for this
+    candidate yet", they concluded the check was out of reach. It was not. The
+    deck imec's own reports cite by name is installed here, readable, for the
+    right metal layer count, at the same revision they ran; Calibre had 145 of
+    150 DRC seats free; and the deck HAD been run once before, by hand, on
+    2026-08-17 against another build. What was missing was a pdk_paths key and
+    a runner -- the wrapper deck had been in the tree naming a run_ant.sh that
+    did not exist since the tapeout branch opened.
+
+    THE THIRD CLAUSE WAS WRONG ON ITS NUMBER. imec's antenna archives for this
+    design carry 272 zero-result records (213 of them .rep), not 204; 204 is
+    the count from their 17-August run and was carried forward unchecked.
+
+    WHAT A PASS HERE DOES NOT MEAN. The stream carries LEF abstracts for every
+    standard cell, IO cell and bond pad, so the deck's antenna denominator --
+    GATE = OD AND POLY -- exists only inside the merged memory macros. This
+    gate therefore states its scope in instance terms and refuses to pass at
+    all unless the coverage control says that denominator is non-empty."""
+    ASSERTS = ("the foundry antenna deck reports no violation on the streamed "
+               "layout, over a population the run itself demonstrates is "
+               "non-empty")
+    run = spec.get("antenna_run")
+
+    def nm(why, cites=()):
+        return Gate(id="antenna-foundry-deck", verdict=NOT_MEASURED,
+                    asserts=ASSERTS, why=why, cites=list(cites) or
+                    [bundle.write("antenna/absent.txt",
+                                  "spec.antenna_run = %r\n%s\n" % (run, why))])
+
+    if not run:
+        return nm("the spec names no `antenna_run`. Innovus "
+                  "check_process_antenna does run in this flow and does report "
+                  "clean, but that is the ROUTER's model over the router's "
+                  "database against LEF antenna numbers -- not the foundry "
+                  "deck, and not over the streamed layout. Run "
+                  "`make -C ASIC/genus-innovus ant`.")
+    rundir = os.path.join(ROOT, run)
+    mpath = os.path.join(rundir, "ant_manifest.txt")
+    if not os.path.isfile(mpath):
+        return nm("no ant_manifest.txt under %s. run_ant.sh writes it last, so "
+                  "its absence means the run did not finish -- and a Calibre "
+                  "run directory always has plausible-looking files in it."
+                  % rel(rundir))
+    man = _kv_manifest(mpath)
+    cites = [bundle.add(mpath, "antenna/ant_manifest.txt",
+                        note="the antenna run's own record")]
+
+    # 1. DID IT CHECK THE STREAM THIS REPORT IS ABOUT. The single most likely
+    #    way to get a reassuring antenna number here is to run it over a
+    #    different candidate; four green verdicts on this project have already
+    #    been read off the wrong stream.
+    if man.get("layout_md5") != identity.stream_md5:
+        return nm("the antenna run checked md5 %s; this report is about %s. An "
+                  "antenna result for another stream is not evidence about "
+                  "this one, however clean."
+                  % (man.get("layout_md5") or "<none recorded>",
+                     identity.stream_md5), cites)
+    if man.get("top_cell") != spec.get("design"):
+        return nm("the antenna run's top cell is %r, the spec is about %r."
+                  % (man.get("top_cell"), spec.get("design")), cites)
+    if not man.get("ant_finished"):
+        return nm("the antenna manifest has no ant_finished line: Calibre did "
+                  "not reach the end of the deck.", cites)
+
+    sname = man.get("summary", "")
+    spath = sname if os.path.isabs(sname) else os.path.join(rundir, sname)
+    if not os.path.isfile(spath):
+        return nm("the manifest names %s as the summary and it is not there."
+                  % (sname or "<nothing>"), cites)
+    cites.append(bundle.add(spath, "antenna/%s" % os.path.basename(spath),
+                            note="Calibre summary, every executed rulecheck"))
+    rc = _ant_summary(spath)
+    if not rc:
+        return nm("the summary at %s carries no RULECHECK rows at all -- the "
+                  "deck compiled and the layout read, but nothing was "
+                  "executed." % rel(spath), cites)
+
+    # 2. WAS IT THE ANTENNA DECK. A Calibre summary from ANY deck has the same
+    #    shape, so "721 rulechecks, all zero" is not by itself a statement
+    #    about antennas -- and the two decks beside this one on the same
+    #    stream, DRC and BND, both produce plausible-looking summaries in
+    #    directories that look identical from the outside. The antenna rule
+    #    families are the discriminator: no other TSMC deck emits them.
+    ant_family = [k for k in rc if k.startswith("A.R.") or k.startswith("DNW.R.")]
+    if len(ant_family) < 200:
+        return nm("the summary carries only %d rulecheck(s) from an antenna "
+                  "rule family, out of %d. This does not look like a run of the "
+                  "foundry antenna deck, whatever else it is."
+                  % (len(ant_family), len(rc)), cites)
+    if not man.get("foundry_deck_md5"):
+        return nm("the manifest records no foundry_deck_md5, so the run names "
+                  "no deck by content and its result cannot be tied to one.",
+                  cites)
+
+    # 3. THE COVERAGE CONTROL, READ BEFORE THE RESULT. This is the whole
+    #    reason the gate exists in this shape. Five checks on this project
+    #    have reported zero while running over an empty layer.
+    ctl = {k: v for k, v in rc.items() if k.startswith("ANTCTL.")}
+    missing = [c for c in _ANT_CONTROLS if c not in ctl]
+    if missing:
+        return nm("the run carries no coverage control (%s absent from the "
+                  "summary). Its zeros could equally be a clean design or an "
+                  "empty layer and there is nothing in the run that "
+                  "distinguishes them. Do not report this as an antenna pass."
+                  % ", ".join(missing), cites)
+    empty = sorted(c for c, (n, _) in ctl.items() if n == 0)
+    if empty:
+        return nm("the coverage control came back EMPTY on %s. The deck's own "
+                  "antenna denominator has no population in this layout, so "
+                  "every antenna zero in this run divided by nothing."
+                  % ", ".join(empty), cites)
+
+    # 4. SATURATION. A count equal to the deck's result cap is a FLOOR, and it
+    #    prints exactly like a real number.
+    #
+    #    Read the pair correctly. This deck asks for `DRC SUMMARY REPORT ...
+    #    REPLACE HIER`, so a row reads `= <hierarchical> (<flat>)` -- the first
+    #    is the count of distinct results in the hierarchy, the second the
+    #    count of their placements. It is the FIRST that the cap truncates, and
+    #    it is the first this gate compares. Measured 2026-08-26 on this design:
+    #    the coverage control's GATE row came back `1000 (8080184)`, which is a
+    #    capped hierarchical count beside a real flat one -- so the repo's
+    #    standing note that "Calibre writes the truncated value into both count
+    #    fields" does NOT hold for this report form, and reading the second
+    #    field as a total here would be right where reading it as a total in a
+    #    density report was wrong.
+    cap = int(man.get("max_results") or 0)
+    foundry = {k: v for k, v in rc.items() if not k.startswith("ANTCTL.")}
+    sat = sorted(k for k, (n, t) in foundry.items() if cap and n >= cap)
+    if sat:
+        return nm("%d foundry rulecheck(s) hit the deck's result cap of %d "
+                  "(%s). At the cap the reported number is a floor, not a "
+                  "count." % (len(sat), cap, ", ".join(sat[:6])), cites)
+
+    nz = sorted(((k, n) for k, (n, _) in foundry.items() if n),
+                key=lambda kv: -kv[1])
+    over = ("%d foundry rulecheck(s) executed from %s over %s, plus %d "
+            "project-owned coverage controls, ALL non-empty (%s).  SCOPE: the "
+            "streamed layout carries LEF abstracts for standard cells, IO and "
+            "bond pads, so the deck's GATE = OD AND POLY denominator exists "
+            "only inside the merged memory macros. This is a real result over "
+            "a real population and it is NOT the same population the foundry's "
+            "own merged run measures."
+            % (len(foundry), man.get("foundry_deck_name", "the foundry deck"),
+               os.path.basename(man.get("layout", "")), len(ctl),
+               ", ".join("%s=%d" % (c.split(".")[1], ctl[c][0])
+                         for c in _ANT_CONTROLS)))
+    detail = ["foundry deck %s, md5 %s"
+              % (man.get("foundry_deck_name", "UNVERIFIED"),
+                 man.get("foundry_deck_md5", "UNVERIFIED")),
+              "deck switches: %s" % man.get("deck_switches", "foundry defaults"),
+              "wall clock %ss on %s CPU(s)" % (man.get("ant_wall_clock_s", "?"),
+                                               man.get("cpus", "?"))]
+    if nz:
+        return Gate(id="antenna-foundry-deck", verdict=FAIL, asserts=ASSERTS,
+                    got="; ".join("%s = %d" % kv for kv in nz[:12]),
+                    required="0 on every foundry rulecheck",
+                    measured_over=over, cites=cites, detail=detail)
+    return Gate(id="antenna-foundry-deck", verdict=PASS, asserts=ASSERTS,
+                got="0 on every one of %d foundry rulechecks" % len(foundry),
+                required="0", measured_over=over, cites=cites, detail=detail)
+
+
 def declared_not_measured(spec, bundle):
     """Things nothing on this site can measure for this build. Declared in the
     spec, rendered as full NOT-MEASURED rows, never omitted.
@@ -1372,6 +1734,18 @@ def declared_not_measured(spec, bundle):
     Section 6 of the report exists because of how 23 August failed: the finding
     was one line among thousands in a report the reader had been told to skip."""
     out = []
+    # TWO ROWS WITH THE SAME ID IS WORSE THAN EITHER OF THEM. `upf-power-intent`
+    # and `antenna-foundry-deck` became real gates on 2026-08-26; a spec that
+    # still declares them here would render a measured verdict and a
+    # NOT-MEASURED declaration side by side, and a reader would believe
+    # whichever they saw first.
+    _now_gated = {"upf-power-intent", "antenna-foundry-deck"}
+    _dupe = sorted(_now_gated.intersection(d["id"] for d in spec.get("not_measured", [])))
+    if _dupe:
+        die("the spec declares %s under not_measured, but %s a real gate now. "
+            "Remove the declaration -- the gate reports PASS, FAIL or its own "
+            "NOT-MEASURED with its own reason."
+            % (", ".join(_dupe), "they are" if len(_dupe) > 1 else "it is"))
     for d in spec.get("not_measured", []):
         cite = bundle.write("declared/%s.txt" % d["id"],
                             "id:      %s\nasserts: %s\nwhy:     %s\n"
@@ -1546,6 +1920,16 @@ def collect(spec, out):
 
     print("evidence_flow: gate    gds-layout-identity ...", flush=True)
     g = gate_layout_identity(spec, bundle, identity)
+    print("evidence_flow:         -> %s" % g.verdict)
+    gates.append(g)
+
+    print("evidence_flow: gate    upf-power-intent ...", flush=True)
+    g = gate_upf_power_intent(spec, bundle)
+    print("evidence_flow:         -> %s" % g.verdict)
+    gates.append(g)
+
+    print("evidence_flow: gate    antenna-foundry-deck ...", flush=True)
+    g = gate_antenna(spec, bundle, identity)
     print("evidence_flow:         -> %s" % g.verdict)
     gates.append(g)
 
@@ -1966,6 +2350,10 @@ def selftest():
     ok = _selftest_wider_scope(say) and ok
     ok = _selftest_layout_identity(say) and ok
 
+    # 7. THE TWO ROWS ADJUDICATED ON 26 AUGUST that used to be declarations.
+    ok = _selftest_clp(say) and ok
+    ok = _selftest_antenna(say) and ok
+
     # A DEFINITION SHADOWED BY A LATER ONE OF THE SAME NAME IS SILENT. Python
     # keeps the last, imports nothing, warns about nothing, and the first
     # symptom is a TypeError in an unrelated function months later. It happened
@@ -2237,6 +2625,271 @@ def crosscheck_router_gate():
              "identical verdicts and echo classification"
              if not bad else "%d disagreement(s)" % bad))
     return bad == 0
+
+
+
+# ===========================================================================
+# FIXTURES for the two rows adjudicated on 26 August. Both replaced a
+# NOT-MEASURED whose stated reason was FALSE -- a licence this site owns 41 of,
+# a deck this site has installed -- so for both, the arm that matters is not
+# "does it fail on a violation". It is "does it refuse a perfectly clean run
+# that measured the wrong thing, or measured nothing".
+# ===========================================================================
+
+_CLP_FIX = """\
+step.read_design    = ok
+step.read_intent    = ok
+step.commit         = ok
+step.analyze_pd     = ok
+intent_elaborated   = yes
+checks_ran          = yes
+macro_model_domain_misses= 0
+rules_reported      = 15
+rules_error         = 0
+violations_error    = 0
+clp_tool            = conformal
+clp_tool_version    = 22.10-s200
+clp_licence_mode    = -LPGXL
+clp_started         = 2026-08-26T12:03:43
+clp_finished        = 2026-08-26T12:04:42
+clp_wall_clock_s    = 59
+clp_exit_status     = 0
+design_name         = nanosoc_eth_chiplet_pads
+build_dir           = {build}
+netlist             = {netlist}
+netlist_md5         = 4f0043247e0088ccd651f1f1dd899502
+instance_total      = 415417
+intent_kind         = cpf
+intent              = {build}/outputs/nanosoc_eth_chiplet_pads_gate1.cpf
+intent_md5          = 1c374ed5493739647930a5ddcf1e8792
+library_count       = 10
+dofile_aborted      = no
+"""
+
+
+def _selftest_clp(say):
+    """Mutate a known-good Conformal Low Power run one property at a time."""
+    import tempfile
+    root = tempfile.mkdtemp(prefix="evidence-clp-selftest-")
+    good = True
+    try:
+        base = os.path.join(root, "build", "thisrun")
+        netlist = os.path.join(base, "outputs",
+                               "nanosoc_eth_chiplet_pads_gate_power.v")
+        os.makedirs(os.path.dirname(netlist), exist_ok=True)
+        open(netlist, "w").write("// fixture\n")
+
+        def build(edit=None, drop_manifest=False, kind="cpf"):
+            d = tempfile.mkdtemp(prefix="clp-case-", dir=root)
+            man = _CLP_FIX.format(build=base, netlist=netlist)
+            if edit:
+                man = edit(man)
+            if not drop_manifest:
+                open(os.path.join(d, "clp_manifest.txt"), "w").write(man)
+            open(os.path.join(d, "clp_rulecheck_design.rpt"), "w").write("fixture\n")
+            return {kind: os.path.relpath(d, ROOT)}
+
+        def verdict(runs):
+            b = Bundle(tempfile.mkdtemp(prefix="clp-bundle-", dir=root))
+            return gate_upf_power_intent(
+                {"design": "nanosoc_eth_chiplet_pads",
+                 "base_run": os.path.relpath(base, ROOT),
+                 "clp_runs": runs}, b)
+
+        cases = [
+            ("a clean CLP run of THIS build's netlist passes", build(), PASS),
+            ("error-severity violations FAIL",
+             build(lambda m: m.replace("violations_error    = 0",
+                                       "violations_error    = 138")
+                              .replace("rules_error         = 0",
+                                       "rules_error         = 3\nerror.PDM1          = 72")),
+             FAIL),
+            # THE ARM THAT MATTERS. Four violations look better than 138 and
+            # are strictly worse: the intent did not compile, so no
+            # power-domain check ran at all.
+            ("an intent that does not ELABORATE fails even with 4 violations, "
+             "not 138",
+             build(lambda m: m.replace("intent_elaborated   = yes",
+                                       "intent_elaborated   = no")
+                              .replace("checks_ran          = yes",
+                                       "checks_ran          = no")
+                              .replace("violations_error    = 0",
+                                       "violations_error    = 4")),
+             FAIL),
+            ("checks that did not run fail even at zero violations",
+             build(lambda m: m.replace("checks_ran          = yes",
+                                       "checks_ran          = no")), FAIL),
+            ("a clean run of ANOTHER build's netlist is NOT-MEASURED",
+             build(lambda m: m.replace(netlist, "/elsewhere/rzG/outputs/x_gate_power.v")),
+             NOT_MEASURED),
+            ("a run whose design is not the spec's is NOT-MEASURED",
+             build(lambda m: m.replace("design_name         = nanosoc_eth_chiplet_pads",
+                                       "design_name         = compute_chiplet_pads")),
+             NOT_MEASURED),
+            ("a run that never finished is NOT-MEASURED",
+             build(lambda m: m.replace("clp_finished        = 2026-08-26T12:04:42",
+                                       "clp_finished        =")), NOT_MEASURED),
+            ("a netlist that did not read is NOT-MEASURED, not a clean design",
+             build(lambda m: m.replace("instance_total      = 415417",
+                                       "instance_total      = 0")), NOT_MEASURED),
+            ("no manifest is NOT-MEASURED", build(drop_manifest=True), NOT_MEASURED),
+        ]
+        for name, runs, want in cases:
+            g = verdict(runs)
+            hit = g.verdict == want
+            good = good and hit
+            say("clp gate: " + name, hit,
+                "%s%s" % (g.verdict, "" if hit else " (wanted %s)" % want))
+        g = verdict({})
+        hit = g.verdict == NOT_MEASURED
+        good = good and hit
+        say("clp gate: a spec with no clp_runs is NOT-MEASURED", hit, g.verdict)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return good
+
+
+_ANT_FIX_MANIFEST = """\
+layout                = {gds}
+layout_md5            = {md5}
+layout_bytes          = 302688050
+top_cell              = nanosoc_eth_chiplet_pads
+deck                  = {rundir}/deck.svrf
+deck_md5              = 0123456789abcdef0123456789abcdef
+foundry_deck_name     = the installed foundry antenna deck
+foundry_deck_md5      = fedcba9876543210fedcba9876543210
+deck_switches         = foundry defaults, both verified
+coverage_control      = ant_coverage_control.svrf
+summary               = nanosoc_eth_chiplet_pads.ant.summary
+max_results           = 1000
+rulechecks_executed   = 181
+cpus                  = 16
+calibre_exit_status   = 0
+ant_started           = 2026-08-26T11:43:29
+ant_finished          = 2026-08-26T12:10:11
+ant_wall_clock_s      = 1602
+"""
+
+
+def _ant_fix_summary(controls, foundry):
+    rows = ["--- SUMMARY", "", "--- RULECHECK RESULTS STATISTICS"]
+    for name, n in list(controls.items()) + list(foundry.items()):
+        rows.append("RULECHECK %s %s TOTAL Result Count = %d   (%d)"
+                    % (name, "." * max(1, 34 - len(name)), n, n))
+    return "\n".join(rows) + "\n"
+
+
+def _selftest_antenna(say):
+    """Mutate a known-good foundry antenna run one property at a time.
+
+    The ONE THING this gate exists to refuse is a zero over an empty layer.
+    That arm -- "a zero with an empty control is NOT a pass" -- is the reason
+    the coverage control is appended to every run at all."""
+    import tempfile
+    root = tempfile.mkdtemp(prefix="evidence-ant-selftest-")
+    good = True
+    MD5 = "acd2b93e1ac7ac2c672f236d50b3444c"
+    try:
+        gds = os.path.join(root, "stream.gds")
+        open(gds, "w").write("fixture\n")
+        full = {c: 1000 for c in _ANT_CONTROLS}
+
+        def build(controls=None, foundry=None, edit=None, drop_manifest=False,
+                  drop_summary=False):
+            d = tempfile.mkdtemp(prefix="ant-case-", dir=root)
+            man = _ANT_FIX_MANIFEST.format(gds=gds, md5=MD5, rundir=d)
+            if edit:
+                man = edit(man)
+            if not drop_manifest:
+                open(os.path.join(d, "ant_manifest.txt"), "w").write(man)
+            if not drop_summary:
+                open(os.path.join(d, "nanosoc_eth_chiplet_pads.ant.summary"),
+                     "w").write(_ant_fix_summary(
+                         dict(full if controls is None else controls),
+                         # 200+ antenna-family rows: the gate refuses a
+                         # summary that does not look like the antenna deck,
+                         # so the KNOWN-GOOD fixture has to look like one.
+                         dict({"A.R.1:POLY": 0, "A.R.3:CO": 0,
+                               "A.R.6__A.R.8:M1": 0},
+                              **{"DNW.R.20.%d:VIA1" % i: 0 for i in range(300)})
+                         if foundry is None else foundry))
+            return os.path.relpath(d, ROOT)
+
+        class _Id:
+            stream_md5 = MD5
+
+        def verdict(run):
+            b = Bundle(tempfile.mkdtemp(prefix="ant-bundle-", dir=root))
+            return gate_antenna({"design": "nanosoc_eth_chiplet_pads",
+                                 "antenna_run": run}, b, _Id())
+
+        empty_ctl = dict(full)
+        empty_ctl["ANTCTL.GATE.POPULATION"] = 0
+        no_ctl = {}
+
+        cases = [
+            ("a clean foundry run over THIS stream passes", build(), PASS),
+            ("a real antenna violation fails",
+             build(foundry=dict({"A.R.6__A.R.8:M1": 7},
+                                **{"A.R.20.%d:VIA1" % i: 0 for i in range(300)})),
+             FAIL),
+            # THE ARM THAT MATTERS.
+            ("all-zero WITH AN EMPTY GATE CONTROL is NOT-MEASURED, not a pass",
+             build(controls=empty_ctl), NOT_MEASURED),
+            ("all-zero with NO control at all is NOT-MEASURED, not a pass",
+             build(controls=no_ctl), NOT_MEASURED),
+            ("a run over ANOTHER stream is NOT-MEASURED, however clean",
+             build(edit=lambda m: m.replace(MD5, "0" * 32)), NOT_MEASURED),
+            ("a run of another top cell is NOT-MEASURED",
+             build(edit=lambda m: m.replace("top_cell              = nanosoc_eth_chiplet_pads",
+                                            "top_cell              = compute_chiplet_pads")),
+             NOT_MEASURED),
+            ("a run that never finished is NOT-MEASURED",
+             build(edit=lambda m: m.replace("ant_finished          = 2026-08-26T12:10:11",
+                                            "ant_finished          =")), NOT_MEASURED),
+            ("a rulecheck AT the result cap is NOT-MEASURED, not a count",
+             build(foundry=dict({"A.R.3:CO": 1000},
+                                **{"A.R.20.%d:VIA1" % i: 0 for i in range(300)})),
+             NOT_MEASURED),
+            ("a summary with no rulecheck rows is NOT-MEASURED",
+             build(controls={}, foundry={}), NOT_MEASURED),
+            # A DRC-deck summary in an antenna rundir is the cheapest way to
+            # get a reassuring number here, and it looks identical from the
+            # outside. 714 zeros from the wrong deck is not an antenna result.
+            ("a clean summary from a deck with no antenna rules is NOT-MEASURED",
+             build(foundry={"M%d.S.1" % i: 0 for i in range(1, 400)}),
+             NOT_MEASURED),
+            ("a manifest naming no deck by content is NOT-MEASURED",
+             build(edit=lambda m: m.replace(
+                 "foundry_deck_md5      = fedcba9876543210fedcba9876543210",
+                 "foundry_deck_md5      =")), NOT_MEASURED),
+            ("no summary is NOT-MEASURED", build(drop_summary=True), NOT_MEASURED),
+            ("no manifest is NOT-MEASURED", build(drop_manifest=True), NOT_MEASURED),
+        ]
+        for name, run, want in cases:
+            g = verdict(run)
+            hit = g.verdict == want
+            good = good and hit
+            say("antenna gate: " + name, hit,
+                "%s%s" % (g.verdict, "" if hit else " (wanted %s)" % want))
+        g = verdict(None)
+        hit = g.verdict == NOT_MEASURED
+        good = good and hit
+        say("antenna gate: a spec with no antenna_run is NOT-MEASURED", hit,
+            g.verdict)
+
+        # A PASS MUST SAY WHAT IT MEASURED OVER, and for this row the scope
+        # sentence is the whole point: a reader who quotes the zero without it
+        # is quoting a claim the run did not make.
+        g = verdict(build())
+        scoped = (g.verdict == PASS and "LEF abstracts" in g.measured_over
+                  and "merged memory macros" in g.measured_over)
+        good = good and scoped
+        say("antenna gate: a PASS carries the black-box scope statement", scoped,
+            g.measured_over[:80] + "...")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return good
 
 
 def main():

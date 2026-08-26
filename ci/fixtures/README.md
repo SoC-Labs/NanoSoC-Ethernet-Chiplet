@@ -86,6 +86,41 @@ believe the tool prints" into evidence.
 | `lec/`, `lec-pnr/`, `lec-selftest/` | **RE-DERIVED 2026-08-18 from real Conformal 22.10-s200 transcripts** — `ASIC/genus-innovus/logs/lec_selftest_{equivalent,nonequivalent,extra_state}.log`, one per direction, left by `make lec-selftest` | high — captures, one labelled exception |
 | `ir-drop/` | **cut down from the real artefacts of the fp1505 rail run** (Voltus 21.11 under Innovus, 2026-08-17): the `.iv` header and row format, both `*.main.rpt` summaries and the per-rail table of the implementation run's own `imp_power.rep` are the tool's own bytes | high — captures, with two documented edits, below |
 | `ir-drop-selftest/` | `pass` supplies **no file at all**, so the positive control is the real battery; the three failure arms are stubs that print a tally shape and nothing else | high — the stubs are the fixture's whole subject |
+| `sta-signoff/`, `sta-binding/` | **cut down from the two real Tempus 21.11 report sets on this host** (`ASIC/sta/work/gdsrun-20260826-rc1/reports/`, 2026-08-26, and the 2026-08-18 run). The `sta_manifest.txt` key set, the `Signoff Settings:` banner and the coverage-table column layout are the tool's own; `fail-untested-checks` is the current candidate's real coverage table with four rows kept. Three edits, all stated below | high — captures, three documented edits |
+| `gap-sta-hold-coverage/` | the artefact the `report_analysis_coverage -check_type hold` step would leave behind, and its absence. Two files, one directory marker each | high — the fixture's subject is presence vs absence |
+
+#### Three edits in `sta-signoff/` and `sta-binding/`, stated because they are the only places the bytes are not the tool's
+
+1. **`sta_db` names a synthetic root.** The real manifests record an absolute
+   path under one engineer's home directory. A fixture carrying that would make
+   `sta_binding.py`'s realpath arm compare a synthetic path against *this*
+   machine's build tree, so the case would pass or fail depending on which host
+   ran it. The fixtures use an obviously-invented root instead, and each one
+   carries `.__exclusive__` on `ASIC/eth-chiplet/build/<tag>/` so the real build
+   tree is not visible in the sandbox at all. The realpath arm is therefore
+   **not** proved by these fixtures — it is proved by `sta_binding.py --selftest`,
+   which builds real directories in a temporary tree.
+
+2. **`pass` closes timing, and the real design does not.** The current candidate
+   fails on setup (WNS -0.049, 4 endpoints), hold (WNS -0.053, 394) and coverage
+   (57,955 untested). A must-pass fixture built from unmodified rows would prove
+   that the check rejects good evidence rather than that it accepts it. The WNS
+   and FEP fields of `pass` are the only numbers changed; `fail-violating`
+   carries the candidate's real setup row verbatim.
+
+3. **`clock_count` tracks `ASIC/sta/sta_policy.json`, not a captured run.** The
+   fixtures carry 52 because that is the committed tripwire; a fixture written to
+   any other number would fail the must-pass case for a reason unrelated to the
+   arm under test. The tripwire was re-pinned from 66 to 52 on 2026-08-26 after
+   the 33-vs-66 question was resolved (`get_db clocks` returns one object per
+   active analysis view, and this MMMC activates two, so the database number is
+   always twice the SDC's). **If that policy value moves again, these fixtures
+   must move with it** — `signoff.py prove` will go red on `sta-signoff/pass`
+   the moment they disagree, which is the intended coupling and not a defect.
+
+`fail-wrong-build` needed no invention: it is `pass` with the build tag replaced
+by the one all six historical runs actually read. It is the load-bearing case —
+`sta_gate.py` grades it **clean**, and only `sta_binding.py` says no.
 
 #### Two edits in `ir-drop/`, stated because they are the only places the bytes are not the tool's
 

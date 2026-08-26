@@ -1,0 +1,25 @@
+# FIXTURE — the manifest as it is: no stage runs static timing analysis.
+# The sta-signoff gap's refuted_by must exit 1 over this file (gap still real).
+#
+# Two decoys, both deliberate. `route` WRITES a timing summary and `ir-drop`
+# is a physical-signoff stage whose id contains no timing word: a probe that
+# grepped the manifest for the string "timing" would call this refuted, and a
+# probe that looked for "signoff" would match half the file. Only a stage
+# whose id IS the analysis counts.
+design: nanosoc_eth_chiplet
+top: nanosoc_eth_chiplet
+stages:
+  - id: route
+    phase: physical
+    gate: block
+    description: "detailed route; writes reports/timing_summary_05_route_opt.rep"
+    run: make route
+  - id: ir-drop
+    phase: physical
+    gate: report
+    description: "static IR drop via Voltus"
+    run: make ir-drop
+unsupported:
+  - id: sta-signoff
+    reason: "fixture"
+    refuted_by: "false"

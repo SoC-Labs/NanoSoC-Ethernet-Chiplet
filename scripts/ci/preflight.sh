@@ -26,6 +26,16 @@
 #   would return DIFFERENT verdicts for the same commit, which is worse than
 #   having no second host at all.
 #
+# WHY A PROBE MUST TEST THE NOUN IT NAMES:
+#   Until 2026-08-26 ci/signoff.yaml declared "No Tempus or PrimeTime installed"
+#   and proved it with `command -v tempus`. Tempus was installed, executable,
+#   and had already run six times. `command -v` is a fact about PATH; the claim
+#   was about INSTALLATION; and because the probe answered a different question
+#   than the one asked, it returned the expected answer every single time and
+#   the declaration became unfalsifiable while looking checked. Every probe
+#   below therefore reports WHERE its answer came from -- a declaration, or a
+#   lucky PATH -- and a resolved-but-unexecutable path is MISSING, not OK.
+#
 # Usage:
 #   scripts/ci/preflight.sh              # human-readable report; exit 1 if unfit
 #   scripts/ci/preflight.sh --labels     # print earned labels only, e.g. "soclabs-sim"
@@ -33,6 +43,7 @@
 #
 # Env overrides (same names the Makefile / verif/lint/run.sh honour):
 #   VERILATOR=<bin>   PYTHON=<bin>   ARM_IP_LIBRARY_PATH=<dir>
+#   TEMPUS_BIN=<bin>  QUANTUS_HOME=<dir>   (or set them in ASIC/sta/site.env)
 #-----------------------------------------------------------------------------
 set -uo pipefail
 
@@ -50,6 +61,17 @@ PDK_DIR="${PDK_DIR:-/tsmc65pdk/65}"
 # this account happens to be in BOTH groups.
 PDK_GROUP="${PDK_GROUP:-tsmc65pdkgrp}"
 
+# Signoff STA tool locations. ONE SOURCE OF TRUTH, and it is not this file:
+# ASIC/sta/run_sta.sh reads ASIC/sta/site.env, so this probe reads the same
+# file rather than carrying a second copy of the answer. A probe that resolves
+# a tool differently from the script that will run it can certify a host the
+# run then fails on -- which is a worse outcome than no probe, because the
+# label says the host was checked.
+#
+# site.env is gitignored and names absolute paths into a licensed install;
+# site.env.example is the committed template.
+STA_SITE_ENV="${STA_SITE_ENV:-$(dirname "$0")/../../ASIC/sta/site.env}"
+
 MODE=report
 REQUIRE=""
 case "${1:-}" in
@@ -63,6 +85,7 @@ esac
 notes=()
 gap_sim=()      # blocks soclabs-sim
 gap_pdk=()      # blocks soclabs-pdk
+gap_sta=()      # blocks soclabs-sta (which also needs everything above)
 
 ok()   { notes+=("OK|$1|${2:-}"); }
 warn() { notes+=("WARN|$1|${2:-}"); }
@@ -160,6 +183,107 @@ for v in SNPSLMD_LICENSE_FILE CDS_LIC_FILE; do
     else warn "$v" "unset — licence checkout may fail"; fi
 done
 
+# --- signoff STA: Tempus and its extractor ----------------------------------
+# NEITHER IS RESOLVED FROM PATH, AND THAT IS THE POINT.
+#
+# The SSV install on the one host that has it is NOT on the default PATH, which
+# is the entire reason signoff STA sat unrun for the whole tapeout: a probe
+# spelled `command -v tempus` returned "absent" on a host where the tool was
+# installed, executable and had already produced six result sets. So this block
+# asks for a DECLARATION -- TEMPUS_BIN and QUANTUS_HOME, from the environment or
+# from ASIC/sta/site.env, exactly as ASIC/sta/run_sta.sh asks for them -- and
+# treats a bare PATH hit as a weaker, reportable second best rather than as the
+# answer.
+#
+# It REFUSES rather than skips. There is no code path here that leaves the
+# host looking fit for STA when STA cannot run on it: every branch either
+# earns soclabs-sta or appends to gap_sta.
+#
+# WHAT THIS PROBE CANNOT DO, stated so nobody reads more into a green than is
+# there: it does not check that the Tempus and Quantus VERSIONS match each
+# other or match the Innovus that wrote the database. A version-skewed
+# extractor against a newer database is a silent-wrong-answer risk, not a
+# crash, so no probe of this shape can catch it -- site.env.example says which
+# releases belong together and that remains a human check.
+#
+# Sourced in a SUBSHELL. site.env is a site-local file this script does not
+# own; dotting it into the running shell would let it redefine PDK_DIR, PATH or
+# the ok/bad functions and silently change every verdict above.
+if [ -r "$STA_SITE_ENV" ]; then
+    _sta_env=$(
+        # shellcheck disable=SC1090
+        . "$STA_SITE_ENV" >/dev/null 2>&1
+        printf '%s\n%s\n' "${TEMPUS_BIN:-}" "${QUANTUS_HOME:-}"
+    )
+    _se_tempus=$(printf '%s' "$_sta_env" | sed -n 1p)
+    _se_quantus=$(printf '%s' "$_sta_env" | sed -n 2p)
+else
+    _se_tempus=""; _se_quantus=""
+fi
+# The environment wins over site.env, matching run_sta.sh.
+TEMPUS_PATH="${TEMPUS_BIN:-$_se_tempus}"
+QUANTUS_ROOT="${QUANTUS_HOME:-$_se_quantus}"
+
+# WHY basename AND NOT THE PATH. The resolved locations are absolute paths into
+# a licensed EDA install, and this output is pasted into issues and CI logs on
+# a public repository. The question a reader has here is "did it resolve, and
+# from where" -- both answerable without reproducing the path. Set
+# PREFLIGHT_SHOW_PATHS=1 when debugging a resolution locally.
+# For a BINARY the basename is "tempus", which answers nothing -- the question
+# a reader has is WHICH RELEASE, and that is the directory two levels up
+# (<release>/bin/tempus). For a ROOT the basename already is the release.
+sta_where() {
+    [ "${PREFLIGHT_SHOW_PATHS:-0}" = 1 ] && { printf '%s' "$1"; return; }
+    if [ -d "$1" ]; then printf '%s' "$(basename -- "$1")"
+    else printf '%s' "$(basename -- "$(dirname -- "$(dirname -- "$1")")")"; fi
+}
+
+if [ -n "$TEMPUS_PATH" ]; then
+    if [ -x "$TEMPUS_PATH" ]; then
+        ok "tempus" "declared, executable ($(sta_where "$TEMPUS_PATH"))"
+    else
+        # A DECLARED PATH THAT DOES NOT EXECUTE IS THE WORST OF THE THREE STATES
+        # and must never fall back to PATH: the fallback would find a different
+        # release and the run would silently analyse with it.
+        bad "tempus" "TEMPUS_BIN is set but is not executable — a stale site.env"
+        gap_sta+=("tempus:declared-but-not-executable")
+    fi
+elif p=$(command -v tempus 2>/dev/null); then
+    warn "tempus" "found on PATH only, NOT declared — set TEMPUS_BIN in ASIC/sta/site.env"
+    TEMPUS_PATH="$p"
+else
+    bad "tempus" "no TEMPUS_BIN in env or ASIC/sta/site.env, and none on PATH"
+    gap_sta+=("tempus")
+fi
+
+# Tempus ships no extractor: it shells out to `qrc` and does not resolve it
+# from its own install, so a missing Quantus surfaces mid-run as IMPEXT-5016
+# ("Command qrc failed ... failed to run") about twenty minutes in. Probe the
+# exact file run_sta.sh puts on PATH, not the directory.
+if [ -n "$QUANTUS_ROOT" ]; then
+    if [ -x "$QUANTUS_ROOT/tools/bin/qrc" ]; then
+        ok "quantus" "declared, qrc executable ($(sta_where "$QUANTUS_ROOT"))"
+    else
+        bad "quantus" "QUANTUS_HOME is set but has no executable tools/bin/qrc"
+        gap_sta+=("quantus:no-qrc-under-declared-root")
+    fi
+elif command -v qrc >/dev/null 2>&1; then
+    warn "quantus" "qrc on PATH only, NOT declared — several older installs also"
+    warn "quantus" "  provide one, and an off-version extractor is wrong, not loud"
+else
+    bad "quantus" "no QUANTUS_HOME in env or ASIC/sta/site.env, and no qrc on PATH"
+    gap_sta+=("quantus")
+fi
+
+# The grader and the build-binding check are plain python and hold no licence,
+# but a host that cannot run them cannot produce an STA verdict either, and
+# discovering that after a twelve-minute Tempus run is the wrong order.
+for s in ASIC/sta/sta_gate.py scripts/ci/sta_binding.py; do
+    if [ -r "$(dirname "$0")/../../$s" ]; then ok "$(basename "$s")" "present"
+    else bad "$(basename "$s")" "absent — STA would run with nothing to grade it"
+         gap_sta+=("$(basename "$s")"); fi
+done
+
 # --- read-only lab collateral ----------------------------------------------
 # ARM_IP is a SIM requirement: the lint's blackbox generation reads CMSDK RTL
 # from it (verif/lint/run.sh), and the elab flists source Corstone/BP210.
@@ -201,6 +325,20 @@ fi
 labels=()
 [ ${#gap_sim[@]} -eq 0 ] && labels+=("soclabs-sim")
 { [ ${#gap_sim[@]} -eq 0 ] && [ ${#gap_pdk[@]} -eq 0 ]; } && labels+=("soclabs-pdk")
+# soclabs-sta IS A THIRD LABEL, NOT A CONDITION ON soclabs-pdk, and the choice
+# is deliberate. Folding Tempus into soclabs-pdk would mean one unreachable SSV
+# install, one moved directory or one stale site.env drops the label that
+# eleven unrelated physical stages depend on, and DRC, LVS, ERC and IR drop
+# would all render UNVERIFIED for a reason none of them has anything to do
+# with. This file already makes exactly that argument about the memory
+# compilers and soclabs-sim. A separate label lets an STA-less host keep doing
+# every other physical gate while being honestly unfit for this one.
+#
+# It is a SUPERSET of soclabs-pdk, not an alternative to it: the routed
+# database's library sets resolve into the PDK, so a host with Tempus and no
+# PDK cannot load the design at all.
+{ [ ${#gap_sim[@]} -eq 0 ] && [ ${#gap_pdk[@]} -eq 0 ] && [ ${#gap_sta[@]} -eq 0 ]; } \
+    && labels+=("soclabs-sta")
 label_csv=$(IFS=,; echo "${labels[*]:-}")
 
 if [ "$MODE" = labels ]; then
@@ -219,8 +357,18 @@ if [ "$MODE" = require ]; then
     # failing must not also list the PDK it never needed — that reads as four
     # problems when there is one.
     case "$REQUIRE" in
+        soclabs-sta) blockers=("${gap_sim[@]:-}" "${gap_pdk[@]:-}" "${gap_sta[@]:-}") ;;
         soclabs-pdk) blockers=("${gap_sim[@]:-}" "${gap_pdk[@]:-}") ;;
         *)           blockers=("${gap_sim[@]:-}") ;;
+    esac
+    # A LABEL NOBODY DERIVES IS NOT A LABEL. `--require` used to answer "not
+    # satisfied" for a typo exactly as it does for a genuinely unfit host, so a
+    # stage asking for a misspelt label would be UNVERIFIED forever and read as
+    # a provisioning problem. Say which of the two it is.
+    case "$REQUIRE" in
+        soclabs-sim|soclabs-pdk|soclabs-sta) ;;
+        *) echo "  NOTE: '$REQUIRE' is not a label this script derives" >&2
+           echo "        (known: soclabs-sim, soclabs-pdk, soclabs-sta)" >&2 ;;
     esac
     for b in "${blockers[@]}"; do
         [ -n "$b" ] && echo "  MISSING: $b" >&2
@@ -243,4 +391,5 @@ else
 fi
 [ ${#gap_sim[@]} -gt 0 ] && echo "  blocks soclabs-sim: ${gap_sim[*]}"
 [ ${#gap_pdk[@]} -gt 0 ] && echo "  blocks soclabs-pdk: ${gap_pdk[*]}"
+[ ${#gap_sta[@]} -gt 0 ] && echo "  blocks soclabs-sta: ${gap_sta[*]}"
 [ ${#gap_sim[@]} -eq 0 ]

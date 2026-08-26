@@ -49,9 +49,9 @@ cost attached, and I have deliberately not made any of them.
 | **D1** | **Does STA gate the shuttle at all?** | The design does not close setup at 100 MHz. If signoff STA is a gate, the shuttle date moves. If it is advisory, say so in writing so the gate is not quietly tuned to pass. |
 | **D2** | **What frequency does this chip sign off at?** | Measured: it closes setup at **≈93 MHz** with no RTL, no constraint and no P&R change. §6. This is by far the cheapest lever and only you can spend it. |
 | **D3** | **Which corners sign off?** | Today exactly two are analysed: SS/1.08 V/125 °C setup, FF/1.32 V/−40 °C hold. `ss_1p08v_m40c` and `ff_1p32v_125c` libraries exist on disk, unused. Adding corners can only find more violations. |
-| **D4** | **Is 0.350 ns clock uncertainty still right post-CTS?** | It is applied on every one of ~30 clocks, post-CTS, on top of propagated latency and CPPR. Some of it is pre-CTS skew allowance that the clock tree now models for real. Recovering 0.25 ns of it is worth ~0.25 ns of WNS across the board — but it is margin you are choosing to give up. |
-| **D5** | **Is flat 5 %/3 % OCV the right derate at 65 nm?** | On an 11.2 ns data path the 1.05 late data derate alone costs ≈0.53 ns. AOCV/LVF would recover much of that and is more defensible than flat OCV — but needs vendor data we do not have (§ (c)). |
-| **D6** | **Does signoff require SI (crosstalk)?** | The 2026-08-17 run has SI **off** — forced, see §5.2. P&R claims "SI On". Getting it back costs a restructured run (SMSC, one view per invocation). |
+| **D4** | **Is 0.350 ns clock uncertainty still right post-CTS?** | It is applied on every one of ~30 clocks, post-CTS, on top of propagated latency and CPPR. ~~Some of it is pre-CTS skew allowance that the clock tree now models for real.~~ **That premise is wrong — corrected 2026-08-26 against the constraint file's own derivation** (`constraints/00_clocks.sdc`, "$CLK_ERROR = 0.35 ns: WHERE IT ACTUALLY COMES FROM"). It is **not** a skew allowance. Against TI SCAS869F the oscillator's RMS phase jitter is 0.85 **ps** — 1/29th of the number even at BER 1e-12. The term that dominates is **output duty-cycle distortion**: 45 %/55 % at 250 MHz is ±0.2 ns. So 0.35 ns ≈ 0.2 ns duty distortion + ~0.01 ns jitter + margin, and the file marks it **"VALUE DELIBERATELY UNCHANGED. It is a signoff margin."** The consequence the file itself flags: duty-cycle distortion only reaches checks that use the **negative** edge. All four failing setup endpoints on gdsrun-20260826-rc1 are rising-launch → rising-capture on a single clock, so most of the 0.35 ns is margin against a mechanism that cannot reach them. That is an argument for **accepting** a −0.049 ns miss with the margin stated — **not** a licence to reduce the constraint, and it carries one caveat: an odd number of inversions in the leaf clock tree turns a source falling edge into a leaf rising edge, which would let duty distortion back in on that leaf. Unverified here. |
+| **D5** | **Is flat 5 %/3 % OCV the right derate at 65 nm?** | On an 11.2 ns data path the 1.05 late data derate alone costs ≈0.53 ns. AOCV/LVF would recover much of that and is more defensible than flat OCV — but needs vendor data we do not have (§ (c)). **Now the single most load-bearing open decision on the shuttle, and MEASURED on gdsrun-20260826-rc1 by a four-point matched control (same DB, same MMMC, same Quantus extraction; only the four `set_timing_derate` lines change):** derate **off** → setup `+0.287 / 0.000 / 0`, hold `−0.014 / −0.025 / 6`; flat **on** → setup `−0.049 / −0.137 / 4`, hold `−0.053 / −2.309 / **394**`; off again → reproduces the first row exactly; on `default_delay_corner_min` **alone** → setup unchanged, hold `−0.053 / −2.309 / 394`. So the guess costs 0.336 ns of setup WNS and turns hold from 6 failing endpoints into 394, and **all** of the hold change is that one corner. The flow itself never sees this: the route session executes no `set_timing_derate`, so route optimisation and the route gate both ran at derate 1.0. |
+| **D6** | **Does signoff require SI (crosstalk)?** | ~~The 2026-08-17 run has SI **off** — forced, see §5.2.~~ **WRONG, corrected 2026-08-26.** SI-aware delay calculation is **ON** and always was: every Tempus report header on gdsrun-20260826-rc1 reads `Signoff Settings: SI On`, and each is preceded by two SI iterations (95.4 % of 223,169 nets selected on iteration 1). Stripping `-si` from the MMMC removes the Celtic `.cdb` **noise models** — characterised glitch data behind `report_noise` — not crosstalk delay, which Tempus computes from the coupling capacitance in the Quantus SPEF (`extract_rc_coupled true`). The real open item is narrower: **noise/glitch analysis** has never run. B3 below is the accurate statement of it; this row was not. |
 | **D7** | **The `-divide_by` constraint class — one decision, three instances** | See §4.7. **Pick whether the SDC describes the shipped configuration only, or every configuration the hardware can be put into.** Everything else follows mechanically, three times. |
 
 ### (c) Blocked on something absent
@@ -59,7 +59,7 @@ cost attached, and I have deliberately not made any of them.
 | # | Blocked item | What is missing |
 |---|---|---|
 | **B1** | **Corner-correct extraction** | Both the Cadence QRC deck and the StarRC deck on site are built from the **typical** ICT. Corner-specific QRC tarballs exist (A7) and will improve this, but the *cap tables* remain modelled on the wrong metal stack (`1p9m_6x2z`, M9 at 0.9 µm) versus the real 6X1Z1U (M9 at 3.4 µm). No 6X1Z1U cap table exists in the ARM set and the TSMC PDK ships none. **Vendor collateral request.** |
-| **B2** | **AOCV / SOCV / LVF derating** | No statistical-derate data in any library on site. Flat OCV is the only option until the vendor package includes it. |
+| **B2** | **AOCV / SOCV / LVF derating** | No statistical-derate data in any library on site. Flat OCV is the only option until the vendor package includes it. **CONFIRMED EXHAUSTIVELY 2026-08-26, and it is a vendor gap, not a search miss.** All four roots fully traversable, zero permission-denied paths. Name search for `*aocv*` / `*socv*` / `*lvf*` / `*derate*` / `*variation*` / `*sigma*`: one hit in the whole PDK and it is a PycellStudio unit test. Content search *inside* all 865 PDK `.lib` files for `ocv_sigma_cell_rise`, `ocv_sigma_cell_fall`, `ocv_std_dev`, `ocv_table_template`, `early_late`, `default_ocv_derate_factor`: **zero**. Same grep over the ARM 65 nm physical IP tree and the precompiled memory tree: **zero**. Every `timing_power_noise` package in the PDK lists only `NLDM`, `ECSM` and (12-track only) `CCS` — there is no `AOCV`/`SOCV`/`LVF` sibling directory anywhere. **The contrastive control is what makes this conclusive:** the same site *does* ship AOCV for 28 nm (543 files, 536 of them `.aocv3`, in directories literally named `aocv/`) and partially for 16 nm. And it cannot be regenerated: the 65 nm ARM memory compilers expose `libertygen`, `lvgen`, `dtgen`, `fastgen` … and **no `aocvgen`**, unlike the 16 nm ROM compiler which has one. The remaining unsearched surface is the PDK PDF set; `pdftotext` over the two most likely documents found no OCV guidance either. |
 | **B3** | **SI with concurrent MMMC** | The noise libraries here are Celtic `.cdb`, which Tempus supports only in SMSC. ECSM/CCS-noise data would remove the restriction entirely. Vendor request. |
 | **B4** | **Hold sign-off on the D2D word clocks** | Not a tool gap — a *constraint* gap, §4.5. Until source latency covers those domains, hold on them is fiction regardless of which STA tool runs. **Now quantified:** Tempus finds 79 hold violations where the flow reported 7 (§5.4). |
 
@@ -411,6 +411,25 @@ much as a design property** — in both directions.
 Also measured: the loaded database has **66 clocks**, not the 33 the SDC
 defines. That gap is unexplained and worth ten minutes in the morning — the
 gate flags it rather than quietly accepting either number.
+
+> **RESOLVED 2026-08-26.** It is not a gap. `get_db clocks` returns one clock
+> object **per active analysis view**, and this MMMC activates exactly two
+> (`set_analysis_view -setup default_analysis_view_setup -hold
+> default_analysis_view_hold`), so the database number is always **2× the SDC
+> number**. Two independent lineages confirm it: 33 SDC clocks → 66 on
+> full-20260814, and 26 SDC clocks → 52 on gdsrun-20260826-rc1. The
+> corroborating tell is that `report_clocks` lists only
+> `default_analysis_view_setup` rows, because Tempus reports in **Late Analysis
+> Mode** by default.
+>
+> The move from 33 declared clocks to 26 is also not a loss: seven
+> `D2D_TX_WORD_CLK_1..7` declarations were deliberately deleted in commit
+> `153025c`, because those transmit lanes are clockless by design and the
+> declarations never resolved a master. 33 − 7 = 26.
+>
+> `sta_policy.json`'s `expected_clock_count` tripwire is re-pinned 66 → 52 with
+> this reasoning recorded beside it. It stays a tripwire: it is change
+> detection, not a requirement.
 
 ### 5.5 The coverage hole, measured for the first time
 

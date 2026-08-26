@@ -1,0 +1,20 @@
+# FIXTURE — the day the gap closes: a stage in the manifest runs signoff STA.
+# The sta-signoff gap's refuted_by must exit 0 over this file, which makes
+# `signoff.py lint` go red and forces this declaration to be rewritten.
+design: nanosoc_eth_chiplet
+top: nanosoc_eth_chiplet
+stages:
+  - id: route
+    phase: physical
+    gate: block
+    description: "detailed route"
+    run: make route
+  - id: sta-signoff
+    phase: physical
+    gate: report
+    description: "Tempus signoff STA over the routed DB, graded by sta_gate.py"
+    run: ASIC/sta/run_sta.sh
+unsupported:
+  - id: sta-signoff
+    reason: "fixture"
+    refuted_by: "false"

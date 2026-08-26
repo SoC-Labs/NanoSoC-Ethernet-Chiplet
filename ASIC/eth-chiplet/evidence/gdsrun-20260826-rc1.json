@@ -20,6 +20,11 @@
   ],
   "lvs_report": "ASIC/eth-chiplet/build/rc1eco-20260826/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep",
   "sta_run": "ASIC/sta/work/gdsrun-20260826-rc1",
+  "clp_runs": {
+    "cpf": "ASIC/eth-chiplet/build/gdsrun-20260826-rc1-clp/cpf",
+    "upf": "ASIC/eth-chiplet/build/gdsrun-20260826-rc1-clp/upf"
+  },
+  "antenna_run": "ASIC/genus-innovus/calibre_runs/ant_rc1v3r4_0826",
   "publish": {
     "project": "ethchip",
     "block": "nanosoc_eth_chiplet_pads",
@@ -60,11 +65,11 @@
     },
     {
       "id": "hold-fep",
-      "what": "hold FEP 16, WNS -0.012 ns, per this run's own route_gate.txt. max_transition FEP 6, worst -1.331. Setup did not fail its budget.",
-      "decision": "Carried, as on the 25-Aug lineage. Reported, not gated, and measured PRE-FILL.",
+      "what": "REWRITTEN 2026-08-26 after the first signoff STA. The entry this replaces said 'hold FEP 16, WNS -0.012 ns, per this run's own route_gate.txt ... Setup did not fail its budget ... measured PRE-FILL', and three of those four claims were wrong or have since been overtaken. WHAT IS ACTUALLY TRUE. (a) IN-FLOW, per this run's own route_gate.txt and route_manifest.txt: hold FEP 16 / WNS -0.012 / TNS -0.036, max_transition FEP 6 / worst -1.331 / TNS -4.661. (b) NOT pre-fill: route_manifest.txt says `gate_numbers_from post-fill pnr_hold_summary`, and the numbers match timing_summary_06_post_fill.rep, not the 05_route_opt one. (c) AT SIGNOFF, Tempus 21.11 over this build's routed DB and a Quantus QRC extraction: hold FEP 394 / WNS -0.053 / TNS -2.309, and setup FEP 4 / WNS -0.049 / TNS -0.137. So setup DID go negative and hold is 25x the carried number. (d) WHY THE TWO COLUMNS DIFFER, MEASURED not argued: the in-flow numbers carry NO OCV DERATE. The routed database persists a timingderate.sdc for typical_delay_corner only, and the route session (work/innovus.log2) executes no set_timing_derate at all -- so route optimisation and the route gate both ran at derate 1.0 on default_delay_corner_max AND default_delay_corner_min. run_signoff_sta.tcl re-issues 0.95/1.05 data, 0.97/1.03 clock on every corner. A four-point matched-control probe on the same database, same MMMC, same extraction, changing ONLY those four set_timing_derate lines: derate off -> setup +0.287/0.000/0, hold -0.014/-0.025/6 ; flat derate on -> setup -0.049/-0.137/4, hold -0.053/-2.309/394 ; derate off again -> +0.287/0/0 and -0.014/-0.025/6, i.e. the control reproduces in both directions ; derate on default_delay_corner_min ALONE -> setup unchanged at +0.287/0/0, hold -0.053/-2.309/394, i.e. 100 percent of the hold degradation is that one corner's derate and nothing else. Matched at derate 1.0 the two tools agree on hold to 2 ps (Tempus -0.014/6 vs Innovus -0.012/16); the residual 0.278 ns setup gap at matched derate is extraction (in-flow extract_rc_effort medium vs Quantus QRC signoff) and its size is consistent with a 82-level setup path against 2-3-level hold paths.",
+      "decision": "CARRIED, and the reason has changed. It is no longer 'a small hold number we are tolerating' -- it is 'both timing numbers are a function of an OCV derate nobody can source'. There is no AOCV, SOCV or LVF data for this technology anywhere on site: searched /tsmc65pdk (865 .lib files grepped for ocv_sigma/ocv_std_dev/ocv_table_template/early_late/default_ocv_derate_factor, zero hits), the ARM 65 nm physical IP tree, and the precompiled memory tree, all fully traversable with no permission-denied paths. The contrastive control is what settles it: the same site DOES ship AOCV for 28 nm (543 files, 536 of them .aocv3) and partially for 16 nm, and the 65 nm ARM memory compilers have no aocvgen view generator, so the data cannot be regenerated either. The flow's own scripts call the 0.95/1.05/0.97/1.03 factors a GUESS in as many words. Signing off at that guess is defensible ONLY as a stated margin, and this run does state it. NOT WAIVED, NOT GATED GREEN: the sta-signoff gate FAILS on both setup FEP 4 and hold FEP 394 and is left failing.",
       "person": "flow owner",
       "date": "2026-08-26",
-      "withdraw_when": "before a production tapeout, or if setup WNS goes negative"
+      "withdraw_when": "The old condition -- 'before a production tapeout, or if setup WNS goes negative' -- HAS ALREADY TRIGGERED: signoff setup WNS is -0.049. Leaving it written as an unmet future condition was the entry contradicting itself, so it is replaced. The new condition is a DECISION, not a threshold: this entry is withdrawn when the tapeout owner rules on which derate this design signs off at. If the ruling is the flat 0.95/1.05/0.97/1.03 guess, then 394 hold endpoints and 4 setup endpoints must be FIXED, not carried, and a hold fix at that scale is a post-route delay-cell insertion whose last attempt on this design inserted 62,729 instances and drove setup WNS from +0.001 to -0.729 (recorded in the constraints file's own history) -- so it is a schedule decision as much as a timing one. If the ruling is that an unsourceable derate cannot be a signoff condition and the design signs off underived, then the honest numbers are setup +0.287/0/0 and hold -0.014/-0.025/6, the 6 remaining hold endpoints are the real carried defect, and THIS entry becomes an ordinary small-hold-FEP carry again. Either way the derate must be ruled on explicitly and written down, because it is currently being chosen by which tool happens to run."
     },
     {
       "id": "pg-opens-and-dangling",
@@ -109,16 +114,6 @@
       "id": "ir-drop",
       "asserts": "static IR drop on the database this stream came from",
       "why": "the ir-drop stage in ci/signoff.yaml is pinned to build fp1505. The 1.32%-worst figure on the record was measured on the rzG lineage and does NOT cover this run: this is a fresh synthesis, placement, CTS and route, so neither the instance set nor the power grid it solved over is the one here."
-    },
-    {
-      "id": "upf-power-intent",
-      "asserts": "the CPF/UPF power intent this run emitted is consistent with the netlist",
-      "why": "check_cpf does not run: the Conformal Low Power licence is not available on this site. outputs/..._gate1.cpf and ..._gate2.upf are written and shipped UNVERIFIED."
-    },
-    {
-      "id": "antenna-foundry-deck",
-      "asserts": "the foundry antenna deck is clean on this stream",
-      "why": "the router-level check_process_antenna is NOT the foundry deck, and no foundry antenna run exists for this stream. imec's 204/204 zero belongs to the pinfix lineage."
     },
     {
       "id": "po-r8-post-merge",

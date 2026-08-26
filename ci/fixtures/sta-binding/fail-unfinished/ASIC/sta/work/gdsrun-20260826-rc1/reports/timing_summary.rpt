@@ -1,0 +1,9 @@
+#################################################################################
+# Design Name: nanosoc_eth_chiplet_pads
+# Design Mode: 65nm
+# Analysis Mode: MMMC OCV
+# Parasitics Mode: SPEF/RCDB
+# Signoff Settings: SI On
+#################################################################################
+# SETUP                   WNS       TNS   FEP
+ View : ALL             0.012     0.000     0
