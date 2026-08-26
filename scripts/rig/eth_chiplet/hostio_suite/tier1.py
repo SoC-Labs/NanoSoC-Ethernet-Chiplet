@@ -25,6 +25,7 @@ Deliberate deviations from the plan, each justified in the test's own note():
 """
 
 from harness import Adp, Reply, test, Rec, HZ  # noqa: F401  (HZ unused: Tier 1 is read-only)
+import harness as harness_module  # for LOADED_MODULES only; see _residue_drift_check()
 
 # ---------------------------------------------------------------------------
 # Declaration order == execution order. Plan §3 Phase A3 / B1..B5.
@@ -864,6 +865,83 @@ def hio_102(adp, rec):
 
 
 # ---------------------------------------------------------------------------
+# RESIDUE THIS SUITE ITSELF LEAVES IN ETH DMEM WORD 0.
+#
+# HIO-107's witness lives at 0x18000000, and Tier 2's HIO-205 overwrites ALL 16 KB
+# of eth DMEM including word 0 (its own `destroys=` string says so). So once Tier 2
+# has run in this power cycle, word 0 holds OUR pattern, not the die's answer, and
+# any conclusion drawn from it would be an accusation against silicon for something
+# a sibling test did.
+#
+# WHY THIS IS A LOCAL COPY AND NOT AN IMPORT: CONTRACT.md is explicit -- "Nothing
+# else is shared. One file per agent, no collisions." Tier modules import from
+# harness and from nothing else. A copy can drift, so _residue_drift_check() below
+# cross-checks it opportunistically against the loaded tier2_3 module WITHOUT
+# importing it, and records when it could not.
+#
+# Values are the terminal state each Tier-2 phase leaves at the base address:
+_DMEM_RESIDUE = {
+    0xA5A5A5A5: "PAT_B, the LAST fill of tier2_3's _ram_battery -- the normal "
+                "post-HIO-205 state of eth DMEM word 0",
+    0x5A5A5A5A: "PAT_A, the first of _ram_battery's two complementary fills",
+    0x7FFFFFFF: "the terminal write of _walking_ones_zeros (polarity 'zeros', k=31)",
+    0x18000000: "_address_uniqueness's datum -- each location is given its OWN "
+                "ABSOLUTE ADDRESS, so word 0 holds 0x18000000",
+    0x00000000: "an F-fill of zero -- but ALSO what a cold die and a zero-init "
+                "image read, so this one is ambiguous by nature (see the note)",
+}
+
+_RESIDUE_XCHECK = {"PAT_A": 0x5A5A5A5A, "PAT_B": 0xA5A5A5A5}
+
+
+def _residue_drift_check(rec):
+    """Cross-check the local residue copy against tier2_3, if the harness loaded it.
+
+    Reads harness.LOADED_MODULES -- harness state, not a sibling import -- so this
+    never creates a dependency and never fails a run. It only makes DRIFT VISIBLE:
+    a silently stale copy would start excusing the wrong values, or stop excusing
+    the right ones.
+    """
+    mods = getattr(harness_module, "LOADED_MODULES", None) if harness_module else None
+    t23 = mods.get("tier2_3") if isinstance(mods, dict) else None
+    if t23 is None:
+        rec.record("residue_xcheck", "tier2_3 not loaded in this run -- local copy "
+                                     "used unverified")
+        return
+    drift = {}
+    for name, mine in _RESIDUE_XCHECK.items():
+        theirs = getattr(t23, name, None)
+        if theirs is None:
+            drift[name] = "absent from tier2_3 (renamed?)"
+        elif theirs != mine:
+            drift[name] = "tier2_3 says %s, this copy says %s" % (_h(theirs), _h(mine))
+    rec.record("residue_xcheck", drift or "agrees with tier2_3")
+    if drift:
+        rec.note("RESIDUE TABLE HAS DRIFTED from tier2_3: %s. This table is what stops "
+                 "HIO-107 blaming CPU0 for a pattern Tier 2 wrote, so a stale entry "
+                 "either excuses a real fault or accuses the die of our own residue. "
+                 "Reconcile it." % drift)
+
+
+def _classify_witness(dmem0, neighbour):
+    """(kind, why, corroborated) for a non-marker eth DMEM word 0.
+
+    kind is 'residue' (a pattern this suite writes) or 'unexplained' (the genuine
+    finding). `corroborated` says whether the NEIGHBOURING word agrees with the same
+    fill -- a lone word holding PAT_B with an untouched neighbour is not a fill.
+    """
+    if dmem0 not in _DMEM_RESIDUE:
+        return "unexplained", None, None
+    why = _DMEM_RESIDUE[dmem0]
+    if neighbour is None:
+        return "residue", why, None
+    # _address_uniqueness gives each word its own address; every other phase is a
+    # uniform fill.
+    expect = 0x18000004 if dmem0 == 0x18000000 else dmem0
+    return "residue", why, (neighbour == expect)
+
+
+# ---------------------------------------------------------------------------
 # Which program the die's eth boot ROM carries. THE TWO TARGETS DIFFER.
 #
 #   "smoke_remap"     FPGA. Links SystemCoreClock; its .data[0] initialiser is
@@ -899,6 +977,17 @@ CPU0_RAN_MARKER = 0x05F5E100        # SystemCoreClock initialiser, FPGA image on
               "bit2 MUST be set. That direction can never be wrong on either target, "
               "and it reds on the genuine contradiction of CPU0 having executed while "
               "the gate says it was never released. "
+              "ORDERING DEPENDENCY, WHICH IS A REAL CONSTRAINT ON THE BRING-UP "
+              "SEQUENCE: this test's POSITIVE half is only meaningful BEFORE TIER 2 "
+              "HAS RUN IN THIS POWER CYCLE. Its witness is eth DMEM word 0, and "
+              "HIO-205 overwrites all 16 KB of eth DMEM including word 0 — its own "
+              "destroys= string says so and tells you to capture HIO-107 first. After "
+              "Tier 2 the word holds one of this suite's own fill patterns, so the "
+              "check reports INCONCLUSIVE with witness_destroyed_by naming the "
+              "pattern, and never a red against CPU0: a test must not draw a "
+              "conclusion about the DUT from a value it knows a sibling wrote. Only a "
+              "POWER CYCLE restores it. A value that is neither the marker nor a known "
+              "pattern is still a genuine red. "
               "WHY THE CONVERSE IS NOT ASSERTED BY DEFAULT: the old test read "
               "'bit2 == 1 AND word 0 != 0x05F5E100' as 'released but never executed'. "
               "On ASIC that combination is the HEALTHY state, because the ASIC eth ROM "
@@ -963,18 +1052,81 @@ def hio_107(adp, rec):
 
     # ---- the FPGA-only converse, gated on a declared image --------------------
     if ETH_ROM_IMAGE == "smoke_remap":
-        rec.record("hio107_crosscheck_strength", "full (bidirectional)")
-        rec.record("hio107_crosscheck_executable", 1)
-        rec.check("FPGA image declared: gate bit2 == 1 => eth DMEM word 0 == "
-                  "0x05F5E100 (SystemCoreClock initialiser)",
-                  (not released) or witness, got=_h(dmem0))
-        if released and not witness:
-            rec.note("INCONSISTENT on a declared smoke_remap die: the gate is open but "
-                     "the SystemCoreClock initialiser is absent (word 0 = %s). CPU0 was "
-                     "released and did not execute its scatter-load. Corroborate with "
-                     "HIO-105's reset_info_cpu0_lockupreset_bit2 — CPU0 released into "
-                     "blank IMEM faults immediately, and that latches the lockup cause "
-                     "if lockupreseten is on." % _h(dmem0))
+        _residue_drift_check(rec)
+
+        if witness or not released:
+            # Either the witness is there, or the gate is shut and the converse says
+            # nothing. Nothing to excuse; assert as before.
+            rec.record("hio107_crosscheck_strength", "full (bidirectional)")
+            rec.record("hio107_crosscheck_executable", 1)
+            rec.check("FPGA image declared: gate bit2 == 1 => eth DMEM word 0 == "
+                      "0x05F5E100 (SystemCoreClock initialiser)",
+                      (not released) or witness, got=_h(dmem0))
+            return
+
+        # Gate open, witness absent. BEFORE blaming CPU0, ask whether this suite
+        # wrote the value we are looking at.
+        neighbour = _rd(adp, rec, 0x18000004, "eth DMEM word 1 (residue corroboration)")
+        rec.record("eth_dmem_word1", neighbour)
+        kind, why, corroborated = _classify_witness(dmem0, neighbour)
+        rec.record("witness_classification", kind)
+
+        if kind == "unexplained":
+            rec.record("hio107_crosscheck_strength", "full (bidirectional)")
+            rec.record("hio107_crosscheck_executable", 1)
+            rec.check("FPGA image declared: gate bit2 == 1 => eth DMEM word 0 == "
+                      "0x05F5E100 (SystemCoreClock initialiser)",
+                      False, got=_h(dmem0))
+            rec.note("INCONSISTENT on a declared smoke_remap die, and NOT explained by "
+                     "this suite's own residue: the gate is open but word 0 is %s, "
+                     "which is neither the SystemCoreClock initialiser nor any pattern "
+                     "Tier 2 writes (%s). CPU0 was released and did not execute its "
+                     "scatter-load. Corroborate with HIO-105's "
+                     "reset_info_cpu0_lockupreset_bit2 — CPU0 released into blank IMEM "
+                     "faults immediately, and that latches the lockup cause if "
+                     "lockupreseten is on."
+                     % (_h(dmem0), ", ".join(_h(k) for k in sorted(_DMEM_RESIDUE))))
+            return
+
+        # ---- our own residue. INCONCLUSIVE, never a red against the die. ----
+        rec.record("hio107_crosscheck_strength", "NOT EXERCISED — witness destroyed")
+        rec.record("hio107_crosscheck_executable", 0)
+        rec.record("witness_destroyed_by", "%s (%s)" % (_h(dmem0), why))
+        rec.record("witness_residue_corroborated",
+                   None if corroborated is None else int(corroborated))
+
+        ambiguous = (dmem0 == 0x00000000)
+        rec.target_defer(
+            "FPGA image declared: gate bit2 == 1 => eth DMEM word 0 == 0x05F5E100",
+            prop="eth_dmem_word0", got=_h(dmem0), expected=_h(CPU0_RAN_MARKER),
+            would_have_held=None,
+            reason="WITNESS DESTROYED BY A PRIOR TIER 2 RUN — power-cycle the die to "
+                   "restore it. Word 0 holds %s: %s. This is not evidence about CPU0, "
+                   "it is this suite's own residue, so no conclusion is drawn from "
+                   "it%s." % (_h(dmem0), why,
+                              " (and note this particular value is ambiguous: it is "
+                              "also what a cold die reads)" if ambiguous else ""))
+
+        if ambiguous:
+            rec.note("eth DMEM word 0 reads 0x00000000 with the gate OPEN. This is "
+                     "GENUINELY AMBIGUOUS and is deliberately not called either way: "
+                     "zero is what an F-fill of zero leaves, AND what a cold die reads "
+                     "if CPU0 never ran. One word cannot separate them. To resolve: "
+                     "POWER-CYCLE and run HIO-107 BEFORE Tier 2 — then a zero here is "
+                     "real evidence that CPU0 did not scatter-load.")
+        else:
+            rec.note("WITNESS DESTROYED BY A PRIOR TIER 2 RUN, not by the die. eth "
+                     "DMEM word 0 holds %s — %s. HIO-205's own destroys= string names "
+                     "word 0 explicitly and tells you to capture HIO-107 first. The "
+                     "neighbouring word %s the same fill, so the residue reading is %s. "
+                     "NOTHING IS CONCLUDED ABOUT CPU0 HERE: power-cycle the die and run "
+                     "HIO-107 before Tier 2 to exercise the positive half."
+                     % (_h(dmem0), why,
+                        "confirms" if corroborated else "does NOT confirm",
+                        "solid" if corroborated
+                        else "WEAKER THAN IT LOOKS — a lone word matching a test "
+                             "pattern without the fill around it is worth a second "
+                             "look before dismissing it"))
     elif ETH_ROM_IMAGE == "stage0_bootrom":
         rec.record("hio107_crosscheck_strength", "NOT EXECUTABLE on this image")
         rec.record("hio107_crosscheck_executable", 0)
