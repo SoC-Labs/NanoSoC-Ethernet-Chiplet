@@ -2587,13 +2587,36 @@ def _selftest_targets(ck, n_target, out):
     tck("an OPEN QUESTION and an ESTABLISHED ABSENCE are different kinds of None",
         (a.to_dict()["open_questions"], list(a.to_dict()["established_absent"])),
         (["dma_powered", "fcsm_state_map", "phy_oui", "subword_rmw_supported",
-          "timer0_owned_by_firmware", "write_path_control_addr"],
+          "timer0_owned_by_firmware"],
          ["cpu0_ran_marker"]))
     tck("...and both still defer, so the distinction is documentation, not licence",
         (a.expect("cpu0_ran_marker").asserted,
          a.expect("dma_powered").asserted), (False, False))
     tck("the fpga census overlay can STRENGTHEN a class, not only relax one",
         f.census_class(0x20000FC8, targets.CLS_D)[0], targets.CLS_D)
+    tck("the write-path control is NOT an eth IMEM word on either target",
+        (f.write_path_control_addr, a.write_path_control_addr),
+        (0x2100000C, 0x2100000C))
+    tck("...and both declare the tag that must read back there",
+        (f.write_path_control_tag, a.write_path_control_tag),
+        (0x0BADC0DE, 0x0BADC0DE))
+    tck("ABORT GATE 8 no longer has to defer on silicon for want of a control",
+        a.known("write_path_control_addr"), True)
+    tck("IMEM liveness is UNKNOWN on the fpga, not False -- a loader can flip it "
+        "mid power cycle", f.eth_imem_live_code, None)
+    tck("UNKNOWN liveness is treated as LIVE: only an explicit False permits an "
+        "overwrite", [x.eth_imem_safe_to_overwrite() for x in (f, a, t)],
+        [False, False, False])
+    tck("...and the raw property is the footgun the accessor exists to avoid "
+        "(None is falsy, so `if t.eth_imem_live_code` reads unknown as safe)",
+        bool(f.eth_imem_live_code), False)
+    tck("a loader that DID declare an empty IMEM unlocks it",
+        targets.apply_env(targets.resolve("fpga_kr260"),
+                          {"HOSTIO_ETH_IMEM_LIVE": "0"}).eth_imem_safe_to_overwrite(),
+        True)
+    tck("every profile carries the tier-2-destroys-firmware note, `unknown` too",
+        [any("DESTROYS ANY LOADED FIRMWARE" in n for n in x.notes)
+         for x in (f, a, t)], [True, True, True])
     tck("asking about a property that does not exist RAISES, never answers False",
         _raises(f.known, "fabric_mhz"), "KeyError")
 
