@@ -11,6 +11,67 @@ the ZynqMP PS AXI bus with no timeout (JTAG-POR-only recovery).
 | `mdio_scan2.py` | Is a PHY fitted? MDIO sweep with **stability, uniqueness and plausibility** tests. | writes only ETHMAC MDIO regs |
 | `rd21f8_eth.py` | Reads the read-path sticky witness at SoC `0x2E0321F8` (marker `0xB5`). | read-only |
 
+## The HOSTIO4 debug port — start here
+
+`hostio_suite/` and `hostio_fw/` were added 2026-08-25/26 and are **not** backdoor
+tools. They reach the SoC through the 7-wire HOSTIO4/ADP debug port, which drives
+the `debug_m` AHB master. That matters because **the `eth_ss_0` backdoor every
+other tool here uses does not exist on a packaged die** — it is an internal SoC
+port, reachable on the KR260 only because the Vivado wrapper wires Zynq HPM0_FPD
+to it inside the PL. On silicon the complete external-host inventory is SWD, which
+has never returned a DPIDR on these boards, and HOSTIO4.
+
+| Directory | What it is |
+|---|---|
+| `hostio_adp.py` | The minimal client. Read/write/shell over the port. Read its header first — it documents three measured traps that cost a day. |
+| `hostio_suite/` | 87-test functional suite, tiers 0-5, with a target profile (`--target fpga_kr260 \| asic_tsmc65 \| unknown`). |
+| `hostio_fw/` | Three Cortex-M0 images (CPU1 park, heartbeat, MDIO probe) plus `fw_load.py`, which installs one over the ADP `U` command. |
+
+### Running the suite
+
+The RP2350 debugger is on `mapstone-dev`; the host's own `python3` is 3.6 and too
+old, so use a venv with `pyserial`.
+
+```
+python3 harness.py --port /dev/ttyACM4 --target fpga_kr260 \
+        --die-id <label> --timestamp <ISO> --tier 1 --json out.json
+```
+
+`--target` defaults to **`unknown`**, which defers target-dependent assertions
+rather than inheriting FPGA values — deliberate, so a first-silicon operator who
+forgets it gets data rather than a wall of false reds. `--selftest` and `--list`
+need no hardware. Destructive and hazardous tiers refuse to run without an
+explicit `--allow-*` flag.
+
+**Read `hostio_suite/CONTRACT.md` before editing a tier module.** It is the pinned
+API, and tier modules may import `harness` and nothing else.
+
+### Three things that will bite you
+
+1. **The resync watchdog must be live.** A starved one returns 0/16 reads that
+   look exactly like dead silicon. This is the single easiest way to misdiagnose
+   the port, and it has happened twice.
+2. **Running Tier 2 destroys any loaded firmware.** `HIO-203`/`204` carpet all
+   32 KB of eth IMEM and `HIO-208` carpets shared SRAM, and nothing in tiers 0-4
+   can restart CPU0. Firmware-dependent tests run **before** Tier 2, or the image
+   is reloaded after.
+3. **The debug-port firmware preload works on FPGA and NOT on ASIC.** The FPGA eth
+   ROM (`smoke_remap`) jumps to IMEM without writing it; the ASIC ROM
+   (`stage0_bootrom`) copies a flash image over IMEM first. On silicon the route
+   is the QSPI flash boot table.
+
+### Where the reference values live
+
+`hostio_suite/golden_fpga_reference.json` holds the hand-measured constants, the
+error-class addresses, and — importantly — the values that are **state-dependent
+and must never be asserted**. It also records two traps that have already misled
+people: `0x18000000` is `SystemCoreClock`, a firmware build constant and **not** a
+clock register; and `0x20000000` is the DMA-250 config aperture, so DMA power
+state is settled only by the IIDR at `0x20000FC8`.
+
+Full plan and procedure: `docs/bringup/HOSTIO4_FUNCTIONAL_TEST_PLAN.md` and
+`docs/bringup/ASIC_FIRST_SILICON_HOSTIO_PROCEDURE.md`.
+
 ## Why `rd21f8_eth.py` exists
 
 `~/td/rd21f8.py`, staged on the boards, reads **`0x840321F8`** — the bare-link
