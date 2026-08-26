@@ -1868,6 +1868,13 @@ try_step "manifest" {
     if {$have_drc} {
         mf $fh drc_total     $DRCF(total)
         mf $fh drc_trailer   $DRCF(trailer)
+        # HOW THE ZERO WAS EARNED. `drc_trailer -1` with `drc_attested
+        # clean-sentinel` is a report Innovus wrote with no violations in it;
+        # `drc_trailer -1` with an empty `drc_attested` is a file nobody can
+        # read. Those two must never look alike in a manifest either.
+        mf $fh drc_declared  $DRCF(declared)
+        mf $fh drc_attested  [expr {$DRCF(attested) ne "" ? $DRCF(attested) : "(none)"}]
+        mf $fh drc_command   [expr {$DRCF(cmd) ne "" ? $DRCF(cmd) : "(none)"}]
         mf $fh drc_classes   $DRCF(classes)
         mf $fh drc_special   $DRCF(special)
         mf $fh drc_regular   $DRCF(regular)
