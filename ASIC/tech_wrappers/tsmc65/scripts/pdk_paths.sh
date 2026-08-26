@@ -58,6 +58,7 @@
 #   gdsout-map          foundry GDS stream-out layer map for this metal option
 #   drc-ruledeck        foundry Calibre DRC rule deck for this metal stack
 #   bnd-ruledeck        foundry Calibre BND (wire-bond pad-ring) deck, same stack
+#   ant-ruledeck        foundry Calibre ANTENNA deck for this metal LAYER COUNT
 #   base-lef            standard-cell abstract LEF
 #   io-pad-lef          bond-pad LEF for this metal stack
 #   stdcell-vlog        standard-cell Verilog (power-aware) for GLS
@@ -206,6 +207,27 @@ resolve() {
             "$TSMC_65_HOME"/CMOS/LP/pdk/Calibre/drc/wire_bond/CN65_WIRE_BOND_"$stack_full".*
         ;;
 
+    ant-ruledeck)
+        # THE ANTENNA DECK IS KEYED ON THE LAYER COUNT ALONE, not on the full
+        # stack. drc-ruledeck and bnd-ruledeck both glob on $stack_full because
+        # their rule bodies encode the metal OPTION (widths, spacings, which
+        # metals are thick). The antenna family does not: the installed set is
+        # one file per metal COUNT, and the option-dependent parts are behind
+        # the deck's own switches instead. Globbing on $stack_full here would
+        # resolve nothing and read as "no antenna deck on this site", which is
+        # exactly the false absence this key was added to remove -- the
+        # evidence spec carried "no foundry antenna run exists" as a NOT-
+        # MEASURED reason while the deck sat installed and readable.
+        #
+        # $stack_full is <n>M_<opt>; the layer count is the part before the
+        # first underscore. Derived, never spelled, same rule as everything
+        # else here.
+        resolve_anchor
+        local layers=${stack_full%%_*}
+        pick_one "the foundry ANTENNA rule deck for a ${layers} stack" \
+            "$TSMC_65_HOME"/CMOS/util/ANTENNA_DRC/CN65S_"$layers"_ANT.*
+        ;;
+
     base-lef)
         pick_one "the standard-cell LEF" \
             "$TSMC_65_HOME"/CMOS/LP/stclib/9-track/tcbn65lp-set/tcbn65lp_*_FE/TSMCHOME/digital/Back_End/lef/tcbn65lp_*/lef/tcbn65lp_9lmT2.lef
@@ -333,7 +355,8 @@ resolve() {
     esac
 }
 
-ALL_KEYS="tech-lef gdsout-map drc-ruledeck bnd-ruledeck base-lef io-pad-lef stdcell-vlog
+ALL_KEYS="tech-lef gdsout-map drc-ruledeck bnd-ruledeck ant-ruledeck
+          base-lef io-pad-lef stdcell-vlog
           io-vlog lvs-deck lvs-source-added stdcell-cdl iodrv-cdl pad-cdl
           metal-stack metal-option
           arm-target-lib arm-db-dir arm-stdcell-verilog-dir arm-tf-file

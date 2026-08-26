@@ -12,77 +12,53 @@
 #
 # WHY THIS FILE EXISTS
 # --------------------
-# The boot ROMs are MASK PROGRAMMED. Wrong bits are a dead die, unfixable after
-# tapeout. Until 2026-08-13 the only ROM check in the flow was `romlibs-verify`,
-# which asserted that four files existed and were non-empty. It passed for
-# months while:
+# The boot ROMs are MASK PROGRAMMED: wrong bits are a dead die, unfixable after
+# tapeout, and nothing else in the flow — not synthesis, not P&R, not LEC, not
+# DRC — looks at their contents. A gate asserting only that four files exist and
+# are non-empty passes a ROM holding random data AND a ROM holding a valid but
+# DIFFERENT program; this project has shipped both. THE ONLY ACCEPTABLE CRITERION
+# IS EXACT EQUALITY, word for word, against the code file the firmware build
+# produced.
 #
-#   * ASIC/romlibs/eth_rom held RANDOM contents  — word 0 is 0x5b679892, not a
-#     4-byte-aligned Cortex-M initial stack pointer, and it matches none of the
-#     .bintxt images in the tree;
-#   * ASIC/romlibs/cc_rom held REAL, PLAUSIBLE FIRMWARE — a valid vector table,
-#     zero-padding, the lot — but A DIFFERENT PROGRAM from the one its spec
-#     names: only ~135 of its 512 words coincide with that image.
-#
-# The two failures do not look alike. A gate that asks "does this look random?"
-# passes cc_rom; a gate that compares modification times catches neither
-# reliably, because cc_rom is the wrong program rather than an old copy of the
-# right one. THE ONLY ACCEPTABLE CRITERION IS EXACT EQUALITY, word for word,
-# against the code file the firmware build produced.
-#
-# THE CAUSE, which is cheaper to catch than the symptom
-# -----------------------------------------------------
-# The eth code file comes from a CMake target that is explicitly NOT in the
-# default build (nanosoc-multicore-system/firmware/bootloader/stage0_bootrom/
-# CMakeLists.txt:53 — "# Not added to ALL"). Handed a missing or short code
-# file, the Arm ROM compiler does NOT fail: it substitutes contents and emits a
-# perfectly well-formed macro. So `romlibs-verify-static` below refuses to let a
-# ROM build start, or a synthesis run proceed, when the code file is absent,
-# empty, malformed, or shorter than the macro depth.
-#
-# THE TRAP IN THE OBVIOUS FIX
-# ---------------------------
-# "Just rebuild the ROMs" walks into a second defect: both macros on disk were
-# compiled 512 words deep (A[8:0]) while both specs in ASIC/tech_wrappers/tsmc65
-# say `words = 2048`, and both RTL wrappers drive an 11-bit address. Rebuilding
-# from today's specs produces an 11-bit-address macro that no longer matches the
-# placed LEF/GDS. `romlibs-verify-static` fails loudly on that four-way
-# disagreement (spec / wrapper / macro / code file) rather than letting anyone
-# rebuild into it.
+# TWO FAILURE MODES THIS GATE IS SHAPED AROUND
+#   * A MISSING OR SHORT CODE FILE DOES NOT FAIL THE COMPILER. It substitutes
+#     contents and emits a perfectly well-formed macro. (The eth code file comes
+#     from a CMake target deliberately not in the default build.) So
+#     `romlibs-verify-static` refuses to let a build start, or a synthesis run
+#     proceed, on a code file that is absent, empty, malformed or shorter than
+#     the macro depth.
+#   * "JUST REBUILD THE ROMs" CAN MAKE IT WORSE. A spec depth that disagrees with
+#     the RTL wrapper and the placed macro produces a macro matching neither.
+#     The static gate fails loudly on that four-way disagreement (spec / wrapper
+#     / macro / code file) rather than letting anyone rebuild into it.
 #
 # WHAT EACH TARGET IS FOR
 # -----------------------
-#   romlibs-verify          the gate. files + static + content. Runs BEFORE
-#                           synthesis (ASIC/genus-innovus/Makefile: `syn`
-#                           depends on romlibs-check, which calls this), so a
-#                           bad ROM costs seconds, not a licence hour.
+#   romlibs-verify          the gate: files + static + content. Runs BEFORE
+#                           synthesis, so a bad ROM costs seconds, not a licence
+#                           hour.
 #   romlibs-verify-files    the four files Genus opens exist and are non-empty.
-#                           THIS PROVES NOTHING ABOUT CONTENT — it is kept only
-#                           because a missing .lib is a distinct, common failure
-#                           that deserves its own message.
-#   romlibs-verify-static   spec / wrapper / macro / code-file agreement, and
-#                           the code file's own well-formedness. No checker, no
-#                           licence, milliseconds.
-#   romlibs-verify-content  the word-for-word comparison. Delegated to
+#                           PROVES NOTHING ABOUT CONTENT — kept only because a
+#                           missing .lib deserves its own message.
+#   romlibs-verify-static   spec / wrapper / macro / code-file agreement and the
+#                           code file's well-formedness. No tool, milliseconds.
+#   romlibs-verify-content  the word-for-word comparison, delegated to
 #                           scripts/ci/rom_verify.py ($(ROM_VERIFY)).
-#   romlibs-verify-gds      the same question asked of the MERGED STREAM: are
-#                           the bits that reached the GDS the firmware? Needs a
-#                           bit extractor ($(ROM_GDS_EXTRACT)).
-#   romlibs-selftest        mutation test: proves this gate can FAIL, and can
+#   romlibs-verify-gds      the same question asked of the MERGED STREAM: are the
+#                           bits that reached the GDS the firmware? Needs the
+#                           extractor ($(ROM_GDS_EXTRACT)).
+#   romlibs-selftest        mutation test proving this gate can FAIL and can
 #                           still PASS. A gate nobody has seen fail is a rumour.
 #
-# HOW THIS GATE IS BUILT, AND WHY IT LOOKS PARANOID
-# -------------------------------------------------
-#   * The checker's EXIT CODE IS NEVER THE VERDICT. Its JSON artefact must
-#     exist, be non-empty, parse, name the exact rom-dir and code-file it was
-#     pointed at, and carry a verdict. Exit code and verdict must AGREE — if
-#     they disagree the gate fails, because one of them is lying.
-#   * A MISSING INPUT IS A FAILURE, NEVER A SKIP. No checker, no code file, no
-#     spec, no JSON: all hard failures. The classic way a gate like this dies
-#     silently is a path that resolves to nothing, so it finds no files and
-#     therefore reports no problems.
-#   * NOTHING IS GATED ON A BARE COUNT. Every assertion names the object it is
-#     about: this ROM, this word index, this spec key, this file.
+# THREE RULES THE WHOLE FILE OBEYS
+#   * THE CHECKER'S EXIT CODE IS NEVER THE VERDICT. Its JSON must exist, parse,
+#     name the exact rom-dir and code file it was pointed at, and carry a
+#     verdict; exit code and verdict must AGREE, or the gate fails because one of
+#     them is lying.
+#   * A MISSING INPUT IS A FAILURE, NEVER A SKIP. A path that resolves to nothing
+#     finds no files and therefore reports no problems.
+#   * NOTHING IS GATED ON A BARE COUNT. Every assertion names its object: this
+#     ROM, this word index, this spec key, this file.
 #-----------------------------------------------------------------------------
 
 # The checker (owned by scripts/ci/rom_verify.py). `?=` so a test harness can
@@ -90,85 +66,63 @@
 # that does not write the JSON artefact fails the post-conditions below.
 ROM_VERIFY      ?= $(NANOSOC_ETH_CHIPLET_HOME)/scripts/ci/rom_verify.py
 
-# THE STREAM-OUT GATE IS THE TOOLKIT'S NOW. This file keeps the TABLE.
+# THE STREAM-OUT MECHANISM IS THE TOOLKIT'S; THIS FILE KEEPS THE TABLE.
+# Extract, prove the artefacts belong to THIS stream, prove the macro is actually
+# instanced, stamp a verdict, collect the evidence — none of that is about this
+# die, so it lives in ASIC/asic-toolkit/mk/rom.mk. What stays here is what only
+# this project can say: which ROMs exist, where their code files are, and what
+# the stream being gated IS.
 #
-# The mechanism -- extract, prove the artefacts belong to THIS stream, prove the
-# macro is actually instanced, stamp a verdict, collect the evidence -- moved to
-# ASIC/asic-toolkit/mk/rom.mk on 2026-08-18, because none of it is about this
-# die. What stays here is what only this project can say: which ROMs exist,
-# where their code files are, and what the stream being gated actually IS.
-#
-# The extractor moved with it, to
-# $(ASIC_TOOLKIT_DIR)/scripts/asic-flow-rom-gds-bits. scripts/ci/rom_gds_bits.py
-# is now a FORWARDER to that one program, so the path in docs/tapeout/34 still
-# works and there is exactly ONE implementation. Two copies of a decoder is a
-# trap this tree has already been caught in.
+# scripts/ci/rom_gds_bits.py is a FORWARDER to the toolkit extractor, so old
+# paths still work against exactly ONE implementation. Two copies of a decoder is
+# a trap this tree has already been caught in.
 ASIC_TOOLKIT_DIR ?= $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/asic-toolkit
 ROM_TOOLKIT_MK   ?= $(ASIC_TOOLKIT_DIR)/mk/rom.mk
 ROM_GDS_EXTRACT  ?= $(ASIC_TOOLKIT_DIR)/scripts/asic-flow-rom-gds-bits
 
 # ── THIS FILE OWNS THE ROM GATE HERE, SO THE TOOLKIT'S COPY STAYS OUT ──────
 #
-# The toolkit's mk/flow.mk includes mk/rom.mk BY DEFAULT (it used to be opt-in,
-# which is how this fork came to exist unnoticed in the first place). Both files
-# define `rom-vars`, and mk/rom.mk also defines `rom-compiler-stage`, which
-# ASIC/common.mk:444 defines too. GNU make does not refuse a redefinition: it
-# prints "overriding recipe for target" and silently keeps the LAST one - and
-# the toolkit's is last, because design.mk includes common.mk (and so this
-# file) at line 65 and mk/flow.mk at line 522.
-#
-# MEASURED, with this line removed:
-#   mk/rom.mk:533: warning: overriding recipe for target 'rom-vars'
-#   ASIC/rom_gate.mk: warning: ignoring old recipe for target 'rom-vars'
-#   mk/rom.mk:939: warning: overriding recipe for target 'rom-compiler-stage'
-#   ASIC/common.mk:444: warning: ignoring old recipe for target 'rom-compiler-stage'
-# `rom-vars` happens to print identically (the toolkit's recipe reads THIS
-# file's table), but `rom-compiler-stage` is a different recipe entirely, and a
-# silently substituted ROM compiler stage is not something to discover later.
+# The toolkit's mk/flow.mk includes mk/rom.mk by default. Both files define
+# `rom-vars`, and mk/rom.mk also defines `rom-compiler-stage`, which ASIC/
+# common.mk defines too. GNU make does not refuse a redefinition: it warns
+# "overriding recipe for target" and silently keeps the LAST one — the toolkit's,
+# because design.mk includes common.mk (and so this file) before mk/flow.mk.
+# `rom-vars` happens to print identically, but `rom-compiler-stage` is a
+# different recipe entirely, and a silently substituted ROM compiler stage is not
+# something to discover later.
 #
 # So this project declares that it supplies the `rom` fragment itself. DELETE
-# THIS LINE when the fork below is retired in favour of $(ROM_TOOLKIT_MK), which
-# is the whole point of keeping the two in step - and re-run
-# `make -C ASIC/eth-chiplet rom-vars` when you do: it must stay warning-free.
+# THIS LINE when the fork below is retired in favour of $(ROM_TOOLKIT_MK), and
+# re-run `make -C ASIC/eth-chiplet rom-vars`: it must stay warning-free.
 ASIC_FLOW_SKIP_MK += rom
 
 # ── THE RUN'S OWN TREE, DERIVED FROM THE STREAM UNDER TEST ─────────────────
 #
-# Two defects share one cause, and one derivation closes both. Found 2026-08-18
-# by two sessions independently.
-#
-# 1. GEOMETRY CAME FROM A TREE THAT IS NOT THE RUN'S. This gate extracts
-#    <words> x <bits> from the stream and takes those numbers from the macro's
-#    metadata -- but ROMLIBS_DIR points at the SHARED ASIC/romlibs, not at the
-#    macros this run actually merged. They are byte-identical today (md5'd, both
-#    trees), so the result stands; the safety rests on a coincidence. The day
-#    they diverge, the gate extracts another macro's geometry and PASSES.
-#
-# 2. THE EVIDENCE WAS UNREACHABLE. build/rom_verify is gitignored AND sits at
-#    the repo root, outside $(ASIC_DIR) -- and scripts/ci/package_submission.sh
-#    collects exactly one reports tree, $(ASIC_DIR)/reports. So a submission
-#    bundle could be assembled, pass its own checks, and contain NO evidence
-#    that the mask-programmed boot ROMs were ever compared against the firmware.
-#    The ROMs are the one thing on this die that cannot be fixed after tapeout.
-#
 # THE STREAM NAMES ITS OWN RUN. Gating .../build/<tag>/outputs/<block>.gds means
 # the run root is .../build/<tag>, which holds both that run's romlibs/ and the
-# reports/ tree the packager collects. Nothing else has to be passed, and no
-# RUN_DIR is needed here (it is only defined in eth-chiplet/design.mk, which is
-# not in scope in a common.mk context -- that is what blocked this before).
+# reports/ tree a submission packager collects. Nothing else has to be passed.
 #
-# CONSERVATIVE BY CONSTRUCTION. Every redirect is guarded on the artefact
-# actually existing, and falls back to today's behaviour otherwise. With no
-# ROM_GDS -- i.e. `romlibs-verify`, the paper gate -- nothing changes at all.
+# That derivation closes two holes at once:
+#   1. GEOMETRY FROM THE WRONG TREE. The gate takes <words> x <bits> from the
+#      macro's metadata. Read from the SHARED ASIC/romlibs rather than the macros
+#      this run merged, it measures another macro's geometry and PASSES the day
+#      the two trees diverge.
+#   2. UNREACHABLE EVIDENCE. build/rom_verify is gitignored AND outside
+#      $(ASIC_DIR), and scripts/ci/package_submission.sh collects exactly one
+#      reports tree, $(ASIC_DIR)/reports. A bundle could pass its own checks and
+#      contain NO evidence that the boot ROMs were ever compared to the firmware.
+#
+# CONSERVATIVE BY CONSTRUCTION: every redirect is guarded on the artefact really
+# existing and falls back to the previous behaviour otherwise. With no ROM_GDS —
+# i.e. `romlibs-verify`, the paper gate — nothing changes at all.
 ROM_GDS_RUN_ROOT   := $(if $(strip $(ROM_GDS)),$(abspath $(dir $(ROM_GDS))/..),)
 
 # Trust the run's romlibs only if BOTH macros' metadata is really there. A
 # partial tree would otherwise fail the gate on a stream that is fine.
 ROM_RUN_ROMLIBS    := $(if $(ROM_GDS_RUN_ROOT),$(ROM_GDS_RUN_ROOT)/romlibs,)
-# $(strip) IS LOAD-BEARING. A backslash-continuation inside $(if ...) keeps the
-# leading whitespace of the next line, so the unstripped form yields " /path"
-# and every ROM_DIR_<r> below becomes " /path/<rom>". Caught 2026-08-18 by
-# reading `rom-vars` output rather than assuming the expansion was clean.
+# $(strip) IS LOAD-BEARING: a backslash continuation inside $(if ...) keeps the
+# leading whitespace of the next line, so the unstripped form yields " /path" and
+# every ROM_DIR_<r> below becomes " /path/<rom>".
 ROMLIBS_EFFECTIVE  := $(strip $(if $(and \
                         $(wildcard $(ROM_RUN_ROMLIBS)/eth_rom/eth_rom_via.memlib),\
                         $(wildcard $(ROM_RUN_ROMLIBS)/cc_rom/rom_via.memlib)),\
@@ -177,25 +131,22 @@ ROMLIBS_EFFECTIVE  := $(strip $(if $(and \
 # ── AND ASSERT IT, RATHER THAN LEAVING THE KNOB FOR SOMEONE TO REMEMBER ────
 #
 # ROM_GDS_GEOM_ROOT makes the geometry source a CHECK instead of a printed note.
-# It is set here only when the geometry actually came from the run's own tree --
-# if the guards above fell back to the shared ASIC/romlibs, declaring the run
-# root would fail every ROM for being outside it, which is a false failure and
-# would train someone to switch the assertion off.
+# It is set only when the geometry really came from the run's own tree: if the
+# guards above fell back to the shared ASIC/romlibs, declaring the run root would
+# fail every ROM for being outside it — a false failure, and the kind that trains
+# someone to switch the assertion off.
 #
-# Proven to discriminate, 2026-08-18, both directions on the real fp1505 stream:
-#   correct run tree -> "geometry containment asserted for memlib against .../fp1505", PASS
-#   wrong run tree   -> "the memlib ... is OUTSIDE the declared run tree", FAIL
-# The toolkit only applies containment to run-emitted artefacts (the .memlib);
-# the .spec is a checked-in request shared by every run, is recorded in the
-# manifest, and is answered for by rom_verify.py's provenance check instead.
+# The toolkit applies containment only to run-emitted artefacts (the .memlib).
+# The .spec is a checked-in request shared by every run, recorded in the manifest
+# and answered for by rom_verify.py's provenance check instead.
 ROM_GDS_GEOM_ROOT ?= $(strip $(if $(filter $(ROM_RUN_ROMLIBS),$(ROMLIBS_EFFECTIVE)),\
                        $(ROM_GDS_RUN_ROOT),))
 
-# Evidence: into the run's own reports/ when we are gating that run's stream, so
-# the packager collects it BY CONSTRUCTION rather than by someone remembering an
-# override. Falls back to the old gitignored location otherwise -- which is
-# still where the paper gate writes, and is still not collected. Guarded on
-# outputs/ so an arbitrary --gds path cannot make us scatter directories.
+# Evidence lands in the run's own reports/ when we are gating that run's stream,
+# so a packager collects it BY CONSTRUCTION. It falls back to the gitignored
+# build/rom_verify otherwise — where the paper gate writes, and which is still
+# not collected. Guarded on outputs/ so an arbitrary --gds path cannot scatter
+# directories.
 ROM_VERIFY_DIR  ?= $(strip $(if $(wildcard $(ROM_GDS_RUN_ROOT)/outputs),\
                      $(ROM_GDS_RUN_ROOT)/reports/rom,\
                      $(NANOSOC_ETH_CHIPLET_HOME)/build/rom_verify))
@@ -214,30 +165,26 @@ ROMS := eth cc
 
 # -- What the stream-out gate needs to know about THIS die -------------------
 #
-# WHICH ARTEFACT. This project deliberately produces two GDSs that are not the
-# same file: the un-logoed SIGNOFF stream at build/<tag>/outputs/<block>.gds,
-# which the DRC and LVS numbers are quoted against, and a logo-merged SUBMISSION
-# stream selected by SUBMIT_GDS, which is what actually ships. The logo is
-# merged in a SEPARATE step after write_stream, precisely so a DRC count can
-# never be quoted against the wrong file -- and a bundle has already once been
-# built carrying the wrong one.
+# WHICH ARTEFACT. This project produces two GDSs that are not the same file: the
+# un-logoed SIGNOFF stream at build/<tag>/outputs/<block>.gds, which the DRC and
+# LVS numbers are quoted against, and a logo-merged SUBMISSION stream selected by
+# SUBMIT_GDS, which is what ships. The logo is merged in a separate step after
+# write_stream precisely so a DRC count cannot be quoted against the wrong file.
 #
 # The defaults below describe THE WIRED INVOCATION: ASIC/genus-innovus/Makefile
 # runs this gate on the un-logoed signoff stream after route and after restream.
-# That is a true statement about what the flow gates today, not a guess about
-# whatever path a human passes on the command line -- which is why the basis
-# records where the label comes from rather than just asserting it.
+# ROM_GDS_CLASS_BASIS records where that label comes from rather than asserting
+# it.
 #
-# GATING THE STREAM THAT SHIPS is one line, and it is the line a promotion or a
+# GATING THE STREAM THAT SHIPS is one line, and it is the line a promotion or
 # submission step must use:
 #
 #   make -f ASIC/common.mk romlibs-verify-gds ROM_GDS=<logo-merged>.gds \
 #        ROM_GDS_CLASS=submission ROM_GDS_SHIPS=yes ROM_GDS_REQUIRE_SHIPPING=1
 #
-# No fp1505 logo-merged stream exists yet, so if fp1505 is promoted the logo
-# merge happens afterwards and THAT stream will never have been through this
-# gate. The ROM bits almost certainly survive a logo merge. "Almost certainly"
-# is the phrase this gate exists to remove.
+# No logo-merged stream has been through this gate. The ROM bits almost certainly
+# survive a logo merge; "almost certainly" is the phrase this gate exists to
+# remove.
 ROM_GDS_CLASS       ?= signoff
 ROM_GDS_CLASS_BASIS ?= declared:genus-innovus gates the un-logoed stream at build/<tag>/outputs
 ROM_GDS_SHIPS       ?= no
@@ -246,24 +193,22 @@ ROM_GDS_SHIPS       ?= no
 ROM_GDS_PLACEMENTS_eth ?= 1
 ROM_GDS_PLACEMENTS_cc  ?= 1
 
-# The compiler's own content view, for the independence report. Measured
-# 2026-08-18: *_verilog.rcf and the .bintxt are BYTE-IDENTICAL for both ROMs,
-# because the compiler produced one from the other. That does NOT weaken the
-# stream-out gate -- its other side is decoded out of the GDS -- but it does
-# mean any gate whose two sides are the .rcf and the .bintxt is a mirror, and
-# that belongs on the record rather than being rediscovered.
+# The compiler's own content view, for the independence report. *_verilog.rcf and
+# the .bintxt are BYTE-IDENTICAL for both ROMs, because the compiler produced one
+# from the other. That does not weaken the stream-out gate — its other side is
+# decoded out of the GDS — but any gate whose two sides are the .rcf and the
+# .bintxt is a mirror, and that belongs on the record.
 ROM_CODE_PEER_eth ?= $(ROM_DIR_eth)/eth_rom_via_verilog.rcf
 ROM_CODE_PEER_cc  ?= $(ROM_DIR_cc)/rom_via_verilog.rcf
 
 # -- Declared sim/silicon divergence -----------------------------------------
 # The eth simulation boot ROM is a gitignored MUTABLE SLOT materialised per
-# environment: 55 cocotb environments install a smoke variant and 2 install the
+# environment: most cocotb environments install a smoke variant, two install the
 # silicon image, because the silicon bootloader requires a QSPI XiP handshake
 # that IMEM-preload environments do not model. Regenerating the slot would
-# self-revert on the next build and would be a false green. So this is a
-# DECLARED EXCEPTION, hash-scoped, and it stays visible as [ALLOW-LISTED].
-#
-# Reason and evidence: docs/tapeout/44-eth-rom-sim-divergence.md
+# self-revert on the next build and be a false green, so this is a DECLARED
+# EXCEPTION, hash-scoped, and it stays visible as [ALLOW-LISTED].
+# Evidence: docs/tapeout/44-eth-rom-sim-divergence.md
 ROM_SIM_ALLOW_eth        ?= sha256:9d5fa954ceb646f51aaf5f40f615380dc4296760ca533846ebb553d20434d504
 ROM_SIM_ALLOW_REASON_eth ?= sim ROM is a per-environment smoke image; the silicon bootloader needs a QSPI XiP handshake. Evidence: docs/tapeout/44-eth-rom-sim-divergence.md
 ROM_SIM_ALLOW_cc         ?=
@@ -271,64 +216,51 @@ ROM_SIM_ALLOW_REASON_cc  ?=
 
 # ── Geometry for the SIMULATION readback gate (mk/gls.mk, `make gls-rom`) ───
 #
-# DERIVED FROM THE ONE EXISTING SPELLING, NOT RE-STATED. $(ROM_EXPECT_WORDS)
-# lives in rom_build.mk and is already cross-checked against $(ROM_ADDR_BITS)
-# there, with an $(error) if the two disagree -- because "two spellings of one
-# fact" is exactly how the 512-vs-2048 disagreement survived on this project.
-# A third independent copy here would re-open that hole in a new place.
+# DERIVED FROM THE ONE EXISTING SPELLING, NOT RE-STATED. $(ROM_EXPECT_WORDS) is
+# defined in rom_build.mk and cross-checked there against $(ROM_ADDR_BITS) with
+# an $(error) if they disagree. A third independent copy here would re-open the
+# hole those two close.
 #
-# The gate REFUSES to infer these from the .rcf, and that refusal is the point:
-# a truncated content file would otherwise define a shorter ROM and then match
-# itself perfectly. Measured 2026-08-17 - an under-declared depth of 256 against
-# these 512-word macros passed a .rcf whose top half was garbage, and printed
-# "every word matches the firmware". Declared here, cross-checked against the
-# artefacts by the runner before any simulator starts.
+# The gate REFUSES to infer these from the .rcf, and that refusal is the point: a
+# truncated content file would otherwise define a shorter ROM and then match
+# itself perfectly. An under-declared depth of 256 against these 512-word macros
+# passes a .rcf whose top half is garbage while printing "every word matches the
+# firmware". Declared here, cross-checked against the artefacts before any
+# simulator starts.
 #
-# Both ROMs are the same shape. A die whose ROMs differ sets them per ROM.
+# Both ROMs are the same shape; a die whose ROMs differ sets them per ROM.
 #
-# `$$` IS LOAD-BEARING. common.mk includes THIS file at :605 and rom_build.mk -
-# where $(ROM_EXPECT_WORDS) is defined - at :613, eight lines later. A plain
-# `$(ROM_EXPECT_WORDS)` here is expanded by $(eval) immediately, finds nothing,
-# and assigns EMPTY; `?=` then treats the variable as set, so nothing later
-# fixes it and `make gls-rom` reports the depth as undeclared. Escaping the
-# dollar defers expansion to use time, by which point rom_build.mk has been
-# read. Measured 2026-08-17: the un-escaped form left GLS_ROM_WORDS_eth empty
-# while GLS_ROM_BITS_eth resolved fine, because ROM_EXPECT_BITS is defined on
-# the line above and ROM_EXPECT_WORDS is not.
+# `$$` IS LOAD-BEARING. common.mk includes THIS file BEFORE rom_build.mk, where
+# ROM_EXPECT_WORDS is defined. A plain $(ROM_EXPECT_WORDS) is expanded by
+# $(eval) immediately, finds nothing and assigns EMPTY; `?=` then treats the
+# variable as set, so nothing later fixes it. Escaping the dollar defers
+# expansion to use time, by which point rom_build.mk has been read.
 ROM_EXPECT_BITS ?= 32
 $(foreach r,$(ROMS),$(eval GLS_ROM_WORDS_$(r) ?= $$(ROM_EXPECT_WORDS)))
 $(foreach r,$(ROMS),$(eval GLS_ROM_BITS_$(r)  ?= $$(ROM_EXPECT_BITS)))
 
-# ROM_SIM_<r> is the SIMULATION boot ROM — the behavioural .sv the RTL flows
-# and the FPGA build read. The checker compares it too, because "the ASIC ROM
-# and the ROM everyone simulates hold different programs" is a defect nobody
-# would otherwise see. A difference is a WARNING, not a failure: sim and ASIC
-# may legitimately diverge. Set ROM_SIM_<r>=none to state that explicitly —
-# it becomes --no-sim-check, which the checker prints. Leaving the file simply
-# missing is NOT that statement, and fails.
+# ROM_SIM_<r> is the SIMULATION boot ROM — the behavioural .sv the RTL flows and
+# the FPGA build read. The checker compares it too, because "the ASIC ROM and the
+# ROM everyone simulates hold different programs" is a defect nobody would
+# otherwise see. A difference is a WARNING, not a failure: sim and ASIC may
+# legitimately diverge. Set ROM_SIM_<r>=none to state that explicitly (it becomes
+# --no-sim-check, which the checker prints). A file simply missing is NOT that
+# statement, and fails.
 ROM_SIM_RTL_DIR ?= $(NANOSOC_MULTICORE_HOME)/src/rtl/bootrom
 
 # ROM_WRAP_<r> — the ASIC RTL wrapper that binds the hard macro.
 #
 # THESE MUST BE THE SUBMODULE COPIES UNDER nanosoc-multicore-system, because
 # THOSE ARE THE FILES THE FLIST COMPILES (nanosoc_multicore_asic.flist, and the
-# build/chip/flist/soc.flist generated from it). Do not "simplify" these back to
-# $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/ — that is the mistake
-# this comment exists to prevent.
+# build/chip/flist/soc.flist generated from it). Do not "simplify" them back to
+# $(NANOSOC_ETH_CHIPLET_HOME)/ASIC/tech_wrappers/tsmc65/: hand-copies there once
+# made this gate report two geometry failures per ROM against RTL that nothing
+# builds, while the compiled wrappers were correct — and, worse, a genuine width
+# defect in a compiled wrapper would have been invisible. tech_wrappers/tsmc65
+# still owns the ROM .spec files, the pad wrapper and the pad LEF, just not these.
 #
-# Until 2026-08-14 they pointed at a pair of STALE HAND-COPIES that used to sit
-# in ASIC/tech_wrappers/tsmc65/. Those copies still declared word_addr[10:0] and
-# .TA(11'd0) into a 512-word A[8:0] macro, long after the real wrappers were
-# fixed. The gate therefore reported two geometry FAILURES PER ROM against RTL
-# THAT NOTHING BUILDS, while the wrappers that do get compiled were correct.
-# Four red lines, zero real defects — and, far worse, the reverse was equally
-# possible: a genuine width defect in the compiled wrapper would have been
-# invisible, because the gate was not reading that file. The stale copies were
-# deleted in the same change; ASIC/tech_wrappers/tsmc65 still legitimately owns
-# the ROM .spec files, the pad wrapper and the pad LEF, just not these two.
-#
-# ROM_FLIST below turns this from a convention into an assertion: rom-static-%
-# fails if ROM_WRAP_<r> is not a file the flist actually compiles.
+# ROM_FLIST turns that from a convention into an assertion: rom-static-% fails if
+# ROM_WRAP_<r> is not a file the flist actually compiles.
 ROM_FLIST ?= $(NANOSOC_MULTICORE_HOME)/flist/nanosoc_multicore_asic.flist
 ROM_WRAP_DIR ?= $(NANOSOC_MULTICORE_HOME)/syn/asic/tech_wrappers/tsmc65
 
@@ -372,9 +304,9 @@ rom-vars:
 #-----------------------------------------------------------------------------
 # The gate
 #-----------------------------------------------------------------------------
-# All three sub-gates RUN, then the verdict. Not `romlibs-verify: a b c`, which
-# would stop at the first failure and hide the other two — and the two ROMs on
-# this die fail differently, so a partial picture is a misleading one.
+# All three sub-gates RUN, then the verdict — not `romlibs-verify: a b c`, which
+# would stop at the first failure. The two ROMs on this die fail differently, so
+# a partial picture is a misleading one.
 romlibs-verify:
 	@mkdir -p $(ROM_VERIFY_DIR)
 	@# The pass stamp is deleted FIRST. It records a pass that happened; it must
@@ -402,25 +334,22 @@ romlibs-verify:
 # romlibs-content-hashes — the flat file every P&R run manifest reads
 #
 # The toolkit's stage scripts write a PROVENANCE block into every stage manifest
-# (flow/common/provenance.tcl), and a boot ROM's content hash is one of its
-# fields — because two builds of "the same design" whose ROMs differ are not the
-# same design, and a comparison between their reports is meaningless. That block
-# READS this file. It does not compute a hash of its own: a second implementation
-# of "what is in this ROM" is a second thing to be wrong, and the two would agree
-# until the day they did not.
+# (flow/common/provenance.tcl) and a boot ROM's content hash is one of its
+# fields: two builds of "the same design" whose ROMs differ are not the same
+# design, and comparing their reports is meaningless. That block READS this file
+# rather than computing its own hash — a second implementation of "what is in
+# this ROM" is a second thing to be wrong.
 #
-# So this is an EXTRACTION from the JSON the checker has already written — the
+# The value is an EXTRACTION from the JSON the checker already wrote: the
 # PHYSICAL bit-cell programming decoded out of the transistor-level netlist,
 # which is the only view that describes silicon.
 #
-# Written ONLY after the gate has passed. A tree whose ROM gate has not passed
+# WRITTEN ONLY AFTER THE GATE HAS PASSED. A tree whose ROM gate has not passed
 # has no file here, every stage manifest records UNVERIFIED for its ROMs, and
-# `asic-flow-compare-runs` REFUSES to diff that run against any other. That is
-# the point, not a side effect: a build on unverified ROMs must not be quietly
-# compared against one on verified ROMs, and it has been.
+# `asic-flow-compare-runs` refuses to diff that run against any other.
 #
-# Mirrors the toolkit's mk/rom.mk `rom-content-hashes`. This file is a project-
-# side fork of that one; keep the two in step.
+# Mirrors the toolkit's mk/rom.mk `rom-content-hashes`; this is a project-side
+# fork, keep the two in step.
 #
 # Format, one line per ROM:  <name> <content sha256> <code-file sha256>
 #-----------------------------------------------------------------------------
@@ -514,14 +443,31 @@ romlibs-verify-content:
 	    echo "      in this flow compares a single ROM word against the firmware."; \
 	    exit 1; }
 	@mkdir -p $(ROM_VERIFY_DIR)
+	@# The eth sim ROM is a gitignored slot. Materialise the tracked default if
+	@# nothing has installed a variant -- see bootrom-slot-ensure in common.mk.
+	@$(MAKE) -f $(COMMON_MK) --no-print-directory bootrom-slot-ensure
 	@fail=""; for r in $(ROMS); do \
 	    $(MAKE) -f $(COMMON_MK) --no-print-directory rom-verify-$$r || fail="$$fail $$r"; \
 	done; \
 	if [ -n "$$fail" ]; then \
+	    content=""; precond=""; \
+	    for r in $$fail; do \
+	        if [ -s "$(ROM_VERIFY_DIR)/$$r.json" ]; then content="$$content $$r"; \
+	        else precond="$$precond $$r"; fi; \
+	    done; \
 	    echo ""; \
-	    echo "FAIL: ROM CONTENT IS WRONG FOR:$$fail"; \
-	    echo "      These ROMs are MASK PROGRAMMED. Wrong bits are a dead die."; \
-	    echo "      Evidence: $(ROM_VERIFY_DIR)/<rom>.{log,json}"; \
+	    if [ -n "$$precond" ]; then \
+	        echo "FAIL: THE ROM GATE COULD NOT RUN FOR:$$precond"; \
+	        echo "      A PRECONDITION failed -- an input file is missing -- and the content"; \
+	        echo "      checker never started. NOTHING HAS BEEN SAID ABOUT THESE ROMs'"; \
+	        echo "      CONTENTS, in either direction. This is NOT a wrong-bits finding."; \
+	        echo "      The FAIL line above names the absent file."; \
+	    fi; \
+	    if [ -n "$$content" ]; then \
+	        echo "FAIL: ROM CONTENT IS WRONG FOR:$$content"; \
+	        echo "      These ROMs are MASK PROGRAMMED. Wrong bits are a dead die."; \
+	        echo "      Evidence: $(ROM_VERIFY_DIR)/<rom>.{log,json}"; \
+	    fi; \
 	    exit 1; \
 	fi; \
 	echo "OK: content verified for: $(ROMS)"
@@ -545,7 +491,12 @@ rom-verify-%:
 	@# A sim ROM that is simply ABSENT is not a statement about anything, and
 	@# the checker rightly fails on it. Say so here, where the path is visible.
 	@test "$(ROM_SIM_$*)" = "none" -o -s "$(ROM_SIM_$*)" || { \
-	    echo "FAIL: [$(ROM_LABEL_$*)] no simulation boot ROM at $(ROM_SIM_$*)."; \
+	    echo "FAIL: [$(ROM_LABEL_$*)] SIM BOOT ROM FILE IS MISSING -- a missing FILE, not"; \
+	    echo "      wrong bits. The compiled macro's contents are not in question here."; \
+	    echo "      expected: $(ROM_SIM_$*)"; \
+	    echo "      For eth that path is a gitignored MUTABLE SLOT; the tracked default is"; \
+	    echo "      eth_ss_bootrom_default.sv beside it. Materialise it with:"; \
+	    echo "        make -C $(NANOSOC_ETH_CHIPLET_HOME)/ASIC -f common.mk bootrom-slot-ensure"; \
 	    echo "      Point ROM_SIM_$* at it, or set ROM_SIM_$*=none to state on the record"; \
 	    echo "      that the sim view is not being compared. Silence is not a statement."; exit 1; }
 	@# A declared exception is validated and PRINTED before the checker runs.
@@ -584,36 +535,32 @@ rom-verify-%:
 # macro is merged into the GDS by write_stream, from a $gds_merge_list that is
 # maintained by hand in scripts/config.tcl.
 #
-# THE MECHANISM IS NOT HERE ANY MORE. It is $(ROM_TOOLKIT_MK)'s `rom-gate-gds`,
-# which since 2026-08-18 also
-#
-#   * writes a per-ROM manifest recording WHICH STREAM was measured -- absolute
-#     path, sha256, size, mtime -- and refuses to report a pass from artefacts
-#     whose recorded stream is not the one being gated. Before that, the only
-#     record was free text on line 1 of a log in a single mutable slot, and on
-#     2026-08-18 at 08:21 a superseded build's artefacts sitting in that slot
-#     were read as a live failure of the current shipping candidate;
-#   * ASSERTS that the macro is actually INSTANCED in the stream, instead of
-#     printing the count. The standalone macro .gds2 extracts perfectly and
-#     diffs clean while saying nothing about the die;
+# THE MECHANISM IS $(ROM_TOOLKIT_MK)'s `rom-gate-gds`, which also
+#   * writes a per-ROM manifest recording WHICH STREAM was measured — absolute
+#     path, sha256, size, mtime — and refuses to report a pass from artefacts
+#     whose recorded stream is not the one being gated. Without it, a superseded
+#     build's artefacts sitting in a mutable slot read as a live failure of the
+#     current candidate;
+#   * ASSERTS that the macro is actually INSTANCED in the stream instead of
+#     printing the count. The standalone macro .gds2 extracts perfectly and diffs
+#     clean while saying nothing about the die;
 #   * refuses to measure a stream whose CLASS is undeclared, and names it in
 #     every verdict;
 #   * writes one portable evidence artefact a packager can collect.
 #
-# This target stays, because it is the documented entry point and
+# This target stays because it is the documented entry point and
 # ASIC/genus-innovus/Makefile wires it after `pnr_route` and after `restream`.
-# It is now a thin delegation carrying this die's table across.
+# It is a thin delegation carrying this die's table across.
 #
 #   make -f ASIC/common.mk romlibs-verify-gds ROM_GDS=/path/to/design.gds
 #-----------------------------------------------------------------------------
 ROM_GDS ?=
 
-# Where the evidence lands. Pointed at the run's own reports tree, this is
-# collected by whatever packages a submission BY CONSTRUCTION rather than by
-# someone remembering; left at the default it is under build/, which is
-# gitignored and outside $(ASIC_DIR)/reports -- i.e. reachable on this host and
-# nowhere else. Not relocated by default here: an in-flight invocation whose
-# evidence silently moves is its own incident.
+# Where the evidence lands. Pointed at the run's own reports tree it is collected
+# by whatever packages a submission BY CONSTRUCTION; left at the default it is
+# under build/, gitignored and outside $(ASIC_DIR)/reports — i.e. reachable on
+# this host and nowhere else. Not relocated by default: an in-flight invocation
+# whose evidence silently moves is its own incident.
 #   make -f ASIC/common.mk romlibs-verify-gds ROM_GDS=... \
 #        ROM_VERIFY_DIR=$(NANOSOC_ETH_CHIPLET_HOME)/ASIC/eth-chiplet/build/<tag>/reports/rom
 
@@ -654,17 +601,15 @@ romlibs-verify-gds:
 #-----------------------------------------------------------------------------
 # Mutation test — can this gate fail, and can it still pass?
 #
-# Modelled on lec-selftest. Everything runs on COPIES under $(ROM_SELFTEST_DIR);
-# ASIC/romlibs is never touched (it is evidence in an open investigation).
+# Everything runs on COPIES under $(ROM_SELFTEST_DIR); ASIC/romlibs is never
+# touched. Both directions matter: a gate that always fails is as useless as one
+# that always passes, so the positive controls are the only evidence that this
+# gate discriminates at all.
 #
-# Both directions matter. A gate that always fails is as useless as one that
-# always passes, and today every real ROM fails — so the positive controls here
-# are the only evidence that this gate discriminates at all.
-#
-# The checker doubles it writes are HARNESS controls: they prove that a verdict,
-# a missing artefact or a disagreement between exit code and JSON propagates
-# correctly through this wiring. They are not a test of scripts/ci/rom_verify.py,
-# which owns its own selftest.
+# The doubles it writes are HARNESS controls — they prove that a verdict, a
+# missing artefact or a disagreement between exit code and JSON propagates
+# correctly through this wiring. They do not test scripts/ci/rom_verify.py, which
+# owns its own selftest.
 #-----------------------------------------------------------------------------
 ROM_SELFTEST_DIR ?= $(ROM_VERIFY_DIR)/selftest
 
@@ -967,10 +912,9 @@ if not counts:
 endef
 export ROM_JSON_ASSERT
 
-# ROM_BITS_ASSERT lived here until 2026-08-18. It is now
-# $(ROM_TOOLKIT_MK)'s, alongside the stream-identity and macro-reachability
-# assertions it grew. Deleted rather than left as a second copy: this tree has
-# already been bitten three times in one day by two copies of one source, where
+# ROM_BITS_ASSERT now lives in $(ROM_TOOLKIT_MK), alongside the stream-identity
+# and macro-reachability assertions it grew. Deleted rather than kept as a second
+# copy: this tree has been bitten repeatedly by two copies of one source where
 # only the wiring said which one ran.
 
 

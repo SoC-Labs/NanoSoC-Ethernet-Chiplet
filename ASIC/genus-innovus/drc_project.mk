@@ -150,6 +150,20 @@ DRC_FOUNDRY_DECK ?= $(PDK_DRC_DECK)
 #       `INCLUDE "$BND_FOUNDRY_DECK"` wrapper is sufficient. See run_bnd.sh.
 BND_FOUNDRY_DECK ?= $(PDK_BND_DECK)
 
+# [PDK] The foundry ANTENNA deck. Resolved by the same pdk_paths.sh off the same
+#       installed tech LEF, but on the metal LAYER COUNT rather than the full
+#       stack: the antenna family ships one file per metal count and puts the
+#       option-dependent parts behind its own switches. See pdk_paths.sh
+#       ant-ruledeck for why that difference is load-bearing.
+#
+#       Not named here, for the same public-repository reason as the other two.
+#
+#       Like BND and unlike DRC, this needs no make_project_deck.sh splice: the
+#       antenna deck declares no die-box VARIABLE and sets no unconditional
+#       #DEFINE this design has to clear, so the plain
+#       `INCLUDE "$ANT_FOUNDRY_DECK"` wrapper is sufficient. See run_ant.sh.
+ANT_FOUNDRY_DECK ?= $(PDK_ANT_DECK)
+
 # The project-owned switch/environment block that replaces the foundry deck's
 # own is NOT a variable here, on purpose. It lives beside its assembler as
 #     scripts/calibre/tsmc65_minisic_header.svrf.in
@@ -180,6 +194,13 @@ BND_RUNDIR ?= $(WORK_DIR)/bnd_run
 #        site licence caps parallel CPUs.
 DRC_CPUS ?= 8
 BND_CPUS ?= 8
+
+# [FLOW] Where the antenna run's results land, and how many processors it gets.
+#        Same shape as the BND pair above. The antenna deck is the slowest of
+#        the three on this design -- about 25 minutes at 16 -- because every
+#        metal step re-derives connectivity.
+ANT_RUNDIR ?= $(WORK_DIR)/ant_run
+ANT_CPUS ?= 16
 
 #-----------------------------------------------------------------------------
 # 5. Census budgets — what counts as a pass
