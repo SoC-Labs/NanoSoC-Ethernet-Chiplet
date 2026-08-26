@@ -182,6 +182,132 @@ TIER_NAMES = {
 
 
 # ---------------------------------------------------------------------------
+# memory-test fill patterns -- THE ONE SOURCE
+# ---------------------------------------------------------------------------
+# These are the patterns the RAM battery WRITES.  They live here, in the only
+# module every tier may legally import (CONTRACT.md: "Nothing else is shared.
+# One file per agent, no collisions."), because two different tiers have to
+# agree about them for OPPOSITE reasons:
+#
+#   * the tier that runs the battery WRITES them;
+#   * a tier that reads a memory word AFTERWARDS has to RECOGNISE them, so it
+#     can report "this suite wrote that" instead of accusing the die.
+#
+# A private copy in the second tier is dangerous in an asymmetric way.  A
+# drifted entry either EXCUSES A REAL FAULT -- a genuine die value that happens
+# to match a stale pattern is written off as our own residue -- or ACCUSES THE
+# DIE OF OUR OWN RESIDUE, when a pattern we did write is no longer recognised.
+# Both are wrong verdicts about silicon produced by a stale constant, and
+# neither announces itself.
+#
+# NAMED FOR WHAT THEY ARE, not for who consumes them.  tier1's HIO-107 residue
+# table is a CONSUMER of these; so is tier2_3's battery.  Neither owns them.
+
+FILL_PAT_A = 0x5A5A5A5A     # complementary bulk fill, first half
+FILL_PAT_B = 0xA5A5A5A5     # ... and its complement.  The PAIR is the test: a
+                            # cell stuck at PAT_A's bit values passes PAT_A alone.
+
+
+def walking_patterns_by_polarity():
+    """The walking-ones and walking-zeros sequences, in write order.
+
+    BOTH POLARITIES ARE MANDATORY and the split is exposed because the battery
+    asserts them separately: walking ones alone cannot see a stuck-at-1 bit (the
+    pattern's other 31 bits are already 0, and the stuck bit is only ever asked
+    to be 1 once, where it agrees), and walking zeros alone cannot see a
+    stuck-at-0 bit.  Running one half is the classic half-blind version.
+    """
+    return (("ones", [(1 << k) for k in range(32)]),
+            ("zeros", [(~(1 << k)) & 0xFFFFFFFF for k in range(32)]))
+
+
+def walking_patterns():
+    """The flat walking sequence IN WRITE ORDER: 32 ones, then 32 zeros.
+
+    The battery iterates this, so the LAST element is by construction the value
+    the walking phase leaves behind -- see FILL_WALK_TERMINAL.  Deriving that
+    terminal instead of writing it down is the whole point: a hand-typed
+    terminal is exactly the copy this section exists to remove.
+    """
+    out = []
+    for _polarity, pats in walking_patterns_by_polarity():
+        out.extend(pats)
+    return out
+
+
+#: What the walking phase leaves in the word it ran against: its LAST write, the
+#: walking-ZEROS pattern at k=31.  DERIVED from the sequence, never typed out.
+FILL_WALK_TERMINAL = walking_patterns()[-1]         # 0x7FFFFFFF
+
+
+def fill_addr_datum(addr):
+    """The address-uniqueness datum for `addr`: the address is its own datum.
+
+    A fill-based test cannot find a stuck address bit -- an `F` writes one
+    constant everywhere, so a RAM whose A12 is stuck passes F+verify perfectly.
+    Giving every location its own absolute address is what makes aliasing
+    visible, and it is why THIS phase's terminal value is a FUNCTION of the
+    address rather than a constant.  Every consumer must go through here rather
+    than assume "the base address": that assumption is only true at offset 0.
+    """
+    return int(addr) & 0xFFFFFFFF
+
+
+class MemFillPhase(object):
+    """One phase of the standard RAM battery, named by THE STATE IT LEAVES.
+
+    `pattern` is None for the address-dependent phase.  Ask `terminal_at(addr)`
+    instead -- it answers uniformly for every phase, which is what lets a
+    consumer classify a word without special-casing that one phase.
+    """
+
+    __slots__ = ("name", "pattern", "what")
+
+    def __init__(self, name, pattern, what):
+        self.name = name
+        self.pattern = pattern
+        self.what = what
+
+    def terminal_at(self, addr):
+        """The value this phase leaves in the word at `addr`."""
+        return fill_addr_datum(addr) if self.pattern is None else self.pattern
+
+    def __repr__(self):
+        return "<MemFillPhase %s %s>" % (
+            self.name,
+            "address-dependent" if self.pattern is None
+            else "0x%08X" % self.pattern)
+
+
+#: The battery's phases IN EXECUTION ORDER.  The order is part of the shared
+#: fact, not decoration: the LAST phase is what a word normally holds after a
+#: full battery run, which is what a residue reader sees most of the time.
+MEM_FILL_PHASES = (
+    MemFillPhase("walking_ones_zeros", FILL_WALK_TERMINAL,
+                 "the terminal write of the walking-ones/zeros phase "
+                 "(polarity 'zeros', k=31)"),
+    MemFillPhase("address_uniqueness", None,
+                 "the address-uniqueness datum -- each location is given its OWN "
+                 "ABSOLUTE ADDRESS, so the word at `base` holds `base`"),
+    MemFillPhase("fill_pat_a", FILL_PAT_A,
+                 "PAT_A, the first of the battery's two complementary bulk fills"),
+    MemFillPhase("fill_pat_b", FILL_PAT_B,
+                 "PAT_B, the LAST fill of the battery -- the normal post-battery "
+                 "state of any word in the RAM"),
+)
+
+
+def mem_fill_terminals(base):
+    """{terminal value at `base`: MemFillPhase} for the whole battery.
+
+    Everything a reader of `base` may find there after a battery run, paired
+    with the phase that put it there.  On a collision the LATER phase wins,
+    which is the correct answer: it ran last.
+    """
+    return dict((p.terminal_at(base), p) for p in MEM_FILL_PHASES)
+
+
+# ---------------------------------------------------------------------------
 # exceptions
 # ---------------------------------------------------------------------------
 class SkipTest(Exception):
@@ -2370,8 +2496,18 @@ def _selftest(out=sys.stdout):
     r.run()
     ck("exit code 1 when something FAILs", r.exit_code(), 1)
 
-    core = n[0]
     _selftest_targets(ck, n_target, out)
+
+    out.write("\n[5] Memory fill patterns -- one source, and a drift check that\n"
+              "    can still go red\n")
+    _selftest_fill_patterns(ck, out)
+
+    out.write("\n[6] HIO-307's coarse rate band -- sized against its window\n")
+    _selftest_coarse_band(ck, out)
+
+    # section [4] counts itself separately so the ORIGINAL core total stays
+    # countable; everything else, this section included, is core.
+    core = n[0] - n_target[0]
 
     out.write("\n%s\n" % ("-" * 78))
     if fails:
@@ -2386,7 +2522,10 @@ def _selftest(out=sys.stdout):
               "and is VOID on a broken one, with its own checks holding in both.\n"
               "And the same target-dependent assertion is a RED on a declared\n"
               "target and a recorded DEFERRAL on an undeclared one -- a profile\n"
-              "that could only ever soften a result would be worth nothing.\n")
+              "that could only ever soften a result would be worth nothing.\n"
+              "And the fill-pattern drift check is shown going RED five ways on\n"
+              "one departure each, with a clean control after every one -- it did\n"
+              "not become decorative when the copy it used to police went away.\n")
     return 0
 
 
@@ -2672,6 +2811,246 @@ def _selftest_targets(ck, n_target, out):
     tck("record: it json round-trips",
         json.loads(json.dumps(rr, sort_keys=True))["target"]["name"], "unknown")
     out.write("     (%d target checks)\n" % (n_target[0] - base))
+
+
+def _selftest_fill_patterns(ck, out):
+    """[5] The shared memory-test fill patterns, and the consumer that reads them.
+
+    Two things are proven here, and the second one is the point.
+
+    (1) THE DECLARATION IS SELF-CONSISTENT. The walking terminal is DERIVED from
+        the sequence the battery iterates rather than typed out beside it; the
+        address-uniqueness datum is a function of the address; the bulk-fill pair
+        is genuinely complementary; and mem_fill_terminals() covers every phase
+        without one shadowing another.
+
+    (2) TIER1'S RESIDUE DRIFT CHECK CAN STILL GO RED. Moving these patterns into
+        harness made the old question -- "does tier1's copy agree with tier2_3's
+        copy?" -- trivially true, because neither copy exists any more. A check
+        that cannot fail is worth nothing, so that check was rewritten to ask
+        whether both sides still USE the declaration, and it is driven here in
+        BOTH DIRECTIONS: clean against a module that reads harness, RED against
+        one that has re-literalised a pattern, RED against one that has stopped
+        writing a declared phase, RED against one that no longer publishes what
+        it writes, and RED against a residue table that has dropped an entry or
+        grown one. Each red is paired with the clean control that follows it, so
+        the check is shown to discriminate rather than merely to complain.
+    """
+    # ---- (1) the declaration ------------------------------------------------
+    pats = walking_patterns()
+    ck("walking sequence is 64 patterns", len(pats), 64)
+    ck("walking sequence has no repeats", len(set(pats)), 64)
+    ck("walking sequence starts at bit 0", pats[0], 0x00000001)
+    ck("walking polarities, in write order",
+       [p for p, _ in walking_patterns_by_polarity()], ["ones", "zeros"])
+    ck("BOTH polarities are present -- ones alone cannot see a stuck-at-1 bit",
+       len(walking_patterns_by_polarity()), 2)
+    ck("FILL_WALK_TERMINAL is DERIVED from the sequence's last write",
+       FILL_WALK_TERMINAL, pats[-1])
+    ck("...and that terminal is the value the residue table has always excused",
+       FILL_WALK_TERMINAL, 0x7FFFFFFF)
+
+    ck("PAT_A", FILL_PAT_A, 0x5A5A5A5A)
+    ck("PAT_B", FILL_PAT_B, 0xA5A5A5A5)
+    ck("the bulk-fill pair is COMPLEMENTARY -- which is what makes either half "
+       "worth running; a cell stuck at PAT_A's bit values passes PAT_A alone",
+       FILL_PAT_A ^ FILL_PAT_B, 0xFFFFFFFF)
+
+    ck("address datum is the address itself", fill_addr_datum(0x18000004), 0x18000004)
+    ck("address datum is masked to 32 bits", fill_addr_datum(0x1_0000_0004), 0x00000004)
+
+    base = 0x18000000
+    term = mem_fill_terminals(base)
+    ck("every declared phase contributes a terminal (none is shadowed)",
+       len(term), len(MEM_FILL_PHASES))
+    ck("the four terminals at eth DMEM word 0", sorted(term),
+       [0x18000000, 0x5A5A5A5A, 0x7FFFFFFF, 0xA5A5A5A5])
+    ck("the address-uniqueness phase is the one that leaves the base address",
+       term[base].name, "address_uniqueness")
+    ck("PAT_B is LAST, so it is the normal post-battery state",
+       (MEM_FILL_PHASES[-1].name, MEM_FILL_PHASES[-1].pattern),
+       ("fill_pat_b", FILL_PAT_B))
+    ck("the address-dependent phase declares no fixed pattern",
+       [p.name for p in MEM_FILL_PHASES if p.pattern is None], ["address_uniqueness"])
+    ck("terminal_at() answers for the address-dependent phase too",
+       term[base].terminal_at(base + 4), base + 4)
+
+    # ---- (2) the consumer's drift check, driven both ways -------------------
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    try:
+        tier1 = importlib.import_module("tier1")
+    except Exception as exc:                                # pragma: no cover
+        out.write("  FAIL  tier1 is not importable (%s)\n" % exc)
+        ck("tier1 importable -- without it the drift check has no proof and this "
+           "selftest would be reporting a green it did not earn", False, True)
+        return
+
+    class _StubWriter(object):
+        """Stands in for tier2_3: the module that WRITES the patterns.
+
+        Deliberately built from harness's own declaration, the way the real one
+        is, so each red below is produced by ONE departure from it.
+        """
+
+        def __init__(self, **kw):
+            self.PAT_A = FILL_PAT_A
+            self.PAT_B = FILL_PAT_B
+            self.unrunnable = ()
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+        def battery_plan(self):
+            return tuple((p, p.name not in self.unrunnable)
+                         for p in MEM_FILL_PHASES)
+
+    healthy = _StubWriter()
+    ck("CONTROL: a writer that reads the shared declaration shows no drift",
+       tier1._residue_drift(healthy), {})
+    ck("CONTROL: with no writer loaded the table-vs-harness arm still runs clean",
+       tier1._residue_drift(None), {})
+
+    # THE ARM THAT GUARDS THE REAL FILES, not a stub of them. The stubs above
+    # prove the checker discriminates; this proves the shipped modules currently
+    # pass it. Without this, a re-literalised pattern in the real tier2_3 would
+    # sail through a selftest that was only ever asking synthetic questions.
+    try:
+        tier2_3 = importlib.import_module("tier2_3")
+    except Exception as exc:                                # pragma: no cover
+        out.write("  FAIL  tier2_3 is not importable (%s)\n" % exc)
+        ck("tier2_3 importable -- it is the module that WRITES these patterns, and "
+           "without it the live half of the drift check cannot run", False, True)
+        tier2_3 = None
+    if tier2_3 is not None:
+        ck("LIVE: the shipped tier2_3 and tier1 still read the shared declaration",
+           tier1._residue_drift(tier2_3), {})
+        ck("LIVE: tier2_3's battery executes every declared phase, in order",
+           [p.name for p, runnable in tier2_3.battery_plan() if runnable],
+           [p.name for p in MEM_FILL_PHASES])
+        ck("LIVE: tier2_3's PAT_A/PAT_B are harness's",
+           (tier2_3.PAT_A, tier2_3.PAT_B), (FILL_PAT_A, FILL_PAT_B))
+
+    # RED 1 -- the writing module re-literalised a pattern. This is exactly the
+    # "you moved the problem instead of solving it" case.
+    d = tier1._residue_drift(_StubWriter(PAT_A=0x5A5A5A5B))
+    ck("RED: a re-literalised PAT_A in the writing module is drift", bool(d), True)
+    ck("...and the drift names PAT_A", sorted(d), ["PAT_A"])
+
+    # RED 2 -- harness declares a phase the writer never runs, so the residue
+    # table would excuse a value nothing writes: it would forgive a real fault.
+    d = tier1._residue_drift(_StubWriter(unrunnable=("fill_pat_b",)))
+    ck("RED: a declared phase with no runner is drift", bool(d), True)
+    ck("...and the drift names the phase",
+       [k for k in d if "fill_pat_b" in k], ["phase_not_written_fill_pat_b"])
+
+    # RED 3 -- the writer stopped publishing what it writes, so the cross-check
+    # has nothing to read. Silence is drift, not agreement.
+    class _Silent(object):
+        PAT_A = FILL_PAT_A
+        PAT_B = FILL_PAT_B
+
+    ck("RED: a writer that no longer publishes battery_plan() is drift",
+       sorted(tier1._residue_drift(_Silent())), ["battery_plan"])
+
+    # RED 4/5 -- the CONSUMER's own table. These need no writer at all, which is
+    # the arm that keeps the check alive when tier2_3 is not in the run.
+    saved = dict(tier1._DMEM_RESIDUE)
+    try:
+        # pop(k, None), not pop(k): if the entry is ALREADY gone the checks above
+        # have failed and said so, and this section must still report rather than
+        # raise. A selftest that crashes on a broken tree tells you less than one
+        # that fails on it.
+        tier1._DMEM_RESIDUE.pop(FILL_PAT_B, None)
+        d = tier1._residue_drift(None)
+        ck("RED: a table that no longer excuses a pattern we DO write is drift "
+           "(it would accuse the die of our own residue)",
+           [k for k in d if k.startswith("table_missing")],
+           ["table_missing_fill_pat_b"])
+    finally:
+        tier1._DMEM_RESIDUE.clear()
+        tier1._DMEM_RESIDUE.update(saved)
+    ck("CONTROL: the same table is clean again once restored",
+       tier1._residue_drift(healthy), {})
+
+    try:
+        tier1._DMEM_RESIDUE[0xDEADBEEF] = None
+        d = tier1._residue_drift(None)
+        ck("RED: a table that excuses a value NOTHING writes is drift "
+           "(it would write off a genuine die value as our residue)",
+           [k for k in d if k.startswith("table_excuses")],
+           ["table_excuses_0xDEADBEEF"])
+    finally:
+        tier1._DMEM_RESIDUE.clear()
+        tier1._DMEM_RESIDUE.update(saved)
+    ck("CONTROL: clean again after the surplus entry is removed",
+       tier1._residue_drift(healthy), {})
+
+    # And the classifier that consumes the table still reads the phase, not a
+    # hard-coded neighbour rule: address-uniqueness corroborates on base+4, the
+    # uniform fills corroborate on the same pattern.
+    ck("classifier: PAT_B corroborated by a neighbour holding PAT_B",
+       tier1._classify_witness(FILL_PAT_B, FILL_PAT_B)[0::2], ("residue", True))
+    ck("classifier: the address datum corroborates on the NEIGHBOUR'S address",
+       tier1._classify_witness(base, base + 4)[0::2], ("residue", True))
+    ck("classifier: ...and NOT on a repeat of word 0's value",
+       tier1._classify_witness(base, base)[0::2], ("residue", False))
+    ck("classifier: an unknown value stays UNEXPLAINED -- the genuine finding",
+       tier1._classify_witness(0x05F5E101, 0)[0::2], ("unexplained", None))
+
+
+def _selftest_coarse_band(ck, out):
+    """[6] The band HIO-307 asserts its SNAP delta in must stay HONEST BOTH WAYS.
+
+    HIO-307's delta is taken over ~0.26 s of pure ADP command time and a 45-run
+    soak measured it swinging 16.4%. That number used to be recorded as
+    `perf_implied_hclk_hz` and never asserted -- a figure that looked like a
+    clock measurement sitting in the die record at 16% of error. It is now
+    asserted, but only in a FACTOR band, and the band is the load-bearing
+    choice: too narrow and it reds on host timing (a false accusation against
+    the die), too wide and it cannot fail at all (the vacuous green this suite
+    exists to prevent).
+
+    So the band is checked against BOTH failure modes here, arithmetically and
+    with no timing involved: the measured noise must sit comfortably INSIDE it,
+    and the 4x error this suite's history actually records must sit OUTSIDE it.
+    Widening the band to 0.1x..10x, or narrowing it to a tolerance, reds here.
+    """
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    try:
+        tier2_3 = importlib.import_module("tier2_3")
+    except Exception as exc:                                # pragma: no cover
+        out.write("  FAIL  tier2_3 is not importable (%s)\n" % exc)
+        ck("tier2_3 importable for the coarse-band proof", False, True)
+        return
+
+    lo, hi = tier2_3._COARSE_RATE_BAND
+    ck("the band is a factor either side of the declared rate", lo < 1.0 < hi, True)
+
+    # NOT TOO NARROW. The soak's own spread, and the window's theoretical
+    # precision, must both land inside -- otherwise the check reds on the host.
+    soak = 0.164                       # 23.14-26.93 MHz over 45 runs
+    window_s = 4 * 0.065               # 4 CU at the measured ~130 ms per 2 CU
+    precision = tier2_3._HOST_TIMER_JITTER_S / window_s
+    ck("the 16.4% soak spread is inside the band, low side", (1.0 - soak) > lo, True)
+    ck("the 16.4% soak spread is inside the band, high side", (1.0 + soak) < hi, True)
+    ck("the window's own precision is inside the band, low side",
+       (1.0 - precision) > lo, True)
+    ck("the window's own precision is inside the band, high side",
+       (1.0 + precision) < hi, True)
+    ck("...and with real margin, not by a hair: the band is at least 2x wider "
+       "than the noise it must absorb", (hi - 1.0) >= 2.0 * soak, True)
+
+    # NOT TOO WIDE. A band that cannot fail is worth nothing, and the specific
+    # error this suite has already been bitten by is a factor of FOUR.
+    ck("a 4x-too-fast counter is OUTSIDE the band -- the historical error", 4.0 > hi, True)
+    ck("a 4x-too-slow counter is OUTSIDE the band", 0.25 < lo, True)
+    ck("a 10x error is outside the band", (10.0 > hi) and (0.1 < lo), True)
+
+    # And the number must not be dressed up as a clock again.
+    ck("the coarse-rate record keys do not claim to be a clock",
+       [k for k in ("perf_snap_coarse_rate_hz", "perf_snap_delta_cycles",
+                    "perf_snap_delta_window_s") if "hclk" in k], [])
 
 
 def _raises(fn, *a, **kw):

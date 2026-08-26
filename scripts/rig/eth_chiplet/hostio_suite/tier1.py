@@ -25,7 +25,7 @@ Deliberate deviations from the plan, each justified in the test's own note():
 """
 
 from harness import Adp, Reply, test, Rec, HZ  # noqa: F401  (HZ unused: Tier 1 is read-only)
-import harness as harness_module  # for LOADED_MODULES only; see _residue_drift_check()
+import harness as harness_module  # fill patterns + LOADED_MODULES; see _residue_drift()
 
 # ---------------------------------------------------------------------------
 # Declaration order == execution order. Plan §3 Phase A3 / B1..B5.
@@ -873,54 +873,158 @@ def hio_102(adp, rec):
 # any conclusion drawn from it would be an accusation against silicon for something
 # a sibling test did.
 #
-# WHY THIS IS A LOCAL COPY AND NOT AN IMPORT: CONTRACT.md is explicit -- "Nothing
-# else is shared. One file per agent, no collisions." Tier modules import from
-# harness and from nothing else. A copy can drift, so _residue_drift_check() below
-# cross-checks it opportunistically against the loaded tier2_3 module WITHOUT
-# importing it, and records when it could not.
 #
-# Values are the terminal state each Tier-2 phase leaves at the base address:
-_DMEM_RESIDUE = {
-    0xA5A5A5A5: "PAT_B, the LAST fill of tier2_3's _ram_battery -- the normal "
-                "post-HIO-205 state of eth DMEM word 0",
-    0x5A5A5A5A: "PAT_A, the first of _ram_battery's two complementary fills",
-    0x7FFFFFFF: "the terminal write of _walking_ones_zeros (polarity 'zeros', k=31)",
-    0x18000000: "_address_uniqueness's datum -- each location is given its OWN "
-                "ABSOLUTE ADDRESS, so word 0 holds 0x18000000",
-    0x00000000: "an F-fill of zero -- but ALSO what a cold die and a zero-init "
-                "image read, so this one is ambiguous by nature (see the note)",
-}
+# WHERE THE VALUES COME FROM, AND WHY THAT CHANGED. They used to be a LOCAL COPY
+# of tier2_3's literals, kept because CONTRACT.md is explicit -- "Nothing else is
+# shared. One file per agent, no collisions." -- so tier1 may not import tier2_3.
+# The copy was the problem, not the import ban: THE PATTERNS NOW LIVE IN harness,
+# the one module every tier may legally import, and both sides read them from
+# there. tier2_3's battery EXECUTES harness.MEM_FILL_PHASES; this table is built
+# from the same declaration. It is a CONSUMER of those patterns. It does not own
+# them, and it no longer restates them.
+ETH_DMEM_BASE = 0x18000000
+ETH_DMEM_WORD1 = ETH_DMEM_BASE + 4          # the corroboration word
 
-_RESIDUE_XCHECK = {"PAT_A": 0x5A5A5A5A, "PAT_B": 0xA5A5A5A5}
+#: The one entry that is genuinely THIS module's and not a battery terminal.
+#: An F-fill of zero leaves it, but so does a cold die and a zero-init image, so
+#: no phase owns it and nothing follows from it either way.
+_ZERO_IS_AMBIGUOUS = ("an F-fill of zero -- but ALSO what a cold die and a "
+                      "zero-init image read, so this one is ambiguous by nature "
+                      "(see the note)")
 
 
-def _residue_drift_check(rec):
-    """Cross-check the local residue copy against tier2_3, if the harness loaded it.
+def _build_dmem_residue():
+    """{value at eth DMEM word 0: harness.MemFillPhase or None}.
 
-    Reads harness.LOADED_MODULES -- harness state, not a sibling import -- so this
-    never creates a dependency and never fails a run. It only makes DRIFT VISIBLE:
-    a silently stale copy would start excusing the wrong values, or stop excusing
-    the right ones.
+    DERIVED from harness.MEM_FILL_PHASES -- the same declaration tier2_3's
+    _ram_battery runs from -- plus the ambiguous zero, which is ours. A None
+    phase means "recognised, but not a battery terminal".
     """
-    mods = getattr(harness_module, "LOADED_MODULES", None) if harness_module else None
-    t23 = mods.get("tier2_3") if isinstance(mods, dict) else None
-    if t23 is None:
-        rec.record("residue_xcheck", "tier2_3 not loaded in this run -- local copy "
-                                     "used unverified")
-        return
+    tbl = dict(harness_module.mem_fill_terminals(ETH_DMEM_BASE))
+    tbl.setdefault(0x00000000, None)
+    return tbl
+
+
+_DMEM_RESIDUE = _build_dmem_residue()
+
+
+def _residue_why(value):
+    """The prose for a recognised residue value; the PHASE supplies its own."""
+    phase = _DMEM_RESIDUE.get(value)
+    return _ZERO_IS_AMBIGUOUS if phase is None else phase.what
+
+
+def _residue_drift(t23):
+    """{issue: explanation} -- drift between this table and what the suite WRITES.
+
+    Empty dict means no drift. PURE by design: it takes the tier2_3 module object
+    (or None) and returns a plain dict, so harness --selftest can drive it BOTH
+    WAYS with a stub and prove that it can still go red. A drift check that
+    cannot fail is worth nothing, and this one became trivially satisfiable the
+    moment the copy went away -- so what it checks had to change with it.
+
+    WHAT IT NO LONGER CHECKS: "does tier1's PAT_A equal tier2_3's PAT_A". Both
+    literals are gone; both modules read harness. Asserting that agreement now
+    would be asserting harness == harness.
+
+    WHAT IT CHECKS INSTEAD -- the three ways a single source can still be
+    abandoned without anyone noticing:
+
+      (A) THIS TABLE still covers every phase harness declares, and excuses
+          NOTHING ELSE. Needs no sibling module, so it runs even when tier2_3 is
+          not loaded. A dropped entry stops excusing a pattern we do write (and
+          so accuses the die of our residue); a surplus entry excuses a value
+          nothing writes (and so writes off a real fault).
+      (B) tier2_3 still EXECUTES every declared phase, and the value each one
+          leaves at eth DMEM word 0 is one this table recognises. Compared BY
+          VALUE, not by identity, so it holds across module reloads.
+      (C) tier2_3's PAT_A/PAT_B are still the shared values -- the direct
+          successor of the old check. This is what fires if someone re-literalises
+          a pattern in the writing module, i.e. if the problem were moved rather
+          than solved.
+    """
     drift = {}
-    for name, mine in _RESIDUE_XCHECK.items():
+
+    # ---- (A) this table against the shared declaration ----------------------
+    declared = harness_module.mem_fill_terminals(ETH_DMEM_BASE)
+    for phase in harness_module.MEM_FILL_PHASES:
+        v = phase.terminal_at(ETH_DMEM_BASE)
+        if v not in _DMEM_RESIDUE:
+            drift["table_missing_%s" % phase.name] = (
+                "harness declares phase %s leaves %s at eth DMEM word 0, and this "
+                "table does not recognise it -- HIO-107 would report our own "
+                "residue as a die fault" % (phase.name, _h(v)))
+    for v in _DMEM_RESIDUE:
+        if v not in declared and v != 0x00000000:
+            drift["table_excuses_%s" % _h(v)] = (
+                "this table excuses %s, which no declared phase writes -- HIO-107 "
+                "would write off a genuine die value as our residue" % _h(v))
+
+    # ---- (B)/(C) the WRITING module, when the harness has it ----------------
+    if t23 is None:
+        return drift
+
+    plan = getattr(t23, "battery_plan", None)
+    if plan is None:
+        drift["battery_plan"] = ("tier2_3 no longer publishes battery_plan(), so what "
+                                 "the battery actually writes cannot be cross-checked")
+    else:
+        for phase, runnable in plan():
+            if not runnable:
+                drift["phase_not_written_%s" % phase.name] = (
+                    "harness declares phase %s but tier2_3 has no runner for it: this "
+                    "table would excuse a value nothing ever writes" % phase.name)
+            v = phase.terminal_at(ETH_DMEM_BASE)
+            if v not in _DMEM_RESIDUE:
+                drift["written_but_unrecognised_%s" % phase.name] = (
+                    "tier2_3's battery leaves %s at eth DMEM word 0 and this table "
+                    "does not recognise it" % _h(v))
+
+    for name, shared in (("PAT_A", harness_module.FILL_PAT_A),
+                         ("PAT_B", harness_module.FILL_PAT_B)):
         theirs = getattr(t23, name, None)
         if theirs is None:
             drift[name] = "absent from tier2_3 (renamed?)"
-        elif theirs != mine:
-            drift[name] = "tier2_3 says %s, this copy says %s" % (_h(theirs), _h(mine))
-    rec.record("residue_xcheck", drift or "agrees with tier2_3")
+        elif theirs != shared:
+            drift[name] = ("tier2_3 says %s, harness says %s -- the writing module has "
+                           "stopped reading the shared declaration"
+                           % (_h(theirs), _h(shared)))
+    return drift
+
+
+def _residue_drift_check(rec, t23=None):
+    """Assert that the residue table still matches what this suite WRITES.
+
+    tier2_3 is reached through harness.LOADED_MODULES -- harness state, not a
+    sibling import -- so this creates no dependency the CONTRACT forbids. When it
+    is absent, arm (A) still runs and is still assertable; the write-side arms
+    are recorded as not run rather than silently passing.
+
+    THIS IS A REAL CHECK, not a record. A drifted table makes HIO-107's residue
+    verdict unsound in one of two directions, and both are wrong verdicts about
+    silicon, so the test must not report PASS on top of it.
+    """
+    mods = getattr(harness_module, "LOADED_MODULES", None) if harness_module else None
+    if t23 is None and isinstance(mods, dict):
+        t23 = mods.get("tier2_3")
+
+    drift = _residue_drift(t23)
+    rec.record("residue_xcheck", drift or "agrees with harness.MEM_FILL_PHASES")
+    rec.record("residue_xcheck_write_side_verified", int(t23 is not None))
+    rec.check("the HIO-107 residue table still matches the fill patterns this suite "
+              "WRITES (harness.MEM_FILL_PHASES; and tier2_3's battery_plan() when the "
+              "runner loaded it). This table is what stops HIO-107 blaming CPU0 for a "
+              "pattern Tier 2 wrote, so a stale entry either EXCUSES A REAL FAULT or "
+              "ACCUSES THE DIE OF OUR OWN RESIDUE",
+              not drift,
+              got=(drift or ("no drift"
+                             + ("" if t23 is not None
+                                else "; tier2_3 not loaded, so only the "
+                                     "table-vs-harness arm ran"))))
     if drift:
-        rec.note("RESIDUE TABLE HAS DRIFTED from tier2_3: %s. This table is what stops "
-                 "HIO-107 blaming CPU0 for a pattern Tier 2 wrote, so a stale entry "
-                 "either excuses a real fault or accuses the die of our own residue. "
-                 "Reconcile it." % drift)
+        rec.note("RESIDUE TABLE HAS DRIFTED: %s. Reconcile it before reading anything "
+                 "into eth DMEM word 0 -- the classification below is unsound until "
+                 "you do." % drift)
 
 
 def _classify_witness(dmem0, neighbour):
@@ -932,12 +1036,16 @@ def _classify_witness(dmem0, neighbour):
     """
     if dmem0 not in _DMEM_RESIDUE:
         return "unexplained", None, None
-    why = _DMEM_RESIDUE[dmem0]
+    phase = _DMEM_RESIDUE[dmem0]
+    why = _residue_why(dmem0)
     if neighbour is None:
         return "residue", why, None
-    # _address_uniqueness gives each word its own address; every other phase is a
-    # uniform fill.
-    expect = 0x18000004 if dmem0 == 0x18000000 else dmem0
+    # ASK THE PHASE what it would have left in the NEIGHBOURING word. For a
+    # uniform fill that is the same pattern; for address-uniqueness each word
+    # holds its OWN address, so it is ETH_DMEM_WORD1. That special case used to be
+    # a literal 0x18000004 here -- a second place the address-uniqueness rule was
+    # written down, and a second place it could drift.
+    expect = dmem0 if phase is None else phase.terminal_at(ETH_DMEM_WORD1)
     return "residue", why, (neighbour == expect)
 
 
@@ -1066,7 +1174,7 @@ def hio_107(adp, rec):
 
         # Gate open, witness absent. BEFORE blaming CPU0, ask whether this suite
         # wrote the value we are looking at.
-        neighbour = _rd(adp, rec, 0x18000004, "eth DMEM word 1 (residue corroboration)")
+        neighbour = _rd(adp, rec, ETH_DMEM_WORD1, "eth DMEM word 1 (residue corroboration)")
         rec.record("eth_dmem_word1", neighbour)
         kind, why, corroborated = _classify_witness(dmem0, neighbour)
         rec.record("witness_classification", kind)

@@ -290,8 +290,18 @@ CPU1_DMEM_SIZE = 8 * 1024
 #: borrowing the other vehicle's offset.
 ROM_DIFF_OFFSET_FALLBACK = 0x0E4
 
-PAT_A = 0x5A5A5A5A
-PAT_B = 0xA5A5A5A5
+#: The complementary bulk-fill pair.  THE VALUES ARE harness's, not this
+#: module's.  These are memory-test fill patterns, and this battery is not their
+#: only consumer: tier1's HIO-107 has to RECOGNISE what this battery leaves in
+#: eth DMEM word 0 so it can report "witness destroyed by a prior Tier 2 run"
+#: rather than accuse CPU0 of a boot failure.  CONTRACT.md forbids tier modules
+#: importing each other, so the alternative was a private copy over in tier1 --
+#: and a stale copy there either EXCUSES A REAL FAULT or ACCUSES THE DIE OF OUR
+#: OWN RESIDUE.  harness is the one module both of us may legally import, so the
+#: patterns live there and both sides read them.  The local names stay; only the
+#: literals are gone.
+PAT_A = harness.FILL_PAT_A          # 0x5A5A5A5A
+PAT_B = harness.FILL_PAT_B          # 0xA5A5A5A5
 ROM_POISON = 0xDEADBEEF
 WRITE_PATH_TAG = 0x0BADC0DE
 
@@ -505,6 +515,22 @@ def _guard_value(addr: int, val: int) -> None:
 #: cycle-counter window is long enough to assert a clock rate against.
 _HOST_TIMER_JITTER_S = 0.05
 
+#: The band HIO-307's SNAP-delta rate is asserted in, as a FACTOR of the
+#: target's declared fabric_hz -- deliberately a factor and not a tolerance.
+#:
+#: Sized against the window that produces the number, not against how precise we
+#: would like it to be.  That window is ~0.26 s of pure command time and carries
+#: ~19% of error (see the long comment in hio_307), so a +/-1% tolerance there
+#: would red on host timing rather than on the die.  A 0.5x..2.0x band has more
+#: than 2.5x of margin over that noise -- host jitter CANNOT produce a failure --
+#: while still catching the failures that matter: a counter clocked from the
+#: wrong net, a probe counting something other than cycles, or a rate wrong by
+#: 4x, which is the error this file's own history records (a ~100 MHz figure
+#: quoted against a 25.010 MHz fabric).
+#:
+#: The PRECISE rate measurement is HIO-402's, over a ~3.3 s window.
+_COARSE_RATE_BAND = (0.5, 2.0)
+
 
 #: A write-path POSITIVE CONTROL needs a location that (a) really goes to a bus
 #: slave, (b) is safe to disturb, and (c) is not being written by a live core in
@@ -695,12 +721,19 @@ def _walking_ones_zeros(adp: Adp, rec: Rec, addr: int, tag: str, strict: bool) -
     """
     replies = []
     fails = {"ones": [], "zeros": []}
+    n_pat = {"ones": 0, "zeros": 0}
     stuck_high = 0          # bits that read 1 when 0 was written
     stuck_low = 0           # bits that read 0 when 1 was written
 
-    for polarity in ("ones", "zeros"):
-        for k in range(32):
-            pat = (1 << k) if polarity == "ones" else ((~(1 << k)) & 0xFFFFFFFF)
+    # THE SEQUENCE COMES FROM harness, not from a local ``1 << k``.  harness
+    # derives FILL_WALK_TERMINAL from the LAST element of exactly this sequence,
+    # and tier1's HIO-107 residue table recognises that terminal.  Iterating the
+    # shared sequence is what makes those two facts the SAME fact: the value
+    # tier1 excuses is by construction the value this loop leaves in the word.
+    # A local generator here would put that agreement back on trust.
+    for polarity, pats in harness.walking_patterns_by_polarity():
+        for pat in pats:
+            n_pat[polarity] += 1
             wr = _w(adp, addr, pat)
             rd = _r(adp, addr)
             replies.extend((wr, rd))
@@ -715,33 +748,37 @@ def _walking_ones_zeros(adp: Adp, rec: Rec, addr: int, tag: str, strict: bool) -
     rec.record("%s_walk_stuck_high_mask" % tag, "0x%08X" % stuck_high)
     rec.record("%s_walk_stuck_low_mask" % tag, "0x%08X" % stuck_low)
 
-    n_ones_ok = 32 - len(fails["ones"])
-    n_zeros_ok = 32 - len(fails["zeros"])
+    n_ones_ok = n_pat["ones"] - len(fails["ones"])
+    n_zeros_ok = n_pat["zeros"] - len(fails["zeros"])
+    n_all = n_pat["ones"] + n_pat["zeros"]
 
     if strict:
-        rec.check("%s: all 32 walking-ONES patterns read back exactly (finds stuck-low / open data bits)" % tag,
+        rec.check("%s: all %d walking-ONES patterns read back exactly (finds stuck-low / open data bits)"
+                  % (tag, n_pat["ones"]),
                   not fails["ones"],
-                  got="%d/32 ok, first failures %s" % (n_ones_ok, fails["ones"][:4]))
-        rec.check("%s: all 32 walking-ZEROS patterns read back exactly (finds stuck-high / bridged data bits)" % tag,
+                  got="%d/%d ok, first failures %s" % (n_ones_ok, n_pat["ones"], fails["ones"][:4]))
+        rec.check("%s: all %d walking-ZEROS patterns read back exactly (finds stuck-high / bridged data bits)"
+                  % (tag, n_pat["zeros"]),
                   not fails["zeros"],
-                  got="%d/32 ok, first failures %s" % (n_zeros_ok, fails["zeros"][:4]))
+                  got="%d/%d ok, first failures %s" % (n_zeros_ok, n_pat["zeros"], fails["zeros"][:4]))
     else:
         rec.check("%s: at least one walking-ONES pattern round-tripped "
-                  "(a live CPU cannot explain zero of 32)" % tag,
-                  n_ones_ok > 0, got="%d/32 ok" % n_ones_ok)
+                  "(a live CPU cannot explain zero of %d)" % (tag, n_pat["ones"]),
+                  n_ones_ok > 0, got="%d/%d ok" % (n_ones_ok, n_pat["ones"]))
         rec.check("%s: at least one walking-ZEROS pattern round-tripped" % tag,
-                  n_zeros_ok > 0, got="%d/32 ok" % n_zeros_ok)
-        rec.target_defer("%s: all 64 walking patterns read back exactly" % tag,
+                  n_zeros_ok > 0, got="%d/%d ok" % (n_zeros_ok, n_pat["zeros"]))
+        rec.target_defer("%s: all %d walking patterns read back exactly" % (tag, n_all),
                          prop="bus_quiescent",
-                         got="ones %d/32, zeros %d/32" % (n_ones_ok, n_zeros_ok),
+                         got="ones %d/%d, zeros %d/%d"
+                             % (n_ones_ok, n_pat["ones"], n_zeros_ok, n_pat["zeros"]),
                          would_have_held=(not fails["ones"] and not fails["zeros"]),
                          reason="the bus is not quiescent on this target, so a mismatch is a live "
                                 "core writing its own memory and cannot be attributed to the RAM")
         if fails["ones"] or fails["zeros"]:
-            rec.note("%s: INCONCLUSIVE — %d/64 walking patterns mismatched while the owning CPU is live; "
+            rec.note("%s: INCONCLUSIVE — %d/%d walking patterns mismatched while the owning CPU is live; "
                      "a running CPU legitimately writes this memory. Not reported as a fault. "
                      "Park the CPU (where the profile says that is possible) and re-run for a verdict." %
-                     (tag, len(fails["ones"]) + len(fails["zeros"])))
+                     (tag, len(fails["ones"]) + len(fails["zeros"]), n_all))
 
     return {"ones_ok": n_ones_ok, "zeros_ok": n_zeros_ok,
             "stuck_high": stuck_high, "stuck_low": stuck_low}
@@ -772,9 +809,13 @@ def _address_uniqueness(adp: Adp, rec: Rec, base: int, size: int, tag: str, stri
     offs = _addr_walk_offsets(size)
     replies = []
 
+    # THE DATUM COMES FROM harness.fill_addr_datum(), for the same reason the
+    # walking sequence does: this phase's terminal value is address-DEPENDENT,
+    # and tier1's residue table has to reproduce it for eth DMEM word 0.  One
+    # function, both sides.
     for off in offs:
         a = base + off
-        replies.append(_w(adp, a, a))
+        replies.append(_w(adp, a, harness.fill_addr_datum(a)))
 
     got = {}
     for off in offs:
@@ -788,11 +829,12 @@ def _address_uniqueness(adp: Adp, rec: Rec, base: int, size: int, tag: str, stri
 
     _replies_healthy(rec, replies, "%s address-uniqueness" % tag)
 
-    bad = [(off, got[off]) for off in offs if got[off] != (base + off)]
+    bad = [(off, got[off]) for off in offs
+           if got[off] != harness.fill_addr_datum(base + off)]
     aliases = []
     for off, v in bad:
         for other in offs:
-            if v == (base + other):
+            if v == harness.fill_addr_datum(base + other):
                 aliases.append("off 0x%X reads the value written at off 0x%X (address bit 0x%X suspect)"
                                % (off, other, off ^ other))
                 break
@@ -803,7 +845,7 @@ def _address_uniqueness(adp: Adp, rec: Rec, base: int, size: int, tag: str, stri
         rec.record("%s_addr_alias_pairs" % tag, aliases)
 
     wrap_val = wrap.value if wrap.value is not None else -1
-    wrap_ok = wrap_val == base
+    wrap_ok = wrap_val == harness.fill_addr_datum(base)
 
     # THE WRAP CHECK IS STRUCTURAL AND MUST SURVIVE A LIVE BUS.  A macro built at
     # the wrong depth is not something a running CPU can explain, and the earlier
@@ -827,11 +869,11 @@ def _address_uniqueness(adp: Adp, rec: Rec, base: int, size: int, tag: str, stri
     # BOTH alias back onto offset 0, so the probe reads the same thing either
     # way. The half-depth case shows up here instead, as offset 0 holding
     # offset 0x4000's value.
-    addr_values = dict((base + o, o) for o in offs)
+    addr_values = dict((harness.fill_addr_datum(base + o), o) for o in offs)
     alias_hits = []
     for off in offs:
         v = got.get(off)
-        if v != base + off and v in addr_values:
+        if v != harness.fill_addr_datum(base + off) and v in addr_values:
             alias_hits.append("off 0x%X holds off 0x%X's value 0x%08X (address bit 0x%X suspect)"
                               % (off, addr_values[v], v, off ^ addr_values[v]))
     rec.record("%s_addr_alias_hits" % tag, alias_hits)
@@ -842,7 +884,7 @@ def _address_uniqueness(adp: Adp, rec: Rec, base: int, size: int, tag: str, stri
               % (tag, size),
               not alias_hits, got="; ".join(alias_hits[:3]) or "no aliasing pairs")
 
-    anchor_ok = got.get(0) == base
+    anchor_ok = got.get(0) == harness.fill_addr_datum(base)
     rec.record("%s_addr_wrap_observed" % tag, "0x%08X (expected 0x%08X)" % (wrap_val, base))
     if anchor_ok:
         rec.check("%s: window aliases back to offset 0 at the declared physical size 0x%X. STRUCTURAL — a "
@@ -979,17 +1021,76 @@ def _fill_and_sample(adp: Adp, rec: Rec, base: int, size: int, pattern: int,
     return {"mismatches": bad, "last_filled": last_filled, "sample_offsets": offs}
 
 
+# ---------------------------------------------------------------------------
+# THE BATTERY'S PHASE SEQUENCE.
+#
+# The phases, their ORDER, and the value each one LEAVES BEHIND are declared in
+# harness (``harness.MEM_FILL_PHASES``).  _ram_battery EXECUTES FROM THAT PLAN
+# rather than from a hand-written call list, and that is the whole point: there
+# is no path through the battery that writes a pattern the plan does not name,
+# so ``battery_plan()`` is an honest answer to "what does this battery leave
+# behind" and not a second declaration that merely happens to agree today.
+#
+# Each runner takes the uniform signature (adp, rec, base, size, tag, strict,
+# phase) so a phase can be added in harness and picked up here by name.  The
+# fill tag suffix is DERIVED from the pattern ("_5a"/"_a5"), so it cannot drift
+# away from the pattern it labels either.
+_BATTERY_RUNNERS = {
+    "walking_ones_zeros":
+        lambda adp, rec, base, size, tag, strict, ph:
+            _walking_ones_zeros(adp, rec, base, tag, strict),
+    "address_uniqueness":
+        lambda adp, rec, base, size, tag, strict, ph:
+            _address_uniqueness(adp, rec, base, size, tag, strict),
+    "fill_pat_a":
+        lambda adp, rec, base, size, tag, strict, ph:
+            _fill_and_sample(adp, rec, base, size, ph.pattern,
+                             "%s_%02x" % (tag, ph.pattern & 0xFF), strict),
+    "fill_pat_b":
+        lambda adp, rec, base, size, tag, strict, ph:
+            _fill_and_sample(adp, rec, base, size, ph.pattern,
+                             "%s_%02x" % (tag, ph.pattern & 0xFF), strict),
+}
+
+
+def battery_plan():
+    """((MemFillPhase, runnable), ...) -- what _ram_battery will execute, in order.
+
+    PUBLISHED FOR CROSS-CHECKING, because this module's residue outlives this
+    module's run: tier1's HIO-107 witness table has to recognise what the
+    battery left in eth DMEM word 0.  CONTRACT.md forbids tier1 importing this
+    module, so it reads this through ``harness.LOADED_MODULES`` instead -- a
+    harness lookup, not a sibling import.
+
+    ``runnable`` is False for a phase harness declares that this module has no
+    runner for.  That is the divergence worth reporting in this direction: a new
+    phase added to the shared declaration but never implemented here would have
+    tier1 excusing a value that NOTHING writes -- i.e. excusing a real fault.
+    """
+    return tuple((p, p.name in _BATTERY_RUNNERS) for p in harness.MEM_FILL_PHASES)
+
+
 def _ram_battery(adp: Adp, rec: Rec, base: int, size: int, tag: str, strict: bool) -> None:
     """The HIO-201/202/203/204 pattern applied to one RAM (plan's HIO-205 shape).
 
     Order matters: per-cell tests first (they need a quiet RAM to interpret),
-    then the two complementary bulk fills.  Cost ~= 380 CU ~= 25 s for a 16 KB
-    RAM; the walking-pattern half dominates and does not scale with depth.
+    then the two complementary bulk fills.  It comes from battery_plan(), so
+    that order is the shared declaration's, not a local one.  Cost ~= 380 CU
+    ~= 25 s for a 16 KB RAM; the walking-pattern half dominates and does not
+    scale with depth.
     """
-    _walking_ones_zeros(adp, rec, base, tag, strict)
-    _address_uniqueness(adp, rec, base, size, tag, strict)
-    _fill_and_sample(adp, rec, base, size, PAT_A, tag + "_5a", strict)
-    _fill_and_sample(adp, rec, base, size, PAT_B, tag + "_a5", strict)
+    for phase, runnable in battery_plan():
+        if not runnable:
+            # A suite bug, not a die result.  Raising reports ERROR, which is
+            # what an unimplemented declared phase deserves: running the rest
+            # would leave a RAM in a state tier1 has been told to expect and
+            # this module never produced.
+            raise RuntimeError(
+                "battery phase %r is declared in harness.MEM_FILL_PHASES but has no "
+                "runner in tier2_3._BATTERY_RUNNERS. Implement it or remove the "
+                "declaration -- tier1's HIO-107 residue table trusts that every "
+                "declared phase is actually written." % phase.name)
+        _BATTERY_RUNNERS[phase.name](adp, rec, base, size, tag, strict, phase)
 
 
 # ===========================================================================
@@ -997,7 +1098,7 @@ def _ram_battery(adp: Adp, rec: Rec, base: int, size: int, tag: str, strict: boo
 # ===========================================================================
 
 @test("HIO-201", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
-      destroys="eth IMEM word at 0x10000000 (left holding 0x7FFFFFFF)",
+      destroys="eth IMEM word at 0x10000000 (left holding 0x%08X)" % harness.FILL_WALK_TERMINAL,
       purpose="Eth IMEM data-bus integrity: 32 walking-ones AND 32 walking-zeros at 0x10000000. "
               "RED when a written pattern does not read back. Both polarities are required and are "
               "asserted separately: walking-ones alone cannot see a stuck-at-1 bit, walking-zeros alone "
@@ -1025,7 +1126,7 @@ def hio_202(adp, rec):
 
 
 @test("HIO-203", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
-      destroys="ALL 32 KB of eth IMEM (0x10000000-0x10007FFF), overwritten with 0x5A5A5A5A",
+      destroys="ALL 32 KB of eth IMEM (0x10000000-0x10007FFF), overwritten with 0x%08X" % PAT_A,
       purpose="Eth IMEM whole-RAM fill 0x5A5A5A5A via the F engine, then strided sampled readback. "
               "Every cell is WRITTEN (one F command, ~4700x cheaper than a dump); 12 fixed sample cells are "
               "READ — a full R<n> dump is ~18 min and returns thousands of replies the pinned Reply API "
@@ -1040,7 +1141,7 @@ def hio_203(adp, rec):
 
 
 @test("HIO-204", tier=2, hazard=HZ.DESTRUCTIVE, weak=_LIVE_BUS,
-      destroys="ALL 32 KB of eth IMEM (0x10000000-0x10007FFF), overwritten with 0xA5A5A5A5",
+      destroys="ALL 32 KB of eth IMEM (0x10000000-0x10007FFF), overwritten with 0x%08X" % PAT_B,
       purpose="Eth IMEM whole-RAM fill 0xA5A5A5A5 — the complement of HIO-203. RED for the same reasons. "
               "The pair is what makes either sound: a cell stuck at 0x5A5A5A5A's bit values passes HIO-203 "
               "and fails here. Running one polarity only is the 'measured nothing' failure mode. "
@@ -1788,8 +1889,13 @@ def hio_306(adp, rec):
               "separates 'CLR worked' from 'the register is stuck at a small number', which no single "
               "post-CLR read can do. "
               "These counters SATURATE rather than wrap, so an as-found 0xFFFFFFFF is POSITIVE evidence the "
-              "fabric clock ran, not a stuck register. The implied clock rate from the SNAP delta is "
-              "recorded as a free cross-check of the 0x05F5E100 clock-rate word at 0x18000000. "
+              "fabric clock ran, not a stuck register. THE SNAP DELTA IS RECORDED AS A COARSE "
+              "ORDER-OF-MAGNITUDE CHECK AND IS NOT A CLOCK MEASUREMENT: its window is the two ADP commands "
+              "between the two SNAPs, ~0.26 s, which carries ~19% of host-timing error (measured: 16.4% "
+              "spread over a 45-run soak, against 0.18% for HIO-402 on the same net). It is asserted only "
+              "in a 0.5x..2.0x band around the declared fabric_hz -- wide enough that host jitter cannot "
+              "red it, narrow enough to catch a rate wrong by 4x. THE FABRIC RATE IS MEASURED BY HIO-402, "
+              "which brackets ~3.3 s; do not quote this number as a clock. "
               "(The plan's literal CLR write lands on 0x2C20000C because R auto-increments.) "
               "Budget: ~22 CU ~= 1.4 s.")
 def hio_307(adp, rec):
@@ -1908,48 +2014,97 @@ def hio_307(adp, rec):
                   "single post-CLR read can distinguish" % (a1, a2),
                   a2 > a1, got="0x%08X -> 0x%08X" % (a1, a2))
 
+    # ---- THE SNAP DELTA: A COARSE ORDER-OF-MAGNITUDE CHECK, NOT A CLOCK -----
+    #
+    # WHAT THE WINDOW ACTUALLY IS, read off the code above rather than assumed:
+    # t1 and t2 bracket exactly two ADP commands -- the second _perf_snap (A + W,
+    # 2 CU) and the read that follows it (A + R, 2 CU). Four CU, ~0.26 s at the
+    # measured ~130 ms per access. That is the entire measurement window.
+    #
+    # And it is made ENTIRELY OF COMMAND TIME, which is the second half of the
+    # problem. The board pumps in PUMP_MS (50 ms) slices, so the window's own
+    # length quantises and jitters; and t1/t2 are REPLY-ARRIVAL times, not latch
+    # times, so the true counter interval differs from (t2 - t1) by two unknown
+    # SNAP-to-reply offsets that do not cancel. Both effects are tens of ms
+    # against a 260 ms window.
+    #
+    # MEASURED CONSEQUENCE (45-run soak): this number swings 23.14-26.93 MHz, a
+    # 16.4% spread, while HIO-402's estimate ON THE SAME NET swings 0.18%.
+    # HIO-402's window is a deliberate 3 s sleep plus its own two commands,
+    # ~3.26 s -- 12x longer, and the long part of it is a SLEEP rather than
+    # command time, so it is both longer and quieter. That is the whole
+    # difference; there is no second mechanism to look for.
+    #
+    # WHY THE WINDOW IS NOT WIDENED HERE. It could be: ~5 s would bring the
+    # precision under a 1% tolerance. But that is more than 3x this test's entire
+    # ~1.4 s budget, and it would duplicate HIO-402 exactly -- which already
+    # brackets a long window and IS the fabric-rate measurement. Two tests
+    # measuring one rate to different precisions is how the weaker number ends up
+    # being the one quoted.
+    #
+    # WHAT IS KEPT AND WHY. The delta is genuinely useful as "the counter
+    # advanced by roughly the right number of cycles for the time that passed",
+    # so it stays -- but as the coarse check it is, ASSERTED in a factor band
+    # rather than recorded and left alone, and NAMED for what it is. The old key
+    # `perf_implied_hclk_hz` was the defect: nothing about that name said
+    # +/-16%, so a reader scanning the die record for a clock found a number that
+    # looked like one and was not. The raw counts and the window are recorded
+    # alongside it, because those are what was actually observed; the rate is a
+    # quotient that carries the window's error.
     dt = max(t2 - t1, 1e-9)
     if a2 > a1 and a2 != 0xFFFFFFFF:
-        implied = int((a2 - a1) / dt)
-        rec.record("perf_implied_hclk_hz", implied)
-        rec.record("perf_implied_hclk_window_s", round(dt, 4))
-
-        # THE CHEAPEST CLOCK GUARD IN THE SUITE, and it was recorded but never
-        # asserted. It is asserted now -- but only when the measurement window
-        # can actually support the tolerance being asserted.
-        #
-        # The delta is (cycles / host-measured seconds), so its relative error is
-        # dominated by host timer jitter divided by the window. Over the ~0.26 s
-        # of a single ADP round trip, ~50 ms of jitter is ~19% error, which would
-        # red a perfectly good 1%-tolerance comparison for a HOST-TIMING reason.
-        # Over the 19.680 s window that measured 25.010 MHz it is ~0.25%, and the
-        # measurement agreed with the routed report to 0.004%. So: compare the
-        # window's own achievable precision against the tolerance, and assert
-        # only when the measurement is good enough to mean something.
-        tol = (t.fabric_hz_tol if t is not None else 0.01) or 0.01
+        delta = a2 - a1
         precision = _HOST_TIMER_JITTER_S / dt
-        rec.record("perf_implied_hclk_precision", round(precision, 5))
-        if precision <= tol:
-            rec.target_check("the implied fabric clock (%.3f MHz over %.3f s, precision +/-%.2f%%) is "
-                             "within %.1f%% of the target's declared %s"
-                             % (implied / 1e6, dt, 100.0 * precision, 100.0 * tol,
-                                ("%.3f MHz" % (f_hz / 1e6)) if f_hz else "fabric_hz"),
-                             (t.fabric_hz_holds(implied) if (t is not None and f_hz) else None),
-                             prop="fabric_hz", got="%d Hz" % implied, expected=f_hz)
-        else:
-            rec.target_defer("the implied fabric clock is within %.1f%% of the declared fabric_hz" % (100.0 * tol),
-                             prop="fabric_hz", got="%d Hz over %.3f s" % (implied, dt), expected=f_hz,
-                             would_have_held=(t.fabric_hz_holds(implied)
-                                              if (t is not None and f_hz) else None),
-                             reason="the %.3f s measurement window supports only +/-%.2f%% precision against "
-                                    "a %.1f%% tolerance -- asserting it would red on host timer jitter, not "
-                                    "on the clock. Widen the window to assert this."
-                                    % (dt, 100.0 * precision, 100.0 * tol))
-        rec.note("Implied fabric clock from the SNAP delta: %.3f MHz over %.3f s. This is a HARDWARE "
-                 "measurement. It is NOT to be cross-checked against 0x05F5E100 at eth DMEM word 0 — that "
-                 "word is SystemCoreClock, a firmware build constant, and on this FPGA it says 100 MHz "
-                 "while the fabric runs at 25.010 MHz. Deriving a rate from it is how a 4x error survived."
-                 % (implied / 1e6, dt))
+        coarse = int(delta / dt)
+
+        # THE RAW OBSERVATION FIRST. A reader who wants to recompute, or to
+        # compare against a differently bracketed window, needs these two numbers
+        # and not the quotient.
+        rec.record("perf_snap_delta_cycles", delta)
+        rec.record("perf_snap_delta_window_s", round(dt, 4))
+        rec.record("perf_snap_coarse_rate_hz", coarse)
+        rec.record("perf_snap_coarse_rate_precision", round(precision, 5))
+        rec.record("perf_snap_coarse_rate_is_a_clock_measurement", False)
+        rec.record("perf_snap_coarse_rate_exercised", True)
+
+        lo, hi = _COARSE_RATE_BAND
+        rec.record("perf_snap_coarse_rate_band",
+                   ("%.1fx..%.1fx of the declared %.3f MHz = %.3f..%.3f MHz"
+                    % (lo, hi, f_hz / 1e6, lo * f_hz / 1e6, hi * f_hz / 1e6))
+                   if f_hz else
+                   "not computable: target %s does not establish fabric_hz"
+                   % (t.name if t is not None else "?"))
+
+        rec.target_check(
+            "COARSE SANITY CHECK, NOT A RATE MEASUREMENT: the SNAP delta (%d cycles over %.3f s = "
+            "%.3f MHz, +/-%.1f%% from the window alone) is inside a %.1fx..%.1fx band around the "
+            "target's declared %s. The band is a FACTOR, not a tolerance: at this window length host "
+            "timing cannot push the number out of it, so a failure here is the counter, not the host "
+            "-- a probe clocked from the wrong net, counting something other than cycles, or a rate "
+            "wrong by the 4x this suite has already been bitten by"
+            % (delta, dt, coarse / 1e6, 100.0 * precision, lo, hi,
+               ("%.3f MHz" % (f_hz / 1e6)) if f_hz else "fabric_hz"),
+            (lo * f_hz <= coarse <= hi * f_hz) if f_hz else None,
+            prop="fabric_hz", got="%d Hz over %.3f s" % (coarse, dt), expected=f_hz)
+
+        rec.note("SNAP delta: %d cycles over %.3f s = %.3f MHz. THIS IS NOT A CLOCK MEASUREMENT. Its "
+                 "window is two ADP commands (~%.2f s of pure command time) and carries +/-%.1f%% of "
+                 "host-timing error on its own; a 45-run soak measured it swinging 16.4%%. It is here "
+                 "as an order-of-magnitude check and is asserted only in a %.1fx..%.1fx band. "
+                 "THE FABRIC RATE IS HIO-402's NUMBER (fabric_hclk_hz_estimate): it brackets ~3.3 s "
+                 "instead of ~%.2f s and held to 0.18%% across the same soak. Quote that one. "
+                 "And do not cross-check either against 0x05F5E100 at eth DMEM word 0 — that word is "
+                 "SystemCoreClock, a firmware build constant, and on this FPGA it says 100 MHz while "
+                 "the fabric runs at 25.010 MHz. Deriving a rate from it is how a 4x error survived."
+                 % (delta, dt, coarse / 1e6, dt, 100.0 * precision, lo, hi, dt))
+    else:
+        # Recorded, not silent: an unexercised check must be visible as such, or
+        # the absence of a red reads as a pass.
+        rec.record("perf_snap_coarse_rate_exercised", False)
+        rec.note("The SNAP-delta order-of-magnitude check did not run: the counter did not advance "
+                 "across the two SNAPs (0x%08X -> 0x%08X)%s. There is no delta to take a rate from. "
+                 "The advance check above is the one that reports this."
+                 % (a1, a2, ", and it is SATURATED at 0xFFFFFFFF" if a2 == 0xFFFFFFFF else ""))
 
 
 @test("HIO-308", tier=3, hazard=HZ.DESTRUCTIVE, weak=True,
