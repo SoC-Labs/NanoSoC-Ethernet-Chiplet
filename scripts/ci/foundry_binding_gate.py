@@ -35,10 +35,18 @@ bind". The gate returns UNVERIFIED in that case and says which path it searched.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 
-DEFAULT_BASE = "http://mapstone-dev.ecs.soton.ac.uk:8082/artifactory"
+# Honour ASIC_ARTIFACT_BASE like every other client in this tree. It did NOT,
+# and that is the shape a hostname change fails in: sixteen scripts follow the
+# env var, one keeps a hardcoded literal, and the rename looks complete because
+# fifteen of them moved. The one left behind then reports on the OLD store --
+# and a gate that reads the wrong store still returns a verdict.
+DEFAULT_BASE = os.environ.get(
+    "ASIC_ARTIFACT_BASE",
+    "http://mapstone-dev.ecs.soton.ac.uk:8082/artifactory")
 RECORD_REPO = "asic-record"
 
 
