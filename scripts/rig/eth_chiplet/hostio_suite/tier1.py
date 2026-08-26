@@ -202,6 +202,28 @@ _BOOT_LADDER = [
 ]
 
 
+# The five states a ZERO boot gate resolves into, in the order the ladder tests
+# them. Naming them is not decoration: `flash_provisioned` discriminates exactly
+# ONE of them (_Z_NO_FLASH_PARK), and a branch that is keyed on a string cannot
+# drift away from the branch that is keyed on a rung number.
+_Z_WRONG_ROM = "rung0_wrong_rom"
+_Z_NO_MAIN = "rung1_cpu1_never_reached_main"
+_Z_XIP_HALT = "rungs23_halted_in_xip_enable"
+_Z_NO_FLASH_PARK = "rung4_absent_no_flash_hardfault_park"
+_Z_CONTRADICTION = "rung4_published_gate_still_zero"
+
+
+def _flash_word(t):
+    """How the board's declared flash state renders in a record. Three states."""
+    if t is None:
+        return "undeclared (no target)"
+    if t.flash_absence_explains_zero_bootgate():
+        return "DECLARED ABSENT (flash_provisioned=False)"
+    if t.flash_presence_makes_zero_bootgate_a_finding():
+        return "DECLARED PRESENT (flash_provisioned=True)"
+    return "UNDECLARED (flash_provisioned=None)"
+
+
 def _bootgate_values(rec):
     """The target profile's declared terminating-path words, or () if undeclared."""
     t = getattr(rec, "target", None)
@@ -246,6 +268,8 @@ _TIER1_OTHERS = [
               "NON-ZERO reading it is checked against the target profile's "
               "bootgate_values via rec.target_check, so an undeclared target defers "
               "instead of inheriting FPGA expectations. "
+              "ON A NON-ZERO reading it is checked against bootgate_values, AND "
+              "THAT PROPERTY JUDGES THE NON-ZERO READING ONLY. "
               "A ZERO READING IS NOT ASSUMED TO BE A FAULT. 0x00000000 is FOUR "
               "distinct states, not one, and on an ASIC bring-up board with "
               "unprovisioned or absent QSPI flash it is the EXPECTED reading and the "
@@ -263,6 +287,19 @@ _TIER1_OTHERS = [
               "terminating store — both are in the reticle — and a zero then "
               "contradicts the mask. That is the only reading in §0.3's table that is a "
               "silicon finding, and it is the only one that fails here. "
+              "WHICH ZEROS ARE EVIDENCE IS SETTLED BY flash_provisioned, A BOARD "
+              "FACT THE OPERATOR DECLARES PER RUN (--target-set "
+              "flash_provisioned=0|1, or HOSTIO_FLASH_PROVISIONED) — not by "
+              "bootgate_values, which IS `known` on the asic profile and would "
+              "therefore pass its guard and red a healthy unprovisioned die. "
+              "Declared ABSENT: the no-flash park is the predicted reading and "
+              "PASSES CLEAN, while any OTHER zero classification reds. Declared "
+              "PRESENT: a zero is a finding whatever the ladder says, and reds. "
+              "UNDECLARED: the classification is recorded and the assertion "
+              "DEFERS, naming flash_provisioned — the correct first-silicon "
+              "outcome, because a first board very likely has bare flash pads and "
+              "an assertion of 'non-zero' would red a healthy die on the first "
+              "test of the first chip. "
               "NOT a write test: HZ-4 (write-1-set, irreversible without a power "
               "cycle) applies to writes only; this test only reads.")
 def hio_106(adp, rec):
@@ -342,16 +379,16 @@ def hio_106(adp, rec):
                  "stage0_bootrom_chip_core, or the gate-release stores are not in it. "
                  "A wrong ROM image explains a zero gate with NO silicon fault, and it "
                  "voids the premise of the whole bring-up procedure for this die.")
-        silicon = False
+        zero_class, silicon = _Z_WRONG_ROM, False
     elif not ok.get(1, False):
         state = ("rung 1 FAILED — CPU1 never reached main(). Suspect the CPU1 core, "
                  "its reset, or the ROM. Rung 0 passed, so the image is right.")
-        silicon = False
+        zero_class, silicon = _Z_NO_MAIN, False
     elif not (ok.get(2, False) and ok.get(3, False)):
         state = ("rungs 2/3 FAILED — CPU1 halted inside xip_enable(); CTRL.XIP_ACTIVE "
                  "never latched. halt() is 'for(;;) wfi();', a quiet park in ROM. "
                  "Suspect the QSPI controller or its clock.")
-        silicon = False
+        zero_class, silicon = _Z_XIP_HALT, False
     elif not ok.get(4, False):
         state = ("rungs 1-3 OK, rung 4 absent — THE MOST LIKELY READING ON A FIRST "
                  "BRING-UP BOARD, AND IT IS BENIGN. xip_enable()'s warm-up read of "
@@ -361,7 +398,7 @@ def hio_106(adp, rec):
                  "branch-to-self in ROM — the QUIETEST bus state this die can be in — "
                  "and CPU0 is still held in reset. Provision flash, or accept a "
                  "quiescent bus and read on.")
-        silicon = False
+        zero_class, silicon = _Z_NO_FLASH_PARK, False
     else:
         state = ("rung 4 PUBLISHED but the gate is STILL ZERO on a re-read — THE ONLY "
                  "SILICON FINDING in §0.3's table. CPU1 provably survived "
@@ -369,9 +406,10 @@ def hio_106(adp, rec):
                  "in the reticle (cc_rom byte offsets 0x4F4 and 0x528). Either CPU1 is "
                  "still executing — re-run after 5 s before believing this — or the "
                  "0x29 decode arm or chip_core_remap_ctrl is faulty.")
-        silicon = True
+        zero_class, silicon = _Z_CONTRADICTION, True
 
     rec.record("cpu1_boot_outcome", state)
+    rec.record("boot_gate_zero_class", zero_class)
     rec.record("boot_gate_zero_is_silicon_finding", int(silicon))
 
     rec.check("boot gate zero is not the rung-4 contradiction "
@@ -379,24 +417,88 @@ def hio_106(adp, rec):
               not silicon, got="%s | %s" % (_h(v), state))
 
     if not silicon:
-        rec.target_defer(
-            "boot gate value is a known terminating-path word",
-            prop=None, got=_h(v),
-            expected=[_h(x) for x in _bootgate_values(rec)] or None,
-            would_have_held=False,
+        # ------------------------------------------------------------------
+        # THE ZERO IS JUDGED BY flash_provisioned, AND BY NOTHING ELSE.
+        #
+        # Not by bootgate_values. That property IS `known` on asic_tsmc65, so
+        # rec.target_check(prop="bootgate_values") sails through its guard and
+        # reds a healthy unprovisioned board — the guard only asks whether a
+        # property is DECLARED, never whether it is the property that answers the
+        # question. An established property is not automatically the right
+        # property to gate on. bootgate_values judges the NON-ZERO reading above,
+        # and only that.
+        #
+        # Three states, and the third one is why this is a target_check and not
+        # an `if`:
+        #   flash DECLARED ABSENT  → a zero is what the board predicts, so assert
+        #                            that the ladder found the no-flash park and
+        #                            nothing else. A healthy bare board PASSES
+        #                            CLEAN; any other zero is a real finding and
+        #                            reds, with the failing rung in the record.
+        #   flash DECLARED PRESENT → flash is fitted and carries a CRC-valid
+        #                            image, so CPU1 should have reached a
+        #                            terminating store. A zero is a finding
+        #                            whatever the ladder says: assert False.
+        #   flash UNDECLARED       → ok is None: nothing to compare against, so
+        #                            target_check DEFERS, names flash_provisioned
+        #                            in deferred_by_property, and records the
+        #                            classification. This is the expected
+        #                            first-silicon outcome and it must not red.
+        #
+        # `ok` is None only in the third state, so a MIS-WIRED prop= (one that IS
+        # known on this target) hands None to rec.check(), which refuses a
+        # non-bool — the mis-wire surfaces as a hard ERROR, not as a quiet
+        # deferral that nobody reads.
+        t = rec.target
+        rec.record("flash_provisioned_declared", _flash_word(t))
+        if t is not None and t.flash_absence_explains_zero_bootgate():
+            consistent = (zero_class == _Z_NO_FLASH_PARK)
+        elif t is not None and t.flash_presence_makes_zero_bootgate_a_finding():
+            consistent = False
+        else:
+            consistent = None
+
+        rec.target_check(
+            "a zero boot gate is what this board's DECLARED QSPI flash state predicts",
+            consistent, prop="flash_provisioned",
+            got="gate=0x00000000, ladder=%s, flash=%s"
+                % (zero_class, _flash_word(t)),
+            expected="flash_provisioned=False AND ladder=%s" % _Z_NO_FLASH_PARK,
             reason="the gate reads 0x00000000 and the ladder classifies that as a "
-                   "NON-silicon state (%s). Whether zero is correct here depends on "
-                   "whether QSPI flash is provisioned on this board, and NO TARGET "
-                   "PROPERTY ESTABLISHES THAT — targets.py has no flash_provisioned "
-                   "property, so there is nothing sound to assert against and the "
-                   "value is recorded instead. Asserting bootgate_values here would "
-                   "red a healthy unprovisioned board on the first test of the first "
-                   "die." % state.split(" — ")[0])
-        rec.note("BOOT GATE READS 0x00000000, and the ladder says this is NOT a "
-                 "silicon fault. %s CPU0 is still held in reset, so unlike the "
-                 "non-zero case the bus below IS quiescent — which makes the memory "
-                 "readings in this run unusually trustworthy, not untrustworthy."
-                 % state)
+                   "NON-silicon state (%s). Whether zero is CORRECT here depends on "
+                   "whether this BOARD has QSPI flash fitted and programmed — the "
+                   "same die reads a healthy zero on bare pads and a healthy "
+                   "0x00000004 once flash is provisioned — and nobody declared it "
+                   "for this run. Declare it with --target-set flash_provisioned=0 "
+                   "(or =1), or HOSTIO_FLASH_PROVISIONED, and this becomes evidence. "
+                   "Do NOT reach for bootgate_values instead: it is `known` on the "
+                   "asic profile, so the guard would pass and this healthy reading "
+                   "would go red." % state.split(" — ")[0])
+
+        if consistent is True:
+            rec.note("BOOT GATE READS 0x00000000 AND THAT IS THE DECLARED-EXPECTED "
+                     "READING: you told the suite this board has no provisioned QSPI "
+                     "flash, and the ladder found exactly the signature that "
+                     "predicts: rungs 1-3 good, no XiP-warm handshake at rung 4. "
+                     "%s This is not a deferral and not a fault; it is a pass."
+                     % state)
+        elif consistent is False:
+            why = ("flash is declared PRESENT, so CPU1 should have reached one of "
+                   "cc_rom's two terminating stores and the gate should not be zero"
+                   if t.flash_presence_makes_zero_bootgate_a_finding() else
+                   "flash is declared ABSENT, which predicts the rung-4 HardFault "
+                   "park — and the ladder found %s instead" % zero_class)
+            rec.note("BOOT GATE READS 0x00000000 AND THE BOARD'S DECLARED FLASH "
+                     "STATE SAYS THAT IS WRONG: %s. %s Everything below is VOID. If "
+                     "the declaration is the thing that is wrong, fix the "
+                     "declaration — do not relax the check." % (why, state))
+        else:
+            rec.note("BOOT GATE READS 0x00000000, and the ladder says this is NOT a "
+                     "silicon fault. %s CPU0 is still held in reset, so unlike the "
+                     "non-zero case the bus below IS quiescent — which makes the "
+                     "memory readings in this run unusually trustworthy, not "
+                     "untrustworthy. NOTHING WAS ASSERTED ABOUT THE ZERO ITSELF: "
+                     "declare flash_provisioned to turn this into evidence." % state)
     else:
         rec.note("BOOT GATE READS 0x00000000 AND THE LADDER CONTRADICTS IT. %s "
                  "Everything below is VOID, which is correct here: the boot state is "
@@ -2179,3 +2281,337 @@ def hio_127(adp, rec):
              "silicon one — check HIO-106's bus_quiescent_expected before treating a "
              "failure here as a defect. WDOGLOAD is not a counter and is the "
              "unambiguous half.")
+
+
+# ===========================================================================
+# --selftest : HIO-106's flash_provisioned wiring, proved in ALL THREE states
+# ===========================================================================
+# WHY IT LIVES HERE AND NOT IN harness.py --selftest
+# --------------------------------------------------
+# harness.py owns the suite-wide selftest and is pinned: its [4] section proves
+# the target MECHANISM (a deferral is recorded, a declared target still reds).
+# What is proved below is the WIRING OF ONE TEST to one property, which is
+# tier-1 knowledge -- the ladder classes, the boot gate, cc_rom's two store
+# sites -- and it belongs beside the test it polices, the same way
+# `_residue_drift` does. Run it with:
+#
+#     python3 tier1.py --selftest        # no hardware, no serial port, no board
+#
+# It touches nothing: every read goes to harness's _FakeAdp, a table of canned
+# replies, and the boot gate never leaves that table.
+#
+# THE STANDING RULE IT ANSWERS: a check that cannot produce the failing verdict
+# is worth nothing. So every case below is PAIRED with a control that inverts
+# exactly one input and flips the verdict -- and the deferral is shown NOT to
+# launder the one zero that is a real silicon finding.
+
+# The ladder as a healthy provisioned board would answer it, keyed by address.
+# Omitting an entry makes _FakeAdp answer `R!0x00000000` -- a bus error, which is
+# how an ABSENT rung reads: _run_boot_ladder scores it None, and the rung fails.
+_ST_LADDER_FULL = {
+    0x800000E4: 0x08000678,     # rung 0  CPU1 ROM slot
+    0x800004F4: 0x220423A4,     # rung 0  gate-release store site 1
+    0x800004F8: 0x601A059B,     # rung 0  ...continued
+    0x98000200: 0x0F1C0DE1,     # rung 1  CPU1 main() entered
+    0x21000030: 0x0000800B,     # rung 2  QSPI AHB_SETUP
+    0x21000000: 0x00000100,     # rung 3  CTRL[8] XIP_ACTIVE
+    0x23000010: 0xD15C0001,     # rung 4  XiP-warm handshake
+    0x98000084: 0xFFFFFFFF,     # rung 5  g_tbl, blank flash
+}
+
+# Which rung addresses each fixture DROPS. The classification is by first
+# failing rung, so dropping one word is enough to select a class.
+_ST_SHAPES = {
+    "no_flash_park":  (0x23000010,),              # rungs 1-3 good, no handshake
+    "contradiction":  (),                         # every rung good, gate still 0
+    "wrong_rom":      (0x800000E4, 0x800004F4, 0x800004F8),
+    "no_main":        (0x98000200,),
+    "xip_halt":       (0x21000000,),
+}
+
+
+def _st_table(shape, gate=0x00000000):
+    """Canned ADP replies for one fixture. Nothing here reaches a board."""
+    words = dict(_ST_LADDER_FULL)
+    for addr in _ST_SHAPES[shape]:
+        words.pop(addr)
+    words[0x29000000] = gate
+    return dict((a, "\nR 0x%08x\n]" % w) for a, w in words.items())
+
+
+def _st_run(profile, flash, shape, gate=0x00000000):
+    """Run the REAL hio_106 against one fixture and return its result dict.
+
+    `flash` is None (undeclared), True or False, and it is applied through the
+    SAME --target-set channel the operator uses -- not by poking the attribute,
+    which would prove the wiring works only for a path nobody takes.
+    """
+    from io import StringIO
+    import targets
+
+    t = targets.resolve(profile)
+    if flash is not None:
+        targets.apply_settings(t, ["flash_provisioned=%d" % int(flash)])
+
+    reg = harness_module.Registry("st106")
+    saved = getattr(hio_106, "hostio_meta", None)
+    harness_module.test("HIO-106", tier=1, registry=reg,
+                        purpose="selftest fixture")(hio_106)
+    if saved is not None:                 # the decorator stamps fn.hostio_meta
+        hio_106.hostio_meta = saved       # put the real declaration back
+
+    r = harness_module.Runner(
+        reg, harness_module.Opts(preamble=False, target=t),
+        adp=harness_module._FakeAdp(_st_table(shape, gate)), out=StringIO())
+    r.run()
+    return r.results["HIO-106"], r
+
+
+def selftest(out=None):
+    """Prove HIO-106's flash_provisioned wiring in both directions. No hardware."""
+    import sys as _sys
+    from io import StringIO
+    import targets
+
+    out = out or _sys.stdout
+    fails, n = [], [0]
+    PASS, FAIL, SKIP = harness_module.PASS, harness_module.FAIL, harness_module.SKIP
+
+    def tck(desc, got, want):
+        n[0] += 1
+        if got != want:
+            fails.append("%s\n      got  %r\n      want %r" % (desc, got, want))
+            out.write("  FAIL  %s\n" % desc)
+        elif "-v" in _sys.argv or "--verbose" in _sys.argv:
+            out.write("  ok    %s\n" % desc)
+
+    f = targets.resolve("fpga_kr260")
+    a = targets.resolve("asic_tsmc65")
+    u = targets.resolve("unknown")
+
+    # ------------------------------------------------------------------
+    out.write("\n[1] flash_provisioned is a first-class property, UNDECLARED "
+              "on every profile\n")
+    # ------------------------------------------------------------------
+    tck("it is in the property table, so a typo cannot become a no-op",
+        "flash_provisioned" in targets.Target.PROPS, True)
+    tck("NO PROFILE DECLARES IT -- it is a board fact, not a vehicle fact",
+        [x.flash_provisioned for x in (f, a, u)], [None, None, None])
+    tck("...so known() says unknown everywhere, and every assertion defers",
+        [x.known("flash_provisioned") for x in (f, a, u)], [False, False, False])
+    tck("a typo still RAISES rather than answering False",
+        harness_module._raises(a.known, "flash_provisioned_"), "KeyError")
+    tck("it is NOT filed as an open question a profile could close",
+        "flash_provisioned" in a.to_dict()["open_questions"], False)
+    tck("...nor as an established absence -- it is answerable, just not here",
+        "flash_provisioned" in a.to_dict()["established_absent"], False)
+    tck("...it is filed as OPERATOR-DECLARED, the third kind of None",
+        a.to_dict()["operator_declared_unknown"], ["flash_provisioned"])
+    tck("...and it is still counted among the unknown properties, as before",
+        "flash_provisioned" in a.to_dict()["unknown_properties"], True)
+    tck("THE INVARIANT THIS MUST NOT DISTURB: the asic's open questions are "
+        "exactly what they were before the property existed",
+        a.to_dict()["open_questions"],
+        ["dma_powered", "fcsm_state_map", "phy_oui", "subword_rmw_supported",
+         "timer0_owned_by_firmware"])
+    tck("--list-targets shows the property, and shows WHO is being asked",
+        "QSPI flash provisioned (BOARD)" in targets.format_table()
+        and "-- declare per run --" in targets.format_table(), True)
+
+    # ------------------------------------------------------------------
+    out.write("\n[2] Both operator channels produce a BOOLEAN, not the string "
+              '"0"\n')
+    # ------------------------------------------------------------------
+    for raw, want in (("0", False), ("1", True), ("false", False), ("on", True)):
+        tck("--target-set flash_provisioned=%s -> %r" % (raw, want),
+            targets.apply_settings(targets.resolve("asic"),
+                                   ["flash_provisioned=%s" % raw]).flash_provisioned,
+            want)
+    tck("HOSTIO_FLASH_PROVISIONED=0 does the same through the env",
+        targets.apply_env(targets.resolve("asic"),
+                          {"HOSTIO_FLASH_PROVISIONED": "0"}).flash_provisioned, False)
+    tck("...and every override that fires is RECORDED with its source",
+        targets.apply_env(targets.resolve("asic"),
+                          {"HOSTIO_FLASH_PROVISIONED": "0"}
+                          ).overrides["flash_provisioned"]["via"],
+        "env:HOSTIO_FLASH_PROVISIONED")
+    tck("THE CONTROL: the string '0' would be TRUTHY and would make known() lie",
+        bool("0"), True)
+    tck("...which is why =0 must land as False, and it does",
+        targets.apply_settings(targets.resolve("asic"),
+                               ["flash_provisioned=0"]).flash_provisioned is False,
+        True)
+    tck("an unparseable declaration is REFUSED, not silently stringified",
+        harness_module._raises(targets.apply_settings, targets.resolve("asic"),
+                               ["flash_provisioned=maybe"]), "ValueError")
+
+    # ------------------------------------------------------------------
+    out.write("\n[3] The accessors -- true only on an EXPLICIT declaration\n")
+    # ------------------------------------------------------------------
+    tck("undeclared: flash absence does NOT excuse a zero gate",
+        [x.flash_absence_explains_zero_bootgate() for x in (f, a, u)],
+        [False, False, False])
+    tck("undeclared: flash presence does NOT condemn one either",
+        [x.flash_presence_makes_zero_bootgate_a_finding() for x in (f, a, u)],
+        [False, False, False])
+    tck("THE FOOTGUN THE ACCESSORS EXIST TO AVOID: the raw property is FALSY "
+        "when unknown, so `if t.flash_provisioned:` reads UNDECLARED as "
+        "'no flash fitted' and would EXCUSE a real silicon finding",
+        bool(a.flash_provisioned), False)
+    tck("...and the naive mirror is worse: `not <absence>` is TRUE on an "
+        "undeclared board, which would red a healthy one. That is why there "
+        "are TWO accessors and not one negation",
+        (not a.flash_absence_explains_zero_bootgate(),
+         a.flash_presence_makes_zero_bootgate_a_finding()), (True, False))
+    d0 = targets.apply_settings(targets.resolve("asic"), ["flash_provisioned=0"])
+    d1 = targets.apply_settings(targets.resolve("asic"), ["flash_provisioned=1"])
+    tck("declared ABSENT: exactly one accessor fires",
+        (d0.flash_absence_explains_zero_bootgate(),
+         d0.flash_presence_makes_zero_bootgate_a_finding()), (True, False))
+    tck("declared PRESENT: exactly the other one",
+        (d1.flash_absence_explains_zero_bootgate(),
+         d1.flash_presence_makes_zero_bootgate_a_finding()), (False, True))
+
+    # ------------------------------------------------------------------
+    out.write("\n[4] THE TRAP: an established property is not automatically the "
+              "right one\n")
+    # ------------------------------------------------------------------
+    tck("bootgate_values IS known on the asic profile", a.known("bootgate_values"), True)
+    bad = harness_module.Rec("MISWIRE", target=a)
+    bad.target_check("boot gate is a terminating-path value",
+                     0x00000000 in a.bootgate_values,
+                     prop="bootgate_values", got="0x00000000")
+    tck("...so the naive guard PASSES and the assertion is actually MADE",
+        (len(bad.checks), len(bad.deferrals)), (1, 0))
+    tck("...and it REDS a healthy unprovisioned board. This is the bug.",
+        bad.n_failed, 1)
+    good = harness_module.Rec("CORRECT", target=a)
+    good.target_check("a zero boot gate is what the board predicts", None,
+                      prop="flash_provisioned", got="0x00000000")
+    tck("THE FIX: the property that actually answers the question is NOT known, "
+        "so the same reading is recorded instead of asserted",
+        (len(good.checks), len(good.deferrals)), (0, 1))
+    tck("...and the deferral names it, so the record says what would fix the run",
+        good.deferrals[0]["property"], "flash_provisioned")
+    tck("A MIS-WIRED prop= REDS RATHER THAN DEFERRING SILENTLY: hio_106 hands "
+        "`ok=None` only when the flash state is undeclared, so a prop= that IS "
+        "known on this target passes the guard and rec.check REFUSES the None",
+        harness_module._raises(harness_module.Rec("X", target=a).target_check,
+                               "mis-wired", None, "bootgate_values"), "TypeError")
+
+    # ------------------------------------------------------------------
+    out.write("\n[5] HIO-106 end to end -- the three states, each with a "
+              "control\n")
+    # ------------------------------------------------------------------
+    # STATE 1: flash DECLARED ABSENT + zero gate + the no-flash park signature.
+    # The expected first-silicon reading on a bare board. A clean PASS.
+    res, _ = _st_run("asic_tsmc65", False, "no_flash_park")
+    tck("[absent] the no-flash park is a PASS, not a deferral", res["outcome"], PASS)
+    tck("...with the assertion actually MADE, not deferred",
+        res["target_deferred_count"], 0)
+    tck("...and the ladder classification is in the record",
+        res["values"]["boot_gate_zero_class"], _Z_NO_FLASH_PARK)
+    tck("...and so is the declaration it was judged against",
+        res["values"]["flash_provisioned_declared"],
+        "DECLARED ABSENT (flash_provisioned=False)")
+    # ITS CONTROL: same declaration, one rung moved. The pass is NOT unconditional.
+    res, _ = _st_run("asic_tsmc65", False, "wrong_rom")
+    tck("[absent] CONTROL: a zero the declaration does NOT predict still REDS",
+        res["outcome"], FAIL)
+    tck("...naming the class that contradicted it",
+        res["values"]["boot_gate_zero_class"], _Z_WRONG_ROM)
+    res, _ = _st_run("asic_tsmc65", False, "xip_halt")
+    tck("[absent] CONTROL: so does a halt inside xip_enable()", res["outcome"], FAIL)
+
+    # STATE 2: flash DECLARED PRESENT + zero gate. A genuine finding.
+    res, _ = _st_run("asic_tsmc65", True, "no_flash_park")
+    tck("[present] a zero gate is a FINDING and REDS", res["outcome"], FAIL)
+    tck("...on the flash-state assertion, by name",
+        any("DECLARED QSPI flash state" in c["label"] and not c["ok"]
+            for c in res["checks"]), True)
+    tck("...and it is NOT parked as a deferral", res["target_deferred_count"], 0)
+    res, _ = _st_run("asic_tsmc65", True, "contradiction")
+    tck("[present] the rung-4 contradiction reds here too", res["outcome"], FAIL)
+    # ITS CONTROL: same declaration, a healthy NON-ZERO gate. The red is NOT
+    # unconditional on flash_provisioned=1.
+    res, _ = _st_run("asic_tsmc65", True, "contradiction", gate=0x00000004)
+    tck("[present] CONTROL: a non-zero gate is UNAFFECTED and PASSES",
+        res["outcome"], PASS)
+    tck("...and the ladder never ran", res["values"]["boot_ladder_run"], 0)
+
+    # STATE 3: flash UNDECLARED + zero gate. Defer, naming the property.
+    res, run = _st_run("asic_tsmc65", None, "no_flash_park")
+    tck("[undeclared] the healthy no-flash board does NOT red", res["outcome"] != FAIL,
+        True)
+    tck("...it is a THIN pass: the structural checks held, the zero was not judged",
+        res["outcome"], PASS)
+    tck("...with exactly one deferral", res["target_deferred_count"], 1)
+    tck("...NAMING A REAL PROPERTY (this was `prop=None` before)",
+        res["target_deferred"][0]["property"], "flash_provisioned")
+    tck("...and the value seen is on the record",
+        "gate=0x00000000" in res["target_deferred"][0]["got"], True)
+    tck("...and `would_have_held` is None, NOT False -- nobody declared the "
+        "board, so there was nothing to compute, and a reader must not read "
+        "this as a latent failure",
+        res["target_deferred"][0]["would_have_held"], None)
+    tck("...and the reason says which flag turns it into evidence",
+        "--target-set flash_provisioned" in res["target_deferred"][0]["reason"], True)
+    tck("...and warns off the property that would red a healthy die",
+        "bootgate_values" in res["target_deferred"][0]["reason"], True)
+    rr = harness_module.build_record(run, "SELFTEST-DIE", None, argv=["--selftest"])
+    tck("...and the run summary answers 'what would fix this?' by property",
+        rr["summary"]["target"]["deferred_by_property"]["flash_provisioned"],
+        ["HIO-106"])
+    tck("...with no `None` bucket left over from the old placeholder",
+        "None" in rr["summary"]["target"]["deferred_by_property"], False)
+    # ITS CONTROL: undeclared must NOT launder the one zero that IS silicon.
+    res, _ = _st_run("asic_tsmc65", None, "contradiction")
+    tck("[undeclared] CONTROL: the rung-4 contradiction REDS ANYWAY -- the "
+        "deferral does not launder a silicon finding", res["outcome"], FAIL)
+    tck("...on the target-INDEPENDENT check, which no profile can soften",
+        any("rung-4 contradiction" in c["label"] and not c["ok"]
+            for c in res["checks"]), True)
+    # ...and on a target that declares nothing at all, same three answers.
+    res, _ = _st_run("unknown", None, "no_flash_park")
+    tck("[undeclared] the `unknown` profile behaves identically -- the property "
+        "was never the target's to supply", res["target_deferred"][0]["property"],
+        "flash_provisioned")
+    res, _ = _st_run("unknown", False, "no_flash_park")
+    tck("...and a declaration works there too: no --target is needed to supply "
+        "a fact about the board", res["outcome"], PASS)
+
+    # THE FOURTH CORNER: gate non-zero, all three states, unaffected.
+    for flash, label in ((None, "undeclared"), (False, "absent"), (True, "present")):
+        res, _ = _st_run("asic_tsmc65", flash, "no_flash_park", gate=0x00000004)
+        tck("[%s] a NON-ZERO gate is unaffected: PASS, no flash deferral" % label,
+            (res["outcome"], [d["property"] for d in res["target_deferred"]]),
+            (PASS, []))
+
+    out.write("\n%s\n" % ("-" * 78))
+    if fails:
+        out.write("TIER1 SELFTEST FAILED: %d of %d checks\n\n" % (len(fails), n[0]))
+        for x in fails:
+            out.write("  - %s\n" % x)
+        return 1
+    out.write("TIER1 SELFTEST PASSED: %d checks, no hardware touched.\n" % n[0])
+    out.write(
+        "Proven both ways. flash DECLARED ABSENT + the no-flash park is a clean\n"
+        "PASS, and the SAME declaration reds on any other zero. flash DECLARED\n"
+        "PRESENT reds on a zero, and the same declaration passes on a non-zero\n"
+        "gate. UNDECLARED defers and NAMES flash_provisioned -- and still reds on\n"
+        "the rung-4 contradiction, so the deferral cannot launder the one zero\n"
+        "that is a silicon finding. The trap is shown live: bootgate_values is\n"
+        "`known` on the asic profile, so gating the zero on it passes the guard\n"
+        "and REDS A HEALTHY NO-FLASH BOARD.\n")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    if "--selftest" in _sys.argv:
+        _sys.exit(selftest())
+    _sys.stderr.write(
+        "tier1.py is a test module for harness.py, not a program.\n"
+        "  python3 tier1.py --selftest   prove HIO-106's flash_provisioned wiring\n"
+        "  python3 harness.py --list     the suite\n")
+    _sys.exit(2)

@@ -31,6 +31,24 @@ WHICH ASSERTIONS ARE EVIDENCE ON THIS VEHICLE.  Therefore:
     `--target` on first silicon gets DATA AND A FLAG, not a fake failure -- and
     not a fake pass either.
 
+SOME FACTS BELONG TO THE BOARD, NOT TO THE VEHICLE
+==================================================
+A profile answers "which vehicle is this?".  It cannot answer "which SOCKET is
+this die in?".  Whether QSPI flash is fitted and programmed is the second kind of
+question: the same silicon reads a HEALTHY zero boot gate on a bare board and a
+healthy 0x4 on a provisioned one.  Properties like that (`Target.OPERATOR_DECLARED`)
+are None on EVERY profile by construction, are declared per run with
+`--target-set flash_provisioned=0` or `HOSTIO_FLASH_PROVISIONED=0`, and are
+reported apart from the open questions so that nobody "closes the gap" by writing
+a constant into a profile that then answers for every board it is pointed at.
+
+AND THE LESSON THAT PUT THEM THERE: AN ESTABLISHED PROPERTY IS NOT AUTOMATICALLY
+THE RIGHT PROPERTY TO GATE ON.  `bootgate_values` is `known` on asic_tsmc65, so
+`rec.target_check(prop="bootgate_values")` on a ZERO gate sails through its guard
+and reds a perfectly healthy unprovisioned board.  The guard can only ask whether
+a property is declared; asking whether it is the property that ANSWERS THE
+QUESTION is the author's job, and it has to be done once, at the call site.
+
 TARGET-INDEPENDENT FACTS STAY ASSERTED ON EVERY PROFILE
 =======================================================
 `unknown` asserts nothing TARGET-SPECIFIC.  It still asserts everything that is
@@ -324,7 +342,11 @@ class Target(object):
                                             "on this image, or None if the image "
                                             "provides no witness"),
         "bootgate_values":           (None, "tuple of boot-gate words that are "
-                                            "healthy at power-on"),
+                                            "healthy at power-on. It judges a "
+                                            "NON-ZERO gate only -- a ZERO is "
+                                            "judged by flash_provisioned, and "
+                                            "gating a zero on THIS property "
+                                            "reds a healthy no-flash board"),
 
         # the bus
         "bus_quiescent":             (None, "is the bus quiet while the suite "
@@ -359,6 +381,45 @@ class Target(object):
                                             "macro read-modify-write correctly? "
                                             "CRC-at-reset makes this a real "
                                             "question on the ASIC"),
+        # A BOARD FACT, NOT A DIE FACT. The same silicon in two sockets can
+        # have flash fitted-and-programmed in one and bare pads in the other, so
+        # NO PROFILE DECLARES IT -- every profile leaves it None and the operator
+        # says so per run:
+        #     --target-set flash_provisioned=0   (no flash / not programmed)
+        #     --target-set flash_provisioned=1   (flash fitted AND programmed)
+        #     HOSTIO_FLASH_PROVISIONED=0|1
+        #
+        # WHAT IT IS FOR. cc_rom writes 0x4 to the CPU0 boot gate at 0x29000000 on
+        # EVERY terminating path -- verified at mask geometry -- so a healthy fresh
+        # die reads 0x00000004 or 0x00000005. But on a board with NO QSPI FLASH,
+        # ZERO IS THE CORRECT READING: CPU1 HardFaults on xip_enable()'s warm-up
+        # read of 0x24000000 and parks in `b .` at 0x080001CE, reaching NEITHER
+        # cc_rom store site. A first-silicon board very likely has unprovisioned
+        # flash, so "the gate is non-zero" is not a safe assertion to make blind.
+        #
+        # THE TRAP THIS PROPERTY EXISTS TO CLOSE, and the reason it had to be added
+        # rather than borrowed: `bootgate_values` IS `known` on asic_tsmc65, so a
+        # naive rec.target_check(prop="bootgate_values") on a zero gate PASSES ITS
+        # GUARD and still reds the healthy no-flash board. AN ESTABLISHED PROPERTY
+        # IS NOT AUTOMATICALLY THE RIGHT PROPERTY TO GATE ON. The guard only asks
+        # "is this property declared?"; it cannot ask "is this property the one
+        # that answers the question?" -- that is the author's job, here, once.
+        #
+        # AND THE FALSY-None TRAP, which bites in the WORSE direction than
+        # eth_imem_live_code's. `if t.flash_provisioned:` reads unknown as "no
+        # flash fitted" and would EXCUSE a genuine rung-4 contradiction: a vacuous
+        # green, which CONTRACT.md names as the specific failure this suite exists
+        # to prevent. Never read the raw property in a branch condition. Use
+        # flash_absence_explains_zero_bootgate() and
+        # flash_presence_makes_zero_bootgate_a_finding(); each is true only on an
+        # EXPLICIT declaration, so unknown licenses neither the excuse nor the red.
+        "flash_provisioned":         (None, "BOARD FACT, per socket, not per die: "
+                                            "is QSPI flash fitted AND carrying a "
+                                            "CRC-valid image? None = UNDECLARED, "
+                                            "and undeclared must DEFER -- it is "
+                                            "the only property that says whether "
+                                            "a ZERO boot gate is expected"),
+
         # RUN-TIME STATE, NOT A DIE PROPERTY. Whether eth IMEM holds live code
         # depends on whether anyone loaded an image THIS POWER CYCLE, and a
         # debug operation can flip it at any moment. None therefore means
@@ -409,6 +470,23 @@ class Target(object):
         "sources":                   (None, "where each number above came from"),
         "notes":                     (None, "free text carried into the record"),
     }
+
+    # THE THIRD KIND OF None. `to_dict()` already separates an OPEN QUESTION (a
+    # person can go and measure it) from an ESTABLISHED ABSENCE (someone did, and
+    # the answer is "there is none"). Neither describes a property whose answer
+    # does not belong to the VEHICLE at all: whether flash is fitted in THIS
+    # socket, or whether anyone loaded an image THIS power cycle. Filing those
+    # under "open questions" invites the fix that must never happen -- somebody
+    # "closing the gap" by writing a constant into a profile, which then answers
+    # for every board that profile is ever pointed at.
+    #
+    # They are not a licence either: they are None, `known()` says so, and every
+    # assertion resting on them still DEFERS. What changes is only WHO is being
+    # asked -- the operator at the bench, per run, not the author of the profile.
+    OPERATOR_DECLARED = frozenset((
+        "flash_provisioned",        # per socket: is QSPI flash fitted + programmed?
+        "eth_imem_live_code",       # per power cycle: did anyone load an image?
+    ))
 
     def __init__(self, name, **kw):
         self.name = name
@@ -505,6 +583,34 @@ class Target(object):
         can make the second one false between one test and the next.
         """
         return self.eth_imem_live_code is False
+
+    def flash_absence_explains_zero_bootgate(self):
+        """True ONLY on an explicit `flash_provisioned = False`.
+
+        This is the accessor that licenses the BENIGN reading of a zero boot
+        gate: no flash on the board, so CPU1 HardFaulted in xip_enable() and
+        never reached either cc_rom store site, so nothing ever wrote the gate.
+
+        `None` -- nobody declared it -- returns False, and it must. The falsy-None
+        trap bites HARDER here than it does on eth_imem_live_code: there, reading
+        unknown as "safe" risks a corrupted image; here, `if t.flash_provisioned:`
+        reads unknown as "no flash fitted" and would EXCUSE the one zero that IS a
+        silicon finding. That is a vacuous green, which CONTRACT.md names as the
+        specific failure mode this suite exists to prevent.
+        """
+        return self.flash_provisioned is False
+
+    def flash_presence_makes_zero_bootgate_a_finding(self):
+        """True ONLY on an explicit `flash_provisioned = True`.
+
+        The mirror, and it is a SEPARATE accessor rather than
+        `not flash_absence_explains_zero_bootgate()` on purpose: the negation
+        would be true on an UNDECLARED board and would turn the healthy
+        first-silicon reading red, which is the exact bug this property was added
+        to prevent. Both accessors are false when nobody has declared anything,
+        and that is what makes the third state -- DEFER -- reachable at all.
+        """
+        return self.flash_provisioned is True
 
     def perf_counter_saturation_seconds(self, width_bits=32):
         """How long P0_CYC takes to saturate from a fresh CLR.
@@ -616,10 +722,16 @@ class Target(object):
         # result. Collapsing them invites someone to "fill in the gap" by
         # guessing a value that was determined not to exist.
         unknown = sorted(p for p in self.PROPS if getattr(self, p) is None)
-        d["open_questions"] = [p for p in unknown if p not in self.settled_absent]
+        d["open_questions"] = [p for p in unknown
+                               if p not in self.settled_absent
+                               and p not in self.OPERATOR_DECLARED]
         d["established_absent"] = dict(
             (p, self.settled_absent[p]) for p in unknown if p in self.settled_absent)
-        d["unknown_properties"] = unknown          # kept: both kinds, as before
+        # THE THIRD KIND (see Target.OPERATOR_DECLARED): not a gap in the profile,
+        # because no profile can ever close it. The operator declares it per run.
+        d["operator_declared_unknown"] = [p for p in unknown
+                                          if p in self.OPERATOR_DECLARED]
+        d["unknown_properties"] = unknown          # kept: ALL THREE kinds, as before
         return d
 
     def summary_line(self):
@@ -748,6 +860,16 @@ def _fpga_kr260():
                 "run records, and the profile did not look.",
             "ecc_enabled": "docs: FPGA is ECC on, CRC off, FCSM recovery present "
                            "-- the ASIC netlist is the opposite on all three",
+            "flash_provisioned":
+                "None here too, and for the same reason as on the ASIC: it is a "
+                "BOARD fact, not a build fact, so even the vehicle every constant "
+                "in this suite was calibrated on cannot declare it for the next "
+                "board of the same kind. What IS known about this one is a "
+                "CONSEQUENCE, not the property: the gate measured 0x00000004 -- "
+                "CPU1 ran, found no boot candidate, and released CPU0 -- so on "
+                "the day of that run the flash was not carrying a CRC-valid "
+                "image. That is a reading, and it expires; declare the property "
+                "per run rather than freezing the reading into the profile.",
         },
         notes=[
             "eth DMEM word 0 = 0x05F5E100 is a firmware build constant and a "
@@ -879,8 +1001,22 @@ def _asic_tsmc65():
                                "bootgate_values FOR A ZERO: this property is "
                                "`known` here, so the guard passes and a healthy "
                                "no-flash die reds. flash_provisioned is the "
-                               "property that discriminates, and it does not "
-                               "exist yet.",
+                               "property that discriminates, and HIO-106 now "
+                               "gates the zero on IT (added 2026-08-26). This "
+                               "property still judges the NON-ZERO reading, and "
+                               "only that.",
+            "flash_provisioned":
+                "DELIBERATELY None, on this profile and on every other, and it is "
+                "NOT an open question a profile can close: it is a fact about the "
+                "SOCKET, not about the silicon. The same die reads a healthy "
+                "0x00000000 on a board with bare QSPI pads and a healthy "
+                "0x00000004 once flash is fitted and programmed. The operator "
+                "declares it per run (--target-set flash_provisioned=0|1, or "
+                "HOSTIO_FLASH_PROVISIONED), and an undeclared board DEFERS -- "
+                "which is the correct first-silicon outcome, because a first "
+                "board very likely has unprovisioned flash and an assertion of "
+                "'non-zero' would red a healthy die on the first test of the "
+                "first chip.",
             "bus_quiescent": "cpu1_bootgate is tied 1'b1 so CPU1 free-runs from "
                              "power-on, and cc_rom releases CPU0. There is no "
                              "configuration of this SoC in which a running ASIC "
@@ -930,6 +1066,16 @@ def _asic_tsmc65():
             "legitimately read SET. It is recorded, never asserted.",
             "The eth ROM anchors at words 0..15 ARE valid here: they were audited "
             "against the ASIC eth_rom_via macro image and sit ahead of word 55.",
+
+            "DECLARE flash_provisioned ON THIS BOARD. A zero CPU0 boot gate is "
+            "FOUR states, not one, and only one of them is a silicon fault. "
+            "Without the declaration HIO-106 runs its ladder, records the "
+            "classification and DEFERS -- correct, but it asserts nothing. "
+            "--target-set flash_provisioned=0 turns the no-flash park into a "
+            "clean PASS and every OTHER zero into a red; =1 makes any zero a red. "
+            "Do not reach for bootgate_values instead: it is `known` on this "
+            "profile, so the guard passes and a healthy unprovisioned die goes "
+            "red on the first test of the run.",
         ],
     )
     return t
@@ -958,6 +1104,13 @@ def _unknown():
             "Run again with --target fpga_kr260 or --target asic_tsmc65 to turn "
             "the deferred assertions back into evidence. The deferral list in "
             "this record names every one of them and the value that was seen.",
+
+            "flash_provisioned is the exception to that sentence: NO --target "
+            "will ever supply it, because it describes the board in front of you "
+            "and not the vehicle class. --target-set flash_provisioned=0|1 (or "
+            "HOSTIO_FLASH_PROVISIONED) is the only thing that turns HIO-106's "
+            "zero-boot-gate deferral into evidence, and it works on this profile "
+            "exactly as it does on the declared ones.",
         ],
     )
     return t
@@ -1019,6 +1172,12 @@ ENV_OVERRIDES = {
     # an image was installed. 0 asserts "I have not loaded anything this power
     # cycle"; absent leaves it unknown, which is treated as live.
     "HOSTIO_ETH_IMEM_LIVE": ("eth_imem_live_code", "bool"),
+    # The BOARD in front of the operator, declared per run. 0 = no QSPI flash
+    # fitted or none programmed, which makes a ZERO boot gate the EXPECTED
+    # reading; 1 = flash fitted and carrying a CRC-valid image, which makes a
+    # zero a finding. Absent leaves it None, and None DEFERS -- it never guesses,
+    # in either direction.
+    "HOSTIO_FLASH_PROVISIONED": ("flash_provisioned", "bool"),
     "HOSTIO_SOAK_SECONDS": ("soak_seconds", "int"),
     "HOSTIO_ECC":          ("ecc_enabled", "bool"),
     "HOSTIO_CRC":          ("crc_enabled_at_reset", "bool"),
@@ -1026,6 +1185,24 @@ ENV_OVERRIDES = {
 }
 
 TARGET_ENV = "HOSTIO_TARGET"
+
+
+# Properties whose value is a BOOLEAN. `apply_settings` needs this because it
+# infers the type from the value already in the profile, and a property that is
+# None on the target being set has no type to infer from -- it used to fall
+# through to `val = raw.strip()` and store the STRING "0", which is TRUTHY, makes
+# `known()` answer True, and asserts against a string. That is the falsy/truthy
+# trap arriving through the override channel instead of through a read, and it
+# reached every bool that is None on some profile: dma_powered,
+# subword_rmw_supported and timer0_owned_by_firmware on the ASIC,
+# eth_imem_live_code on the FPGA, and flash_provisioned on all three.
+BOOL_PROPS = frozenset((
+    "bus_quiescent", "bus_parkable", "cpu1_free_running",
+    "ecc_enabled", "crc_enabled_at_reset", "fcsm_recovery_present",
+    "census_value_class_asserted", "subword_rmw_supported",
+    "timer0_owned_by_firmware", "dma_powered", "eth_imem_live_code",
+    "flash_provisioned",
+))
 
 
 def _parse(kind, raw):
@@ -1079,7 +1256,11 @@ def apply_settings(target, settings, via="--target-set"):
         cur = getattr(target, prop)
         default = Target.PROPS[prop][0]
         ref = cur if cur is not None else default
-        if isinstance(ref, bool):
+        # BOOL_PROPS first: a property that is None on THIS target has no value to
+        # infer a type from, and the fall-through at the bottom stores a string.
+        if prop in BOOL_PROPS:
+            val = _parse("bool", raw)
+        elif isinstance(ref, bool):
             val = _parse("bool", raw)
         elif isinstance(ref, int):
             val = _parse("int", raw)
@@ -1182,6 +1363,7 @@ _TABLE_ROWS = [
     ("eth_rom_image", "eth boot ROM image"),
     ("eth_dmem_word0", "eth DMEM word 0"),
     ("bootgate_values", "CPU0 boot gate at power-on"),
+    ("flash_provisioned", "QSPI flash provisioned (BOARD)"),
     ("bus_quiescent", "bus quiescent while testing"),
     ("bus_parkable", "bus CAN be made quiescent"),
     ("ecc_enabled", "TideLink ECC"),
@@ -1201,7 +1383,12 @@ def format_table(target_names=None, width=30):
         for t in ts:
             v = getattr(t, prop)
             if v is None:
-                cells.append("-- unknown --")
+                # THE THIRD KIND of None reads differently in a table: "unknown"
+                # invites someone to fill the profile in, and no profile can
+                # answer this one. Say who is being asked instead.
+                cells.append("-- declare per run --"
+                             if prop in Target.OPERATOR_DECLARED
+                             else "-- unknown --")
             elif prop in HZ_PROPS:
                 cells.append("%d (%.3f MHz)" % (v, v / 1e6))
             elif isinstance(v, tuple):
