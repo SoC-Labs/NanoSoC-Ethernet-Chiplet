@@ -3,7 +3,6 @@
   "platform": "FPGA (KR260, kr260-eth-chiplet build), RP2350 host on PMOD3",
   "captured": "2026-08-25",
   "method": "ad-hoc MicroPython REPL client, same transport as scripts/rig/eth_chiplet/hostio_adp.py",
-
   "stable_constants": {
     "_comment": "Expected to reproduce on any die of this build. Safe to assert.",
     "0x08000000": "0x18003c00",
@@ -18,7 +17,6 @@
     "0x84000000": "0x18003c00",
     "0x840321F8": "0xe7fee7fe"
   },
-
   "error_class": {
     "_comment": "Must return the ! bus-error flag. These are the ERROR side of the HIO-114 three-sided census. 0x40000000 is the Ethernet MAC: structurally unreachable from debug_m, NOT a defect.",
     "0x30000000": "R!",
@@ -26,19 +24,16 @@
     "0x40001000": "R!",
     "0x50000000": "R!"
   },
-
   "ok_with_zeros_class": {
     "_comment": "Decode WITHOUT the error flag but read zero. The census must distinguish these from the error class - value alone cannot.",
     "0x28000000": "cc_periph_0",
     "0x20000000": "NOT memory -- this is the DMA-250 CONFIG APERTURE (DMAC_CFG_ADDR_W=14, 16 KB), DMASECCFG at +0x000. It decodes and reads 0x00000000, and writes do not stick because it is a register aperture, not RAM. **DO NOT INFER DMA POWER STATE FROM THIS ADDRESS.** An agent did exactly that on 2026-08-25 and set a target profile to dma_powered=False, which would have mis-shaped every later run. The DMA power state is settled ONLY by the IIDR at 0x20000FC8, MEASURED 0x2500043B = PRESENT AND NOT POWER-GATED, confirmed in three separate suite run records (HIO-124 and HIO-411 both PASS)."
   },
-
   "alias_signatures": {
     "_comment": "Known aliasing. Region sizes are UNESTABLISHED; the size probes must detect wrap, not assume.",
     "0x80000000 == 0x80001000": "0x18003c00, so CPU1 region size unknown",
     "0x84xxxxxx": "CPU1 ROM alias from ADP - real code, 0xe7fee7fe is Thumb 'b .' twice. NOT an undecoded hole. The wedge hazard at this address family is BACKDOOR-specific."
   },
-
   "state_dependent": {
     "_comment": "NOT constants. Record these, never assert them.",
     "0x29000000": "0x00000004 - CPU0 boot gate, bit 2 ALREADY SET on this build while IMEM is all zeros. Resolve before any irreversible release.",
@@ -47,7 +42,6 @@
     "M register": "stateful mask, read/write proven (Mx0000FF00 read back 0x0000ff00)",
     "C register": "GPO, reads 0x00000000; 0x2xx sets bits, 0x1xx clears, low byte is the operand"
   },
-
   "protocol_behaviour": {
     "fabric_clock_MEASURED": "25.010 MHz. P0_CYC delta 492,193,491 cycles over a HOST-TIMED 19.680 s (CLR, SNAP, read, sleep, SNAP, read). Matches the routed timing report 25.011 MHz to 0.004%. An earlier ~100 MHz figure in this session was WRONG by exactly 4x: the interval was estimated, not measured, and the client burns 4 commands x 2200 ms of pump per snap cycle (~9.68 s, not the ~2.4 s assumed). Always time the interval on the host.",
     "phc_rate_MEASURED": "The PTP clock does NOT keep real time at reset, and the REMEDY IS PROVEN IN SOFTWARE. Measured on the die both directions: NS_INCR=4 -> 0.1000x real time; write NS_INCR=40 (0x28 at 0x22000008, reads back 0x28) -> 1.0004x real time; restored to 4 cleanly. NS_INCR is RW - only the RESET DEFAULT is wrong (DEFAULT_NS_INCR = 8'd4, phc_apb_regs.sv:18, commented '4 ns for 250 MHz' on a design that runs at 100 MHz ASIC / 25 MHz FPGA and has never run at 250). Real time needs NS_INCR x f = 1e9: ASIC wants 10 (exact at 100 MHz, no NS_INCR_FRAC needed), FPGA wants 40. NOT A TAPEOUT BLOCKER - do not spin the GDS. FIX BELONGS IN PHC INIT FIRMWARE. The residual risk is SILENCE: the reset default stays wrong, so an uninitialised PHC runs at 0.4x real time on ASIC and reports no error. HIO-404 is the guard - it reds on 'does not keep real time' rather than on an assumed frequency. Caveat: proven on FPGA only; the ASIC instantiates the same IP with the same parameter, but that has not been tested on silicon.",
@@ -58,5 +52,35 @@
     "banner": "0x50c1ab04",
     "prompt": "]",
     "auto_increment": "R advances the address by the access size; A reports it"
+  },
+  "firmware_measured_2026_08_26": {
+    "_comment": "First firmware ever loaded AND executed on this chiplet over the 7-wire HOSTIO4 port. Image fw_mdio_probe.bin (1128 B) loaded into eth IMEM at 0x10000000 via the ADP U command, then CPU0_SWRST pulsed so smoke_remap re-ran and jumped to it. No SWD, no PS backdoor, no JTAG. Recorded here because the ASIC procedure cites these values and they previously existed only in a conversation.",
+    "worked_because": "The FPGA eth ROM is smoke_remap, which reads SP/PC from the always-mapped IMEM aperture and bx'es WITHOUT writing IMEM. The ASIC ROM is stage0_bootrom, which halts if XIP_ACTIVE is clear else copies a flash image OVER IMEM first -- so this route is FPGA-only; on ASIC the route is the QSPI flash boot table.",
+    "firmware_witnesses": {
+      "0x2D000004 sentinel": "0x5E27C0DE  (was 0xA5A5A5A5 Tier-2 residue immediately before)",
+      "0x2D000000 heartbeat": "advancing (~1 kHz)",
+      "0x2D000008 image id": "0x48465703  'HFW'|3",
+      "0x2D00000C core Hz": "0x017D9F50  = 25.010 MHz, the FPGA build",
+      "0x2D001FF0 boot token": "0xB007C0FE"
+    },
+    "mac_read_by_firmware": {
+      "_comment": "HOSTIO itself CANNOT reach 0x40000000 (measured R!, no window in debug_m's decode), so firmware is the only route. Both values exact.",
+      "MODER": "0x0000A000",
+      "PACKETLEN": "0x00400600  -- independently confirms the ethmac_probe.py fix; the old expected 0x00064000 was a digit transposition"
+    },
+    "mdio_census": {
+      "_comment": "THE MDIO VERDICT. The state machine completes every transaction and the data coming back is noise. This rules out firmware, the MAC, the MIIM controller and the clock divider, and isolates the fault to the PHYSICAL MDIO PATH. Next step is a scope on PMOD1.4 (MDC) and PMOD1.10 (REF_CLK), not more software.",
+      "0x2D00001C STATUS": "0xB3040000  magic 0xB3 OK, rc=0x04, 0 candidates, none selected",
+      "0x2D000028 mask UNSTABLE": "0xFFFFFFFF  -- ALL 32 addresses differ across four reads",
+      "0x2D000020 mask stable 0xFFFF": "0x00000000",
+      "0x2D000024 mask stable 0x0000": "0x00000000",
+      "0x2D00002C mask stable non-trivial": "0x00000000",
+      "0x2D000030 mask CANDIDATES": "0x00000000",
+      "0x2D000034 BUSY-never-cleared": "0x00000000",
+      "0x2D00004C mask TIMEOUT": "0x00000000",
+      "0x2D000040 scan passes": "0x0000006C = 108",
+      "expected_LAN8720": "reg2 = 0x0007, reg3 = 0xC0F1 -- neither seen at any address"
+    },
+    "caveat": "One run, one die (die_b), one ribbon. The isolation conclusion is well supported by the zero-timeout / BUSY-always-clearing / 108-pass combination; the pass count itself is a single observation. Re-read the three ABI witness words to reproduce."
   }
 }
