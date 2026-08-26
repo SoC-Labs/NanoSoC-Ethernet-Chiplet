@@ -922,6 +922,44 @@ bnd:
 	BLOCK=$(BLOCK) BND_FOUNDRY_DECK=$(BND_FOUNDRY_DECK) \
 	    $(DESIGN_DIR)/scripts/calibre/run_bnd.sh
 
+## Calibre ANTENNA (process-antenna / plasma charging) on the built GDS. A
+## THIRD foundry deck, distinct from both `drc` and `bnd`: the mini@sic manual
+## requires the shipped stream to be DRC/ANT/BND clean and treats an antenna
+## violation as never acceptable.
+##
+## THIS TARGET DID NOT EXIST UNTIL 2026-08-26, and its absence was on the
+## record as "no foundry antenna run exists for this stream" -- which read as a
+## statement about the site and was a statement about the Makefile. The wrapper
+## deck scripts/calibre/nanosoc_eth_chiplet_pads.ant.rules had been in the tree
+## since the tapeout branch opened, naming a runner that nobody had written.
+##
+## READ THE RESULT WITH ITS SCOPE. The stream carries LEF abstracts for every
+## standard cell, IO and bond pad, so the deck's antenna denominator exists
+## only inside the merged memory macros. run_ant.sh therefore ALWAYS appends
+## the project's coverage control and the evidence gate refuses to pass a zero
+## whose control came back empty. See run_ant.sh's header.
+##   make ant                        — check $(GDS)
+##   make ant ANT_GDS=some/other.gds — check a different stream
+ANT_GDS ?= $(GDS)
+ant:
+	ANT_GDS=$(ANT_GDS) ANT_RUNDIR=$(ANT_RUNDIR) ANT_CPUS=$(ANT_CPUS) \
+	BLOCK=$(BLOCK) ANT_FOUNDRY_DECK=$(ANT_FOUNDRY_DECK) \
+	    $(DESIGN_DIR)/scripts/calibre/run_ant.sh
+
+## Conformal Low Power extended checks over a flow run's OWN emitted power
+## intent and OWN gate netlist. Costs a Conformal_Low_Power_GXL seat (41 here,
+## and the record said this site had none) and about a minute.
+##   make clp CLP_BUILD=ASIC/eth-chiplet/build/gdsrun-20260826-rc1
+##   make clp CLP_BUILD=... CLP_KIND=upf
+CLP_BUILD ?=
+CLP_KIND  ?= cpf
+clp:
+	@test -n "$(CLP_BUILD)" || { \
+	    echo "FAIL: set CLP_BUILD=<a flow run directory>. This check is about"; \
+	    echo "      ONE run's emitted intent against THAT run's netlist, so"; \
+	    echo "      there is deliberately no default."; exit 1; }
+	BLOCK=$(BLOCK) $(DESIGN_DIR)/scripts/conformal/run_clp.sh $(CLP_BUILD) $(CLP_KIND)
+
 #-----------------------------------------------------------------------------
 # Padring GDS check -- the local, license-free analog of the foundry's
 # CompareCells + Padringcheck, run BEFORE a stream goes to a broker.

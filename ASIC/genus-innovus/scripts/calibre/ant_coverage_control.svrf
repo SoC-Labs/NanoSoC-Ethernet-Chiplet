@@ -1,0 +1,111 @@
+//============================================================================
+// ant_coverage_control.svrf --- PROJECT-OWNED coverage control for the
+// foundry antenna run.  Contains no foundry rule text.
+//
+// A joint work commissioned on behalf of SoC Labs, under Arm Academic Access
+// license.  Copyright 2026, SoC Labs (www.soclabs.org)
+//============================================================================
+// APPENDED BY run_ant.sh AFTER the foundry deck's INCLUDE, never before: every
+// layer named below is DERIVED BY THAT DECK and does not exist until it has
+// been read.
+//
+// WHY THIS FILE EXISTS
+// --------------------
+// This repository has a documented class of check that "passed" while
+// measuring nothing -- a rule evaluated over a layer that is empty in the
+// stream returns zero, and zero is indistinguishable from clean.  It has
+// happened here at least five separate times.  An antenna run is unusually
+// exposed to it, because the denominator of every antenna rule is TRANSISTOR
+// GATE AREA, and this project streams LEF abstracts for every standard cell,
+// IO cell and bond pad.  Those cells contribute no gate area at all.  A run
+// that found nothing but had nothing to find would look exactly like a pass.
+//
+// So the run carries its own population census, in the same summary report,
+// produced by the same Calibre invocation over the same layout.  A reader
+// cannot get to the antenna zeros without walking past these.
+//
+// HOW TO READ THE COUNTS
+// ----------------------
+// The wrapper sets a finite DRC MAXIMUM RESULTS, so a count that equals that
+// limit is a FLOOR and not a total -- Calibre writes the truncated value into
+// both count fields, so a saturated check is not visibly different from an
+// exact one.  That is fine for the question being asked here, which is only
+// "is this population non-empty", and it is NOT fine for any other question.
+// Do not quote these as populations.  For exact per-layer populations of the
+// stream itself use scripts/ci/gds_layer_census.py, which reads the GDSII
+// records directly and cannot saturate.
+//
+// WHY THESE ARE ALL `COPY` AND NOT A RATIO
+// ---------------------------------------
+// The obvious control -- a real NET AREA RATIO with the limit pushed down so
+// that any net carrying both terms must trip it -- CANNOT BE WRITTEN HERE, and
+// the reason is worth recording because it will be re-proposed.
+//
+// The foundry deck sets DRC INCREMENTAL CONNECT YES and declares the metal
+// stack as a sequence of LAYOUT TOP LAYER steps.  Connectivity is therefore
+// POSITIONAL: each metal's antenna rulechecks sit between the CONNECT that
+// brings that metal into the net and the CONNECT that brings the next one in.
+// By the end of the file the low metals are no longer in the connectivity set
+// at all, and a ratio referencing one gets
+//     ERROR: Error EXT3 ... cannot establish connectivity of this layer in the
+//     MASK connectivity set: M1
+// which is what the first attempt at this file produced (measured 2026-08-26,
+// Calibre exits 4 in about twenty seconds -- it never reads the layout).
+// An append can only carry checks that need no connectivity.  That is what
+// COPY is.
+//
+// The discrimination question those ratios were meant to answer -- "could this
+// deck have reported a violation at all?" -- is answered instead by a fixture
+// that runs the SAME foundry deck over a tiny synthetic layout built to carry
+// one, in BOTH directions: ci/fixtures/antenna-deck-fires/.  Keeping the two
+// apart is better anyway: a discrimination control that rides on the signoff
+// run costs a 300 MB stream read to answer a question about the deck.
+//
+// WHAT EACH ONE DEMONSTRATES
+// --------------------------
+//   ANTCTL.GATE.POPULATION  the deck's own antenna DENOMINATOR, GATE.  Empty
+//                           => every antenna rulecheck in this run divided by
+//                           nothing and its zero is vacuous.  This is THE one
+//                           to read first.
+//   ANTCTL.SD.POPULATION    the diffusion (diode) term.  Empty => the
+//                           diode-protection variants measured nothing either.
+//   ANTCTL.POLY.POPULATION  the other half of GATE, and the numerator of the
+//                           two POLY antenna rules.
+//   ANTCTL.OD.POPULATION    the other half of GATE.  GATE = OD AND POLY, so a
+//                           populated OD with an empty GATE would say the two
+//                           are present but never overlap -- a different and
+//                           much stranger failure than either being absent.
+//   ANTCTL.M1.POPULATION    the lowest routing numerator.
+//   ANTCTL.M9.POPULATION    the highest routing numerator.
+//   ANTCTL.AP.POPULATION    the RDL numerator, which is the one layer in this
+//                           stream that no standard cell contributes to, so it
+//                           is populated or the stream is wrong.
+//============================================================================
+
+ANTCTL.GATE.POPULATION {@ CONTROL (project-owned): is the antenna denominator non-empty?
+   COPY GATE
+}
+
+ANTCTL.SD.POPULATION {@ CONTROL (project-owned): is the diffusion/diode term non-empty?
+   COPY SD
+}
+
+ANTCTL.POLY.POPULATION {@ CONTROL (project-owned): gate poly present?
+   COPY POLY
+}
+
+ANTCTL.OD.POPULATION {@ CONTROL (project-owned): active area present?
+   COPY OD
+}
+
+ANTCTL.M1.POPULATION {@ CONTROL (project-owned): lowest routing layer present?
+   COPY M1
+}
+
+ANTCTL.M9.POPULATION {@ CONTROL (project-owned): highest routing layer present?
+   COPY M9
+}
+
+ANTCTL.AP.POPULATION {@ CONTROL (project-owned): redistribution layer present?
+   COPY AP
+}

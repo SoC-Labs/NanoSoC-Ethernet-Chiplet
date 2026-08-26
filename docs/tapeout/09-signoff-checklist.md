@@ -34,7 +34,7 @@ the "not run" items below should be read as "probably fine".
 | 11 | Timing — setup/hold | local, free | setup WNS **+0.068 ns**, 0 FEP — but see 11a caveat below |
 | 12 | Timing — DRV (transition/cap) | local, free | **FAILS — 1,243 + 618 violations** ([11g](11-known-issues.md)) |
 | 13 | Calibre DRC | local, licensed, hours | run it, but it is **over an incomplete GDS** |
-| 14 | Antenna signoff (foundry deck) | not wired here | **never run** |
+| 14 | Antenna signoff (foundry deck) | local, licensed, ~25 min | **RUNS. `make -C ASIC/genus-innovus ant`.** Zero on every one of 714 foundry rulechecks on the rc1 candidate, over a population the run proves non-empty — but only the memory macros carry gates, so it does not replace the broker's run over merged layout |
 | 15 | Metal density fill | **foundry** | contracted out by declaration: `METAL_FILL_OWNER=foundry`, `ROUTE_METAL_FILL=0`. A declaration is not a waiver — the foundry must confirm |
 | 16 | LVS | local, licensed | **black-box LVS runs here.** Clean on `fp1505`; the shipping stream cannot reach a verdict (VDD/VSS extract as one net). [`docs/asic/LVS_FINDINGS.md`](../asic/LVS_FINDINGS.md) |
 | 17 | Cell-level GDS merge | **foundry** | **not done — the GDS is not self-contained** |
@@ -484,13 +484,37 @@ They are all declared as coverage gaps in [`ci/signoff.yaml`](https://github.com
 restated in the bundle's `MANIFEST.txt`. Take them to
 [10 — Tapeout submission](10-tapeout-submission.md) as questions, not tasks.
 
-### 14. Antenna signoff against the foundry deck — **never run**
+### 14. Antenna signoff against the foundry deck — **it runs, and it is clean at a stated scope**
 
-The 9-metal antenna deck exists at
-`$TSMC_65_HOME/CMOS/util/ANTENNA_DRC/CN65S_<stack>_ANT.<rev>`, but nothing in this flow invokes
-it, and it would run over the incomplete GDS anyway. Item 8 is a router-level check only.
+CORRECTED 2026-08-26. This section said "never run", and "nothing in this flow invokes it".
+Both were statements about this repository and neither was a statement about the site: the
+9-metal antenna deck has always been installed here, and Calibre has always had free seats.
+What was missing was a `pdk_paths.sh` key and a runner. Both now exist.
 
-**Ask the broker:** do they run antenna as part of their acceptance flow, or is it ours?
+```bash
+make -C ASIC/genus-innovus ant                    # the built GDS
+make -C ASIC/genus-innovus ant ANT_GDS=some/other.gds
+```
+
+`scripts/calibre/run_ant.sh` always appends `scripts/calibre/ant_coverage_control.svrf` —
+seven project-owned rulechecks that report the population of the deck's OWN derived layers
+into the same summary — and the evidence gate `antenna-foundry-deck` REFUSES to pass a zero
+whose control came back empty. That is not decoration: the deck's antenna denominator is
+`GATE = OD AND POLY`, this stream carries LEF abstracts for every standard cell, IO cell and
+bond pad, and a run with no gates in it would report exactly the same zeros.
+
+**What the clean result covers, on the rc1 candidate.** 714 foundry rulechecks, all zero.
+The denominator is non-empty — 8,080,184 flat `GATE` polygons — and an independent census of
+the stream says where they are: 209 GDS structures carry front-end geometry and every one is
+a memory-macro sub-cell. So the result is real for the memory macros and the top-level
+routing that reaches them, and says nothing about antenna ratios into standard-cell gates.
+
+**Still ask the broker** whether they run antenna in their acceptance flow. They do — every
+imec archive here carries an `ant/` directory — but theirs runs over MERGED layout and is the
+only run that can cover the cells this one cannot. Note also that imec's runs report
+`#DEFINE DTM` and ours uses the deck's shipped default; on this design that switch is inert,
+because it only selects MIM capacitor behaviour and neither MIM layer is present in the
+stream (the deck's own `MIM_SWITCH.WARN.1`, which fires only with the switch off, reports 0).
 
 ### 15. Metal density fill — **contracted out to the foundry, by declaration**
 

@@ -28,10 +28,15 @@
 // Innovus check_process_antenna reports "No Violations Found" on this design,
 // and it is backed by real data (the std-cell LEF carries thousands of antenna
 // gate-area/diff-area entries). But that is the ROUTER's model over a stream
-// with no transistors in it. The foundry deck has never been run here -- there
-// is no .ant.summary anywhere in this repo -- and the Europractice mini@sic
-// manual is unambiguous that antenna violations are not acceptable in a
-// submission.
+// with no transistors in it. The Europractice mini@sic manual is unambiguous
+// that antenna violations are not acceptable in a submission.
+//
+// CORRECTED 2026-08-26. This paragraph used to continue "The foundry deck has
+// never been run here -- there is no .ant.summary anywhere in this repo". That
+// stopped being true on 2026-08-17 (calibre_runs/ant_toolkit_20260817) and is
+// now routinely false: scripts/calibre/run_ant.sh exists, `make -C
+// ASIC/genus-innovus ant` drives it, and every run carries the coverage
+// control the 17-August one lacked.
 //
 // READ THE RESULT WITH THE BLACK-BOX CAVEAT IN MIND. Standard cells, IO and
 // bond pads stream as empty references (their layouts are imported by the

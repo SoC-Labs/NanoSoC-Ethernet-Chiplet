@@ -332,15 +332,52 @@ not be allowed to blur:
   under the PDK's `ANTENNA_DRC/` directory — not reproduced here, per §3; read it
   from `deck_expanded.rules` in that run directory on your own install) against
   `ASIC/eth-chiplet/build/full-20260814/outputs/nanosoc_eth_chiplet_pads.gds`:
-  **714 rulechecks, 0 results, 0 of 204 report files non-empty.** That is a NULL
-  RESULT, not a clean one. An antenna ratio is gate area over connected metal
-  area, and this stream carries no standard-cell, IO or pad layout — its
-  `write_stream -merge` list holds only the eight vendor-memory GDS files. There
-  are no gates in the stream for a ratio to be computed against, so 0 is the
-  arithmetic of an absent measurement.
-  (An earlier revision of this correction, made the same day, wrongly stated the
-  foundry deck had never been run. It had. The conclusion is unchanged and better
-  grounded: antenna cannot be measured until the foundry merges its own layout.)
+  **714 rulechecks, 0 results, 0 of 204 report files non-empty.**
+  **CORRECTED 2026-08-26 — "there are no gates in the stream" IS FALSE, AND
+  IT WAS THE WHOLE ARGUMENT.** The text that stood here read: "An antenna ratio
+  is gate area over connected metal area, and this stream carries no
+  standard-cell, IO or pad layout ... There are no gates in the stream for a
+  ratio to be computed against, so 0 is the arithmetic of an absent
+  measurement." The first clause is right and the conclusion does not follow
+  from it, because the eight merged vendor-memory GDS files are FULL LAYOUT and
+  they contain transistors.
+
+  Measured on the shipped rc1 candidate by running the foundry antenna deck
+  with a population control appended to it
+  (`scripts/calibre/ant_coverage_control.svrf`, seven project-owned rulechecks
+  that COPY the deck's own derived layers into the same summary):
+
+  | control | flat polygons |
+  |---|---|
+  | the deck's antenna denominator, `GATE = OD AND POLY` | 8,080,184 |
+  | `SD` (the diffusion / diode term) | 10,121,800 |
+  | `POLY` | 4,099,844 |
+  | `OD` | 4,065,260 |
+  | `M1` | 11,887,530 |
+  | `M9` | 4,234 |
+  | `AP` | 40 |
+
+  A separate, independent census of the stream itself
+  (`scripts/ci/gds_layer_census.py`) agrees on where they come from: **209 GDS
+  structures carry front-end geometry and every one of them is a memory-macro
+  sub-cell** — the four register-file families, the two flash-cache arrays, the
+  two boot ROMs, and the memory compiler's own row-edge/strap cells. No
+  standard cell, IO cell or bond pad appears in that list.
+
+  SO THE CORRECT STATEMENT IS NARROWER AND STRONGER. The zero is a REAL result
+  over a REAL population, and that population is the memory macros and the
+  top-level routing that reaches them — not the whole die. It does not cover
+  antenna ratios into standard-cell gates, because that geometry is not in the
+  stream, and it therefore still does not substitute for the foundry's run over
+  its own merged layout. Antenna signoff remains open for that reason and only
+  that reason; "0 measured nothing" is no longer one of them.
+  (Revision history, because this entry has now been wrong in two directions.
+  An earlier revision on 2026-08-17 said the foundry deck had never been run;
+  it had. The revision that replaced it said the run measured nothing; it
+  measured a real population, just a narrower one than the sentence implied.
+  What has been true throughout, and is the only thing still keeping this open,
+  is that the standard-cell, IO and pad gates are not in our stream and only
+  the foundry's merged run can cover them.)
   The 1,549 → 0 improvement is real but belongs to the LEFOBS stream-map fix as
   measured by Innovus `check_process_antenna`, which is a router-level LEF-based
   check and is not foundry antenna signoff.
