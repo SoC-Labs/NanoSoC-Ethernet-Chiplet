@@ -2253,9 +2253,18 @@ stages:
     #     (mid-flight) and -valid7 (died at placement) both have work/ and
     #     neither has a route_manifest.txt.
     # Same string as run:, check: and artifacts: below, on purpose.
+    #
+    # RE-PINNED rzG -> gdsrun-20260826-rc1, 2026-08-26, on the run that first
+    # produced a current-density number on this design. All four spellings moved
+    # together (needs_implementation, run:, check:'s PINNED, artifacts:) because
+    # this stage's whole discipline is that they name the SAME string. The rest
+    # of the physical table is still on rzG and this row is deliberately out of
+    # step with it: rc1 is the newer FINISHED route, so this pin is the correct
+    # one and the others are the stale ones. build-freshness grades that, and
+    # moving this row cannot make its verdict worse.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/nanosoc_eth_chiplet_pads_routed
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/reports/route_manifest.txt
+      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/nanosoc_eth_chiplet_pads_routed
+      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/reports/route_manifest.txt
     # The rzG rail solve took 6m40s wall (stage.started 2026-08-24T10:11:25,
     # census written 10:18:05). Budgeted generously at 4x that: this stage runs
     # Voltus over a 103-macro routed database and a slower host, a colder file
@@ -2290,7 +2299,7 @@ stages:
     # worktree. ir-drop-selftest's `rail-selftest` is unreachable for the
     # identical reason. THE FIX IS TO COMMIT THAT INCLUDE, in
     # ASIC/genus-innovus/Makefile — not to change anything here.
-    run: make -C ASIC/genus-innovus rail RAIL_RUN_TAG=gdsrun-20260823-rzG
+    run: make -C ASIC/genus-innovus rail RAIL_RUN_TAG=gdsrun-20260826-rc1
     # THE CHECK NEVER CONSULTS AN EXIT CODE — not the tool's and not the stage
     # script's. report_rail, report_resistance and set_power_pads have all been
     # observed printing `**ERROR` and returning SUCCESS on this design, so the
@@ -2356,7 +2365,7 @@ stages:
       set -u
       # -- 1 -- WHICH CENSUS. Named, never ranked. --------------------------
       RAIL_WORK=ASIC/genus-innovus/rail/work
-      PINNED=$RAIL_WORK/gdsrun-20260823-rzG/census.txt
+      PINNED=$RAIL_WORK/gdsrun-20260826-rc1/census.txt
       CEN="${RAIL_CENSUS:-}"
       case "$CEN" in
         *'*'*|*'?'*|*'['*)
@@ -2457,7 +2466,7 @@ stages:
     # a verdict computed from exactly one of them — which is how a reader ends up
     # attributing a millivolt number to the wrong build.
     artifacts:
-      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/census.txt
+      - ASIC/genus-innovus/rail/work/gdsrun-20260826-rc1/census.txt
       - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/verdict.json
       - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/Reports/*/*.main.rpt
       - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/Reports/*/*.layerbased_ir.rpt
@@ -3817,6 +3826,176 @@ stages:
     artifacts:
       - ci/fixtures/lvs-missing-connection/PROVENANCE.md
 
+  # --- SIGNOFF STA ------------------------------------------------------------
+  # ADDED 2026-08-26. Until this row existed this manifest had 27 stages and NOT
+  # ONE OF THEM TIMED ANYTHING: every timing number was a Genus/Innovus in-tool
+  # report, i.e. the optimiser grading its own work off the delay calculator it
+  # optimised with and the parasitics it estimated.
+  #
+  # AND THE TOOL WAS HERE THE WHOLE TIME -- installed, mutation-proven harness in
+  # ASIC/sta/, six real result sets. What was missing was a caller. The
+  # `unsupported:` entry that stood for this said "No Tempus or PrimeTime
+  # installed" and proved it with `command -v tempus` -- a fact about PATH
+  # answering a question about installation -- so it reported itself still real
+  # on every run it ever made. Deleted by this change; scripts/ci/preflight.sh
+  # now resolves both tools by DECLARATION and refuses a host that cannot.
+  #
+  # gate: report IS A CHOICE. gdsrun-20260826-rc1 fails this gate today on real
+  # numbers -- setup WNS -0.049 over 4 endpoints, hold -0.053 over 394, 57,955
+  # untested checks -- and that is being worked separately. Per this file's own
+  # definition `report` is for a flow that is real and whose findings are not yet
+  # triaged to zero, which is why ir-drop is `report`. A blocking row red on day
+  # one for a known, owned reason teaches its reader to skip it.
+  #
+  # THE BLOCKING HALF IS THE ROW BELOW. "Has this been timed, and does the timing
+  # belong to it" is a different question from "does it close". Do not merge the
+  # rows: one `gate:` field cannot hold both answers.
+  - id: sta-signoff
+    phase: physical
+    gate: report
+    label: soclabs-sta
+    description: "Signoff STA in Tempus on the routed database with Quantus parasitics: OCV, CPPR both, re-issued derate, graded by ASIC/sta/sta_gate.py against a committed policy"
+    # The two artefacts ir-drop names, for its reason: work/<block>_routed means
+    # a route STARTED, route_manifest.txt is written at the route's END and is
+    # the only proof it FINISHED. Declaring them makes an unrouted build render
+    # UNVERIFIED (indicts the run) rather than FAIL (indicts the design).
+    needs_implementation:
+      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/nanosoc_eth_chiplet_pads_routed
+      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/reports/route_manifest.txt
+    # MEASURED 716 s wall on gdsrun-20260826-rc1 (09:56:24 -> 10:08:20), mostly
+    # extraction over 223,168 nets. Budgeted at 5x: a wedged Tempus with no
+    # timeout holds a runner and a seat; one set tight kills a healthy run and
+    # renders it as a design result.
+    timeout_s: 3600
+    # THE BUILD TAG IS SPELLED OUT IN run:, check: AND artifacts:, and here it is
+    # load-bearing as nowhere else in this file: the launcher's own default names
+    # a build from 14 August, and six real STA runs took that default and
+    # analysed a stale database while everyone believed otherwise. Leaving the
+    # tag implicit restores that defect. Everything is written under
+    # ASIC/sta/work/<tag>/ so two builds cannot overwrite each other's evidence.
+    #
+    # `< /dev/null` on both tool calls: Tempus holds a seat at an interactive
+    # prompt if handed a tty, and run_sta.sh does not trust the exit code.
+    run: |
+      set -u
+      TAG=gdsrun-20260826-rc1
+      DB="$PWD/ASIC/eth-chiplet/build/$TAG/work/nanosoc_eth_chiplet_pads_routed"
+      W="$PWD/ASIC/sta/work/$TAG"
+      mkdir -p "$W/reports" "$W/outputs"
+      python3 ASIC/sta/make_sta_mmmc.py --db "$DB" --out "$W/mmmc_sta.tcl" < /dev/null
+      STA_OUT="$W/outputs" STA_REP="$W/reports" STA_WORK="$W" \
+        STA_MMMC="$W/mmmc_sta.tcl" \
+        ASIC/sta/run_sta.sh "$DB" < /dev/null
+    # TWO GRADERS, AND THE ORDER IS THE POINT. sta_binding.py first: which build
+    # is this, and did the run finish. It exits non-zero before sta_gate.py is
+    # reached, so a number from the wrong die is never printed, let alone quoted.
+    # sta_gate.py cannot do that -- MEASURED 2026-08-26, its check() never reads
+    # sta_db and none of its 22 arms is a wrong-build arm. Proved:
+    # ci/fixtures/sta-signoff/fail-wrong-build is graded CLEAN by sta_gate.py and
+    # rejected here. Full argument in scripts/ci/sta_binding.py's header.
+    # sta_gate.py second: the timing verdict against sta_policy.json, whose
+    # budgets are REQUIREMENTS not observations and are not restated here.
+    # Neither exit code is consulted; both graders assert on artefacts.
+    check: |
+      set -u
+      TAG=gdsrun-20260826-rc1
+      REP="ASIC/sta/work/$TAG/reports"
+      python3 scripts/ci/sta_binding.py \
+          --reports "$REP" --build-tag "$TAG" \
+          --build-root ASIC/eth-chiplet/build || exit 1
+      python3 ASIC/sta/sta_gate.py \
+          --reports "$REP" --policy ASIC/sta/sta_policy.json
+    # Both directions. Every must_fail is a shape this project has already been
+    # misled by: wrong-build is the 17-18 August runs verbatim, violating is the
+    # candidate's own setup row, no-result is the state this repo shipped in.
+    check_proof:
+      must_pass: ci/fixtures/sta-signoff/pass
+      must_fail:
+        - ci/fixtures/sta-signoff/fail-wrong-build
+        - ci/fixtures/sta-signoff/fail-violating
+        - ci/fixtures/sta-signoff/fail-unfinished
+        - ci/fixtures/sta-signoff/fail-no-result
+        - ci/fixtures/sta-signoff/fail-untested-checks
+    # PINNED TO MATCH run: AND check:. A `*` would sweep the six stale 17-18
+    # August report sets under ASIC/sta/reports/ into the bundle beside a verdict
+    # computed from none of them. The huge SPEF and SDF are deliberately not
+    # collected: they are inputs to the numbers, not evidence of them, and their
+    # sizes are in the manifest.
+    artifacts:
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/sta_manifest.txt
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/timing_summary.rpt
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/timing_summary_hold.rpt
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/analysis_coverage.rpt
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/timing_derate.rpt
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/clocks.rpt
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/tempus_sta.log
+
+  # --- Has this candidate been timed, and is the timing ITS OWN? --------------
+  # THIS IS THE ROW THAT BLOCKS. It never looks at a WNS, an endpoint or a
+  # budget. It asks only: does a signoff-STA result exist for the build under
+  # judgement, did it finish, and was it produced from THAT build's routed
+  # database? A candidate that cannot answer yes has not been timed.
+  #
+  # IT PASSES TODAY, so blocking costs the current candidate nothing while making
+  # the next untimed one impossible. It would have FAILED every run before
+  # 2026-08-26.
+  - id: sta-binding
+    phase: physical
+    gate: block
+    # soclabs-sim, NOT soclabs-sta: this row reads text files and holds no
+    # licence. Requiring the STA toolchain to grade evidence that already exists
+    # would make an unreachable Tempus look like an untimed candidate, and those
+    # are opposite findings.
+    label: soclabs-sim
+    description: "A signoff-STA result EXISTS for this candidate, finished, and was produced from this candidate's own routed database — no WNS, no budget, no timing verdict"
+    # Same two artefacts as above, and here they change what a red MEANS:
+    #   no route yet       UNVERIFIED  go and route it
+    #   routed, not timed  FAIL        go and time it   <- the case this row exists for
+    # Both block; they send the reader to different places.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/nanosoc_eth_chiplet_pads_routed
+      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/reports/route_manifest.txt
+    # run: IS THE MUTATION BATTERY, not a no-op to satisfy the schema. 15 arms,
+    # ~0.1 s, no licence or PDK, immediately before the check uses it -- the
+    # doctrine of rom-selftest and ir-drop-selftest, folded into the row it
+    # guards because the grader is a script, not a flow.
+    run: python3 scripts/ci/sta_binding.py --selftest
+    # The TALLY is asserted, not just the exit status: a selftest that quietly
+    # stops running cases still exits 0. The positive-control clause is there
+    # because a check that says no to everything is not a check either.
+    check: |
+      set -u
+      OUT=$(python3 scripts/ci/sta_binding.py --selftest 2>&1) || {
+        echo "$OUT"; echo "sta-binding: the build-binding check's own mutation battery FAILED"; exit 1; }
+      echo "$OUT" | tail -3
+      N=$(echo "$OUT" | sed -n 's/^SELFTEST: \([0-9]\+\) passed, \([0-9]\+\) broken.*/\1/p')
+      F=$(echo "$OUT" | sed -n 's/^SELFTEST: \([0-9]\+\) passed, \([0-9]\+\) broken.*/\2/p')
+      test -n "$N" || { echo "the battery printed no tally — it did not run"; exit 1; }
+      test "${F:-1}" = 0 || { echo "$F mutation(s) were not caught"; exit 1; }
+      test "$N" -ge 12 || { echo "only $N cases ran; the battery has been cut down"; exit 1; }
+      echo "$OUT" | grep -q 'A DIFFERENT BUILD' || {
+        echo "the wrong-build arm is GONE — that is the one this row exists for"; exit 1; }
+      echo "$OUT" | grep -q '^ok    baseline PASSES' || {
+        echo "the positive control did not pass — this check rejects good evidence"; exit 1; }
+      # And now the real evidence.
+      TAG=gdsrun-20260826-rc1
+      python3 scripts/ci/sta_binding.py \
+          --reports "ASIC/sta/work/$TAG/reports" --build-tag "$TAG" \
+          --build-root ASIC/eth-chiplet/build
+    check_proof:
+      must_pass: ci/fixtures/sta-binding/pass
+      must_fail:
+        # fail-wrong-build is load-bearing: a complete, clean report set about
+        # a DIFFERENT die. It satisfies every property sta_gate.py asserts, and
+        # this row is the only thing in the pipeline that says no to it.
+        - ci/fixtures/sta-binding/fail-wrong-build
+        - ci/fixtures/sta-binding/fail-no-result
+        - ci/fixtures/sta-binding/fail-unfinished
+        - ci/fixtures/sta-binding/fail-predates-route
+        - ci/fixtures/sta-binding/fail-battery-cut-down
+    artifacts:
+      - ASIC/sta/work/gdsrun-20260826-rc1/reports/sta_manifest.txt
+
   - id: evidence-report
     phase: physical
     gate: block
@@ -3927,50 +4106,86 @@ unsupported:
     refuted_by: |
       ! grep -qF -- '-group [get_clocks $_tx_grp]' \
         ASIC/genus-innovus/inputs/constraints.sdc
-  - id: sta-signoff
-    # CORRECTED 2026-08-26. THE OLD REASON WAS FALSE, AND ITS PROBE COULD NOT
-    # NOTICE. It read "No Tempus or PrimeTime installed", refuted_by
-    # `command -v tempus`. Measured on this host:
+  - id: sta-hold-coverage
+    # REPLACED THE `sta-signoff` GAP, 2026-08-26: two stages now run STA, so
+    # that entry was deleted rather than reworded -- a gap whose refutation has
+    # fired is not a gap. What survives is this, narrower and separately true,
+    # buried in the old entry's prose where nothing could test it.
     #
-    #   Tempus 21.11-s131_1 is installed and executable at the path
-    #   ASIC/sta/site.env names as TEMPUS_BIN (see site.env.example — the live
-    #   file is gitignored, which is why nothing in the tree points at it).
-    #   It had ALREADY RUN SIX TIMES before this correction: six
-    #   `tempus_sta.log*` generations under ASIC/sta/reports/ dated 17-18 Aug,
-    #   every one recording `MANIFEST: sta_db = .../full-20260814/...`, and
-    #   every .rpt in that directory carries a `Generated by: Cadence Tempus
-    #   21.11-s131_1` header. Licence Tempus_Timing_Signoff_TSO: 41 issued,
-    #   0 in use (`lmstat -a -c $CDS_LIC_FILE`).
+    # MEASURED on gdsrun-20260826-rc1 and on 2026-08-18 -- every signoff STA
+    # this project has completed:
     #
-    # `command -v tempus` is a fact about PATH, not about installation, and the
-    # SSV install is not on the default PATH here. So the probe exited 1 and
-    # `signoff.py lint` printed "still real" on every run it ever made —
-    # a declaration protected by a probe that tests the wrong noun is not
-    # falsifiable, it is only decorated with a command. Same class as the
-    # "capability declared absent is present" family. run_report.py already
-    # reports off-PATH as its own state for exactly this reason.
+    #   **ERROR: (TCLCMD-1056): 'early check types checkTypeName cannot be
+    #   reported in Late Analysis Mode'
     #
-    # WHAT IS ACTUALLY STILL TRUE, and is now the load-bearing clause: no
-    # STAGE in this manifest times anything. Signoff STA on this project runs
-    # OUT OF BAND — ASIC/sta/run_sta.sh -> run_signoff_sta.tcl, graded by
-    # ASIC/sta/sta_gate.py — and its result reaches a reader through the
-    # evidence flow (ASIC/eth-chiplet/evidence/<tag>.json), never through this
-    # pipeline. Refuted the day a stage here runs one.
+    # raised by run_signoff_sta.tcl's report_analysis_coverage_hold step, which
+    # records that step FAILED and writes no report. So the untested-check
+    # census sta-signoff grades -- 57,955 on the candidate -- is a LATE-SIDE
+    # census being read as the whole design.
     #
-    # The probe honours SIGNOFF_MANIFEST so it can be proved in both
-    # directions against fixtures; see ci/fixtures/gap-sta-signoff/ and
-    # `signoff.py prove`.
-    reason: "No stage in this manifest runs static timing analysis: every timing number it collects is a Genus/Innovus in-tool report, which is an optimisation-side estimate and not signoff STA. NOT for want of a tool — Tempus 21.11 is installed here and has run; it is driven out of band by ASIC/sta/run_sta.sh and reported through the evidence flow, so this pipeline neither runs it nor gates on it"
+    # NOT A MISSING FEATURE: the tool refuses the request in the mode the session
+    # is in, as it refuses `-early` with `-late` (TCLCMD-1130) outside
+    # simultaneous setup-and-hold mode. The fix is one step in
+    # ASIC/sta/run_signoff_sta.tcl and no change to any gate here; declared
+    # rather than fixed because that file is being edited concurrently.
+    #
+    # THE HOLD NUMBER IS NOT MISSING: report_timing_summary -checks hold runs
+    # fine and the candidate's hold WNS and FEP are graded. What is missing is
+    # the early-side DENOMINATOR.
+    reason: >
+      Hold-side analysis coverage has never been measured. Every completed
+      signoff STA raises TCLCMD-1056 on report_analysis_coverage -check_type
+      hold and writes no report, so the untested-check census the sta-signoff
+      stage grades is a setup-only census. Hold WNS and failing endpoints ARE
+      measured; the number of hold checks that went unevaluated is not, and an
+      unevaluated check reads exactly like a passing one.
+    # Keyed on the ARTEFACT, not on the command being present in the Tcl: that
+    # command has been there since 2026-08-18 and has failed every time, so a
+    # grep for it would report this gap closed while it was wide open.
+    #
+    # A LOOP, NOT `ls ... && test -s ...`, AND THE FIRST DRAFT WAS THE BAD ONE:
+    # `ls` on a glob matching nothing exits 2, the `&&` short-circuits, and lint
+    # calls a 2 UNVERIFIABLE -- the same decorated-but-unfalsifiable shape as the
+    # entry this replaced. An unmatched glob expands to the literal pattern and
+    # `[ -s ]` is false on it.
     refuted_by: |
-      python3 -c "import os,yaml,sys; \
-      m=yaml.safe_load(open(os.environ.get('SIGNOFF_MANIFEST','ci/signoff.yaml'))); \
-      sys.exit(0 if any(s['id']=='sta' or s['id'].startswith('sta-') \
-      for s in m.get('stages',[])) else 1)"
+      for f in ASIC/sta/work/*/reports/analysis_coverage_hold.rpt; do
+        [ -s "$f" ] && exit 0
+      done
+      exit 1
   - id: antenna-signoff
-    reason: "Innovus check_process_antenna DOES run and ANTENNA diodes ARE inserted by filler.tcl (reports/*_imp_antenna.rep), but nothing gates on the count and it is a router-level check, not foundry antenna signoff"
-    # The load-bearing clause is "nothing GATES on the count". Refuted the day a
-    # stage in this manifest does. (Not a grep for the word 'antenna' — the
-    # reason text above lives in this same file and would match itself.)
+    # CORRECTED 2026-08-26, and the correction is the same shape as
+    # sta-signoff's above: the clause that was doing the work turned out to be
+    # a statement about this repository, phrased as a statement about the site.
+    #
+    # THE OLD TEXT SAID the foundry check was not available, and the evidence
+    # spec's matching row said "no foundry antenna run exists for this stream".
+    # Measured on this host 2026-08-26:
+    #
+    #   The foundry antenna deck imec's own reports cite by name is installed
+    #   here, readable, for the right metal layer count, at the same revision
+    #   they ran. Calibre is installed and 150 of its DRC seats were free.
+    #   What was missing was a pdk_paths key and a runner script -- the wrapper
+    #   deck scripts/calibre/nanosoc_eth_chiplet_pads.ant.rules had been in the
+    #   tree since the tapeout branch opened, naming a run_ant.sh nobody had
+    #   written. It has now been run, on the shipped candidate, and every
+    #   foundry rulecheck came back zero over a population the run itself
+    #   demonstrates is non-empty.
+    #
+    # WHAT IS STILL TRUE, and is now the load-bearing clause: no STAGE IN THIS
+    # MANIFEST runs it or gates on it. It runs out of band -- `make -C
+    # ASIC/genus-innovus ant` -> scripts/calibre/run_ant.sh -- and its verdict
+    # reaches a reader through the evidence flow's `antenna-foundry-deck` gate
+    # (scripts/ci/evidence_flow.py, proved both directions by
+    # `evidence_flow.py selftest`), never through this pipeline. Refuted the
+    # day a stage here runs one.
+    #
+    # AND THE ROUTER-LEVEL CLAUSE STANDS UNCHANGED: Innovus
+    # check_process_antenna is not this check and must not be quoted as it.
+    reason: "No stage in this manifest runs or gates on a foundry antenna check. Innovus check_process_antenna DOES run and ANTENNA diodes ARE inserted by filler.tcl (reports/*_imp_antenna.rep), and that is the ROUTER's model over the router's database — not the foundry deck and not over the streamed layout. NOT for want of a deck or a tool: the foundry antenna deck is installed here, `make -C ASIC/genus-innovus ant` runs it, and the result is graded by the evidence flow's antenna-foundry-deck gate — out of band, so this pipeline neither runs it nor gates on it"
+    # Unchanged, and still correct for the re-scoped clause: refuted the day a
+    # stage id in this manifest mentions antennas. (Not a grep for the word —
+    # the reason text above lives in this same file and would match itself.)
     refuted_by: |
       python3 -c "import yaml,sys; m=yaml.safe_load(open('ci/signoff.yaml')); \
       sys.exit(0 if any('antenna' in s['id'] for s in m.get('stages',[])) else 1)"
@@ -4093,40 +4308,35 @@ unsupported:
              ASIC/genus-innovus/outputs/*_gate1.cpf 2>/dev/null)
       [ -n "$f" ] || exit 1
       grep -qE '^create_power_nets .*VDDIO' $f
-  - id: em-current-density
-    # The trap is explicit in the tool's own documentation: in static mode, if
-    # -em_models is not supplied and -process_techgen_em_rules is not true,
-    # current-density analysis is DISABLED. The run still succeeds and the EM
-    # report is simply absent — so this gap is invisible unless it is declared.
-    # The gate records em_status=NOT_ANALYSED and treats it as a hard failure
-    # whenever rail_budgets.txt says em.required true, which it does. (That key
-    # used to be half of the decision; --tier was the other half and is gone.)
-    #
-    # WIRED IN 2026-08-24, NOT YET RUN. rail_run.tcl now passes
-    # -process_techgen_em_rules true with an -ict_em_models file built by
-    # rail/gen_em_ict.py out of the tech LEF's own DCCURRENTDENSITY tables, and
-    # refuses to solve without one. The standing claim that TSMC ships no EM
-    # rules for this stack was true only of the volcano directory. This entry
-    # stays until a RUN records current density — flags in a script are not a
-    # measurement, which is why refuted_by below reads a census and a report
-    # instead of grepping the script.
-    reason: "PG electromigration is NOT analysed by the ir-drop stage: no -em_models and no -process_techgen_em_rules are supplied, so Voltus disables current-density analysis and completes successfully without it. The licence-free pg_capacity step computes a DC-average capacity margin from the tech LEF instead, which assumes perfect current sharing across every via on a plane and is not the same check. EM limits are the one genuinely foundry-defined number in this area"
-    # Refuted the day the rail stage passes EM models and a run records that it
-    # analysed current density.
-    # WAS a grep of rail_run.tcl for the flag names. That now MATCHES, and it
-    # would have declared this gap closed the moment the flags were typed —
-    # before any run had used them. The refutation is a rail run whose census
-    # names the model file it was given AND whose report carries a J/Jmax
-    # number: both halves, because either alone has already been produced here
-    # without the other.
-    refuted_by: |
-      for c in ASIC/genus-innovus/rail/work/*/census.txt; do
-        [ -f "$c" ] || continue
-        grep -qE '^method\.em_ict=.+' "$c" || continue
-        grep -rqE 'Maximum J/Jmax:[[:space:]]*[0-9]' \
-             "$(dirname "$c")"/results/*/Reports/*/*.main.rpt 2>/dev/null && exit 0
-      done
-      exit 1
+  # `em-current-density` used to sit here. REMOVED 2026-08-26: IT IS MEASURED.
+  # The first EM analysis this design has ever had ran that day on
+  # gdsrun-20260826-rc1 and the gap's own refuted_by now exits 0, so keeping the
+  # entry would be the stale-waiver failure this register exists to prevent.
+  #
+  # WHAT CLOSED IT, and it was not the flags. rail_run.tcl had passed
+  # -process_techgen_em_rules true with -ict_em_models since 2026-08-24, and
+  # three runs used them. All three produced NOTHING, because the model file
+  # gen_em_ict.py wrote was in an invented grammar — a top-level
+  # `em_model <LAYER> { ... }` block Voltus has no production for. Its parser
+  # refused line 1 (`;` is not an ICT comment leader either), printed
+  # `Error in performing EM analysis` to the SOLVER LOG ONLY, and report_rail
+  # then returned success with an empty J/Jmax field and `Number of Violations:
+  # 0` — diffed byte-identical against an EM-off run on a different database.
+  # The generator now emits the documented "EM Only ICT File" grammar
+  # (process/conductor/via, EQU for metals, PWL for cuts) with the extraction
+  # tech's layer names, and carries a grammar selftest so a file the tool cannot
+  # read is caught without a licence.
+  #
+  # THE RESULT IS NOT A PASS. 49 VSS grid elements are over the derated foundry
+  # limit — worst J/Jmax 1.432 on metal2 — all of them in the metal1/metal2
+  # pad-feed stripes under the four VSS supply pads, none on any via layer and
+  # none above metal2; VDD is clean at worst 0.604. That finding is carried as a
+  # bounded known-bad in ASIC/eth-chiplet/evidence/gdsrun-20260826-rc1.json
+  # (`electromigration-vss-pad-feed-metal1-metal2`), with a withdrawal condition,
+  # and it is GATED: rail_gate.py's em.current_density now fails on
+  # em.max_violations in rail_budgets.txt instead of asking only whether the
+  # analysis ran. "Analysed" and "passed" are different claims and this entry
+  # only ever covered the first.
   # `full-design-lint` used to sit here reading "make lint covers 3 authored
   # files of 598 compiled; the rest is linted only in component repos, if at
   # all". REMOVED 2026-08-17: verif/lint/full/run.sh exists and does exactly the
