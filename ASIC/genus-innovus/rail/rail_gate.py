@@ -549,6 +549,165 @@ def resolve(path, base):
     return alt if os.path.exists(alt) else path
 
 
+def _si(tok):
+    """'8.177m' -> 0.008177. Voltus prints these with an SI suffix and no unit,
+    and a float() that silently drops the 'm' is a 1000x error in the direction
+    of good news."""
+    tok = tok.strip().rstrip(",")
+    mult = {"f": 1e-15, "p": 1e-12, "n": 1e-9, "u": 1e-6, "m": 1e-3,
+            "K": 1e3, "M": 1e6, "G": 1e9}
+    if tok and tok[-1] in mult:
+        return float(tok[:-1]) * mult[tok[-1]]
+    return float(tok)
+
+
+def em_evidence(census_path, cen):
+    """Everything the run said about electromigration, read from voltus_rail's
+    own log -- because on this tool version the MAIN REPORT DOES NOT CARRY IT.
+
+    TWO SEPARATE TRAPS, both measured on 2026-08-26, both of which made an EM
+    result invisible to this gate.
+
+    1. THE MAIN REPORT'S J/Jmax FIELD IS EMPTY EVEN WHEN EM RAN. On the rc1 run
+       whose model file Voltus accepted and which found 49 VSS elements over
+       limit, VDD.main.rpt and VSS.main.rpt still print
+
+           Minimum, Average, Maximum J/Jmax:
+           Number of Violations: 49
+
+       -- an empty triple beside a non-zero count. The numbers exist only in
+       results/<domain>/voltus_rail.log. A gate reading only the main report
+       therefore calls a successful EM run NOT_ANALYSED, which is what this one
+       did until this function existed. The empty field is NOT evidence of
+       anything; the log is.
+
+    2. THE DOMAIN DIRECTORY AUTO-INCREMENTS AND THE OLD ONE STAYS. report_rail
+       writes PD_TOP_125C_avg_1, then _2, then _3 on successive runs in the same
+       work directory; nothing removes the earlier ones. A glob over
+       results/*/voltus_rail.log finds the FIRST, which is the OLDEST, and on
+       this run the oldest is the one whose model file was rejected. So the
+       domain directory is taken from the census's OWN artefact paths -- the
+       report files the rest of this gate reads -- and never by ranking or
+       globbing. Same doctrine as ci/signoff.yaml's census selection: named,
+       never ranked."""
+    base = os.path.dirname(os.path.abspath(census_path))
+    out = {"log": "", "rejected": False, "reason": "", "analysed": False,
+           "nets": {}, "temp_warn": [], "domain": ""}
+
+    # ANCHORED ON THE MAIN REPORT, WALKED UP -- never globbed. The real layout
+    # is <domain>/Reports/<NET>/<NET>.main.rpt with the log at <domain>/, so
+    # the log is three levels above the report; a fixture writes both flat in
+    # one directory. Walking up from the report until a voltus_rail.log appears
+    # covers both without ranking anything, and it binds the log to the SAME
+    # domain directory the rest of this gate reads its numbers from -- which is
+    # the point, because report_rail auto-increments PD_TOP_125C_avg_N and
+    # leaves every earlier N in place. On this run the oldest of those is the
+    # one whose model file was rejected, so a glob would have reported the
+    # stale failure against the current run's good numbers.
+    main = cen.get("artefact.main_vdd") or cen.get("artefact.main_vss") or ""
+    if not main:
+        return out
+    dom, lg = os.path.dirname(os.path.abspath(main)), ""
+    for _ in range(4):
+        cand = os.path.join(dom, "voltus_rail.log")
+        if os.path.isfile(cand):
+            lg = cand
+            break
+        parent = os.path.dirname(dom)
+        if parent == dom or len(dom) <= len(base):
+            break
+        dom = parent
+    if not lg:
+        return out
+    out["domain"] = dom
+    out["log"] = os.path.relpath(lg, base)
+    try:
+        with open(lg, errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return out
+
+    why, cur = [], None
+    for i, ln in enumerate(lines):
+        t = ln.strip()
+        if t.startswith(("Error in performing EM analysis",
+                         "Error while parsing File:",
+                         "syntax error,", "Error: Near token:")):
+            out["rejected"] = True
+            if t not in why:
+                why.append(t)
+        m = re.match(r"Warning: Temperature for EM analysis of net (\S+) is out "
+                     r"of the range", t)
+        if m and m.group(1) not in out["temp_warn"]:
+            out["temp_warn"].append(m.group(1))
+        m = re.match(r"Minimum, Average, Maximum Current Density \(J/JMAX\):\s*"
+                     r"(\S+),\s*(\S+),\s*(\S+)", t)
+        if m:
+            cur = {"min": _si(m.group(1)), "avg": _si(m.group(2)),
+                   "max": _si(m.group(3)), "over": 0, "near": 0}
+            continue
+        if cur is not None:
+            # Range 1 is J/Jmax >= 1, i.e. over the derated foundry limit.
+            r = re.match(r"Range 1\(.*?\):\s*(\d+)", t)
+            if r:
+                cur["over"] = int(r.group(1))
+            r = re.match(r"Range 2\(.*?\):\s*(\d+)", t)
+            if r:
+                cur["near"] = int(r.group(1))
+            # The GIF path is what names the net; the summary line does not.
+            r = re.search(r"GIF plot:.*/Reports/([^/]+)/rj\.gif", t)
+            if r:
+                out["nets"][r.group(1)] = cur
+                cur = None
+    out["reason"] = " / ".join(why)
+    out["analysed"] = bool(out["nets"]) and not out["rejected"]
+
+    # THE DERATE THE TOOL ACTUALLY APPLIED, per layer, out of the rj report's
+    # own header. This is the authoritative statement and it is machine
+    # readable:
+    #
+    #   # Temperature: 125.0 (C)
+    #   # Jmax_factor:
+    #   #   metal9  0.358000
+    #   #   ...
+    #   #   poly    1.000000
+    #
+    # It is what makes the `Temperature ... out of the range of the EM rule
+    # jmax_factor` warning readable. That warning fires for ANY layer the model
+    # does not cover, and on this design the uncovered layers are poly, the
+    # contacts, the diffusions and CSUBSTRATE -- none of which carry a single
+    # grid element in a techonly PGV. Reacting to the warning text alone would
+    # red every correct run here. Comparing the applied factor against the
+    # layers that actually carry current is the check that discriminates.
+    for net in list(out["nets"]):
+        rj = os.path.join(dom, "Reports", net, f"{net}.rj.avg.rpt")
+        fac, temp, inblock = {}, "", False
+        if os.path.isfile(rj):
+            try:
+                with open(rj, errors="replace") as fh:
+                    for ln in fh:
+                        if not ln.startswith("#"):
+                            break
+                        t = ln[1:].strip()
+                        m = re.match(r"Temperature:\s*([\d.]+)", t)
+                        if m:
+                            temp = m.group(1)
+                        if t.startswith("Jmax_factor:"):
+                            inblock = True
+                            continue
+                        if inblock:
+                            m = re.match(r"(\S+)\s+([\d.]+)$", t)
+                            if m:
+                                fac[m.group(1)] = float(m.group(2))
+                            else:
+                                inblock = False
+            except OSError:
+                pass
+        out["nets"][net]["jmax_factor"] = fac
+        out["nets"][net]["rj_temp"] = temp
+    return out
+
+
 def find_flow_power_report(db_path):
     """The IMPLEMENTATION run's own report_power output, which the rail stage did
     not produce and cannot influence.
@@ -1215,7 +1374,26 @@ def run_gate(census_path, budget_path):
     # In static mode, without -em_models and without -process_techgen_em_rules,
     # current-density analysis is DISABLED and the run still succeeds with the
     # EM report simply absent. An unmeasured signoff criterion is not a pass.
-    em_ok = bool(M.get("em_analysed"))
+    # THE EVIDENCE COMES FROM THE SOLVER LOG, NOT THE MAIN REPORT. See
+    # em_evidence(): on this tool version the main report's J/Jmax field is
+    # empty whether EM ran or not, so `em_analysed` off the main report is a
+    # false negative on every successful run. The main report is still read, and
+    # if it ever does carry the triple that counts too - but it is no longer the
+    # only witness.
+    em_rej = em_evidence(census_path, cen)
+    em_ok = bool(M.get("em_analysed")) or em_rej["analysed"]
+    if em_rej["nets"]:
+        M["em_jjmax_by_net"] = {
+            n: {"max": round(d["max"], 4), "avg": round(d["avg"], 6),
+                "over_limit": d["over"], "near_limit_0p857_1p0": d["near"]}
+            for n, d in sorted(em_rej["nets"].items())}
+        M["em_jjmax_max"] = round(max(d["max"] for d in em_rej["nets"].values()), 4)
+        M["em_over_limit_total"] = sum(d["over"] for d in em_rej["nets"].values())
+        M["em_temp_out_of_range_nets"] = " ".join(em_rej["temp_warn"]) or "-"
+        if not M.get("em_raw"):
+            M["em_raw"] = "; ".join(
+                f"{n} min/avg/max {d['min']:.4g}/{d['avg']:.4g}/{d['max']:.4g}"
+                for n, d in sorted(em_rej["nets"].items()))
     # ONE SWITCH, AND IT CARRIES PROVENANCE. This used to be the budget key AND
     # `--tier`, so the same question had two answers in two files and the
     # command-line one silently won. The tier is gone; this line is the whole
@@ -1223,14 +1401,65 @@ def run_gate(census_path, budget_path):
     # same anti-ratchet rule they are.
     em_required = str(bud.get("em.required", "true")).lower() == "true"
     M["em_status"] = "analysed" if em_ok else "NOT_ANALYSED"
+    # THE MESSAGE NO LONGER ASSERTS A CAUSE IT DID NOT MEASURE - fixed
+    # 2026-08-26. It used to read "which is the documented result of running
+    # static mode with no -em_models and no -process_techgen_em_rules". On the
+    # 24-Aug valid4 run and the 26-Aug rc1 run BOTH of those flags were
+    # supplied and the ICT-EM file was named in the census; the reason the
+    # field was empty is that Voltus REJECTED the model file at its first line
+    # and carried on. The gate reported a true verdict with a false reason, and
+    # a false reason is what sends the next person to check flags that are
+    # already right. There are now three distinguishable states and the
+    # detail says which one was observed.
+    # ANALYSED IS NOT PASSED. Until 2026-08-26 this check's only question was
+    # whether EM ran, because no run had ever produced a number and "did it run"
+    # was the whole difficulty. The first run that DID produce numbers found 49
+    # VSS elements over the derated foundry limit, and a check that asks only
+    # "was it analysed" would have rendered that green. The budget key is
+    # em.max_violations, beside every other threshold and carrying provenance.
+    em_over = M.get("em_over_limit_total")
+    em_vmax = num(bud, "em.max_violations") if em_ok else None
+    if em_ok and em_over is not None and em_vmax is not None and em_over > em_vmax:
+        em_ok = False
+        worst = max(em_rej["nets"].items(), key=lambda kv: kv[1]["max"])
+        em_detail = (
+            f"EM current density: {em_over} grid element(s) OVER the derated "
+            f"foundry limit (budget {int(em_vmax)}). Worst net {worst[0]} at "
+            f"J/Jmax {worst[1]['max']:.3f}, i.e. {worst[1]['max']:.2f}x the "
+            f"allowed DC average current at the analysis temperature. Per net: "
+            + "; ".join(f"{n} max {d['max']:.3f}, {d['over']} over, {d['near']} "
+                        f"in the 0.857-1.0 band"
+                        for n, d in sorted(em_rej["nets"].items()))
+            + f". Read from {em_rej['log']}, which is the only place this tool "
+              "prints it - the main report's J/Jmax field is empty even here.")
+    elif em_ok:
+        em_detail = f"EM current density: analysed, J/Jmax = {M.get('em_raw')}"
+    elif em_rej["rejected"]:
+        em_detail = (
+            "EM current density: NOT_ANALYSED because the solver REJECTED the "
+            f"EM model file. {em_rej['log']} says: {em_rej['reason']}. The "
+            "flags are not the problem - the run supplied them, and report_rail "
+            "still returned success and printed an EMPTY J/Jmax with "
+            "'Number of Violations: 0', which is byte-identical to a run with "
+            "no EM flags at all. Regenerate the model with gen_em_ict.py and "
+            "re-run; do not go looking at set_rail_analysis_mode.")
+    elif em_rej["log"]:
+        em_detail = (
+            "EM current density: NOT_ANALYSED. The report's J/Jmax field is "
+            "EMPTY and the solver log records no model-file rejection, so this "
+            "is the documented result of static mode without usable EM rules: "
+            "the tool disables current-density analysis and completes "
+            "successfully without it. An unmeasured signoff criterion is not a "
+            "pass.")
+    else:
+        em_detail = (
+            "EM current density: NOT_ANALYSED. The report's J/Jmax field is "
+            "EMPTY. No solver log was found beside this census, so WHY it is "
+            "empty was not measured - flags absent and model rejected both "
+            "produce exactly this report. An unmeasured signoff criterion is "
+            "not a pass either way.")
     v.add("em.current_density", "HARD" if em_required else "ADVISORY", em_ok,
-          (f"EM current density: analysed, J/Jmax = {M.get('em_raw')}"
-           if em_ok else
-           "EM current density: NOT_ANALYSED. The report's J/Jmax field is "
-           "EMPTY, which is the documented result of running static mode with "
-           "no -em_models and no -process_techgen_em_rules: the tool disables "
-           "current-density analysis and completes successfully without it. "
-           "An unmeasured signoff criterion is not a pass."))
+          em_detail)
 
     # ---- 11b. WHAT THE EM NUMBERS WERE COMPUTED FROM ------------------------
     # The Voltus reference is explicit that -process_techgen_em_rules WITHOUT
@@ -1263,6 +1492,145 @@ def run_gate(census_path, budget_path):
               "behind them." if declared else
               "EM was not analysed, so there is nothing to corroborate - "
               "em.current_density above is the check that owns that.")))
+
+    # ---- 11c. WAS THE MODEL FILE ACCEPTED? ----------------------------------
+    # ADDED 2026-08-26, AND IT IS THE CHECK method.em_models COULD NOT BE.
+    #
+    # method.em_models above reads the CENSUS. The census records what
+    # rail_run.tcl PASSED, which is a statement about the script, not about the
+    # run - the same distinction ci/signoff.yaml's em-current-density note draws
+    # when it says "flags in a script are not a measurement". One level up, this
+    # gate was making the identical mistake: `the model file is named, so the
+    # J/Jmax numbers have a ruleset behind them` was emitted as an [ok] on two
+    # runs that produced no J/Jmax numbers at all, because the file Voltus was
+    # handed was in a grammar it does not parse.
+    #
+    # The tool says so, and says so only in the solver's own log:
+    #
+    #     Error in performing EM analysis
+    #     Error while parsing File: <the model file>
+    #     syntax error, unexpected WORD, expecting PROCESS or CONDUCTOR or VIA
+    #
+    # None of that reaches the main report, the census, or the exit code. So
+    # this check goes and reads it.
+    #
+    # IT FAILS ONLY ON POSITIVE EVIDENCE. An absent log is not a failure - it
+    # is an older run, or a fixture, and inventing a red there would be the
+    # "red for a wiring reason" this project already refuses. What it must never
+    # do is stay silent when the evidence IS there, which is the state that
+    # cost three runs.
+    if em_rej["rejected"]:
+        acc_ok, acc_detail = False, (
+            f"the solver REJECTED the ICT-EM model file. {em_rej['log']}: "
+            f"{em_rej['reason']}. report_rail returned success anyway and the "
+            "current-density section is indistinguishable from a run that was "
+            "never given EM rules, so nothing downstream of the log can see "
+            "this. A named model file is not an accepted one.")
+    # KEYED ON em_rej["analysed"], NOT em_ok. em_ok is flipped to False by the
+    # violation budget above, and reusing it here made this check announce "EM
+    # still did not produce numbers" on a run that produced 49 of them.
+    elif em_rej["log"] and em_rej["analysed"]:
+        acc_ok, acc_detail = True, (
+            f"the solver log {em_rej['log']} records no model-file rejection "
+            "and the J/Jmax field carries numbers. The file was read, not just "
+            "named.")
+    elif em_rej["log"]:
+        acc_ok, acc_detail = True, (
+            f"the solver log {em_rej['log']} records no model-file rejection. "
+            "EM still did not produce numbers - em.current_density owns that - "
+            "but the model file is not the reason.")
+    else:
+        acc_ok, acc_detail = True, (
+            "no solver log beside this census, so acceptance of the model file "
+            "was NOT measured. Not a failure - an older run or a fixture has "
+            "no such log - but this check corroborates nothing here.")
+    M["em_model_accepted"] = acc_ok and not em_rej["rejected"]
+    v.add("method.em_model_accepted", "HARD", acc_ok, acc_detail)
+
+    # ---- 11d. DID THE TEMPERATURE DERATE REACH THE LAYERS THAT CARRY CURRENT?
+    #
+    # Between 110C and 125C copper derates x0.358 and aluminium x0.671. A
+    # current density computed against the wrong end of that is out by 2.8x, in
+    # the direction of good news, and looks exactly like a good result. This is
+    # the check that the derate the model declares is the derate the tool used.
+    #
+    # IT DOES NOT KEY OFF THE WARNING TEXT, and that distinction is the whole
+    # design of it. Voltus prints
+    #
+    #   Warning: Temperature for EM analysis of net VSS is out of the range of
+    #            the EM rule jmax_factor
+    #
+    # for ANY layer the model does not cover. On this design the uncovered
+    # layers are poly, the contacts, the diffusions, CSUBSTRATE and REDUCED --
+    # every one of which carries ZERO grid elements in a techonly PGV, because
+    # cell internals are not modelled and the grid stops at the metal1 taps. So
+    # the warning is raised on every correct run here and a check that failed on
+    # it would be a permanent false red. MEASURED 2026-08-26: extending the
+    # model's jmax_factor table upward to 130C left the warning in place and
+    # every J/Jmax byte-identical, which is what proved the warning is about
+    # coverage and not about the analysis temperature.
+    #
+    # What it keys off instead is the rj report's own per-layer Jmax_factor
+    # table, compared against the layers that carry grid elements. Independently
+    # confirmed the same day: forcing the model's 125C copper factor from 0.358
+    # to 0.1 moved worst VSS J/Jmax from 1.432 to 5.127, which is x3.580 against
+    # an expected x3.580. The derate is applied, and this check is what keeps
+    # that true on the next run rather than on this one only.
+    temp_required = str(bud.get("em.temp_must_be_in_range", "true")).lower() == "true"
+    carrying = set()
+    for key in ("layer_elements_vdd", "layer_elements_vss"):
+        d = M.get(key) or {}
+        if isinstance(d, dict):
+            carrying |= {k for k, n in d.items() if n}
+    undertreated, uncovered, applied_any = [], [], False
+    for net, d in sorted(em_rej["nets"].items()):
+        fac = d.get("jmax_factor") or {}
+        if any(abs(f - 1.0) > 1e-9 for f in fac.values()):
+            applied_any = True
+        for lay in sorted(carrying):
+            if lay not in fac:
+                uncovered.append(f"{net}:{lay}")
+            elif abs(fac[lay] - 1.0) <= 1e-9:
+                undertreated.append(f"{net}:{lay}")
+    default_layers = sorted({l for net, d in em_rej["nets"].items()
+                             for l, f in (d.get("jmax_factor") or {}).items()
+                             if abs(f - 1.0) <= 1e-9})
+    M["em_derate_default_layers"] = " ".join(default_layers) or "-"
+    if not em_rej["nets"]:
+        v.add("em.derate_applied", "ADVISORY", True,
+              "no current-density result to qualify - em.current_density owns "
+              "that. Nothing to say about the derate.")
+    elif not applied_any:
+        v.add("em.derate_applied", "HARD" if temp_required else "ADVISORY", False,
+              "the rj report records jmax_factor 1.000 for EVERY layer: no "
+              "temperature derate was applied at all. The limits in the model "
+              "are characterised at its em_tref, so every J/Jmax here is the "
+              "un-derated figure and is optimistic by the full derate "
+              "(x2.79 for copper between 110C and 125C).")
+    elif undertreated or uncovered:
+        v.add("em.derate_applied", "HARD" if temp_required else "ADVISORY", False,
+              "a layer that CARRIES GRID CURRENT was analysed with no "
+              "temperature derate. "
+              + (f"factor 1.000 on {' '.join(undertreated)}. " if undertreated else "")
+              + (f"absent from the rj jmax_factor table: {' '.join(uncovered)}. "
+                 if uncovered else "")
+              + "Other layers did get a derate, so this is a hole in the model's "
+                "layer coverage and not an analysis run at the reference "
+                "temperature. Those elements' J/Jmax are optimistic.")
+    else:
+        ex = sorted(em_rej["nets"].items())[0][1].get("jmax_factor") or {}
+        shown = ", ".join(f"{l} {ex[l]:.3f}" for l in
+                          sorted(carrying, key=lambda x: (len(x), x))[:4] if l in ex)
+        v.add("em.derate_applied", "HARD" if temp_required else "ADVISORY", True,
+              f"every current-carrying layer was analysed with an explicit "
+              f"temperature derate at "
+              f"{sorted(em_rej['nets'].items())[0][1].get('rj_temp') or '?'}C "
+              f"({shown}...). "
+              + (f"The solver's 'temperature out of range' warning on "
+                 f"{' '.join(em_rej['temp_warn'])} concerns only layers with no "
+                 f"em_model and no grid elements here "
+                 f"({M['em_derate_default_layers']}), so it does not qualify any "
+                 f"reported number." if em_rej["temp_warn"] else ""))
 
     # ---- 12. THE BUDGETS -----------------------------------------------------
     for key, metric, label in (
@@ -1339,7 +1707,10 @@ def emit(v, fh=sys.stdout):
     for k in ("eff_worst_mv", "eff_worst_pct", "eff_p99_pct", "eff_mean_pct",
               "vdd_droop_worst_mv", "vss_rise_worst_mv", "naive_sum_of_maxima_mv",
               "instance_coverage_frac", "current_ratio", "iv_disconnected",
-              "classification", "em_status", "reff_status",
+              "classification", "em_status", "em_model_accepted",
+              "em_jjmax_max", "em_over_limit_total", "em_jjmax_by_net",
+              "em_temp_out_of_range_nets", "em_derate_default_layers",
+              "reff_status",
               "coverage_power_attributed_frac",
               "vsrc_n_vdd_reconstructed", "vsrc_n_vss_reconstructed",
               "pad_i_vdd_min_ma", "pad_i_vdd_avg_ma", "pad_i_vdd_max_ma",
@@ -1463,7 +1834,19 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
                  vdd_pads=6, vss_pads=4, vsrc_n_vdd=6, vsrc_n_vss=4,
                  pad_spread=0.128, reff="NA, NA, NA",
                  layer_present=True, layer_total_scale=1.0,
-                 em_rules="techgen", em_ict="inputs/n65_9m_6x1z1u_em.ict"):
+                 em_rules="techgen", em_ict="inputs/n65_9m_6x1z1u_em.ict",
+                 # THE SOLVER LOG. None writes none, which is what every
+                 # fixture did before 2026-08-26 and is why the model-file
+                 # rejection had no coverage at all. "clean" writes a log with
+                 # the EM banner and no error; "rejected" writes the three
+                 # lines voltus_rail actually printed on the 24-Aug and 26-Aug
+                 # runs, quoted from the log rather than paraphrased.
+                 solver_log=None,
+                 # THE SOLVER LOG'S OWN EM SECTION. (min, avg, max, over, near)
+                 # per net, plus the per-layer derate the rj report records.
+                 # None leaves the log without an EM result, which is the
+                 # rejected/absent shape; a tuple is a run that measured one.
+                 em_jjmax=None, em_factor=0.358, em_factor_default_layers=()):
     """A synthetic run directory. Ranks the drops so the distribution is a real
     one rather than a single value, and places instances so the spatial
     classification has something to work on.
@@ -1608,6 +1991,49 @@ def make_fixture(d, *, n=1000, worst=0.0151, vdd_share=0.4, vsrc=10, pads=10,
             with open(path, "w") as fh:
                 fh.write(LAYER_RPT.format(l9=t * 0.60, l8=t * 0.61,
                                           l7=t * 0.976, t=t))
+
+    if solver_log is not None:
+        # Flat, beside VDD.main.rpt, which is this fixture's whole layout. The
+        # gate walks up from the main report to find the log, so this exercises
+        # the same resolution the real <domain>/Reports/<NET>/ tree does.
+        with open(os.path.join(d, "voltus_rail.log"), "w") as fh:
+            fh.write("Info: Using Layer-stack details from : 'qrcTechFile'\n")
+            fh.write(f"Info: Using EM Rules from : '{em_ict}'\n")
+            if solver_log == "rejected":
+                fh.write("Error in performing EM analysis\n\n")
+                fh.write(f"Error while parsing File: {em_ict}\n")
+                fh.write("syntax error, unexpected WORD, expecting PROCESS or "
+                         "CONDUCTOR or VIA or EOL\n")
+                fh.write("Error: Near token: ;\n")
+            if em_jjmax is not None:
+                mn, av, mx, over, near = em_jjmax
+                for net in ("VSS", "VDD"):
+                    fh.write("\nBegin Current Density (J/JMAX) Report "
+                             "Generation\n")
+                    fh.write(f"  Minimum, Average, Maximum Current Density "
+                             f"(J/JMAX): {mn:.3f}, {av:.3f}, {mx:.3f}\n")
+                    fh.write(f"    Range 1(    1.000  -     1.000G ): "
+                             f"{over:>9d} (  0.00%)\n")
+                    fh.write(f"    Range 2(    0.857  -      1.000 ): "
+                             f"{near:>9d} (  0.00%)\n")
+                    fh.write(f"  GIF plot: {d}/Reports/{net}/rj.gif\n")
+            fh.write("\nBegin Grid Integrity Report Generation\n")
+        if em_jjmax is not None:
+            # The rj report, for its Jmax_factor header alone. Every layer the
+            # fixture's layer-IR report names must appear here, or the derate
+            # check reads it as a coverage hole - which is a case below, on
+            # purpose, and must not be the accidental state of every case.
+            for net in ("VSS", "VDD"):
+                rd = os.path.join(d, "Reports", net)
+                os.makedirs(rd, exist_ok=True)
+                with open(os.path.join(rd, f"{net}.rj.avg.rpt"), "w") as fh:
+                    fh.write(f"# Net name: {net}\n# Temperature: 125.0 (C)\n")
+                    fh.write("# Jmax_factor: \n")
+                    for lay in ("metal9", "metal8", "metal7", "metal3", "metal1"):
+                        f = 1.0 if lay in em_factor_default_layers else em_factor
+                        fh.write(f"#   {lay}  {f:.6f}\n")
+                    fh.write("#   poly  1.000000\n")
+                    fh.write("#\n# Total Violations: 0\n")
 
     cen = {
         "result.completed": completed,
@@ -1799,6 +2225,65 @@ def selftest():
          "EM verdict here that means nothing at all",
          fails=("method.em_models",), passes=("em.current_density",),
          em_rules="techgen", em_ict="none")
+    # --- THE MODEL FILE WAS NAMED AND REFUSED. Both directions, because the
+    # negative alone would pass for any reader that never finds a log.
+    case("em_model_rejected_by_solver", "FAIL_HARD",
+         "the 24-Aug valid4 and 26-Aug rc1 shape, and the one this gate was "
+         "blind to for three runs: -process_techgen_em_rules AND "
+         "-ict_em_models both supplied, the census naming the model file, and "
+         "voltus_rail refusing to parse it at line 1. report_rail returns "
+         "success and prints an EMPTY J/Jmax with 'Number of Violations: 0' - "
+         "byte-identical to a run given no EM rules at all. Before this case "
+         "the gate said [ok] method.em_models 'the model file is named, so the "
+         "J/Jmax numbers have a ruleset behind them' on a run that had no "
+         "J/Jmax numbers",
+         fails=("method.em_model_accepted", "em.current_density"),
+         passes=("method.em_models",),
+         em="", solver_log="rejected")
+    case("em_model_accepted_by_solver", "PASS",
+         "the positive control for the case above. Same log location, same EM "
+         "banner, no parse error, and J/Jmax populated. Without it "
+         "method.em_model_accepted passes for any reader that cannot find a "
+         "log, which is exactly how the defect it catches survived",
+         passes=("method.em_model_accepted", "em.current_density",
+                 "method.em_models"),
+         em=" 0.01, 0.20, 0.83", solver_log="clean")
+    # --- ANALYSED IS NOT PASSED, and the derate must have reached the metal.
+    case("em_over_the_foundry_limit", "FAIL_HARD",
+         "the rc1 result: EM ran, the model was accepted, and 49 VSS grid "
+         "elements carry more DC average current than the derated foundry "
+         "limit allows. Until 2026-08-26 em.current_density asked only whether "
+         "the analysis RAN, so this run - the first that ever produced a "
+         "number here - would have rendered GREEN",
+         fails=("em.current_density",),
+         passes=("method.em_model_accepted", "em.derate_applied"),
+         em="", solver_log="clean", em_jjmax=(0.0, 0.008, 1.432, 49, 21))
+    case("em_within_the_foundry_limit", "PASS",
+         "the positive control: the same analysis with nothing over the limit. "
+         "Without it the case above is satisfied by any gate that fails every "
+         "run whose EM was measured",
+         passes=("em.current_density", "method.em_model_accepted",
+                 "em.derate_applied"),
+         em="", solver_log="clean", em_jjmax=(0.0, 0.008, 0.604, 0, 0))
+    case("em_derate_never_applied", "FAIL_HARD",
+         "jmax_factor 1.000 on every layer: the limits are used at the "
+         "temperature they were characterised at while the solve runs at "
+         "another. Copper derates x0.358 between 110C and 125C, so every "
+         "J/Jmax printed is optimistic by 2.79x and the report looks clean",
+         fails=("em.derate_applied",),
+         em="", solver_log="clean", em_jjmax=(0.0, 0.008, 0.604, 0, 0),
+         em_factor=1.0)
+    case("em_derate_hole_on_a_current_carrying_layer", "FAIL_HARD",
+         "a partial model: most layers derated, metal1 not. This is the shape "
+         "the tool's own 'temperature out of range' warning ALSO has on a "
+         "perfectly good run - where the un-derated layers are poly and the "
+         "contacts and carry no grid element - which is exactly why this check "
+         "compares the applied factor against the layers that carry current "
+         "instead of reading the warning text",
+         fails=("em.derate_applied",),
+         passes=("em.current_density",),
+         em="", solver_log="clean", em_jjmax=(0.0, 0.008, 0.604, 0, 0),
+         em_factor_default_layers=("metal1",))
     case("em_numbers_from_undeclared_models", "FAIL_HARD",
          "J/Jmax numbers on a run that declares no model file: whatever "
          "produced them cannot be named, so they cannot be quoted. The "

@@ -373,6 +373,37 @@ if {[info exists ::RAIL(em_volcano)] && $::RAIL(em_volcano) ne ""} {
 # every main report on disk says `Reff: NA, NA, NA` - the analysis was never
 # asked for, not unavailable.
 cen method.reff true
+# THE EM REPORTING THRESHOLD, only when asked for, and BEFORE the mode.
+#
+# Voltus lists a resistor in <net>.rj.avg.rpt only when its current exceeds this
+# fraction of its own limit. The tool default is 0.9, which is what a signoff
+# report wants and is what runs with RAIL_EM_THRESHOLD unset still get -- the
+# call below is not made at all in that case, so an environment variable nobody
+# set cannot silently widen or narrow a signoff report. 0 lists every resistor
+# and is how a specific node's margin is turned from a bound into a number.
+#
+# ORDER IS LOAD-BEARING AND WAS LEARNED THE HARD WAY. set_rail_analysis_config
+# is NOT additive: -em_threshold requires -accuracy, which requires -method
+# (two consecutive IMPTCM-113 aborts), and supplying those RESETS the rest of
+# the configuration. Called AFTER set_rail_analysis_mode it discarded the power
+# grid libraries and the extraction tech file, and the run died with
+#
+#   ** ERROR: (VOLTUS_RAIL-1147): Unable to run analysis - no cell library has
+#             been specified.
+#
+# -- after which report_rail wrote nothing and the artefact scan below bound the
+# census to a PREVIOUS run's results directory. Both halves of that are fixed:
+# this call now runs first and set_rail_analysis_mode re-establishes everything
+# after it, and the scan refuses stale directories.
+if {$::RAIL(em_threshold) ne ""} {
+    puts "RAIL em thresh: $::RAIL(em_threshold) (reporting filter for rj.avg.rpt only)"
+    set_rail_analysis_config -method static -accuracy hd \
+        -em_threshold $::RAIL(em_threshold)
+    cen method.em_report_threshold $::RAIL(em_threshold)
+} else {
+    cen method.em_report_threshold tool_default_0.9
+}
+
 set_rail_analysis_mode \
     -method static \
     -accuracy hd \
@@ -438,18 +469,37 @@ if {[catch { set_power_data -format ascii -bias_voltage $::RAIL(vcore) $PWR } ep
 # rejected too - VOLTUS-1123, also returning success - even though the reference
 # page offers ALL as a worked example. PD_TOP is the domain declared above.
 set RESULTS $OUT/results
+# WHEN THIS RUN STARTED REPORTING. report_rail creates a NEW domain directory
+# each time (PD_TOP_<T>_avg_1, _2, _3 ...) and never removes the earlier ones,
+# so $RESULTS accumulates every run ever made in this work directory. The scan
+# below used to take the last match of a glob across all of them, which means a
+# report_rail that FAILED still bound the census to an older run's reports --
+# measured 2026-08-26, a run whose analysis died with VOLTUS_RAIL-1147 produced
+# a complete-looking census pointing at a domain directory written 43 minutes
+# earlier BY A DIFFERENT EM MODEL. Nothing downstream could have noticed.
+set T0 [clock seconds]
 catch { report_rail -type domain -output_dir $RESULTS PD_TOP } erail
 
 ########################################################################
 # 6. ASSERT THE ARTEFACTS, then harvest. Never the return code.
 ########################################################################
 set found {}
+set stale 0
 foreach p [glob -nocomplain $RESULTS/* $RESULTS/*/* $RESULTS/*/*/* $RESULTS/*/*/*/*] {
-    if {[file isfile $p] && [file size $p] > 0} { lappend found $p }
+    if {![file isfile $p] || [file size $p] <= 0} { continue }
+    # 5 s of slack for filesystem timestamp granularity, and NO more: the
+    # directories this rejects are minutes to hours old, never seconds.
+    if {[file mtime $p] < $T0 - 5} { incr stale ; continue }
+    lappend found $p
 }
 cen artefacts.count [llength $found]
+cen artefacts.stale_ignored $stale
 if {[llength $found] == 0} {
-    puts "RAIL-FAIL no non-empty rail artefact under $RESULTS (tcl said '$erail')"
+    puts "RAIL-FAIL no non-empty rail artefact WRITTEN BY THIS RUN under $RESULTS"
+    puts "RAIL-FAIL   (tcl said '$erail'; $stale older artefact(s) ignored)"
+    puts "RAIL-FAIL   Older domain directories are NOT a fallback. Binding the"
+    puts "RAIL-FAIL   census to one is how a failed analysis reports a complete"
+    puts "RAIL-FAIL   result computed from another run's inputs."
     cen result.fatal no_rail_artefact
     close $fcen
     exit 1
@@ -481,9 +531,21 @@ foreach k [lsort [array names A]] { cen artefact.$k $A($k) }
 # the Voltage Sources column of the circuit profile, and it is harvested here
 # and compared by the gate against the pad count measured in section 1.
 set vsrc_total 0 ; set nconn {} ; set curlines {}
-set logs [glob -nocomplain $RESULTS/*/voltus_rail.log $RESULTS/voltus_rail.log \
-                           $RESULTS/*/*/voltus_rail.log $RSTATE/voltus_rail.log]
+# THIS RUN'S LOGS ONLY -- same stale-directory trap as the artefact scan above,
+# and it bit in the same way. $RESULTS accumulates one PD_TOP_<T>_avg_N per run
+# ever made here, each with its own voltus_rail.log, and this glob summed the
+# circuit profile across ALL of them: after six runs `solve.voltage_sources`
+# read 60 against 10 pads and vsrc.count failed on a perfectly good solve.
+# Filtered by mtime against T0, exactly as `found` is.
+set alllogs [glob -nocomplain $RESULTS/*/voltus_rail.log $RESULTS/voltus_rail.log \
+                              $RESULTS/*/*/voltus_rail.log $RSTATE/voltus_rail.log]
+set logs {} ; set logs_stale 0
+foreach rl $alllogs {
+    if {[file mtime $rl] < $T0 - 5} { incr logs_stale ; continue }
+    lappend logs $rl
+}
 cen solve.logs [llength $logs]
+cen solve.logs_stale_ignored $logs_stale
 foreach rl $logs {
     set fhv [open $rl r] ; set t [read $fhv] ; close $fhv
     foreach line [split $t "\n"] {

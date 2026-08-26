@@ -161,6 +161,20 @@ set ::RAIL(cpu) [::rail::opt_env RAIL_CPU 4]
 # values verbatim, so .gitignore:108 ignores rail/inputs/*.ict for the same
 # reason rail/work/ is ignored. The GENERATOR is tracked; the output is rebuilt
 # on demand from the PDK the site already has.
+# THE EM REPORTING THRESHOLD. Voltus lists a resistor in <net>.rj.avg.rpt only
+# when its current is above this fraction of its own limit; the tool default is
+# 0.9 and that is what a signoff report wants. It is NOT a budget and it changes
+# no computed current -- same relationship as RAIL_VTHRESH_FRAC has to the IR
+# numbers.
+#
+# It is a knob because the default makes one question unanswerable: "what is the
+# EM margin at THIS node". A node below 0.9 is simply absent from the report,
+# which bounds it and no more. Setting this to 0 lists every resistor and turns
+# the bound into a number. Empty means "do not call set_rail_analysis_config at
+# all", so the shipped behaviour is the tool's own default and this knob cannot
+# quietly change what a signoff run reports.
+set ::RAIL(em_threshold) [::rail::opt_env RAIL_EM_THRESHOLD ""]
+
 set ::RAIL(em_ict) [::rail::opt_env RAIL_EM_ICT \
     $::RAIL(raildir)/inputs/n65_9m_6x1z1u_em.ict]
 
@@ -240,10 +254,16 @@ proc ::rail::ensure_em_ict {} {
 proc ::rail::em_provenance {} {
     set ::RAIL(em_lef) "" ; set ::RAIL(em_volcano) ""
     if {![file readable $::RAIL(em_ict)]} { return }
+    # The comment leader is '#'. It was ';' until 2026-08-26, when the emitted
+    # grammar was corrected: ';' is not an ICT comment and the Voltus parser
+    # named it as the token it choked on. Both halves had to move together --
+    # a provenance reader still looking for ';' would find nothing, break on
+    # line 1, and quietly drop method.em_lef / method.em_volcano from the
+    # census while the run itself looked fine.
     set fh [open $::RAIL(em_ict) r]
     while {[gets $fh line] >= 0} {
-        if {![string match ";*" $line]} { break }
-        foreach {pat key} {{;   limits  from *} em_lef {;   derate  from *} em_volcano} {
+        if {![string match "#*" $line]} { break }
+        foreach {pat key} {{#   limits  from *} em_lef {#   derate  from *} em_volcano} {
             if {[string match $pat $line]} {
                 set p [string trim [string range $line [string length \
                         [string range $pat 0 end-1]] end]]

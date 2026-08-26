@@ -131,3 +131,24 @@ cls.localised_tile_max_source geometry: an exceedance touching more than four 50
 # tier for it to be qualified by.
 em.required                    true
 em.required_source             completeness requirement: an unmeasured signoff criterion is not a pass. EM limits are the one genuinely foundry-defined number in this whole file. Setting this false to obtain a green verdict is the move ci/signoff.yaml's own note forbids; the way to satisfy it is to supply -ict_em_models, which rail_run.tcl now does.
+
+# ---- EM: HOW MANY ELEMENTS MAY EXCEED THE FOUNDRY LIMIT --------------------
+# ADDED 2026-08-26, on the first run that ever produced a current-density
+# number here. Until that run `em.required` was the whole EM decision, and it
+# asks only whether the analysis RAN. That was the right question while no run
+# had ever produced a J/Jmax; it is the wrong one now, because the first run
+# that did produce one found 49 VSS grid elements over the limit and a gate
+# asking only "was it analysed" renders that GREEN.
+em.max_violations              0
+em.max_violations_source       foundry requirement, not a convention: J/Jmax > 1 means the element carries more DC average current than the qualified limit at the analysis temperature, and the limit is TSMC's own number out of the tech LEF for this stack. There is no engineering argument for a non-zero value that is not really a request to re-derive the limit or the current. Set to 0 for that reason and NOT tuned to the day's measurement - the anti-ratchet rule applies here as everywhere else in this file.
+
+# ---- EM: THE DERATE MUST ACTUALLY HAVE BEEN APPLIED ------------------------
+# The jmax_factor table in the ICT-EM model spans the temperatures the volcano
+# ruleset characterises. If the analysis temperature falls outside it Voltus
+# prints `Temperature for EM analysis of net <N> is out of the range of the EM
+# rule jmax_factor`, keeps going, and reports J/Jmax computed against a derate
+# this file cannot then name. The numbers still look like numbers. Copper
+# derates x0.358 between 110C and 125C, so getting this wrong is a 2.8x error
+# in the direction of good news.
+em.temp_must_be_in_range       true
+em.temp_must_be_in_range_source measurement-integrity requirement: a current-density verdict whose temperature derate is unknown is not a verdict. This is not a design budget and cannot be met by changing the design - it is met by making the model's jmax_factor cover the analysis temperature, or by analysing at a temperature the foundry characterised.
