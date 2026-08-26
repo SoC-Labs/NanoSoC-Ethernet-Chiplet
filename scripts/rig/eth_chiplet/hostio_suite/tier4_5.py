@@ -291,7 +291,9 @@ DMA_CH_INTREN = 0x008
 DMA_CH_CTRL = 0x00C
 DMA_CH_SRCADDR = 0x010
 DMA_CH_DESADDR = 0x018
-DMA_CH_XSIZE = 0x020
+DMA_CH_XSIZE = 0x020              # {DESXSIZE[31:16], SRCXSIZE[15:0]}, in ELEMENTS
+DMA_CH_XADDRINC = 0x030           # {DESXADDRINC[31:16], SRCXADDRINC[15:0]}
+DMA_XADDRINC_1_1 = 1 | (1 << 16)  # advance BOTH pointers one element per beat
 DMA_CMD_ENABLE = 1 << 0
 DMA_CMD_CLEAR = 1 << 1
 DMA_STAT_DONE = 1 << 16           # POLL THIS.  Not [0] -- see HIO-412's purpose.
@@ -1855,8 +1857,16 @@ def hio_411(adp, rec):
               "decode, ch_nonsec hardwired '1, HAS_TZ=0, PPROT hardwired 3'b011 at "
               "the wrapper -- so there is no security filtering to understand, and "
               "the original demand to understand it first came from a header that "
-              "does not describe this design. Goes red if the poll times out, if "
-              "STAT_ERR sets, or if any destination word does not match its source.")
+              "does not describe this design. (4) CH_XADDRINC RESETS TO 0, meaning "
+              "'do not advance either pointer'. The first silicon run of this test "
+              "never wrote it and the channel dutifully ran all 8 beats copying "
+              "source word 0 onto destination word 0 eight times: ENABLECMD accepted, "
+              "STAT_DONE set, STAT_ERR clear, one word moved. XSIZE and CTRL were "
+              "both correct -- an omitted register, not a mis-encoded one -- which is "
+              "why every descriptor register is now read back rather than just "
+              "SRCADDR. Goes red if the poll times out, if STAT_ERR sets, if any "
+              "descriptor register does not hold what was programmed, or if fewer "
+              "than all words land at their own addresses.")
 def hio_412(adp, rec):
     # SAFETY FIRST: the descriptor is checked before a single channel register is
     # touched.  The DMA is a second bus master, so _check_addr() cannot see where
@@ -1897,13 +1907,27 @@ def hio_412(adp, rec):
         _wr(adp, ch + DMA_CH_STATUS, DMA_STAT_DONE | DMA_STAT_ERR)   # W1C
         _wr(adp, ch + DMA_CH_SRCADDR, DMA_TEST_SRC)
         _wr(adp, ch + DMA_CH_DESADDR, DMA_TEST_DST)
-        _wr(adp, ch + DMA_CH_XSIZE,
-            (DMA_TEST_BEATS & 0xFFFF) | ((DMA_TEST_BEATS & 0xFFFF) << 16))
+        xsize = (DMA_TEST_BEATS & 0xFFFF) | ((DMA_TEST_BEATS & 0xFFFF) << 16)
+        _wr(adp, ch + DMA_CH_XSIZE, xsize)
+        # CH_XADDRINC RESETS TO 0x00000000, WHICH MEANS "DO NOT ADVANCE EITHER
+        # POINTER".  Omitting this write does not fail, error, or shorten the
+        # transfer -- the channel runs all N beats, reading the same source word
+        # and writing the same destination word N times.  See the purpose text.
+        _wr(adp, ch + DMA_CH_XADDRINC, DMA_XADDRINC_1_1)
         _wr(adp, ch + DMA_CH_CTRL, DMA_CTRL_1D_WORD)
 
-        rb = _rd(adp, ch + DMA_CH_SRCADDR)
-        rec.check("CH_SRCADDR reads back what was programmed",
-                  _good(rb) and rb.value == DMA_TEST_SRC, got=rb.raw)
+        # Read back EVERY descriptor register, not just SRCADDR. The first run of
+        # this test on silicon read back only SRCADDR and was blind to the
+        # register it had never written at all.
+        for name, off, want in (("CH_SRCADDR", DMA_CH_SRCADDR, DMA_TEST_SRC),
+                                ("CH_DESADDR", DMA_CH_DESADDR, DMA_TEST_DST),
+                                ("CH_XSIZE", DMA_CH_XSIZE, xsize),
+                                ("CH_XADDRINC", DMA_CH_XADDRINC, DMA_XADDRINC_1_1),
+                                ("CH_CTRL", DMA_CH_CTRL, DMA_CTRL_1D_WORD)):
+            rb = _rd(adp, ch + off)
+            rec.record("dma_%s" % name.lower(), rb.value)
+            rec.check("%s reads back what was programmed (0x%08X)" % (name, want),
+                      _good(rb) and rb.value == want, got=rb.raw)
 
         armed = True
         st = _wr(adp, ch + DMA_CH_CMD, DMA_CMD_ENABLE)
@@ -1913,6 +1937,15 @@ def hio_412(adp, rec):
         p = _poll(adp, ch + DMA_CH_STATUS, DMA_STAT_DONE, DMA_STAT_DONE, POLL_BUDGET)
         rec.record("dma_done_poll_raw", p.raw)
         rec.record("dma_done_iterations", p.value if _matched(p) else None)
+        # NOT a length signal.  Eight beats complete in ~100 ns on-die, while the
+        # first poll read lands ~260 ms after ENABLECMD (4 command round trips at
+        # ~65 ms). DONE on iteration 1 is therefore EXPECTED for any successful
+        # small transfer, and says nothing about how much was moved. The word
+        # count below is the only measure of that.
+        rec.note("dma_done_iterations counts poll reads, not beats: at ~65 ms per "
+                 "command the first read happens ~260 ms after the start, by which "
+                 "time any correct short transfer is long finished. A value of 1 is "
+                 "not evidence of a shortened transfer.")
         rec.check("STAT_DONE (CH_STATUS[16]) set within the budget", _matched(p),
                   got=p.raw)
     finally:
@@ -1929,10 +1962,27 @@ def hio_412(adp, rec):
     vals = [None if not _good(r) else r.value for r in got]
     rec.record("dma_dst_readback", ["0x%08X" % v if v is not None else None
                                     for v in vals])
+    placed = sum(1 for i, v in enumerate(vals) if v == src_pat[i])
+    first_bad = next((i for i, v in enumerate(vals) if v != src_pat[i]), None)
+    rec.record("dma_words_placed", placed)
+    rec.record("dma_words_expected", DMA_TEST_BEATS)
+    rec.record("dma_first_mismatch_index", first_bad)
+    rec.check("all %d words landed at their own addresses (placed %d of %d%s)"
+              % (DMA_TEST_BEATS, placed, DMA_TEST_BEATS,
+                 "" if first_bad is None else ", first wrong at word %d" % first_bad),
+              placed == DMA_TEST_BEATS,
+              got=["0x%08X" % v if v is not None else None for v in vals])
     rec.check("every destination word equals its source word (the ONLY valid "
               "discrimination here -- this DMAC never raises PSLVERR)",
               vals == src_pat,
               got="expected %s" % ["0x%08X" % v for v in src_pat])
+    if placed == 1 and first_bad == 1:
+        rec.note("EXACTLY ONE WORD PLACED, at index 0. That is the signature of "
+                 "CH_XADDRINC = 0: the channel ran every beat but never advanced "
+                 "either pointer, so it copied source word 0 onto destination word 0 "
+                 "N times. Check the CH_XADDRINC readback above before suspecting "
+                 "XSIZE -- an XSIZE of 1 produces the same destination contents from "
+                 "a completely different cause.")
     rec.note("Channel 0 left disarmed (CLEARCMD) and STAT_DONE/STAT_ERR left set for "
              "the record; a later run clears them before arming. ORDER MATTERS: these "
              "buffers are the top 8 KB of eth IMEM, so running this test AFTER "
