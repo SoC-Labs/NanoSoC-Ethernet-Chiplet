@@ -1,0 +1,60 @@
+#!/bin/sh
+# haps-tunnel  up|down|status
+# ONE ref-counted SSH ControlMaster to the HAPS bench jump host (haps-dev),
+# carrying BOTH bench forwards over a single connection:
+#   -L 3121 : localhost:3121   JTAG   -> hw_server ON haps-dev   (O2: Digilent cable -> hw_server)
+#   -L 18000: haps-sx:18000    ConfPro-> the BOARD, through haps-dev
+# Best-effort: it must NEVER block or fail a `module load`. ControlPersist reaps a
+# leaked master (crash-safe); the ref-count just closes it promptly on the last `down`.
+# NO ExitOnForwardFailure: the board-side 18000 forward connects lazily, so a
+# rebooting board must not tear down the (haps-dev-local) 3121 JTAG forward.
+#
+# TCP 18000 DRIVES a board but does not DESCRIBE one: ConfPro reads board state
+# over UDP (query to 18009, reply to local 18008 -- SearchCABNet::touchBorad),
+# and `ssh -L` cannot carry UDP. Without that channel the GUI has only the six
+# identity fields seeded into its systems list, so the Used/Idle column, the
+# User-IP label and the "Board is Busy" interlock are all dead -- and because
+# on_selectButton_clicked() gates that popup on the UDP-sourced `control` flag,
+# a board somebody else holds is listed as a normal white "Idle" row and the
+# GUI connects to it. haps-state-relay carries the channel, and is driven from
+# here so it shares this script's ref-count and lifetime.
+set -u
+SSH_TARGET="${HAPS_TUNNEL_SSH:-haps-dev}"            # override to a de-privileged account (see README)
+JTAG_LP="${HAPS_JTAG_LOCALPORT:-3121}"; JTAG_RHOST="${HAPS_JTAG_RHOST:-localhost}"; JTAG_RPORT="${HAPS_JTAG_RPORT:-3121}"
+CONF_LP="${HAPS_CONFPRO_LOCALPORT:-18000}"; CONF_RHOST="${HAPS_CONFPRO_RHOST:-haps-sx}"; CONF_RPORT="${HAPS_CONFPRO_RPORT:-18000}"
+CTRL="${HAPS_TUNNEL_CTRL:-$HOME/.ssh/cm-haps-tunnel}"
+REF="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.ref.$(id -u)"
+LK="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.lk.$(id -u)"
+CTIMEOUT="${HAPS_TUNNEL_CONNECT_TIMEOUT:-5}"; PERSIST="${HAPS_TUNNEL_PERSIST:-10m}"
+RELAY="${HAPS_STATE_RELAY_BIN:-$(dirname "$(readlink -f "$0")")/haps-state-relay}"
+TAG=haps-tunnel
+lock(){ i=0; while ! mkdir "$LK" 2>/dev/null; do i=$((i+1)); [ $i -gt 50 ] && break; sleep 0.1; done; }
+unlock(){ rmdir "$LK" 2>/dev/null || true; }
+say(){ echo "$TAG: $*" >&2; }
+sshc(){ ssh -o BatchMode=yes -o ControlPath="$CTRL" "$@"; }
+alive(){ sshc -O check "$SSH_TARGET" 2>/dev/null; }
+# The UDP board-state relay. Absent or broken must never affect the tunnel.
+relay(){ [ -x "$RELAY" ] || return 0; "$RELAY" "$@" || true; }
+case "${1:-}" in
+  up)
+    [ "${HAPS_NO_TUNNEL:-0}" = 1 ] && { say "disabled (HAPS_NO_TUNNEL=1)"; exit 0; }
+    lock; n=$(cat "$REF" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$REF"; unlock
+    if alive; then relay up; exit 0; fi
+    if timeout "$((CTIMEOUT + 3))" ssh -f -N \
+         -o BatchMode=yes -o ConnectTimeout="$CTIMEOUT" \
+         -o ControlMaster=auto -o ControlPath="$CTRL" -o ControlPersist="$PERSIST" \
+         -L "${JTAG_LP}:${JTAG_RHOST}:${JTAG_RPORT}" \
+         -L "${CONF_LP}:${CONF_RHOST}:${CONF_RPORT}" \
+         "$SSH_TARGET" 2>/dev/null
+    then say "up: localhost:${JTAG_LP} (JTAG->hw_server) + localhost:${CONF_LP} (ConfPro->board) via ${SSH_TARGET}"
+    else say "WARN could not open tunnel to ${SSH_TARGET} (off-network / no key?) - tools still usable; tunnelled paths unavailable"
+    fi
+    relay up
+    ;;
+  down)
+    lock; n=$(cat "$REF" 2>/dev/null || echo 1); n=$((n-1)); [ "$n" -lt 0 ] && n=0; echo "$n" > "$REF"; unlock
+    [ "$n" -le 0 ] && { relay down; sshc -O exit "$SSH_TARGET" 2>/dev/null || true; rm -f "$REF"; }
+    ;;
+  status) alive && echo "tunnel up" || echo "tunnel down"; relay status ;;
+  *) say "usage: $0 {up|down|status}"; exit 2 ;;
+esac

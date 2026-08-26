@@ -1,0 +1,60 @@
+#%Module1.0
+##
+## haps-tunnel/1.0 -- SoC-Labs HAPS bench tunnel (ref-counted, best-effort)
+##
+proc ModulesHelp { } {
+    puts stderr "SoC-Labs HAPS bench tunnel (ref-counted, best-effort)."
+    puts stderr ""
+    puts stderr "Opens ONE ssh ControlMaster to the haps-dev jump host carrying both bench"
+    puts stderr "forwards, up on load and closed on unload:"
+    puts stderr "  localhost:3121  -> hw_server on haps-dev   (Vivado HW-manager / xsdb / Identify)"
+    puts stderr "  localhost:18000 -> ConfPro-SX on the board (confpro-program), through haps-dev"
+    puts stderr ""
+    puts stderr "TCP 18000 DRIVES a board; it does not DISPLAY one. ConfPro reads board state"
+    puts stderr "over UDP (18009 out / 18008 back), which ssh -L cannot carry -- so a UDP"
+    puts stderr "state relay is started alongside, or the GUI paints an empty grey panel:"
+    puts stderr "  localhost:18009 -> board state via haps-dev (haps-state-relay)"
+    puts stderr ""
+    puts stderr "Best-effort: if haps-dev is unreachable or you have no key, the load still"
+    puts stderr "succeeds and the tools stay usable -- only the tunnelled paths are absent."
+    puts stderr "  HAPS_NO_TUNNEL=1     do not open the tunnel at all"
+    puts stderr "  HAPS_TUNNEL_SSH=host use a de-privileged ssh account instead of haps-dev"
+    puts stderr "  HAPS_ON_NET=1        already on the private segment; keep CONFPRO_BOARD=haps-sx.haps-net"
+    puts stderr ""
+    puts stderr "Board state from a shell (works where the GUI cannot reach the board):"
+    puts stderr "  haps-state-relay probe     reachable / idle-or-used / holder"
+    puts stderr "  haps-state-relay status    is the relay up, and where does it point"
+}
+module-whatis "SoC-Labs HAPS bench tunnel: localhost:3121 hw_server + :18000 ConfPro + :18009 UDP board-state relay via haps-dev (ref-counted, best-effort)"
+
+conflict haps-tunnel
+
+# Client env so Vivado HW-manager / xsdb attach through the forward with no extra args.
+setenv HW_SERVER_URL   TCP:localhost:3121
+setenv HAPS_TUNNEL_URL TCP:localhost:3121
+
+# The board-state relay listens here too, so the one address covers both the
+# TCP command channel and the UDP state channel.
+# ConfPro programs to the tunnel's local endpoint (also fixes name-resolution off
+# the private segment, where haps-sx.haps-net does not resolve). Anyone genuinely
+# on the segment sets HAPS_ON_NET=1 to keep confpro_sx's haps-sx.haps-net default.
+if { ![info exists env(HAPS_ON_NET)] } {
+    setenv CONFPRO_BOARD 127.0.0.1
+}
+
+# --- locate the ref-counted helper (env override -> /apps -> shared clone) ---
+set cands {}
+if { [info exists env(HAPS_TUNNEL_BIN)] } { lappend cands $env(HAPS_TUNNEL_BIN) }
+lappend cands /apps/synopsys/haps/haps-sx/bin/haps-tunnel
+lappend cands /research/CAD/SoC-Labs-HAPS-SX-Tools/bin/haps-tunnel
+set tun ""
+foreach c $cands { if { [file executable $c] } { set tun $c; break } }
+
+if { $tun ne "" } {
+    if { [module-info mode load] }   { system "$tun up   || true" }
+    if { [module-info mode remove] } { system "$tun down || true" }
+} elseif { [module-info mode load] } {
+    puts stderr "haps-tunnel: helper not found (set HAPS_TUNNEL_BIN)."
+    puts stderr "  JTAG/ConfPro forwards NOT started, and no UDP board-state relay,"
+    puts stderr "  so ConfPro's board panel will be grey."
+}

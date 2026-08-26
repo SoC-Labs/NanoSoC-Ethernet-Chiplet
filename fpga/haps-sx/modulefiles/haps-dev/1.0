@@ -1,0 +1,34 @@
+#%Module1.0
+##
+## haps-dev/1.0 -- SoC-Labs HAPS-SX Vivado development bundle (everyday flow)
+##
+proc ModulesHelp { } {
+    puts stderr "SoC-Labs HAPS-SX Vivado development bundle -- the everyday HAPS-SX flow."
+    puts stderr ""
+    puts stderr "  vivado       site default (2026.1) == hw_server 2026.1 on haps-dev"
+    puts stderr "  confpro_sx   board programming (confpro-program)"
+    puts stderr "  haps-tunnel  localhost:3121 hw_server + :18000 ConfPro via haps-dev"
+    puts stderr ""
+    puts stderr "Debug is Vivado ILA / hardware manager over the tunnel."
+    puts stderr "Need the Synopsys IICE route (Synplify + Identify + Verdi)?  module load haps-identify"
+    puts stderr "Legacy ProtoCompiler/ProtoSynthesis flow:                    module load haps-sx-tools"
+}
+module-whatis "SoC-Labs HAPS-SX Vivado dev bundle (vivado + confpro_sx + tunnel; ILA debug via hw_server)"
+
+conflict haps-dev
+conflict haps-sx-tools
+conflict haps-identify
+
+# UNGUARDED loads => refcounted auto-unload at this site (no depends-on). On
+# `module unload haps-dev` each becomes a useless requirement and unloads iff
+# unneeded; haps-tunnel's remove hook then closes the ControlMaster. (Modules 4.5.2.)
+module load vivado                 ;# site default (2026.1) -- matches hw_server 2026.1 on haps-dev
+module load confpro_sx
+module load haps-tunnel
+
+set install_root /apps/synopsys/haps/haps-sx
+if { [module-info mode load] && ![file isdirectory $install_root] } {
+    puts stderr "haps-dev: WARNING install root not found: $install_root"
+}
+setenv HAPS_SX_TOOLS_ROOT $install_root
+setenv COBRA_PATH         $install_root/haps-sx_helper
