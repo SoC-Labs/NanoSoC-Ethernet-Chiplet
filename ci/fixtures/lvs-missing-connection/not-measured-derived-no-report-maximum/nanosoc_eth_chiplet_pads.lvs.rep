@@ -1,0 +1,95 @@
+# *** THIS FIXTURE IS DERIVED, NOT OBSERVED. ***
+#
+# EXPECTED VERDICT: NOT-MEASURED.
+# It is `pass-observed-no-net-section` with ONE LINE DELETED: the
+# `   LVS REPORT MAXIMUM                     1000` line out of its LVS
+# PARAMETERS block. Nothing else differs, and no line is edited.
+#
+# WHAT IT PROVES: an UNSTATED cap is not an ABSENT cap. Control N7 declares
+# the discrepancy list saturated when the parsed count reaches
+# `LVS REPORT MAXIMUM`; with no cap parsed, N7 cannot be evaluated at all, and
+# a control that could not run must not be reported as a control that passed.
+#
+# THIS ARM IS ALSO THE DISCRIMINATOR FOR `ALL`. Until 2026-08-27 the parser
+# required `(\d+)`, so the 13 runs on this site whose deck emits
+# `LVS REPORT MAXIMUM  ALL` left `report_maximum` at None -- the SAME state as
+# this fixture, in which the line is genuinely gone. The two are now distinct:
+# `ALL` is a MEASURED statement that the tool truncated nothing, and only a
+# genuinely absent line trips N11. Mutation M15 takes `ALL` back out of the
+# pattern, at which point the three `ALL` arms
+# (pass-observed-vacuous-pairing, fail-vacuous-but-layout-is-a-path,
+# not-measured-vacuous-flood) start tripping N11 and catch it.
+#
+# derived from: ci/fixtures/lvs-missing-connection/pass-observed-no-net-section
+#               (itself an EXTRACT of lvs_run_nopadbox; see PROVENANCE.md)
+#
+
+
+
+                  ##################################################
+                  ##                                              ##
+                  ##         C A L I B R E    S Y S T E M         ##
+                  ##                                              ##
+                  ##             L V S   R E P O R T              ##
+                  ##                                              ##
+                  ##################################################
+
+
+
+REPORT FILE NAME:         ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_nopadbox/nanosoc_eth_chiplet_pads.lvs.rep
+LAYOUT NAME:              svdb/nanosoc_eth_chiplet_pads.sp ('nanosoc_eth_chiplet_pads')
+SOURCE NAME:              ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_nopadbox/nanosoc_eth_chiplet_pads_lvs_src.cdl ('nanosoc_eth_chiplet_pads')
+RULE FILE:                ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_nopadbox/nanosoc_eth_chiplet_pads_calibre_lvs.deck
+CREATION TIME:            Mon Aug 10 21:42:12 2026
+CURRENT DIRECTORY:        ${CHIPLET_HOME}/ASIC/genus-innovus/work/lvs_run_nopadbox
+USER NAME:                ${USER}
+CALIBRE VERSION:          v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+
+
+
+                               OVERALL COMPARISON RESULTS
+
+
+
+                  #   #         #####################  
+                   # #          #                   #  
+                    #           #     INCORRECT     #  
+                   # #          #                   #  
+                  #   #         #####################  
+
+
+  Error:    Components with non-identical signal pins.
+  Error:    Different numbers of instances.
+  Error:    Cells with non-floating extra pins.
+  Warning:  Components with non-identical power or ground pins.
+  Warning:  Unbalanced smashed mosfets were matched.
+  Warning:  Ambiguity points were found and resolved arbitrarily.
+
+
+
+**************************************************************************************************************
+                                      LVS PARAMETERS
+**************************************************************************************************************
+
+
+**************************************************************************************************************
+                                 INCORRECT INSTANCES
+
+DISC#  LAYOUT NAME                                               SOURCE NAME
+**************************************************************************************************************
+
+  1    ** missing instance **                                    XBuPAD_HOST_IO_6  PAD70NU
+
+       X108/X0/X127/X0/X1/X1/75                                  Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_1_i/XI0/XIO_SLICE/XIO_LEFT/XIO_CDM_ROW_L/XL_IO_I1/_WR.DLAT_NQ
+       X15/X0/X127/X0/X0/X1/75                                   Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_1_i/XI0/XIO_SLICE/XIO_LEFT/XIO_CDM_ROW_L/XL_IO_I3/_WR.DLAT_NQ
+       X104/X0/X74/X1/X1/X1/71                                   Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i/XI0/XIO_SLICE/XIO_RIGHT/XIO_CDM_ROW_R/XR_IO_I4/_WR._DLAT.ND
+       X103/X0/X74/X1/X1/X1/75                                   Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way1_cache_ram_data_ram_0_word_2_i/XI0/XIO_SLICE/XIO_RIGHT/XIO_CDM_ROW_R/XR_IO_I9/_WR.DLAT_NQ
+       X104/X0/X94/193                                           Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_11.ND
+       X104/X0/X94/126                                           Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_2_i/XI0/XIO_SLICE/XCK_BLK/XCK/_ADDR_LAT_10.ND
+
+**************************************************************************************************************
+                                         SUMMARY
+**************************************************************************************************************
+
+Total CPU Time:      104 sec
+Total Elapsed Time:  110 sec

@@ -1,0 +1,134 @@
+# EXTRACT OF A REAL CALIBRE LVS REPORT - verbatim lines, nothing invented
+#
+# EXPECTED VERDICT: FAIL.
+# DISC 62 is the 23-August rzG defect this gate exists for: cache data bit 123,
+# later root-caused as the source of imec's 14 post-merge floating gates.
+# ONE side missing - the layout net holds 1 of the source net's 2 connections,
+# so the pair SHARES one. That is the shape of a real below-top missing
+# connection and the shape the vacuous-pairing rule must never touch.
+# THIS ARM IS THE PRIMARY DISCRIMINATION PROOF for that rule: it is real
+# Calibre output, it FAILS before the widening and it FAILS after it.
+# It also answers PROVENANCE.md's own standing request to re-base the derived
+# rzG arm on the recovered report.
+#
+# source: ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep
+#         (19,806 lines, Calibre v2023.1_18.8, 23 Aug 2026)
+# transform: absolute site paths -> ${SITE_PATH_WITHHELD}; USER NAME -> ${USER};
+#            lines the gate does not read are dropped, so line numbers here are
+#            NOT the source's line numbers. No line was edited.
+#
+
+
+
+                  ##################################################
+                  ##                                              ##
+                  ##         C A L I B R E    S Y S T E M         ##
+                  ##                                              ##
+                  ##             L V S   R E P O R T              ##
+                  ##                                              ##
+                  ##################################################
+
+
+
+REPORT FILE NAME:         ${SITE_PATH_WITHHELD}/lvs/run/nanosoc_eth_chiplet_pads.lvs.rep
+LAYOUT NAME:              svdb/nanosoc_eth_chiplet_pads.sp ('nanosoc_eth_chiplet_pads')
+SOURCE NAME:              ${SITE_PATH_WITHHELD}/lvs/run/nanosoc_eth_chiplet_pads_lvs_src.cdl ('nanosoc_eth_chiplet_pads')
+RULE FILE:                ${SITE_PATH_WITHHELD}/lvs/run/nanosoc_eth_chiplet_pads_calibre_lvs.deck
+CREATION TIME:            Sun Aug 23 19:42:00 2026
+CURRENT DIRECTORY:        ${SITE_PATH_WITHHELD}/lvs/run
+USER NAME:                ${USER}
+CALIBRE VERSION:          v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+
+
+
+                               OVERALL COMPARISON RESULTS
+
+
+
+                  #   #         #####################  
+                   # #          #                   #  
+                    #           #     INCORRECT     #  
+                   # #          #                   #  
+                  #   #         #####################  
+
+
+  Error:    Components with non-identical signal pins.
+  Error:    Different numbers of nets.
+  Error:    Different numbers of instances.
+  Error:    Connectivity errors.
+  Error:    Property errors.
+  Error:    Cells with non-floating extra pins.
+  Warning:  Unbalanced smashed mosfets were matched.
+  Warning:  Ambiguity points were found and resolved arbitrarily.
+
+
+**************************************************************************************************************
+                                      LVS PARAMETERS
+**************************************************************************************************************
+
+   LVS REPORT MAXIMUM                     1000
+**************************************************************************************************************
+                                   INCORRECT NETS
+
+DISC#  LAYOUT NAME                                               SOURCE NAME
+**************************************************************************************************************
+
+  1    Net VDDIO                                                 VDDIO
+       --- 2 Connections On This Net ---                         --- 13 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  XuPAD_VDDIO_T_1:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_T_2:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_T_0:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_R_2:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_R_1:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_R_0:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_L_2:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_L_1:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_L_0:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_B_2:VDDPST
+       ** missing connection **                                  XuPAD_VDDIO_B_1:VDDPST
+       
+
+--------------------------------------------------------------------------------------------------------------
+
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  Xu_nanosoc_eth_chiplet_bscan/Xu_bsc_25_HOST_IO_1_obs_dr_q_reg:D
+       
+
+--------------------------------------------------------------------------------------------------------------
+
+ 61    Net X35/8                                                 FE_OFN4793_n_15985
+       --- 1 Connections On This Net ---                         --- 2 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  XFE_OFC4792_n_15985:Z
+       
+
+--------------------------------------------------------------------------------------------------------------
+
+ 62    Net X99/6106                                              Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_RAMCLD0RDATA[123]
+       --- 1 Connections On This Net ---                         --- 2 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xg87561:B2
+       
+
+--------------------------------------------------------------------------------------------------------------
+
+                                      PROPERTY ERRORS
+
+DISC#  LAYOUT                                                    SOURCE                      ERROR
+**************************************************************************************************************
+
+1131   X99/X0/X47/X0/X1/D0(791.385,422.170)  D(NDIO)             Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_way0_cache_ram_data_ram_0_word_3_i/XI0/XBOTCAP/XRIGHT_COL_11/XI0/DI80.D_Diode_X_dio  D(NDIO)
+       a: 0.0737 sq u                                            a: 0.1474 sq u                50%
+
+
+**************************************************************************************************************
+                                         SUMMARY
+**************************************************************************************************************
+
+Total CPU Time:      111 sec
+Total Elapsed Time:  115 sec

@@ -1,0 +1,137 @@
+# *** THIS FIXTURE IS DERIVED, NOT OBSERVED. ***
+#
+# EXPECTED VERDICT: FAIL.
+# `pass-observed-vacuous-pairing` with DISC 43's connection-count heading
+# reworded (`Connections On This Net` -> `Connections on this net`), which is
+# what a Calibre upgrade that changes its wording would do. The counts then do
+# not parse.
+#
+# WHAT IT PROVES: the vacuous-pairing rule fires ONLY when BOTH connection
+# counts were actually read. An unreadable count must never buy a pass - the
+# entry falls back to the unwidened behaviour and the gate goes red. This is
+# the guard against the widening becoming a silent hole the day the report
+# format moves.
+#
+
+
+
+                  ##################################################
+                  ##                                              ##
+                  ##         C A L I B R E    S Y S T E M         ##
+                  ##                                              ##
+                  ##             L V S   R E P O R T              ##
+                  ##                                              ##
+                  ##################################################
+
+
+
+REPORT FILE NAME:         ${CHIPLET_HOME}/ASIC/eth-chiplet/build/rc2-20260827/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep
+LAYOUT NAME:              svdb/nanosoc_eth_chiplet_pads.sp ('nanosoc_eth_chiplet_pads')
+SOURCE NAME:              ${CHIPLET_HOME}/ASIC/eth-chiplet/build/rc2-20260827/lvs_run/nanosoc_eth_chiplet_pads_lvs_src.cdl ('nanosoc_eth_chiplet_pads')
+RULE FILE:                ${CHIPLET_HOME}/ASIC/eth-chiplet/build/rc2-20260827/lvs_run/nanosoc_eth_chiplet_pads_calibre_lvs.deck
+CREATION TIME:            Thu Aug 27 21:15:13 2026
+CURRENT DIRECTORY:        ${CHIPLET_HOME}/ASIC/eth-chiplet/build/rc2-20260827/lvs_run
+USER NAME:                ${USER}
+CALIBRE VERSION:          v2023.1_18.8    Tue Jan 3 18:11:59 PST 2023
+
+
+
+                               OVERALL COMPARISON RESULTS
+
+
+
+                  #   #         #####################  
+                   # #          #                   #  
+                    #           #     INCORRECT     #  
+                   # #          #                   #  
+                  #   #         #####################  
+
+
+  Error:    Components with non-identical signal pins.
+  Error:    Different numbers of nets.
+  Error:    Different numbers of instances.
+  Error:    Connectivity errors.
+  Error:    Cells with non-floating extra pins.
+  Warning:  Unbalanced smashed mosfets were matched.
+  Warning:  Ambiguity points were found and resolved arbitrarily.
+
+**************************************************************************************************************
+                                      LVS PARAMETERS
+**************************************************************************************************************
+
+   LVS REPORT MAXIMUM                     ALL
+**************************************************************************************************************
+                                   INCORRECT NETS
+
+DISC#  LAYOUT NAME                                               SOURCE NAME
+**************************************************************************************************************
+
+ 41    Net 22166                                                 bsp_tl_rx_0_in
+       --- 18 Connections On This Net ---                        --- 19 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  XuPAD_TL_RX_0:C
+       
+
+--------------------------------------------------------------------------------------------------------------
+
+ 42    Net 40394                                                 FE_OFN89231_bsp_qspi_io_3_oe
+       --- 1 Connections On This Net ---                         --- 2 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  XuPAD_QSPI_IO_3:OEN
+       
+
+--------------------------------------------------------------------------------------------------------------
+
+ 43    Net 25087                                                 Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_network_core/XFE_DBTC206_network_core_dbgahb_slvaddr_2/VSS
+       --- 1 Connections on this net ---                         --- 1 Connections on this net ---
+       --------------------------                                --------------------------
+       
+       X103/X1604(923.400,386.635):Z                             ** missing connection **
+       
+       ** missing connection **                                  Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/Xu_network_core/XFE_DBTC206_network_core_dbgahb_slvaddr_2:VSS
+       
+
+--------------------------------------------------------------------------------------------------------------
+ 44    Net 39932                                                 FE_OFN88974_bsp_qspi_io_0_out
+       --- 1 Connections On This Net ---                         --- 2 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  XuPAD_QSPI_IO_0:I
+       
+
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+
+ 62    Net X111/39                                               CTS_1
+       --- 1 Connections On This Net ---                         --- 2 Connections On This Net ---
+       --------------------------                                --------------------------
+       
+       ** missing connection **                                  XCTS_ccl_a_buf_00379:Z
+       
+
+--------------------------------------------------------------------------------------------------------------
+         ** no similar net **                                      VSS: Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/XFE_PHC12824_n_98320/VSS
+
+--------------------------------------------------------------------------------------------------------------
+
+       X97/X1866(935.800,651.235)  CKBD0                         Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/XFE_PHC10510_u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_cache_controller_u_p_flash_cache_f0_core_reg_enable_fsm_1  CKBD0
+         I: X97/7912                                               I: Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/FE_PHN13909_u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_cache_controller_u_p_flash_cache_f0_core_reg_enable_fsm_1
+         Z: 19362                                                  Z: Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/FE_PHN10510_u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_cache_controller_u_p_flash_cache_f0_core_reg_enable_fsm_1
+         VDD: VDD                                                  VDD: VDD
+         VSS: VSS                                                  ** VSS **
+         ** no similar net **                                      VSS: Xu_nanosoc_eth_chiplet_chip_u_soc_u_soc/XFE_PHC10510_u_qspi_flash_0_u_top_ahb_qspi_u_cache_subsystem_u_cache_controller_u_p_flash_cache_f0_core_reg_enable_fsm_1/VSS
+
+--------------------------------------------------------------------------------------------------------------
+
+       ** unmatched instance **                                  XuPAD_VSSIO_T_1  PVSS2DGZ_G
+
+
+**************************************************************************************************************
+                                         SUMMARY
+**************************************************************************************************************
+
+Total CPU Time:      110 sec
+Total Elapsed Time:  115 sec
+
