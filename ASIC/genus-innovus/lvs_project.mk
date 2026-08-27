@@ -169,8 +169,41 @@ MACRO_CDLS ?= \
     $(MEM_BASE)/rf_32k/rf_32k.cdl \
     $(MEM_BASE)/flash_cache_data/flash_cache_data.cdl \
     $(MEM_BASE)/flash_cache_tag/flash_cache_tag.cdl \
-    $(ROMLIBS_DIR)/cc_rom/rom_via.cdl \
-    $(ROMLIBS_DIR)/eth_rom/eth_rom_via.cdl
+    $(LVS_ROM_CDL_DIR)/cc_rom/rom_via.cdl \
+    $(LVS_ROM_CDL_DIR)/eth_rom/eth_rom_via.cdl
+
+# [PROJECT] The two ROM CDLs are NOT read from $(ROMLIBS_DIR) directly. They are
+#           DERIVED copies whose macro-internal virtual ground `VSS` is renamed
+#           `VSS_ROMVIRT`, which is what makes `.GLOBAL VSS` below safe --
+#           CONTRACT.md 6d prescribes exactly this ("point MACRO_CDLS at a
+#           project-local copy of the CDL with the internal net renamed. Never
+#           edit vendor or PDK collateral in place").
+#
+#           DERIVED, not checked in: the ROM CDL changes whenever the firmware
+#           does, so a committed copy would silently go stale against the GDS it
+#           is compared to. The rule below re-derives from $(ROMLIBS_DIR) on
+#           every run and is order-only-safe (same mtime semantics as any
+#           generated file).
+#
+#           THE RENAME IS EXACT. `\bVSS\b` matches the 524 bare-token uses and
+#           nothing else: VSSE (the ROM's REAL ground pin, 738 uses) and the
+#           IVSS* internal node names are untouched, and every changed line
+#           differs only by the rename. Verified 2026-08-27 on both ROMs.
+#           Only the SOURCE side is renamed; the ROM GDS/LEF are untouched,
+#           because `.GLOBAL` is a SPICE construct with no layout counterpart.
+LVS_ROM_CDL_DIR ?= $(DESIGN_DIR)/outputs/lvs_rom_cdl
+
+$(LVS_ROM_CDL_DIR)/%.cdl: $(ROMLIBS_DIR)/%.cdl
+	@mkdir -p $(dir $@)
+	@sed -E 's/\bVSS\b/VSS_ROMVIRT/g' $< > $@.tmp
+	@# Assert the rename did what it claims before letting it be consumed:
+	@# no bare VSS survives, and VSSE survives untouched.
+	@test "$$(grep -coE '\bVSS\b' $@.tmp)" = 0 || { \
+	    echo "LVS ROM CDL: bare VSS survived the rename in $@"; rm -f $@.tmp; exit 1; }
+	@test "$$(grep -coE '\bVSSE\b' $@.tmp)" = "$$(grep -coE '\bVSSE\b' $<)" || { \
+	    echo "LVS ROM CDL: the rename altered VSSE in $@"; rm -f $@.tmp; exit 1; }
+	@mv $@.tmp $@
+	@echo "LVS ROM CDL: $< -> $@ (internal VSS renamed VSS_ROMVIRT)"
 
 #-----------------------------------------------------------------------------
 # 5. How the two sides are compared
@@ -184,25 +217,48 @@ MACRO_CDLS ?= \
 LVS_POWER  ?= VDD VDDIO
 LVS_GROUND ?= VSS VSSIO
 
-# [PROJECT] VSS is deliberately ABSENT from the .GLOBAL list. Both boot ROMs
-#           bring their real supplies out as VDDE/VSSE and use VSS internally
-#           as the power-gated virtual ground, so .GLOBAL VSS would merge it
-#           with chip ground and fabricate a short across the power gate --
-#           source-side only (measured: 34 unmatched instances, 44 unmatched
-#           nets, 70 property errors, all inside the two ROMs). CONTRACT.md 6d.
-#           `make lvs-preflight` re-checks this against every macro CDL.
+# [PROJECT] All four supplies are global. VSS was ABSENT from this list until
+#           2026-08-27, and its absence was the single reason LVS could not
+#           verify ground connectivity on this design at all.
 #
-#           KNOWN COST, do not remove this note. _pnr.v wires .VDD/.VSS on
-#           185,187 instances but NOT on ~17k tool-inserted ones (FE_OFC*,
-#           FE_PHC*, LTIE_*, CTS_*_buf_*). .GLOBAL VDD still rescues their VDD;
-#           dropping VSS leaves ~16.8k floating <inst>/VSS source nets, which
-#           inflates source-side Net VSS and MASKS the VSS half of the real PG
-#           opens below. An earlier version of this comment claimed "all"
-#           instances were wired -- that was wrong; the denominator is ~202k.
-#           Proper fix: project-local ROM CDL copies with the internal VSS
-#           renamed, then restore VSS here. Until then, read VSS results with
-#           this in mind.
-LVS_GLOBAL_NETS ?= VDD VDDIO VSSIO
+#           WHY IT WAS ABSENT, and why that reasoning was sound as far as it
+#           went: both boot ROMs bring their real supplies out as VDDE/VSSE and
+#           use VSS internally as the power-gated virtual ground (structurally
+#           confirmed -- `rom_via`'s top .SUBCKT ports are `VDDE VSSE ...`, no
+#           VSS, and VSS is created locally inside rom_viaTILE_TOP /
+#           rom_viaWDEC_64WL). `.GLOBAL` is unscoped, so `.GLOBAL VSS` with the
+#           VENDOR CDLs merges that virtual ground with chip ground and
+#           fabricates a short across the power gate, source-side only.
+#           `make lvs-preflight` still detects that and names both ROMs; try it
+#           by pointing MACRO_CDLS back at $(ROMLIBS_DIR).
+#
+#           WHY IT IS NOW PRESENT: CONTRACT.md 6d gives two remedies -- narrow
+#           this list, which is "safe when the post-P&R netlist wires the
+#           supplies explicitly on every instance", or rename the internal net
+#           in a project-local CDL copy. This design took the first WITHOUT its
+#           precondition: _pnr.v wires .VDD/.VSS on 186,598 instantiation lines
+#           and NOT on 18,322 tool-inserted ones (FE_OFC*, FE_PHC*, LTIE_*,
+#           CTS_*_buf_*). MACRO_CDLS above now takes the second remedy, so the
+#           precondition no longer has to hold.
+#
+#           WHAT THE ABSENCE COST, measured on rc2-20260827 (same database, same
+#           re-streamed GDS, source side the only variable):
+#             - 18,322 one-pin orphan `<inst>/VSS` source nets. Exactly the
+#               18,322 instances that lack .VSS(); `.GLOBAL VDD` rescued their
+#               VDD by name, so /VDD orphans were 0 and /VSS orphans were 18,322.
+#             - source-side `Net VSS` 18,322 connections SHORT of the layout's
+#               (243,747 vs 262,069) -- one discrepancy carrying 18,330 rows.
+#             - and the check's SIGN WAS INVERTED. A stranded VSS pin is an
+#               exact match to its own one-pin phantom, so breaking a power pin
+#               made LVS look CLEANER. On a deliberately-stranded database the
+#               broken cell vanished from the report entirely.
+#           With VSS global and the renamed ROM CDLs: orphans 18,322 -> 0, the
+#           `Net VSS` discrepancy disappears, and on the stranded database the
+#           broken pin appears as 1 of exactly 10 missing connections, named and
+#           located. Nothing else moves -- 65 of 67 net discrepancies are
+#           byte-identical, ERC is unchanged, and the two that vanish are the
+#           flood and one phantom pairing it had caused.
+LVS_GLOBAL_NETS ?= VDD VDDIO VSS VSSIO
 
 # [PROJECT] Bond-pad / bump cells. These are LEF-only: no simulation model and
 #           no CDL at all, so v2lvs cannot even emit a stub for them and the
@@ -293,3 +349,16 @@ LVS_PG          ?= 1
 LVS_PG_PIN_TEXT ?= 1
 
 include $(LVS_FLOW_DIR)/lvs.mk
+
+#-----------------------------------------------------------------------------
+# 8. Derived inputs the flow above must build before it runs
+#-----------------------------------------------------------------------------
+# [PROJECT] MUST come AFTER the include: these targets are defined in lvs.mk,
+#           and a prerequisite can only be added to a rule that already exists.
+#           (The `?=` ordering warning at the top of this file is about
+#           ASSIGNMENTS; a prerequisite-only rule here is the opposite case.)
+#
+#           Without this, the renamed ROM CDLs are never built and preflight
+#           stops with `MISSING macro cdl` -- loud, but a step the operator
+#           should not have to take by hand. Verified both ways 2026-08-27.
+lvs-preflight lvs_batch: $(filter $(LVS_ROM_CDL_DIR)/%,$(MACRO_CDLS))
