@@ -30,8 +30,10 @@ module-whatis "SoC-Labs HAPS bench tunnel: localhost:3121 hw_server + :18000 Con
 conflict haps-tunnel
 
 # Client env so Vivado HW-manager / xsdb attach through the forward with no extra args.
-setenv HW_SERVER_URL   TCP:localhost:3121
-setenv HAPS_TUNNEL_URL TCP:localhost:3121
+# NUMERIC, not "localhost": getent ahosts localhost returns ::1 FIRST on these
+# workstations, so a name here is ambiguous and can select the wrong stack.
+setenv HW_SERVER_URL   TCP:127.0.0.1:3121
+setenv HAPS_TUNNEL_URL TCP:127.0.0.1:3121
 
 # The board-state relay listens here too, so the one address covers both the
 # TCP command channel and the UDP state channel.
@@ -41,6 +43,14 @@ setenv HAPS_TUNNEL_URL TCP:localhost:3121
 if { ![info exists env(HAPS_ON_NET)] } {
     setenv CONFPRO_BOARD 127.0.0.1
 }
+
+# The board-reservation key, deliberately INDEPENDENT of how you reach the board.
+# haps-board-lock, confpro-lease.c and haps-state-relay all key the lease on this;
+# without it the key follows CONFPRO_BOARD and a tunnelled user (127.0.0.1.lock)
+# never excludes an on-segment user (haps-sx.haps-net.lock) or one working on the
+# jump host (10.60.1.10.lock). Set here AND in the confpro_sx modulefile so it
+# survives `module unload haps-tunnel`.
+setenv HAPS_LOCK_KEY haps-sx
 
 # --- locate the ref-counted helper (env override -> /apps -> shared clone) ---
 set cands {}

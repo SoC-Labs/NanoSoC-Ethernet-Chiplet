@@ -138,5 +138,6 @@ haps-state-relay status
 6. Optional: add reciprocal `conflict haps-dev` / `conflict haps-identify` to `haps-sx-tools/1.0`.
 
 ## User side (per client, e.g. srv03335 / srv04936)
-A key on haps-dev (or the `jtag` account) + a `Host haps-dev` block in `~/.ssh/config`. Off-LAN
+A key in your own account on haps-dev (the `jtag` account of Deploy step 3 does not exist
+yet) + a `Host haps-dev` block in `~/.ssh/config` naming that account. Off-LAN
 hosts reach hw_server only via this tunnel — which is the sanctioned path. Then `module load haps-dev`.

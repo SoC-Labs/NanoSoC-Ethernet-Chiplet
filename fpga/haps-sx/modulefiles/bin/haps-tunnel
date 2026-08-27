@@ -6,8 +6,21 @@
 #   -L 18000: haps-sx:18000    ConfPro-> the BOARD, through haps-dev
 # Best-effort: it must NEVER block or fail a `module load`. ControlPersist reaps a
 # leaked master (crash-safe); the ref-count just closes it promptly on the last `down`.
-# NO ExitOnForwardFailure: the board-side 18000 forward connects lazily, so a
-# rebooting board must not tear down the (haps-dev-local) 3121 JTAG forward.
+# ExitOnForwardFailure=yes on BOTH channels. An earlier revision omitted it,
+# reasoning that "the board-side 18000 forward connects lazily, so a rebooting
+# board must not tear down the JTAG forward". That is simply wrong -- ssh_config(5)
+# is explicit: it "does not apply to connections made over port forwardings and
+# will not, for example, cause ssh(1) to exit if TCP connections to the ultimate
+# forwarding destination fail." It fires ONLY on bind/listen failure. Omitting it
+# bought nothing and cost everything: when another user (or a stray hw_server)
+# already held a port, ssh backgrounded successfully with a DEAD forward, said
+# "up", and the tools then silently used the other user's forward on the other
+# user's credential. Measured live on srv03335.
+#
+# Two SEPARATE masters, because `ssh -O forward` returns 0 even when the bind
+# fails (measured), so per-forward failure cannot be detected on one connection.
+# Splitting them means a stray hw_server on 3121 can no longer take ConfPro down
+# with it -- each channel succeeds or fails loudly on its own.
 #
 # TCP 18000 DRIVES a board but does not DESCRIBE one: ConfPro reads board state
 # over UDP (query to 18009, reply to local 18008 -- SearchCABNet::touchBorad),
@@ -22,7 +35,16 @@ set -u
 SSH_TARGET="${HAPS_TUNNEL_SSH:-haps-dev}"            # override to a de-privileged account (see README)
 JTAG_LP="${HAPS_JTAG_LOCALPORT:-3121}"; JTAG_RHOST="${HAPS_JTAG_RHOST:-localhost}"; JTAG_RPORT="${HAPS_JTAG_RPORT:-3121}"
 CONF_LP="${HAPS_CONFPRO_LOCALPORT:-18000}"; CONF_RHOST="${HAPS_CONFPRO_RHOST:-haps-sx}"; CONF_RPORT="${HAPS_CONFPRO_RPORT:-18000}"
+# CTRL stays the BOARD channel: haps-state-relay multiplexes its helper on it.
 CTRL="${HAPS_TUNNEL_CTRL:-$HOME/.ssh/cm-haps-tunnel}"
+CTRL_JTAG="${HAPS_TUNNEL_CTRL_JTAG:-$HOME/.ssh/cm-haps-jtag}"
+# Bind address is PINNED and explicit. Without it ssh binds dual-stack, and a v4
+# collision is silently masked by a successful [::1] bind -- ExitOnForwardFailure
+# only fires when NO address binds at all. Measured: a squatter on 127.0.0.1:3121
+# still let the tunnel report "up" on ::1. `localhost` also resolves to ::1 FIRST
+# here (getent ahosts), so every consumer URL must be numeric too.
+# Tier 1 makes this per-user; for now it is the historical 127.0.0.1.
+BIND="${HAPS_TUNNEL_BIND:-127.0.0.1}"
 REF="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.ref.$(id -u)"
 LK="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.lk.$(id -u)"
 CTIMEOUT="${HAPS_TUNNEL_CONNECT_TIMEOUT:-5}"; PERSIST="${HAPS_TUNNEL_PERSIST:-10m}"
@@ -32,29 +54,59 @@ lock(){ i=0; while ! mkdir "$LK" 2>/dev/null; do i=$((i+1)); [ $i -gt 50 ] && br
 unlock(){ rmdir "$LK" 2>/dev/null || true; }
 say(){ echo "$TAG: $*" >&2; }
 sshc(){ ssh -o BatchMode=yes -o ControlPath="$CTRL" "$@"; }
+sshj(){ ssh -o BatchMode=yes -o ControlPath="$CTRL_JTAG" "$@"; }
 alive(){ sshc -O check "$SSH_TARGET" 2>/dev/null; }
+alive_jtag(){ sshj -O check "$SSH_TARGET" 2>/dev/null; }
+
+# Open one channel. $1=ControlPath $2=forward spec $3=label. Reports precisely
+# which channel failed and why -- the whole point of ExitOnForwardFailure here.
+open_chan(){
+    _ctl=$1; _fwd=$2; _label=$3
+    _ctl_tag=$(basename "$_ctl")
+    # stderr to a FILE, never a $(...) pipe: `ssh -f` daemonises and keeps the
+    # inherited stderr open, so command substitution blocks forever waiting for
+    # EOF on a master that is meant to persist. (Learned the hard way.)
+    _tmp="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.err.$$.$_ctl_tag"
+    timeout "$((CTIMEOUT + 3))" ssh -f -N \
+             -o BatchMode=yes -o ConnectTimeout="$CTIMEOUT" \
+             -o ExitOnForwardFailure=yes \
+             -o ServerAliveInterval=30 -o ServerAliveCountMax=4 \
+             -o ControlMaster=auto -o ControlPath="$_ctl" -o ControlPersist="$PERSIST" \
+             -L "$_fwd" "$SSH_TARGET" 2>"$_tmp" \
+        && { rm -f "$_tmp"; say "up: $_label"; return 0; }
+    _err=$(cat "$_tmp" 2>/dev/null); rm -f "$_tmp"
+    case "$_err" in
+        *"Address already in use"*)
+            say "WARN $_label NOT started - the local port is already held by another"
+            say "     process (another user's tunnel, or a stray hw_server). Yours is NOT"
+            say "     running; anything you do would have gone through theirs." ;;
+        *) say "WARN $_label NOT started (off-network / no key?) - tools still usable" ;;
+    esac
+    return 1
+}
 # The UDP board-state relay. Absent or broken must never affect the tunnel.
 relay(){ [ -x "$RELAY" ] || return 0; "$RELAY" "$@" || true; }
 case "${1:-}" in
   up)
     [ "${HAPS_NO_TUNNEL:-0}" = 1 ] && { say "disabled (HAPS_NO_TUNNEL=1)"; exit 0; }
     lock; n=$(cat "$REF" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$REF"; unlock
-    if alive; then relay up; exit 0; fi
-    if timeout "$((CTIMEOUT + 3))" ssh -f -N \
-         -o BatchMode=yes -o ConnectTimeout="$CTIMEOUT" \
-         -o ControlMaster=auto -o ControlPath="$CTRL" -o ControlPersist="$PERSIST" \
-         -L "${JTAG_LP}:${JTAG_RHOST}:${JTAG_RPORT}" \
-         -L "${CONF_LP}:${CONF_RHOST}:${CONF_RPORT}" \
-         "$SSH_TARGET" 2>/dev/null
-    then say "up: localhost:${JTAG_LP} (JTAG->hw_server) + localhost:${CONF_LP} (ConfPro->board) via ${SSH_TARGET}"
-    else say "WARN could not open tunnel to ${SSH_TARGET} (off-network / no key?) - tools still usable; tunnelled paths unavailable"
-    fi
+    # Board channel first -- it is the one ConfPro needs, and the relay rides it.
+    alive || open_chan "$CTRL" "${BIND}:${CONF_LP}:${CONF_RHOST}:${CONF_RPORT}" \
+                       "${BIND}:${CONF_LP} (ConfPro -> board) via ${SSH_TARGET}"
+    alive_jtag || open_chan "$CTRL_JTAG" "${BIND}:${JTAG_LP}:${JTAG_RHOST}:${JTAG_RPORT}" \
+                       "${BIND}:${JTAG_LP} (JTAG -> hw_server) via ${SSH_TARGET}"
     relay up
     ;;
   down)
     lock; n=$(cat "$REF" 2>/dev/null || echo 1); n=$((n-1)); [ "$n" -lt 0 ] && n=0; echo "$n" > "$REF"; unlock
-    [ "$n" -le 0 ] && { relay down; sshc -O exit "$SSH_TARGET" 2>/dev/null || true; rm -f "$REF"; }
+    [ "$n" -le 0 ] && { relay down
+                        sshc -O exit "$SSH_TARGET" 2>/dev/null || true
+                        sshj -O exit "$SSH_TARGET" 2>/dev/null || true
+                        rm -f "$REF"; }
     ;;
-  status) alive && echo "tunnel up" || echo "tunnel down"; relay status ;;
+  status)
+    alive      && echo "board channel (${CONF_LP}) up" || echo "board channel (${CONF_LP}) down"
+    alive_jtag && echo "jtag  channel (${JTAG_LP}) up" || echo "jtag  channel (${JTAG_LP}) down"
+    relay status ;;
   *) say "usage: $0 {up|down|status}"; exit 2 ;;
 esac

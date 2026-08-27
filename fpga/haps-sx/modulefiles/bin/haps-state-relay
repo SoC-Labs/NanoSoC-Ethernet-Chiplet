@@ -111,6 +111,17 @@ CACHE_TTL = max(0.0, min(_num("HAPS_STATE_CACHE", 2.0, float), 30.0))
 # falls behind the GUI's polling until the socket buffer overflows -- then
 # machine-guns the backlog at the GUI when the board comes back.
 FAIL_TTL = max(0.0, min(_num("HAPS_STATE_FAIL_CACHE", 15.0, float), 120.0))
+
+# Naming the holder in ConfPro's "Board is Busy" popup.
+# The board reports `controller` as the peer IP of whoever holds the TCP session.
+# Through the tunnel that is ALWAYS the jump host (10.60.1.1), because `ssh -L`
+# originates the board-side connection there -- so the popup can never identify a
+# person on its own. haps-board-lock already records who booked the board, keyed
+# on CONFPRO_BOARD (= our local endpoint for every tunnelled user, so they all
+# share one lease file). Substituting that name into the payload turns an
+# unhelpful "User : ::ffff:10.60.1.1" into someone you can actually go and ask.
+LOCK_DIR = os.environ.get("HAPS_LOCK_DIR", "/research/CAD/haps-locks")
+NAME_HOLDER = os.environ.get("HAPS_STATE_NAME_HOLDER", "1") != "0"
 # Longer than the remote's own 3 s socket timeout plus a slow ssh round trip, so
 # it only ever fires on a genuinely wedged jump host -- never on a silent board,
 # which the remote reports as ERR by itself.
@@ -315,6 +326,69 @@ class Helper(object):
                 pass
 
 
+def lease_holder():
+    """Who has the board booked, as a display string -- or None.
+
+    Reads haps-board-lock's own flat key=value owner file rather than shelling
+    out to it: no subprocess in the serve loop, and it keeps working if the tool
+    moves. The lock is keyed on the board name the booker used, which for every
+    tunnelled client is this same local endpoint.
+
+    Returns None on ANY doubt -- missing file, unreadable NFS, expired lease, no
+    user field. The caller then leaves the board's own value alone, so a stale or
+    absent reservation can never invent a holder.
+    """
+    # Try the board-identity key first, then the historical endpoint key.
+    # haps-board-lock is being migrated from keying on the transport endpoint
+    # (127.0.0.1.lock tunnelled, haps-sx.haps-net.lock on-segment, ...) to a
+    # single HAPS_LOCK_KEY naming the board. Accepting BOTH means the holder
+    # name keeps working whichever side of that migration a given host is on --
+    # and keeps working for a user whose lease predates it.
+    keys = []
+    k = os.environ.get("HAPS_LOCK_KEY")
+    if k:
+        keys.append(k)
+    keys.append(LOCAL_IP)
+    for key in keys:
+        cand = os.path.join(
+            LOCK_DIR, "%s.lock" % key.replace("/", "_").replace(" ", "_"), "owner")
+        if os.path.exists(cand):
+            path = cand
+            break
+    else:
+        return None
+    try:
+        with open(path) as fh:
+            data = fh.read()
+    except (IOError, OSError):
+        return None
+    info = {}
+    for line in data.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            info[k.strip()] = v.strip()
+    user = info.get("user")
+    if not user:
+        return None
+    # Expiry is wall-clock across NFS by design (hosts run NTP), so compare
+    # against time.time() here, NOT the monotonic clock used for the cache.
+    try:
+        left = int(info.get("until", "0")) - int(time.time())
+    except ValueError:
+        return None
+    if left <= 0:
+        return None          # lapsed booking: not evidence of who is on it now
+    who = user
+    host = info.get("host")
+    if host:
+        who = "%s@%s" % (user, host)
+    mins = max(1, left // 60)
+    note = info.get("note")
+    if note:
+        return "%s (%dm left) - %s" % (who, mins, note)
+    return "%s (%dm left)" % (who, mins)
+
+
 def rewrite(raw):
     """Re-address the board's reply to the endpoint the GUI knows.
 
@@ -334,6 +408,14 @@ def rewrite(raw):
     info["active ip"] = LOCAL_IP
     if "host ip list" in info:
         info["host ip list"] = [{"host ip": LOCAL_IP}]
+    # Only ever relabel a board the BOARD says is busy, and only when a live
+    # booking exists. `control` still comes from the board untouched, so
+    # busy/idle detection stays truthful -- this enriches the label, never the
+    # verdict. No booking => the board's own value survives.
+    if NAME_HOLDER and info.get("control") and info.get("controller"):
+        who = lease_holder()
+        if who:
+            info["controller"] = who
     return MAGIC + (json.dumps(info, sort_keys=True, indent=4,
                            ensure_ascii=False) + "\n").encode("utf-8")
 
