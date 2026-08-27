@@ -55,9 +55,12 @@ BIND_SRC=default
 # (correctly) set, the SECOND user to load the module gets no tunnel at all --
 # not a degraded one -- until the first unloads.
 #
-# WHY THIS SHIPS DISABLED. The board reservation is still keyed on the transport
-# endpoint rather than on the board. Measured 2026-08-27 against the deployed
-# tools, not inferred:
+# WHY THIS SHIPS DISABLED. TWO prerequisites, both measured 2026-08-27 against
+# the deployed tools rather than inferred. Either one alone is enough to keep
+# the default at 127.0.0.1; do not flip it until BOTH are closed.
+#
+# (1) The board reservation is still keyed on the transport endpoint, not on
+#     the board:
 #   /research/CAD/SoC-Labs-ConfPro-SX/haps-board-lock:54
 #       board=${CONFPRO_BOARD:-haps-sx.haps-net}    <- and HAPS_LOCK_KEY appears
 #                                                      nowhere in that script
@@ -71,9 +74,26 @@ BIND_SRC=default
 # actually works on this bench stops excluding anyone, and two people drive one
 # board with both GUIs painting "Idle". A port collision is loud and costs you
 # your tunnel; a split lease is silent and costs somebody else their run. Hence
-# opt-in via HAPS_PER_USER_BIND=1. Flip the default only after haps-board-lock
-# keys on HAPS_LOCK_KEY -- haps-state-relay already prefers it (see its Helper
-# `keys` list); it is only the lock tool that lags.
+# opt-in via HAPS_PER_USER_BIND=1. Closing (1) means haps-board-lock keying on
+#     HAPS_LOCK_KEY -- haps-state-relay already prefers it (see its Helper
+#     `keys` list); it is only the lock tool that lags.
+#
+# (2) The ConfPro launcher's port probes are ADDRESS-BLIND. confpro-sx-shadow's
+#     port_listening()/port_holder()/port_is_ssh() (lines 137/159/171) all ask
+#     `ss -ltn "sport = :$1"` -- "is ANY address listening on this port". While
+#     everyone binds 127.0.0.1 that question and "is MY tunnel up" have the same
+#     answer, so it works by coincidence. Per-user addresses break the identity.
+#     Reproduced here with a listener on 127.1.36.3:19477 only:
+#         ss -ltn "sport = :19477"          -> MATCHES (user A's listener)
+#         ss -ltn "src 127.0.175.110:19477" -> no match (user B has nothing)
+#     so B's launcher concludes a tunnel exists, sets board_ip to an address
+#     nothing of B's is bound to, and the GUI never reaches the board -- with no
+#     error and no warning. Note B CAN still bind its own address fine (verified):
+#     nothing actually collides, only the probe is wrong, which is exactly what
+#     makes this failure silent rather than loud. Closing (2) means qualifying
+#     those three filters by address (plus the 0.0.0.0 / [::] wildcard clauses,
+#     since a wildcard holder does not match a bind-specific filter yet still
+#     makes a per-user bind fail EADDRINUSE).
 #
 # HAPS_TUNNEL_BIND still overrides both, unconditionally.
 per_user_bind(){
