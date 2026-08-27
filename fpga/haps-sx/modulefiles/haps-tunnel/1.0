@@ -21,6 +21,15 @@ proc ModulesHelp { } {
     puts stderr "  HAPS_TUNNEL_SSH=host use a de-privileged ssh account instead of haps-dev"
     puts stderr "  HAPS_ON_NET=1        already on the private segment; keep CONFPRO_BOARD=haps-sx.haps-net"
     puts stderr ""
+    puts stderr "Sharing a workstation? Every user binds 127.0.0.1 by default, so the second"
+    puts stderr "one to load this gets NO tunnel (ExitOnForwardFailure, correctly) until the"
+    puts stderr "first unloads. Opt in to a private loopback address instead:"
+    puts stderr "  HAPS_PER_USER_BIND=1 bind 127.<uid>>16>.<uid>>8>.<uid> instead of 127.0.0.1"
+    puts stderr "  HAPS_TUNNEL_BIND=A.B.C.D  force one address; overrides both defaults"
+    puts stderr "Off by default this release: the board lease is still keyed on the address"
+    puts stderr "(haps-board-lock uses CONFPRO_BOARD), so per-user addressing would give each"
+    puts stderr "user their own lock file and stop excluding anybody. See bin/haps-tunnel."
+    puts stderr ""
     puts stderr "Board state from a shell (works where the GUI cannot reach the board):"
     puts stderr "  haps-state-relay probe     reachable / idle-or-used / holder"
     puts stderr "  haps-state-relay status    is the relay up, and where does it point"
@@ -29,11 +38,71 @@ module-whatis "SoC-Labs HAPS bench tunnel: localhost:3121 hw_server + :18000 Con
 
 conflict haps-tunnel
 
+# --- the address the tunnel will bind ----------------------------------------
+# bin/haps-tunnel is the REFERENCE implementation of this derivation; the three
+# procs below must agree with it exactly, because the helper opens the forwards
+# and this file tells the tools where to find them. `haps-tunnel bind <uid>`
+# prints the helper's answer for any uid, so the two can be diffed over a sweep
+# rather than eyeballed. Rationale for the mapping, for the guarded uids, and
+# for why this is OFF by default lives in bin/haps-tunnel -- one copy, there.
+proc haps_bind_for_uid {uid} {
+    # Fold >24-bit uids in rather than truncating (SSSD/AD ranges reach far past
+    # 0xffffff). Identity for every uid <= 0xffffff.
+    set low [expr {($uid ^ ($uid >> 24)) & 0xffffff}]
+    # 0 -> 127.0.0.0 (/8 network), 1 -> 127.0.0.1 (the shared default),
+    # 53/54 -> systemd-resolved, 0xffffff -> 127.255.255.255 (/8 broadcast).
+    # Flipping bit 23 leaves that set in one step for every member.
+    if {$low == 0 || $low == 1 || $low == 53 || $low == 54 || $low == 0xffffff} {
+        set low [expr {$low ^ 0x800000}]
+    }
+    return "127.[expr {($low >> 16) & 0xff}].[expr {($low >> 8) & 0xff}].[expr {$low & 0xff}]"
+}
+proc haps_uid {} {
+    # /proc/self/status first: no exec, and it works even where a modulefile is
+    # evaluated in a restricted interpreter. Format is
+    #   Uid:  <real> <effective> <saved> <fs>
+    # and the EFFECTIVE uid is the one `id -u` reports, which is what the
+    # helper's ref-count path and this derivation both key on.
+    if {![catch {set fh [open /proc/self/status r]}]} {
+        set txt [read $fh]
+        close $fh
+        foreach line [split $txt "\n"] {
+            if {[string match "Uid:*" $line]} {
+                set f [regexp -all -inline {[0-9]+} $line]
+                if {[llength $f] >= 2} { return [lindex $f 1] }
+            }
+        }
+    }
+    if {![catch {set u [exec id -u]}] && [string is integer -strict $u]} { return $u }
+    return -1
+}
+proc haps_bind_addr {} {
+    # Same precedence as bin/haps-tunnel: explicit > per-user > historical.
+    if {[info exists ::env(HAPS_TUNNEL_BIND)] && $::env(HAPS_TUNNEL_BIND) ne ""} {
+        return $::env(HAPS_TUNNEL_BIND)
+    }
+    if {![info exists ::env(HAPS_PER_USER_BIND)] || $::env(HAPS_PER_USER_BIND) ne "1"} {
+        return 127.0.0.1
+    }
+    set uid [haps_uid]
+    if {$uid < 0} {
+        # Could not learn the uid. Falling back to the shared default is the SAFE
+        # failure: a port collision is loud and self-announcing, whereas pointing
+        # the tools at a guessed address they will never reach is not.
+        puts stderr "haps-tunnel: cannot determine uid - staying on 127.0.0.1"
+        return 127.0.0.1
+    }
+    return [haps_bind_for_uid $uid]
+}
+set haps_bind [haps_bind_addr]
+
 # Client env so Vivado HW-manager / xsdb attach through the forward with no extra args.
 # NUMERIC, not "localhost": getent ahosts localhost returns ::1 FIRST on these
-# workstations, so a name here is ambiguous and can select the wrong stack.
-setenv HW_SERVER_URL   TCP:127.0.0.1:3121
-setenv HAPS_TUNNEL_URL TCP:127.0.0.1:3121
+# workstations, so a name here is ambiguous and can select the wrong stack. The
+# same goes for the per-user address -- it has no name at all, and GuiTools::isIpAddr
+# in the ConfPro GUI rejects anything that is not already a dotted quad.
+setenv HW_SERVER_URL   TCP:${haps_bind}:3121
+setenv HAPS_TUNNEL_URL TCP:${haps_bind}:3121
 
 # The board-state relay listens here too, so the one address covers both the
 # TCP command channel and the UDP state channel.
@@ -41,15 +110,34 @@ setenv HAPS_TUNNEL_URL TCP:127.0.0.1:3121
 # the private segment, where haps-sx.haps-net does not resolve). Anyone genuinely
 # on the segment sets HAPS_ON_NET=1 to keep confpro_sx's haps-sx.haps-net default.
 if { ![info exists env(HAPS_ON_NET)] } {
-    setenv CONFPRO_BOARD 127.0.0.1
+    setenv CONFPRO_BOARD ${haps_bind}
 }
 
+# Pin the relay's own bind rather than leaning on its 127.0.0.1 default: under a
+# per-user address the relay MUST follow the forwards, or ConfPro drives the
+# board through one address and reads its state from another -- and the board
+# panel silently goes grey again, which is the exact failure the relay exists to
+# fix. bin/haps-tunnel exports this too, for a bare `haps-tunnel up`.
+setenv HAPS_STATE_LOCAL_IP ${haps_bind}
+
 # The board-reservation key, deliberately INDEPENDENT of how you reach the board.
-# haps-board-lock, confpro-lease.c and haps-state-relay all key the lease on this;
-# without it the key follows CONFPRO_BOARD and a tunnelled user (127.0.0.1.lock)
+# Without it the key follows CONFPRO_BOARD, and a tunnelled user (127.0.0.1.lock)
 # never excludes an on-segment user (haps-sx.haps-net.lock) or one working on the
 # jump host (10.60.1.10.lock). Set here AND in the confpro_sx modulefile so it
 # survives `module unload haps-tunnel`.
+#
+# CAUTION -- this used to claim "haps-board-lock, confpro-lease.c and
+# haps-state-relay all key the lease on this". Measured 2026-08-27: only
+# haps-state-relay does. haps-board-lock:54 is still
+#   board=${CONFPRO_BOARD:-haps-sx.haps-net}
+# with no mention of HAPS_LOCK_KEY anywhere in the file, and confpro-lease.c:119
+# setenv()s CONFPRO_BOARD to the board IP before it shells out to the lease
+# command -- so the key that actually gets locked today is CONFPRO_BOARD, and
+# /research/CAD/haps-locks/audit.log duly shows every acquire/release against
+# the literal string `127.0.0.1`. Setting HAPS_LOCK_KEY here is therefore
+# forward-looking, not yet effective. THIS is the prerequisite that keeps
+# HAPS_PER_USER_BIND off by default: making CONFPRO_BOARD per-user while
+# haps-board-lock still keys on it splits the one shared lease per user.
 setenv HAPS_LOCK_KEY haps-sx
 
 # --- locate the ref-counted helper (env override -> /apps -> shared clone) ---

@@ -507,7 +507,20 @@ def serve():
             # -- what a real board's reply looks like. Never bind REPLY_PORT:
             # the GUI holds it exclusively while its dialog is open, and it does
             # not check the reply's source anyway.
-            sock.sendto(cached, (peer[0], REPLY_PORT))
+            #
+            # Addressed to LOCAL_IP, NEVER to peer[0]. peer[0] is not "where the
+            # query came from" in any useful sense: it is the source address the
+            # KERNEL picked for it, and the loopback route prefers 127.0.0.1 for
+            # every 127.0.0.0/8 destination. Measured: a relay bound to
+            # 127.0.0.9, sent a query by a GUI on this host, sees peer[0] ==
+            # "127.0.0.1". So once each user gets their own 127.<uid> endpoint,
+            # replying to peer[0] posts OUR board state at SOMEBODY ELSE'S
+            # address -- and the GUI files a reply by "board id" (the MAC), so it
+            # would rewrite their row to our endpoint and dial our tunnel on our
+            # credential. The endpoint we serve is never in doubt: it is the
+            # address we are bound to, and the one query_names_us() has just
+            # required the query to name.
+            sock.sendto(cached, (LOCAL_IP, REPLY_PORT))
         except OSError as exc:
             log("could not deliver reply (%s)" % exc)
 

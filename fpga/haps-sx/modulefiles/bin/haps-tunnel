@@ -43,10 +43,86 @@ CTRL_JTAG="${HAPS_TUNNEL_CTRL_JTAG:-$HOME/.ssh/cm-haps-jtag}"
 # only fires when NO address binds at all. Measured: a squatter on 127.0.0.1:3121
 # still let the tunnel report "up" on ::1. `localhost` also resolves to ::1 FIRST
 # here (getent ahosts), so every consumer URL must be numeric too.
-# Tier 1 makes this per-user; for now it is the historical 127.0.0.1.
-BIND="${HAPS_TUNNEL_BIND:-127.0.0.1}"
-REF="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.ref.$(id -u)"
-LK="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.lk.$(id -u)"
+MYUID=$(id -u)
+BIND_NOTE=""
+BIND_SRC=default
+
+# --- per-user loopback address (OPT-IN; the default is still 127.0.0.1) -------
+# 127.<(uid>>16)&0xff>.<(uid>>8)&0xff>.<uid&0xff>, so uid 74755 -> 127.1.36.3.
+# The whole of 127/8 is loopback, so each user on a workstation can own an entire
+# address and bind :18000, :3121 and the relay's :18009 on it without asking
+# anybody. Today they all bind 127.0.0.1, and because ExitOnForwardFailure=yes is
+# (correctly) set, the SECOND user to load the module gets no tunnel at all --
+# not a degraded one -- until the first unloads.
+#
+# WHY THIS SHIPS DISABLED. The board reservation is still keyed on the transport
+# endpoint rather than on the board. Measured 2026-08-27 against the deployed
+# tools, not inferred:
+#   /research/CAD/SoC-Labs-ConfPro-SX/haps-board-lock:54
+#       board=${CONFPRO_BOARD:-haps-sx.haps-net}    <- and HAPS_LOCK_KEY appears
+#                                                      nowhere in that script
+#   /research/CAD/haps-locks/audit.log
+#       2026-08-27T11:44:21Z ad1u25@srv03335  acquired 127.0.0.1 for 10m
+#       2026-08-27T12:57:24Z dam1n19@srv03335 acquired 127.0.0.1 for 10m
+# So the lease every user contends for today IS the file 127.0.0.1.lock. Making
+# the bind per-user necessarily makes CONFPRO_BOARD per-user too (the tools have
+# to follow the tunnel), and each user would then quietly take their OWN
+# 127.x.y.z.lock -- at which point the one piece of cross-user coordination that
+# actually works on this bench stops excluding anyone, and two people drive one
+# board with both GUIs painting "Idle". A port collision is loud and costs you
+# your tunnel; a split lease is silent and costs somebody else their run. Hence
+# opt-in via HAPS_PER_USER_BIND=1. Flip the default only after haps-board-lock
+# keys on HAPS_LOCK_KEY -- haps-state-relay already prefers it (see its Helper
+# `keys` list); it is only the lock tool that lags.
+#
+# HAPS_TUNNEL_BIND still overrides both, unconditionally.
+per_user_bind(){
+    _u=$1
+    # Only 24 bits fit in 127.x.y.z. Directory-service uids (SSSD/AD) routinely
+    # exceed 0xffffff, so FOLD the high bits in rather than truncate: truncation
+    # would silently hand uid 200000 and uid 16977216 the same address. The fold
+    # is the identity for every uid <= 0xffffff, so the documented mapping
+    # (74755 -> 127.1.36.3) is unchanged by it.
+    _low=$(( (_u ^ (_u >> 24)) & 0xffffff ))
+    if [ "$_u" -gt 16777215 ]; then
+        BIND_NOTE="uid $_u needs more than 24 bits - address is fold-derived: unique on this host, not guaranteed estate-wide"
+    fi
+    # Five low values do not give a usable PRIVATE address:
+    #        0 -> 127.0.0.0         the /8 network address
+    #        1 -> 127.0.0.1         the shared default this exists to get off
+    #       53 -> 127.0.0.53        systemd-resolved stub listener
+    #       54 -> 127.0.0.54        systemd-resolved extra listener
+    #  0xffffff -> 127.255.255.255  the /8 broadcast -- and haps-state-relay does
+    #                               sendto(LOCAL_IP, 18008), so a board-state
+    #                               reply would go to EVERY ConfPro on the host
+    #                               instead of to the one that asked.
+    # Linux binds all five perfectly happily (measured), which is precisely why
+    # they have to be excluded HERE rather than left to fail loudly later.
+    # Escape by flipping bit 23 (second octet ^= 0x80): deterministic, and it
+    # leaves the excluded set in ONE step for every member, so no loop is needed:
+    #   0 -> 127.128.0.0   1 -> 127.128.0.1   53 -> 127.128.0.53
+    #  54 -> 127.128.0.54  0xffffff -> 127.127.255.255
+    case "$_low" in
+        0|1|53|54|16777215)
+            _low=$(( _low ^ 0x800000 ))
+            BIND_NOTE="${BIND_NOTE:+$BIND_NOTE; }uid $_u derives a reserved address - escaped into the 127.128/9 block" ;;
+    esac
+    BIND="127.$(( (_low >> 16) & 0xff )).$(( (_low >> 8) & 0xff )).$(( _low & 0xff ))"
+}
+if [ -n "${HAPS_TUNNEL_BIND:-}" ]; then
+    BIND="$HAPS_TUNNEL_BIND"; BIND_SRC=HAPS_TUNNEL_BIND   # explicit wins over everything
+elif [ "${HAPS_PER_USER_BIND:-0}" = 1 ]; then
+    per_user_bind "$MYUID";  BIND_SRC="per-user, uid $MYUID"
+else
+    BIND=127.0.0.1;          BIND_SRC=default             # historical shared -- see above
+fi
+# The relay has to land on the SAME address as the forwards, or ConfPro drives
+# the board through one address and reads its state from another. The modulefile
+# setenv's this as well; doing it here too keeps a bare `haps-tunnel up`
+# coherent for anyone not going through Modules.
+export HAPS_STATE_LOCAL_IP="${HAPS_STATE_LOCAL_IP:-$BIND}"
+REF="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.ref.$MYUID"
+LK="${XDG_RUNTIME_DIR:-/tmp}/.haps-tunnel.lk.$MYUID"
 CTIMEOUT="${HAPS_TUNNEL_CONNECT_TIMEOUT:-5}"; PERSIST="${HAPS_TUNNEL_PERSIST:-10m}"
 RELAY="${HAPS_STATE_RELAY_BIN:-$(dirname "$(readlink -f "$0")")/haps-state-relay}"
 TAG=haps-tunnel
@@ -89,6 +165,12 @@ relay(){ [ -x "$RELAY" ] || return 0; "$RELAY" "$@" || true; }
 case "${1:-}" in
   up)
     [ "${HAPS_NO_TUNNEL:-0}" = 1 ] && { say "disabled (HAPS_NO_TUNNEL=1)"; exit 0; }
+    # Say which address, but only when it is NOT the historical shared one: a
+    # per-user bind is the thing a second user needs to see in the log when they
+    # are working out why their ConfPro talks to a different endpoint than the
+    # wiki says. Silent on the default so routine loads stay quiet.
+    [ "$BIND" = 127.0.0.1 ] || say "binding $BIND ($BIND_SRC)"
+    [ -n "$BIND_NOTE" ] && say "note: $BIND_NOTE"
     lock; n=$(cat "$REF" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$REF"; unlock
     # Board channel first -- it is the one ConfPro needs, and the relay rides it.
     alive || open_chan "$CTRL" "${BIND}:${CONF_LP}:${CONF_RHOST}:${CONF_RPORT}" \
@@ -105,8 +187,17 @@ case "${1:-}" in
                         rm -f "$REF"; }
     ;;
   status)
-    alive      && echo "board channel (${CONF_LP}) up" || echo "board channel (${CONF_LP}) down"
-    alive_jtag && echo "jtag  channel (${JTAG_LP}) up" || echo "jtag  channel (${JTAG_LP}) down"
+    alive      && echo "board channel (${BIND}:${CONF_LP}) up" || echo "board channel (${BIND}:${CONF_LP}) down"
+    alive_jtag && echo "jtag  channel (${BIND}:${JTAG_LP}) up" || echo "jtag  channel (${BIND}:${JTAG_LP}) down"
     relay status ;;
-  *) say "usage: $0 {up|down|status}"; exit 2 ;;
+  bind)
+    # Read-only: no ssh, no relay, no ref-count. Prints the address THIS
+    # invocation would bind, honouring HAPS_TUNNEL_BIND / HAPS_PER_USER_BIND.
+    # `haps-tunnel bind <uid>` answers for another uid instead, which is what
+    # the modulefile cross-check and any rollout table should use -- so they
+    # quote the shipping derivation rather than a second copy of it.
+    if [ -n "${2:-}" ]; then BIND_NOTE=""; per_user_bind "$2"; fi
+    [ -n "$BIND_NOTE" ] && say "note: $BIND_NOTE"
+    echo "$BIND" ;;
+  *) say "usage: $0 {up|down|status|bind [uid]}"; exit 2 ;;
 esac
