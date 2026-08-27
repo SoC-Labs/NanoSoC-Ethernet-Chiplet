@@ -103,6 +103,7 @@ create_library_set -name typical_libset\
 set qrc_tech_file "/tsmc65pdk/65/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile"
 
 create_rc_corner -name default_rc_corner_worst\
+   -temperature 125\
    -pre_route_res 1\
    -post_route_res 1\
    -pre_route_cap 1\
@@ -114,6 +115,7 @@ create_rc_corner -name default_rc_corner_worst\
    -qrc_tech ${qrc_tech_file}
 
 create_rc_corner -name default_rc_corner_best\
+   -temperature -40\
    -pre_route_res 1\
    -post_route_res 1\
    -pre_route_cap 1\
@@ -125,6 +127,7 @@ create_rc_corner -name default_rc_corner_best\
    -qrc_tech ${qrc_tech_file}
 
 create_rc_corner -name default_rc_corner_typical\
+   -temperature 25\
    -pre_route_res 1\
    -post_route_res 1\
    -pre_route_cap 1\
