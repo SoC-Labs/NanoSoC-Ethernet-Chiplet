@@ -965,6 +965,34 @@ export CTS_DERATE ?= 1
 # 47-minute CTS run once took the toolkit's empty allowlist and its derate-off
 # default despite both being set here, because neither was exported.
 
+# ── ROUTE derate ────────────────────────────────────────────────────────────
+# CTS_DERATE above covers everything up to the clock tree. The toolkit's route
+# stage has NO derate knob at all - grep flow/innovus/4_route.tcl, it contains
+# no set_timing_derate - so route_design and both opt_design -post_route passes
+# run on whatever derate the input database happens to carry.
+#
+# Measured on this design, that inheritance is partial: report_timing_derate on
+# the route_preopt database names default_delay_corner_max and
+# typical_delay_corner and NOT default_delay_corner_min, which is the corner
+# hold signs off on. hooks/pre_route.tcl re-states the derate at the route seam,
+# explicitly and per active corner, and records it in route_manifest.txt. Read
+# that file's header before changing anything here.
+export ROUTE_DERATE ?= 1
+
+# THE FOUR FACTORS ARE DELIBERATELY NOT SET HERE. hooks/pre_route.tcl resolves
+# them tech-pack-first (derate_data_early/late, derate_clock_early/late) and
+# falls back to 0.95/1.05/0.97/1.03 only when the pack registers none - which is
+# the case today. Pinning them in this file would make that fallback dead code
+# and hide the day the pack finally carries the foundry's OCV table.
+#
+# To sweep, set them in the ENVIRONMENT for one run - they are read by `opt`, so
+# an environment value wins and the manifest records what was used:
+#   ROUTE_DERATE_DATA_E=0.92 ROUTE_DERATE_DATA_L=1.08 \
+#   ROUTE_DERATE_CLK_E=0.95  ROUTE_DERATE_CLK_L=1.05  \
+#       make route RUN_TAG=ocv_108 IN_RUN_TAG=main
+# and set the matching STA_DERATE_* for ASIC/sta/run_signoff_sta.tcl, or the
+# route run and the signoff that judges it sit at different derate points.
+
 # ── Diagnosed message IDs ───────────────────────────────────────────────────
 # The toolkit ships an EMPTY allowlist for every stage, deliberately: a default
 # that tolerates IDs would hand each new project someone else's undiagnosed
