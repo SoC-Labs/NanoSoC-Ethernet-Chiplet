@@ -237,6 +237,54 @@ Missing, all of which are standard for a 65 nm production signoff:
 - **`tcbn65lpwcl`** (SS, 1.08 V, −40 °C). TSMC ships it for this library precisely because
   temperature inversion is not zero at 65 nm LP. Not currently loaded anywhere.
 
+### CORRECTION 2026-08-28 — R5's prescription is partly unachievable, and the corners were run
+
+R5's list has now been measured on rc2 (`build/rc2-20260827/db_eco_final`), six Tempus runs
+across two sessions with separately built MMMCs. Three of its four items resolve, and one
+cannot be done at all:
+
+- **"Setup at rcbest" CANNOT BE CLOSED BY ADDING A VIEW.** All three `create_rc_corner`
+  blocks name one `qrcTechFile`, and Quantus dedupes by QRC deck AND temperature. The cap
+  table does not affect post-route extraction. So at equal temperature rcbest and rcworst
+  produce THE SAME PARASITICS: the two SPEFs differ by **1 byte in 318 MB**. The PDK ships
+  no cworst/cbest deck for the 6X1Z1U stack -- the corner packs that exist model
+  M8=M9=0.5um, the 6X2Y scheme, wrong by 6.8x on M9 for this design. Adding an rcbest setup
+  view would re-time identical parasitics and report a number indistinguishable from
+  rcworst's. Closing this needs a DECK BUILT, not a view added.
+
+- **`tcbn65lpwcl` exists and a complete PVT-consistent libset is assemblable.** It is 11
+  directory levels down, which is why earlier searches missed it. Timed, both sides on
+  their own metal: cold **+0.044** vs the signoff corner's **+0.012**. The cold corner has
+  32 ps MORE margin. Temperature inversion is real at 1.08 V but the cold library also
+  produces ~15% sharper edges, and propagating the slews reverses the sign of the naive
+  estimate. -40 C is also outside anything a wire-bonded bench part sees. Non-issue twice
+  over.
+
+- **Hold at the slow corner: RUN, AND IT FAILS.** Once each RC corner is extracted at its
+  own temperature (fixed in commit ec7948c), the shipped hold view reads **-0.006 / -0.187
+  / 94** where it read 0.000 / 0.000 / 0 on the 25 C extraction. `ASIC/sta/sta_gate.py`
+  fires on it. Confirmed three ways.
+
+- **A corner R5 did not list, and it is the worst one: FF/1.32 V/125 C.** Absent from the
+  MMMC entirely. **-0.078 ns on 22 endpoints**, disjoint from the 94. 14 of the 22 are in
+  `u_wlink/phy_gpio/gpiorx_*`, the same block that holds the single failing endpoint at
+  TYPICAL (-0.001). Hold fails at every corner including TT/1.20V/25C; setup is comfortable
+  everywhere (+2.265 typical, +0.044 cold, +0.012 at the real worst corner).
+
+- **Also found: the shipped hold libset is the one PVT-inconsistent set in the file** --
+  nine libraries at -40 C against `tphn65lpgv2od3_slbc` at **0 C**, while `_sllt`
+  (3.6 V/-40 C) sits unused in the same PDK directory. Correcting it exposes 3 RMII
+  transmit violations at -0.159 ns against `set_output_delay -min -2.000`.
+
+- **A hard limit on characterisation:** all eight memory and ROM compilers ship exactly
+  five corners. At FF/1.32 V and SS/1.08 V only -40 C and 125 C exist. The standard cells
+  DO have 0 C variants, so an SS/0 C libset is easy to build and would be WRONG -- cells at
+  0 C against memories at 125 C. The temperature at which fast-corner hold crosses zero can
+  be bracketed but never measured with the libraries this kit contains.
+
+Evidence: `build/rccorner-20260827/`, `build/coldcorner-20260827/reports/`,
+`build/typ-20260828/`.
+
 Also dead code worth cleaning: `.mmmc:193-194` creates `typical_analysis_view_setup` and
 `typical_analysis_view_hold` on `default_delay_corner_ocv` (early = `tc_min`, late =
 `tc_max`) — the only genuinely two-sided delay corner in the file — and then never
