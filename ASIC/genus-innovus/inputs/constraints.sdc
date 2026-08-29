@@ -77,6 +77,59 @@ set INTER_CLOCK_UNCERTAINTY 0.1
 create_clock -name "$EXTCLK" -period "$EXTCLK_PERIOD" -waveform "0 [expr $EXTCLK_PERIOD/2]" [get_ports CLK]
 create_clock -name "$SWDCLK" -period "$SWDCLK_PERIOD" -waveform "0 [expr $SWDCLK_PERIOD/2]" [get_ports SWDCK]
 
+#### CLOCK TRANSITION ########################################################
+#
+# THERE WAS NO set_clock_transition IN THIS DESIGN UNTIL 2026-08-29. The
+# consequence is not "a slightly idealised clock edge" -- it is that synthesis
+# read every sequential constraint table OFF THE BOTTOM OF ITS CLOCK AXIS.
+# Innovus prints the fallback it uses, on every single database load:
+#       "Set Default Input Pin Transition as 0.1 ps."
+# 0.1 ps is 0.0001 ns. The rf_16k setup table's clock-slew axis begins at
+# 0.035 ns (rf_16k_ss_1p08v_1p08v_125c.lib:2279), so the lookup sat 350x below
+# the first characterised point and the tool had nothing to do but clamp.
+#
+# WHICH AXIS IS WHICH. This is easy to get backwards, so it is written down.
+# rf_16k_ss_1p08v_1p08v_125c.lib:211-216 declares the constraint template:
+#       variable_1 : related_pin_transition       <- the CLOCK slew  (ROWS)
+#       variable_2 : constrained_pin_transition   <- the DATA  slew  (COLUMNS)
+# THIS constraint sets variable_1. set_max_transition, at the foot of this
+# file, is what bounds variable_2. Two separate defects; both were open.
+#
+# THE VALUE IS MEASURED, NOT SCALED FROM THE PERIOD. Census of every clk-domain
+# clock-tree sink pin on the routed rc4 database (61,174 pins, read out of
+# build/rc4-20260829/db_rc4 with Innovus on 2026-08-29):
+#       min 0.028   p50 0.120   p90 0.131   p99 0.138   max 0.153
+# and the one sink that actually matters -- the rf_16k CLK pin terminating this
+# design's critical setup path -- measures 0.116 on the nose. 0.120 is the
+# median of what CTS genuinely delivers, and it is BELOW p90, so it does not
+# hand setup an edge faster than 90% of the design really sees.
+# For swdclk the same census over the bscan sinks it reaches (122 pins) gives
+# p50 0.108 / max 0.125, hence the slightly faster figure on the second line.
+#
+# WHAT THIS BUYS, AND WHAT IT DOES NOT -- do not oversell it.
+# In the rf_16k table a LARGER clock slew yields a SMALLER setup requirement
+# and a LARGER hold requirement. Moving the declared edge 0.0001 -> 0.120 is
+# therefore worth, at the A[11] operating point:
+#       setup requirement   -22 ps   (pessimism synthesis was paying for)
+#       hold  requirement   +22 ps   (optimism synthesis was banking on)
+# This is an ACCURACY fix, NOT a setup win. Its more valuable half is the hold
+# half, because this design has failed hold at every corner -- expect synthesis
+# to start seeing hold work earlier. That is the point, not a regression.
+#
+# SCOPE: set_clock_transition applies only while the clock is IDEAL. After the
+# flow calls set_propagated_clock (post-CTS) it is ignored and the real edge is
+# used. So this changes SYNTHESIS and nothing downstream -- which is precisely
+# where the 0.1 ps was being consumed.
+#
+# DO NOT COPY THE SIBLING PROJECT'S FORM. nanosoc-multicore-system's
+# constraints_setup.sdc:13 sets clock_max_transition_factor to 0.273 and
+# constraints.sdc:29,32 multiply it by the PERIOD. At this design's 10 ns that
+# is 2.73 ns for clk and 10.92 ns for swdclk -- an edge occupying 27% of its
+# own period. Slew is a property of the driver and its load. It does not scale
+# with frequency.
+set_clock_transition 0.120 [get_clocks $EXTCLK]  ;# [MEASURED] p50 of 61,174 clk sinks on rc4; rf_16k CLK sink = 0.116
+set_clock_transition 0.110 [get_clocks $SWDCLK]  ;# [MEASURED] p50 0.108 / max 0.125 over the 122 bscan sinks on rc4
+
 # NO create_clock for rtc_clk / user_ref_clk / scan_clk. None of the three is a
 # pad on this chip:
 #   rtc_clk, user_ref_clk : aliased onto the sys_fclk pad inside the generated
@@ -780,4 +833,114 @@ set_max_capacitance 100 [all_outputs]
 # -- which would alter optimisation targets across the whole design and is a
 # signoff decision, NOT a drive/load characterisation fix. Flagged, not changed.
 set_max_fanout 10 [all_inputs]
+#
+#### MAXIMUM TRANSITION #######################################################
+#
+# UNTIL 2026-08-29 THIS DESIGN HAD NO SLEW RULE AT ALL. Not a loose one -- none.
+# The only limit in force anywhere was the library's own global default:
+#
+#       tcbn65lpwc.lib:425      default_max_transition : 0.7657
+#
+# and that line is the ONLY occurrence of the string "max_transition" in all
+# 80 MB of the standard-cell liberty (grep -c == 1). No cell and no cell pin
+# narrows it. The two rules above are both PORTS-ONLY, and the fanout one is
+# documented ten lines up as a structural no-op. Nothing constrained an
+# internal net anywhere in the design.
+#
+# WHY 0.7657 IS NOT A DESIGN RULE. It is the last point of the characterisation
+# axis. Every timing table in the library is indexed on input slew by one of
+# three ladders -- a 7-point one (134,803 tables), a coarse 3-point one
+# (19,120 tables) and an 8-point one (2,024 tables) -- and all three END at
+# 0.7657. (Axis points not reproduced: TSMC characterisation data, same licence
+# reason as the load axis above; read them in tcbn65lpwc.lib.) So the library
+# "default" is the EXTRAPOLATION BOUNDARY, exactly like the 100 pF above: it
+# marks where the model stops meaning anything, not where the design stops
+# being good. A rule that fires only once the timing model has already given up
+# is not a design rule. Worse, 12.3% of those tables have NO characterised
+# point at all between 0.0917 and 0.7657 -- one linear segment 0.674 ns wide.
+#
+# WHAT ITS ABSENCE COST, MEASURED ON THE SHIPPING LINEAGE.
+# build/gdsrun-20260826-rc1/reports/drv_05_route_opt.rep:15-20 reports exactly
+# six max_transition violators and every one is an IO pad. It reads clean. It
+# is not. On the SAME lineage the design's critical setup path
+# (build/holdfix-20260828/sta_final6/reports/timing_setup_default_analysis_view_setup.rpt:8)
+# ends on rf_16k pin A[11] at slack -0.001 ns, and along its 44 points:
+#       16 points carry slew > 0.188, and they hold 4.271 ns of the 9.749 ns
+#        6 points carry slew > 0.3806
+#        0 points carry slew > 0.7657   <-- so NOTHING on it is reportable
+# The endpoint is the clearest case. rf_16k's setup requirement is slew
+# dependent on both axes, and A[11] and A[10] make a controlled experiment:
+# same startpoint, same launch and capture clock, pins 4.6 um apart.
+#       A[11]  arrives at slew 0.407, needs 0.749   (rpt:23,77)
+#       A[10]  arrives at slew 0.048, needs 0.655   (rpt:916,972)
+# 94 ps of pure slew penalty on one pin, and it is the whole violation.
+#
+# WHY 0.300, DERIVED. The cost curve was measured, not guessed: the routed rc4
+# database was reopened read-only and every pin slew dumped, giving the exact
+# number of NETS a limit would put into repair (Innovus over db_rc4, 08-29):
+#       0.188 -> 57,196    0.250 -> 35,245    0.300 -> 26,050
+#       0.350 -> 18,823    0.400 -> 12,914    0.500 ->  4,522
+# At one BUFFD4 (3.24 um2) per net -- a LOWER bound, a long net needs several --
+# 0.300 costs ~84,400 um2 against 799,061 um2 of stdcell area, about +4.5
+# points of core utilisation. This design sits at 77.52%
+# (build/gdsrun-20260826-rc1/reports/design_report.json, qor_util_pct) and DRV
+# repair on it has ALREADY been blocked once by density at 92.2%. That last one
+# is a RUN NOTE, not tool output I re-measured -- it is recorded in
+# genus-innovus/runs/20260807T171905Z_eval-pnr-resume/config/scripts/3b_pnr_cts_eval.tcl:654
+# as "density 83.58% -> 92.17%, which then BLOCKED DRV repair: 153 max_tran
+# nets". Hold repair on this design has historically eaten 90,682 um2
+# (baseline_2026-08-07/work/innovus.log:460) and 171,250 um2 (line 152 of this
+# very file), so that headroom is spoken for.
+# 0.300 leaves that hold headroom underneath the 92.2% wall. 0.188 does not:
+# it costs ~185,000 um2, roughly +9.8 points, and would reach the wall with the
+# hold repair still to pay for. THAT is why this is 0.300 and not the
+# 0.15-0.25 that the timing evidence on its own would argue for.
+#
+# IT IS NOT INERT, AND IT FIXES THE PATH THAT FAILED. 0.300 is 2.55x tighter
+# than the library default, so the min() rule below cannot swallow it. Capping
+# A[11] at 0.300 drops its setup requirement 0.7487 -> 0.7233, worth 25 ps,
+# which takes that path from -0.001 to +0.024 and removes the post-route setup
+# ECO entirely.
+#
+# THE MIN() RULE, AND THE PRICE THIS LINE PAYS AT THE PAD RING. MEASURED, not
+# assumed: with 2.73 forced onto [current_design] on the rc4 database,
+# uPAD_I2C_SDA/PAD's Required moved 5.000 -> 2.730 even though
+# i2c_constraints.sdc:233 already sets 300 on that exact pin. The smallest
+# limit from ANY source wins -- library, port-specific SDC and design-scoped
+# SDC alike -- and a per-port value can never buy an exemption back. Innovus
+# offers -override for this; GENUS, the tool that actually reads this file
+# (eth-chiplet/design.mk:235), does not document it, so it is not used here.
+# The consequence is bounded, and it was MEASURED by applying this exact line
+# to the rc4 database rather than reasoned about: the max_transition report
+# goes from 6 rows to 236,130. 235,894 of those are internal pins -- the real
+# work, and the cost curve above is how to price it -- and 236 land on the pad
+# ring. Of the 236, only 97 can NEVER be fixed:
+#       48  uPAD_*/PAD pins driving off-chip     (0.593 - 6.331 ns)
+#       49  top-level ports, slew ASSERTED by set_input_transition, not
+#           computed                             (0.398 - 6.331 ns)
+# No repeater moves either. The remaining 139 are pad-cell CORE-side pins
+# (46 I, 45 OEN, 48 REN); internal logic drives them and they are ordinary
+# fixable violations like any other.
+# So the STANDING cost of this rule, once the design converges internally, is
+# 97 permanently red rows. Every one of them matches `uPAD_*/PAD` or a bare
+# top-level port name, so a DRV gate can filter them mechanically, and Innovus
+# -override can exempt them on the P&R side where Genus is not the reader. Do
+# NOT read them as new defects, and do NOT "fix" them by loosening this line
+# back above 0.7657 -- that only restores the silence it replaces.
+#
+# THE REFINEMENT NOT TAKEN. `set_max_transition <v> [get_clocks clk] -data_path`
+# and `-clock_path` would split the data rule from the clock rule and might
+# spare the pad ring. Neither is confirmed to behave identically in Genus and
+# Innovus, and choosing a second, tighter number for the clock network is a
+# signoff decision about skew, not a drive/load fix. Flagged, not changed --
+# same standing as the set_max_fanout note above.
+#
+# DO NOT COPY THE SIBLING PROJECT. nanosoc-multicore-system's
+# constraints_setup.sdc:12 sets max_transition_factor 0.273 and its
+# constraints.sdc:86 multiplies it by the period. Here that is 2.73 ns, 3.57x
+# LOOSER than the library default. It was run on the rc4 database to be sure:
+# it caught ZERO internal pins and added 22 unfixable IO ones. A limit looser
+# than the library default is not merely inert -- it is worse than nothing,
+# because the file then reads as though the problem had been addressed.
+set_max_transition 0.300 [current_design] ;# [MEASURED] 26,050 nets, ~+4.5pt util; see the cost curve above
 

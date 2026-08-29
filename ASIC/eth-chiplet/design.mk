@@ -689,7 +689,7 @@ signoff-report:
 ## POST-ROUTE OPTIMISATION MODE -- STATED HERE BECAUSE THE DEFAULT IS NOT WHAT
 ## THIS DESIGN NEEDS, AND NOTHING ELSE RECORDED IT.
 ##
-## The toolkit defaults ROUTE_OPT_MODE to `hold` (flow/innovus/4_route.tcl:116,
+## The toolkit defaults ROUTE_OPT_MODE to `hold` (flow/innovus/4_route.tcl:126,
 ## unchanged since the toolkit's first commit). On THIS design that means route
 ## never runs post-route setup optimisation, and the design does not close setup
 ## without it. MEASURED 2026-08-25 across all 14 runs that left a route
@@ -708,8 +708,202 @@ signoff-report:
 ##
 ## Setting it here makes the intent survive the transport. Override on the
 ## command line for a deliberate hold-only ECO pass.
-ROUTE_OPT_MODE ?= setup_then_hold
+##
+## ---- UPDATED 2026-08-29: setup_then_hold -> hold_then_setup ----------------
+##
+## READ EVERYTHING ABOVE FIRST. IT IS STILL TRUE AND IT IS NOT A MISTAKE BEING
+## CORRECTED. setup_then_hold beat the toolkit's `hold` default 0-vs-1166
+## failing setup endpoints, on fourteen runs, and that measurement is the entire
+## reason this variable is written down at all. Nothing below retracts it.
+##
+## What changed is that the OTHER half of the choice finally got measured.
+## setup_then_hold has a structural weakness that was always there and that the
+## 2026-08-25 census could not see, because every run in it had the same
+## weakness: THE HOLD PASS RUNS LAST, so whatever setup margin the first pass
+## bought, the second pass is free to spend. build/derate-feas-20260826 ran both
+## orders on ONE database (RESULTS.md:416-417):
+##
+##   D  setup then hold   the hold pass eats the setup gain -- 14 failing setup
+##                        endpoints where the setup pass had left 0
+##   E  hold then setup   both survive, AND the setup pass repairs the DRVs the
+##                        hold pass introduced (real max_cap 6 -> 0,
+##                        real max_tran 2 -> 0)
+##
+## At signoff -- Tempus 21.11, unmodified mmmc_sta.tcl, same derate, same
+## extraction, only the database differs (RESULTS.md:423-433):
+##
+##   control (= the stream that shipped)  setup 4 + hold 415 = 419 failing EPs
+##   E       (hold then setup)            setup 1 + hold   2 =   3 failing EPs
+##
+## and all three survivors are exactly 12 ps short. Combined TNS -2.519 ns ->
+## -0.035 ns. Cost: 13,002 instances touched, all buffers and no delay cells,
+## +0.76% area, check_drc still "No DRC violations were found", 20 min 32 s of
+## optimisation (RESULTS.md:435-441).
+##
+## THE ORDER ON ITS OWN IS NOT WHAT DID IT, AND THIS LINE ON ITS OWN IS NOT E.
+## E ran with both optimisation targets raised as well. Those are the block
+## immediately below; setting this line without them is a configuration nobody
+## has measured. The two changes are one change.
+##
+## Override on the command line for a deliberate single-direction ECO pass:
+##     make route ROUTE_OPT_MODE=hold IN_RUN_TAG=<the run to ECO>
+ROUTE_OPT_MODE ?= hold_then_setup
 export ROUTE_OPT_MODE
+
+## ---------------------------------------------------------------------------
+## THE POST-ROUTE PASSES ARE ASKED FOR POSITIVE MARGIN, NOT FOR ZERO.
+##
+## THE DEFECT THIS CLOSES. Nothing in this flow ever set an optimisation target,
+## in place, CTS or route -- grep opt_setup_target_slack and
+## opt_hold_target_slack across ASIC/asic-toolkit/flow/ and
+## ASIC/genus-innovus/scripts/ before 2026-08-29 and there are no hits. Both
+## attributes default to 0.0 (confirmed by get_db on Innovus 21.11-s130_1), so
+## every stage was driven to exactly zero -- and every stage duly landed within
+## 10 ps of zero. From gdsrun-20260826-rc1's own reports, "View : ALL":
+##
+##   01b_place_opt  setup +0.009  hold -0.322 / 439   timing_summary_01b_place_opt.rep:94,106
+##   03_cts_opt     setup +0.005  hold -0.003 /  43   timing_summary_03_cts_opt.rep:94,106
+##   05_route_opt   setup +0.010  hold -0.005 /  13   timing_summary_05_route_opt.rep:466,478
+##   06_post_fill   setup +0.009  hold -0.012 /  16   timing_summary_06_post_fill.rep:465,477
+##
+## Landing at +0.009 is not closure. It is closure ACCORDING TO THE P&R ENGINE,
+## and the P&R engine is not the one that signs the design off.
+##
+## WHY ZERO IS THE WRONG TARGET, MEASURED RATHER THAN ASSUMED.
+## hooks/pre_route.tcl:87-96 measured the two engines against each other on ONE
+## database, the filled routed one:
+##
+##                       setup WNS        hold WNS
+##   P&R,     no derate  +0.236           -0.004
+##   P&R,     derated    +0.010           -0.012
+##   signoff, no derate  +0.287           -0.014
+##   signoff, derated    -0.049           -0.053
+##
+## Two readings come out of that, and they are different numbers:
+##
+##   the DERATE-SENSITIVITY gap  the same four derate factors are worth 226 ps
+##     of setup to Innovus and ~332 ps to Tempus -- Innovus applies about 68% of
+##     the signoff setup effect and 21% of its hold effect, so ~106 ps of setup
+##     and ~31 ps of hold go unseen by the optimiser. This is the number the
+##     hook quotes.
+##   the END-TO-END gap          what actually matters to a target: closing at
+##     +0.010 in P&R IS -0.049 at signoff, i.e. 59 ps of setup and 41 ps of
+##     hold, on this database. It is SMALLER than the derate-sensitivity gap
+##     because P&R is ~51 ps MORE pessimistic than signoff before any derate is
+##     applied, and the two errors partly cancel. Quoting 106 as the end-to-end
+##     disagreement double-counts.
+##
+## hooks/pre_route.tcl:100-103 names these two attributes as the remedy and says
+## explicitly that the hook itself does not fix it. This is that fix.
+##
+## HOW THE VALUES WERE SIZED -- THREE ROUTES, AND WHY THE ANSWER IS NOT 0.075.
+## The only operating point ever RUN on this design is experiment E's
+## setup 0.075 / hold 0.050. It left setup at -0.012 / 1 failing endpoint at
+## signoff, so 0.075 is measured to be 12 ps SHORT. Three ways to size the
+## replacement, none of them taste:
+##
+##   1. E's own residual        0.075 + 0.012 = 0.087, if the extra ask converts
+##                              1:1 into delivered slack.
+##   2. under-delivery ratio    E ASKED for 0.075 and the optimiser DELIVERED
+##                              +0.025 (RESULTS.md:407) -- one third of the ask.
+##                              To deliver the 0.037 that would put signoff at
+##                              zero it must be asked for ~0.111.
+##   3. derate-sensitivity gap  ~0.106 (above).
+##
+## Three independent routes give 0.087 / 0.106 / 0.111. TAKE THE LARGEST: an
+## over-constrained run costs runtime and area, an under-constrained one costs a
+## respin, and route 1 is the only one that assumes the optimiser hits what it
+## is asked for -- which route 2 measured that it does not.
+##
+##   ROUTE_OPT_SETUP_TARGET = 0.110   covers all three; 47% above the largest
+##                                    value ever run on this design, so the
+##                                    increment above 0.075 IS AN EXTRAPOLATION
+##                                    and the first run at it must be compared
+##                                    against E for cell count and runtime.
+##   ROUTE_OPT_HOLD_TARGET  = 0.050   NOT extrapolated. This is exactly B's and
+##                                    E's value, the one that took hold from 415
+##                                    failing endpoints to 2 at signoff. It
+##                                    already exceeds both the 41 ps end-to-end
+##                                    and the 31 ps derate-sensitivity hold gap.
+##                                    Raising it is the lever for the last two
+##                                    12-ps hold endpoints, and the measured
+##                                    price of 0.050 was 12,831 buffers -- price
+##                                    the next increment before paying it.
+##
+## WHAT THESE DO NOT DO. They are OPTIMISATION targets, not reporting offsets:
+## report_timing_summary prints actual slack either way, and a database
+## snapshotted at hold target 0.050 is bit-identical to the same database
+## snapshotted back at 0.0 (RESULTS.md:119-124). So the route gate's
+## ROUTE_BUDGET_*_FEP counts stay honest and cannot be flattered by this block.
+##
+## To sweep, set them in the ENVIRONMENT for one run -- they are read by `opt`,
+## so an environment value wins and route_manifest.txt records what was used:
+##     ROUTE_OPT_SETUP_TARGET=0.075 make route RUN_TAG=t075 IN_RUN_TAG=main
+export ROUTE_OPT_SETUP_TARGET ?= 0.110
+export ROUTE_OPT_HOLD_TARGET  ?= 0.050
+
+## ---------------------------------------------------------------------------
+## SETUP RECOVERY AFTER HOLD REPAIR -- `auto` MEANS OFF ON A DESIGN THIS TIGHT.
+##
+## opt_post_route_setup_recovery is the step Innovus runs INSIDE a post-route
+## hold pass to give back setup that the hold repair just took. Verbatim from
+## <INNOVUS_DOC>/TCRcom/opt_Category_Attributes.html:
+##
+##   "Controls the Setup Recovery step performed when opt_design -post_route
+##    -setup -hold and opt_design -post_route -hold commands have been
+##    specified. ... auto: Allows the software to determine when to trigger
+##    setup recovery. Here recovery will be triggered if WNS or TNS degrade
+##    beyond a certain margin. true: Always triggers setup recovery if timing is
+##    not met, irrespective of the gain/degradation in post-route timing."
+##
+## It defaults to auto and it is set NOWHERE in this flow -- get_db on an
+## untouched Innovus 21.11-s130_1 session returns `auto`, and there is no
+## set_db for it anywhere in ASIC/asic-toolkit/flow/ or
+## ASIC/genus-innovus/scripts/. ON THIS DESIGN, auto HAS NOT BEEN ENOUGH.
+##
+## Both hold-repair experiments ran at the default `auto` -- neither run.tcl
+## touches the attribute -- and both came out of the hold pass with setup
+## degraded (Innovus's own numbers):
+##
+##   B  hold pass alone      setup +0.010 -> -0.023   33 ps lost, 10 failing EPs
+##                                          (RESULTS.md:113-116)
+##   D  setup, then hold     setup +0.047 -> -0.020   67 ps lost, 14 failing EPs
+##                                          (RESULTS.md:247-253)
+##
+## What auto left behind was cheap to pick up: E ran an explicit setup pass on
+## B's output and got setup to +0.025 -- 48 ps better than where auto's hold
+## pass left it -- in 8 min 15 s for 12 cells (RESULTS.md:405-412). So whatever
+## auto did or did not trigger, it stopped well short of what was recoverable,
+## and `true` is the setting whose documented behaviour is to keep going:
+## "Always triggers setup recovery if timing is not met, irrespective of the
+## gain/degradation".
+##
+## HOW MUCH OF THIS IS MEASURED, EXACTLY -- because the next reader will want to
+## cite experiment E for it and E does not say this.
+##   MEASURED: recovering setup on a hold-repaired database works on this
+##     design, is cheap, and does not give the hold repair back -- 8 min 15 s,
+##     12 cells, setup +0.025 and hold still 1 endpoint (RESULTS.md:399-412).
+##   MEASURED: this attribute exists in this tool version, is settable, and
+##     reads back `true` -- get_db/set_db on the rc4 routed database, 2026-08-29.
+##   NOT MEASURED: E did that recovery as an EXPLICIT SECOND
+##     `opt_design -post_route`, which is what ROUTE_OPT_MODE=hold_then_setup
+##     above now issues. This attribute is the in-pass twin of the same idea and
+##     runs inside the -hold pass. Its INCREMENTAL effect on top of the explicit
+##     pass is unmeasured; the expectation is that the hold pass hands the setup
+##     pass a better starting point and the run finishes sooner, not that the
+##     final numbers change. Do not quote E as proof of this line.
+##
+## THE ATTRIBUTE THAT LOOKS LIKE IT BELONGS BESIDE THIS ONE, AND DOES NOT.
+## opt_post_route_allow_setup_tns_degradation guards setup TNS -- "ensure that
+## the setup total negative slack is maintained" -- not WNS. This design's whole
+## margin is WNS and its setup TNS is already 0.000 at every stage in the table
+## above, so the guard is vacuous here; its Tempus twin was set false in every
+## shipped ECO and still leaked 5 ps of WNS. It is also NOT AN INNOVUS ATTRIBUTE
+## AT ALL: get_db and set_db both return **ERROR (IMPDBTCL-247) "not a
+## recognized object or root attribute" on 21.11-s130_1 -- without raising a Tcl
+## error, so a script that sets it exits 0 having done nothing. Measured
+## 2026-08-29. Do not add it.
+export ROUTE_OPT_SETUP_RECOVERY ?= true
 
 ## ---------------------------------------------------------------------------
 ## RUN REPORT -- every stage's VALUES, in four renderings.
