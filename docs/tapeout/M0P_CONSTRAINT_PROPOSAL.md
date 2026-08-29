@@ -136,7 +136,27 @@ Attribution:
 | `u_qspi_flash_0_.../u_qspi_controller_*` | 174 | **`negedge QSPI_SCLK_i`** | `tidelink/imp/fpga/eth_chiplet_ip/src/qspi_controller.sv:427,517` |
 | TideLink lane sync/debug (`dbg_raw_word_q`, `sync_lane_live_q`, …) | 185 | D2D RX domain | — |
 
-**None of them is on `clk`.** So the duty-cycle-distortion argument survives — *for `clk`
+**CORRECTION 2026-08-29: "None of them is on `clk`" IS NO LONGER TRUE, and has not been
+since 23 August.** This census was taken against `full-20260814`, which contains **0**
+references to `tidelink_link_clk_div` (182 `.CPN` pins). Every netlist from
+`gdsrun-20260823-rzG` onward contains **2** (237 `.CPN` pins): the divider landed after this
+was written and put `byp_en_meta_r_reg` and `byp_en_r_reg` on `negedge clk_in`
+(`tidelink/src/rtl/tidelink_link_clk_div.sv:177-184`), and their output gates the D2D
+reference clock (`:203`). Re-measured on the current netlist, resolving every `.CPN` to its
+root: 174 on `QSPI_SCLK`, 49 on `swdclk`, **2 on `clk`**, 1 on `clkdiv_r`.
+
+The argument survives in PRACTICE but for a different reason than "none exist": both `clk`
+negedge flops have constant data (`div_en_r_reg.D` is tied to `LTIE_PD_TOP_LTIELO_NET`, so
+`byp_en_r` is a constant 1) and min-pulse-width has ~4 ns of slack against 45%. That is a
+constant-propagation result on one netlist, in a module explicitly designed to be enabled at
+bring-up — not a structural guarantee. Also closed favourably since this was written: §4.4's
+open item on whether `QSPI_SCLK`'s divider can be configured to ratio 1. It cannot —
+`qspi_clock_div.v:10` has the bypass but `apb_qspi_regs.v:181` resets the field to `5'h01`
+and `:198` clamps any write of 0 to 1, so those 174 flops can never become clk-negedge flops.
+
+The original text follows.
+
+~~**None of them is on `clk`.**~~ So the duty-cycle-distortion argument survives — *for `clk`
 only*, which is exactly where 100 % of the failing endpoints are. But it dies for
 `QSPI_SCLK` and for the D2D RX word clocks, which today are charged the same 0.35 by the
 same variable. Any uncertainty change must therefore be **per-clock**, never a global edit

@@ -33,10 +33,26 @@ set CLK_ERROR 0.35; #Error calculated from worst case characteristics of CDCM610
 #
 #   ODC    Output duty cycle                            =  45% MIN / 55% MAX
 #
-# At 250 MHz (4 ns period) a 45%/55% duty cycle puts the falling edge at 1.8 ns
-# instead of 2.0 ns: +/-0.2 ns of duty-cycle distortion, ~17x the jitter. So
-# 0.35 ns is best read as ~0.2 ns duty-cycle distortion + ~0.01 ns jitter +
-# margin, which is a defensible SETUP number and comfortably conservative.
+# CORRECTED 2026-08-29. The paragraph this replaces computed the duty term at
+# 250 MHz -- the OSCILLATOR's characterisation point -- and this design runs at
+# 100 MHz. See the block near line 524, which has said so all along; the two
+# passages contradicted each other and the 250 MHz figure was the one that got
+# quoted onward (it also reached tidelink_link_clk_div.sv's safety property 2).
+#
+# ODC IS A PERCENTAGE, so it scales with the period and the correction makes the
+# term BIGGER, not smaller:
+#     at 250 MHz (4 ns)   45%/55% -> falling edge 1.8 vs 2.0 ns  = +/-0.2 ns
+#     at 100 MHz (10 ns)  45%/55% -> falling edge 4.5 vs 5.0 ns  = +/-0.5 ns
+# +/-0.5 ns is 1.4x the ENTIRE 0.35 ns budget it was supposed to be the main
+# component of. So 0.35 ns is NOT "0.2 duty + 0.01 jitter + margin". It is a
+# margin smaller than the worst-case duty-cycle distortion of the source part,
+# and it is defensible only because that distortion cannot reach most of this
+# design -- measured 2026-08-29 over the worst 2000 endpoints: 1980 are
+# rising-to-rising and structurally immune, 20 are captured on the falling edge
+# and their worst slack is +0.439 ns.
+#
+# DO NOT cite the old +/-0.2 ns to argue this number down. Whoever does that
+# must also pay the negedge side its real +/-0.5 ns.
 #
 # TWO CONSEQUENCES WORTH KNOWING:
 #  - Duty-cycle distortion only bites checks that use the NEGATIVE edge. The
