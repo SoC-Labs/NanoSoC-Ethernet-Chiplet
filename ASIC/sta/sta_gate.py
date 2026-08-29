@@ -56,7 +56,10 @@ import tempfile
 DEFAULT_POLICY = {
     "setup_fep_budget": 0,
     "hold_fep_budget": 0,
-    "expected_clock_count": 33,
+    # 26 SDC clocks x one object PER ACTIVE VIEW. With 1 setup + 3 hold views
+    # active that is 104. RECOMPUTE THIS IF required_*_views CHANGES:
+    # 26 * (len(required_setup_views) + len(required_hold_views)).
+    "expected_clock_count": 104,
     "require_qrc_all_rc_corners": True,
     "require_spef_min_bytes": 1_000_000,
     "require_cppr": "both",
@@ -71,7 +74,19 @@ DEFAULT_POLICY = {
     # default. Named here so that if the view set silently shrinks, the gate
     # notices. Empty list disables the check.
     "required_setup_views": ["default_analysis_view_setup"],
-    "required_hold_views": ["default_analysis_view_hold"],
+    # Three hold views, matching ASIC/sta/sta_policy.json. Listing only
+    # default_analysis_view_hold let a run drop the two corners that produced
+    # this tapeout's worst hold findings -- av_ml_libset_hold (FF/1.32V/125C)
+    # measured -0.078 on 22 endpoints and av_ltfix_libset_hold (PVT-corrected
+    # -40C IO) measured -0.159 on 3 -- and still clear the gate. A hold corner
+    # you do not activate reports nothing, and nothing is indistinguishable
+    # from passing. This built-in default is the one a caller gets with no
+    # --policy, so it must not be weaker than the file.
+    "required_hold_views": [
+        "default_analysis_view_hold",
+        "av_ml_libset_hold",
+        "av_ltfix_libset_hold",
+    ],
 }
 
 
@@ -410,9 +425,9 @@ sta_db = /somewhere/nanosoc_eth_chiplet_pads_routed
 step.read_db = ok
 step.extract_parasitics = ok
 design_name = nanosoc_eth_chiplet_pads
-clock_count = 33
+clock_count = 104
 analysis_views_setup = default_analysis_view_setup
-analysis_views_hold = default_analysis_view_hold
+analysis_views_hold = default_analysis_view_hold,av_ml_libset_hold,av_ltfix_libset_hold
 timing_analysis_type = ocv
 timing_analysis_cppr = both
 derate_data_early = 0.95
@@ -544,12 +559,21 @@ def selftest():
                  "spef.default_rc_corner_worst.bytes = 412")),
              "SPEF_TOO_SMALL"),
             ("clocks vanished between P&R and STA",
-             dict(manifest=GOOD_MANIFEST.replace("clock_count = 33", "clock_count = 17")),
+             dict(manifest=GOOD_MANIFEST.replace("clock_count = 104", "clock_count = 17")),
              "CLOCK_COUNT"),
             ("setup view silently dropped",
              dict(manifest=GOOD_MANIFEST.replace(
                  "analysis_views_setup = default_analysis_view_setup",
                  "analysis_views_setup = typical_analysis_view")),
+             "VIEW_ABSENT"),
+            # The setup side had a mutation and the hold side did not, so the
+            # half of the view check that guards the three hold corners was
+            # never proven able to fire.
+            ("hold view silently dropped",
+             dict(manifest=GOOD_MANIFEST.replace(
+                 "analysis_views_hold = default_analysis_view_hold,"
+                 "av_ml_libset_hold,av_ltfix_libset_hold",
+                 "analysis_views_hold = default_analysis_view_hold")),
              "VIEW_ABSENT"),
             ("untested checks present (the real measured coverage hole)",
              dict(coverage=MEASURED_COVERAGE), "UNTESTED_CHECKS"),

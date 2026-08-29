@@ -280,6 +280,16 @@ def gate_macro_pins(spec, bundle, identity):
     else:
         argv = [sys.executable, os.path.join(HERE, "gds_macro_pin_connected.py"),
                 stream, "--run", run, "--all-macros", "--json", out_json]
+        # NAME THE TOP CELL, never let the walker infer it. Left to itself it
+        # takes sorted(outputs/*_pnr.v)[0] and strips `_pnr.v`, so a run that
+        # named its netlist with a suffix -- setupclose-20260829 writes
+        # nanosoc_eth_chiplet_pads_rc3setup_pnr.v -- yields a structure name
+        # that is not in the stream, and the row goes NOT-MEASURED with the
+        # design perfectly fine. holdfix-20260828 only escaped this because it
+        # happened to also hold an unsuffixed netlist that sorts first. The
+        # spec already carries the authoritative name in `design`.
+        if spec.get("design"):
+            argv += ["--top", spec["design"]]
         if spec.get("lef_root"):
             argv += ["--lef-root", os.path.join(ROOT, spec["lef_root"])]
         rc, txt = run_tool(argv)
