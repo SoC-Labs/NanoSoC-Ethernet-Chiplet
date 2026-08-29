@@ -99,6 +99,23 @@ compose to the same bytes six weeks later.
 This is a POSITIVE control for F2 as well. It shows the silent no-op was purely
 a missing dependency, not a broken or non-deterministic build.
 
+**A CHALLENGE TO THIS FINDING, RAISED AND RESOLVED.** A peer review noted that
+"from the pinned submodule commits" composes badly with the `pins.reachable`
+failure: the toolkit pin `c6ce42d` is on no remote, so anything said to be
+reproducible "from the pins" might be reproducible on this disk only.
+
+Checked, and it does not apply here. The firmware is built by cmake and
+arm-none-eabi-gcc inside `nanosoc-multicore-system`; the ASIC toolkit is not in
+that path. The only reference to it in that Makefile (:261) feeds a
+`vendor-check-sync` target that is explicitly written to skip when absent, and
+the path it computes is missing in BOTH the worktree and the main checkout. The
+pin F3 actually depends on -- `nanosoc-multicore-system` at f60449b491d5 -- IS
+on its remote, contained in `origin/dma250-ctxram-shrink`.
+
+So F3 is reproducible by someone else. What the unpushed toolkit pin blocks is
+recreating this WORKTREE to re-run the ASIC flow, which is a different and still
+open problem. The two findings should be read together, but they do not overlap.
+
 **Scope, stated so it is not over-read.** This covers the stage-0 boot ROM
 only, on one machine, with the toolchain currently installed. It says nothing
 about the other 47 firmware artefacts, and nothing about whether the ASIC flow
