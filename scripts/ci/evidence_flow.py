@@ -1994,19 +1994,58 @@ def freeze_recipe(spec, out):
     Cheap: measured 1.7 MB across 83 files, so this is not a size decision.
     A run whose recipe is not in the store is a run nobody can repeat."""
     srcs = []
+    seen = set()
     for k in ("eco_tree", "base_run"):
         d = spec.get(k)
         if not d:
             continue
         for sub in ("scripts", "inputs"):
             p = os.path.join(ROOT, d, sub)
-            if os.path.exists(p):
+            if os.path.exists(p) and os.path.realpath(p) not in seen:
+                seen.add(os.path.realpath(p))
                 srcs.append((k, sub, p))
-    if not srcs:
+    # AN ECO TREE IS NOT SHAPED LIKE A FLOW RUN, AND USED TO FREEZE NOTHING.
+    # A full-flow run keeps its recipe in scripts/ and inputs/ (symlinks into
+    # the shared tree, which is why dereference=True above matters). A
+    # post-route arm does not: setupclose-20260829 -- the tree that produced
+    # rc4, the only candidate with no timing waiver -- holds its entire recipe
+    # as top-level run_*.sh plus eco/ and mmmc/, so the loop above found
+    # nothing and published `recipe.frozen_files 0`. Since
+    # `git ls-files ASIC/eth-chiplet/build/` is empty, that recipe then existed
+    # in exactly one deletable directory and nowhere else, which is the precise
+    # hazard this function was written to close.
+    for k in ("eco_tree", "base_run"):
+        d = spec.get(k)
+        if not d:
+            continue
+        for sub in ("eco", "mmmc", "deck"):
+            p = os.path.join(ROOT, d, sub)
+            if os.path.isdir(p) and os.path.realpath(p) not in seen:
+                seen.add(os.path.realpath(p))
+                srcs.append((k, sub, p))
+    # The *.sh drivers sit at the tree root, one level up from everything
+    # above: run_a1_apply.sh names the Tcl, the DB and the output paths, so
+    # without it the eco/ Tcl alone does not say what it was run against.
+    loose = []
+    for k in ("eco_tree", "base_run"):
+        d = spec.get(k)
+        if not d:
+            continue
+        for fp in sorted(glob.glob(os.path.join(ROOT, d, "*.sh"))):
+            if os.path.isfile(fp) and os.path.realpath(fp) not in seen:
+                seen.add(os.path.realpath(fp))
+                loose.append((k, os.path.basename(fp), fp))
+    # Checked AFTER the loose gather, not before it: an arm that carries only
+    # driver scripts still has a recipe worth freezing.
+    if not srcs and not loose:
         return None, []
     tgz = os.path.join(out, "recipe.tar.gz")
     members = []
     with tarfile.open(tgz, "w:gz", dereference=True) as tf:
+        for k, name, fp in loose:
+            arc = "%s/%s" % (k, name)
+            tf.add(fp, arcname=arc)
+            members.append((arc, fp))
         for k, sub, p in srcs:
             arc = "%s/%s" % (k, sub)
             tf.add(p, arcname=arc)
