@@ -820,15 +820,76 @@ export ROUTE_OPT_MODE
 ##                                    increment above 0.075 IS AN EXTRAPOLATION
 ##                                    and the first run at it must be compared
 ##                                    against E for cell count and runtime.
-##   ROUTE_OPT_HOLD_TARGET  = 0.050   NOT extrapolated. This is exactly B's and
-##                                    E's value, the one that took hold from 415
-##                                    failing endpoints to 2 at signoff. It
-##                                    already exceeds both the 41 ps end-to-end
-##                                    and the 31 ps derate-sensitivity hold gap.
-##                                    Raising it is the lever for the last two
-##                                    12-ps hold endpoints, and the measured
-##                                    price of 0.050 was 12,831 buffers -- price
-##                                    the next increment before paying it.
+##   ROUTE_OPT_HOLD_TARGET  = 0.080   RAISED FROM 0.050 ON 2026-08-29, AND THE
+##                                    PARAGRAPH BELOW IS THE PRICING THIS BLOCK
+##                                    ASKED FOR BEFORE THE INCREMENT WAS PAID.
+##
+## WHY 0.050 HAD TO MOVE, AND WHY THE ANSWER IS 0.080 AND NOT 0.100.
+## 0.050 is E's value and it took hold from 415 failing endpoints to 2 at
+## signoff -- but the two survivors failed AT that target, each 12 ps short. A
+## target is the thing the optimiser aims at; leaving it where the last run
+## missed reproduces the miss by construction. Four steps, in order:
+##
+##   1. E's own residual        0.050 + 0.012 = 0.062.
+##   2. under-delivery ratio    E ASKED 0.050 and signoff hold WNS moved
+##                              -0.053 -> -0.012, i.e. 41 ps DELIVERED for 50
+##                              asked, a ratio of 0.82. To deliver the 53 ps
+##                              that reaches zero: 0.053 / 0.82 = 0.065.
+##   3. fill is not in E        Every experiment in RESULTS.md is PRE-FILL, and
+##                              this flow's own stage table above shows hold
+##                              degrading 05_route_opt -0.005 -> 06_post_fill
+##                              -0.012 after filler and diode insertion. A
+##                              full-flow target must carry those 7 ps that an
+##                              ECO on a pre-fill database never met: 0.072.
+##   4. round to the 10 ps grid 0.080, which leaves 8 ps over step 3 and clears
+##                              the 41 ps end-to-end and 31 ps
+##                              derate-sensitivity hold gaps with room.
+##
+## AND WHY IT STOPS AT 0.080: THE AREA CENSUS, MEASURED RATHER THAN FEARED.
+## Innovus 21.11-s130_1 on a COPY of gdsrun-20260826-rc1's own route_preopt
+## database -- the exact substrate B, D and E ran on -- 2026-08-29:
+##     report_timing -early -max_paths 400000 -max_slack 0.150 \
+##         -path_type endpoint -output_format csv
+## returns 43,177 endpoints, far under the 400,000 cap, so it is a census and
+## not a floor. Endpoints below a candidate target, and the delay each would
+## need to reach it:
+##
+##     target    endpoints below    total delay needed
+##     0.000                   9              0.03 ns
+##     0.050              13,656            309 ns
+##     0.080              24,794            899 ns
+##     0.100              33,496          1,484 ns
+##
+## The first row is the one to read twice: only NINE endpoints are actually
+## negative. Everything a hold target buys above that is margin bought on
+## endpoints that already pass, which is why the price climbs so steeply.
+##
+## The 0.050 row prices itself against a known outcome and that is what makes
+## the rest of the table usable: B asked for 0.050 and inserted 12,831 buffers
+## for 13,656 endpoints in scope and 309 ns of shortfall -- 0.94 buffers per
+## endpoint, 24 ps of delay per buffer, 1.46 um2 per buffer. Carrying both
+## ratios forward gives a bracket rather than a point, because a buffer on a
+## multi-fanout net helps every sink below it and the delay-sum arm cannot see
+## that:
+##
+##     target   by endpoint count   by delay needed   utilisation cost
+##     0.050          12,800 buf         12,800 buf   +1.77 pp (MEASURED)
+##     0.080          23,300 buf         37,300 buf   +3.2 to +5.2 pp
+##     0.100          31,500 buf         61,600 buf   +4.4 to +8.5 pp
+##
+## at 10,562 um2 per utilisation point (1,056,181 um2 of placeable area, from
+## the tool's own Placement Density denominator). 0.100 is refused on the
+## pessimistic arm alone: 77.78 start + 7.9 for design-scope slew repair + 8.5
+## is 94.2%, past the ~92.2% where this design has had DRV repair refused
+## before. 0.080 lands at 88.9% to 90.8% and is affordable in both arms.
+##
+## THE CTS BLOCK BELOW SETS THE SAME 0.080, AND THAT IS NOT A DUPLICATE.
+## The cost above is paid ONCE, at whichever stage first meets the target; a
+## route pass that finds its endpoints already above 0.080 does almost nothing.
+## Setting CTS lower would mean buying the same margin later, in the regime
+## where post-route buffering was measured to move the worst hold path by
+## exactly zero. Setting CTS higher was priced and refused: 0.090 is +6.7 pp on
+## the pessimistic arm, which reaches 92.4% and is over the wall.
 ##
 ## WHAT THESE DO NOT DO. They are OPTIMISATION targets, not reporting offsets:
 ## report_timing_summary prints actual slack either way, and a database
@@ -840,7 +901,7 @@ export ROUTE_OPT_MODE
 ## so an environment value wins and route_manifest.txt records what was used:
 ##     ROUTE_OPT_SETUP_TARGET=0.075 make route RUN_TAG=t075 IN_RUN_TAG=main
 export ROUTE_OPT_SETUP_TARGET ?= 0.110
-export ROUTE_OPT_HOLD_TARGET  ?= 0.050
+export ROUTE_OPT_HOLD_TARGET  ?= 0.080
 
 ## ---------------------------------------------------------------------------
 ## SETUP RECOVERY AFTER HOLD REPAIR -- `auto` MEANS OFF ON A DESIGN THIS TIGHT.
@@ -904,6 +965,184 @@ export ROUTE_OPT_HOLD_TARGET  ?= 0.050
 ## error, so a script that sets it exits 0 having done nothing. Measured
 ## 2026-08-29. Do not add it.
 export ROUTE_OPT_SETUP_RECOVERY ?= true
+
+## ---------------------------------------------------------------------------
+## CLOCK OPTIMISATION EFFORT, AND THE HOLD TARGET CTS HAS NEVER HAD.
+##
+## Consumed by ASIC/eth-chiplet/hooks/pre_cts.tcl, which the toolkit calls in
+## flow/innovus/3_cts.tcl:994, sixteen lines before ccopt_design and before both
+## post-CTS optimisation passes. hooks/post_cts.tcl restores all four before the
+## cts database is written, so nothing here leaks into a resumed session. READ
+## THE HEADER OF pre_cts.tcl -- it carries the measurements; this block carries
+## the values and the reasons they are these values and not others.
+##
+## THE DEFECT THESE CLOSE, IN ONE QUOTE FROM THE TOOL'S OWN LOG.
+## gdsrun-20260826-rc1, logs/cts_ccopt.log:50-51 and :78-79, verbatim:
+##
+##   'setDesignMode -flowEffort standard' => 'setOptMode -usefulSkewCCOpt standard'
+##   Using CCOpt effort standard.
+##   Found 0 advancing pin insertion delay (0.000% of 58618 clock tree sinks)
+##   Found 0 delaying pin insertion delay (0.000% of 58618 clock tree sinks)
+##
+## Useful skew was never DISABLED -- nothing in this flow has ever set
+## design_flow_effort, opt_skew_ccopt or opt_skew_pre_cts, in any run. CCOpt
+## simply does very little skew scheduling at the default effort, and on this
+## design it did none at all, on any of 58,618 sinks. Per
+## <INNOVUS_DOC>/TCRcom/opt_Category_Attributes.html, `extreme` is the setting
+## that gives "high effort ccopt_design", it is respected by ccopt_design and
+## opt_design -post_cts, and the same entry says it "should be used with set_db
+## design_flow_effort extreme". BOTH ARE SET BECAUSE THE FIRST LOG LINE SHOWS
+## ccopt DERIVING one from the other at call time: setting the skew attribute
+## alone is a setting the tool may overwrite on its own next line.
+##
+## WHY THIS IS THE LEVER THAT MATTERS. The hold endpoints that do not close are
+## D pins of compiled memories -- read the three worst in
+## build/setupclose-20260829/sta_rc3setup/reports/, the per-view hold reports on
+## the shipping candidate. A memory's D pin cannot be resized and its window
+## cannot be moved, so there are exactly two remedies: more delay in front of
+## it, or a later clock AT THE MACRO. Post-route buffering is the first, and it
+## has been taken as far as it goes -- 12,831 buffers, 14 endpoints, and ZERO
+## movement in worst-case hold. The second is CCOpt's, it exists only while the
+## tree is being built, and this design has never once pulled it.
+##
+## RUNTIME IS THE KNOWN COST AND IT IS NOT ESTIMATED HERE. The tool
+## documentation says extreme "will significantly increase the execution time of
+## the ccopt_design command" and gives no factor. CTS was 47 minutes on rc1;
+## budget for materially more and compare cts_manifest.txt runtime_s.
+##
+## THE TARGETS, AND WHY THE LADDER IS ASYMMETRIC.
+##   CTS hold  0.080  == the route hold target. Priced in the census above: the
+##                      cost is paid once, at whichever stage first meets it,
+##                      and CTS is where cells can still move and skew is still
+##                      schedulable. 0.090 was priced at +6.7 pp and refused.
+##   CTS setup 0.075  BELOW the route setup target of 0.110, deliberately. It is
+##                      set at all because the tool documents that leaving it out
+##                      is an active choice for zero -- "If you specify only
+##                      opt_hold_target_slack attribute, the setup target slack
+##                      value is 0" -- and a CTS hold pass allowed to spend setup
+##                      down to zero hands route a database with none. 0.075 is
+##                      the only setup target ever RUN on this design; 0.110 was
+##                      sized against POST-ROUTE signoff correlation, which does
+##                      not exist on an estimated-parasitic database.
+##
+## The asymmetry -- hold flat-then-flat, setup rising downstream -- is measured:
+## post-route hold repair is expensive and blunt (12,831 buffers, +1.77 pp, no
+## movement on the worst path) and post-route setup repair is cheap and sharp
+## (38 cells, +20.9 um2, four failing signoff endpoints to zero). Buy hold early
+## where it works; buy setup late where it is nearly free.
+##
+## SET BLANK TO RUN THE STAGE AT THE TOOL DEFAULT. Every one of the four is
+## optional in the hook and blank means "leave the attribute alone", so
+##     make cts CTS_FLOW_EFFORT= CTS_SKEW_EFFORT= CTS_OPT_HOLD_TARGET= \
+##              CTS_OPT_SETUP_TARGET= RUN_TAG=control IN_RUN_TAG=main
+## is the control run, and cts_manifest.txt records which one it was.
+##
+## THE NAMES ARE DELIBERATE AND MUST NOT BE "HARMONISED".
+## opt_signoff_hold_target_slack and opt_signoff_setup_target_slack EXIST in
+## Innovus 21.11-s130_1, default to 0.0, and ACCEPT A VALUE -- set to 0.100 the
+## attribute reads back 0.1 (measured 2026-08-29). They belong to the signoff
+## optimiser and opt_design does not use them. Setting the signoff-flavoured
+## name in Innovus therefore passes a read-back guard, changes nothing, and
+## produces a run that looks configured and was not. The shipped rc2/rc3fix/rc4
+## hold closures came from the signoff optimiser; their evidence does not
+## transfer to these four lines and these four lines will not reproduce them.
+export CTS_FLOW_EFFORT       ?= extreme
+export CTS_SKEW_EFFORT       ?= extreme
+export CTS_OPT_HOLD_TARGET   ?= 0.080
+export CTS_OPT_SETUP_TARGET  ?= 0.075
+
+## ONE MORE PASS AT CTS, AND IT IS THE ONLY LINE HERE THAT ADDS OPTIMISATION
+## RATHER THAN CONFIGURING IT. Read by ASIC/eth-chiplet/hooks/post_cts.tcl.
+##
+## flow/innovus/3_cts.tcl runs opt_design -post_cts (setup + DRV) at :1283 and
+## opt_design -post_cts -hold at :1292, in that order, with nothing after. With
+## no hold target that was harmless. With CTS_OPT_HOLD_TARGET set it is exactly
+## the order measurement says goes wrong: at route, a heavy hold pass took setup
+## from +0.010 to -0.023 AND introduced 6 real max_capacitance and 2 real
+## max_transition endpoints where there had been none, and the setup pass run
+## after it put setup back to +0.025, kept the hold repair, and returned both
+## DRV counts to zero for 12 cells and 8 min 15 s. That is why ROUTE_OPT_MODE is
+## hold_then_setup; this is the same move at the stage where the hold buffers
+## are now actually inserted, run before the attributes are restored so the hold
+## target still guards the margin it is meant to keep.
+##
+## NOT MEASURED AT CTS. Every one of those numbers is post-route. No run on this
+## design has ever issued a second opt_design -post_cts. Set this to 0 for the
+## toolkit's stock two-pass order, and compare drv_03_cts_opt.rep against
+## gdsrun-20260826-rc1 either way. The hook skips the pass entirely when no hold
+## target is set, so a control run does not pay for it.
+export CTS_POST_HOLD_SETUP   ?= 1
+
+## ---------------------------------------------------------------------------
+## PLACEMENT SEES THE MODEL SIGNOFF USES, OR IT OPTIMISES AGAINST A FICTION.
+##
+## Read by ASIC/asic-toolkit/flow/innovus/2_place.tcl:72-73, applied in its
+## section 8 after init_design and before the floorplan and placement. Both
+## default to 0 in the toolkit, and this design has never turned either on.
+##
+## WHAT PLACEMENT ACTUALLY RAN AT. get_db timing_analysis_type on a COPY of
+## gdsrun-20260826-rc1's own placed database reads `best_case_worst_case`, and
+## report_timing_derate on it prints no derate at all. So placement and the
+## pre-CTS optimisation ran with min and max delay NOT separated and with no
+## variation budget beyond the SDC's clock uncertainty. OCV first appears at
+## CTS, where flow/steps/cts_setup.tcl sets it; derate first appears at CTS too,
+## via CTS_DERATE=1 above.
+##
+## WHAT THAT IS WORTH, MEASURED ON THIS DESIGN'S OWN PLACED DATABASE.
+## Innovus 21.11-s130_1, a COPY of gdsrun-20260826-rc1's placed snapshot, one
+## session, 2026-08-29. report_timing_summary as read; then OCV and the four
+## derate factors applied to the SAME database in memory and re-timed. Only the
+## timing model differs between the two rows:
+##
+##     model placement ran at   setup WNS +0.009   TNS    0.000   FEP     0
+##     OCV + derate applied     setup WNS -0.470   TNS -222.307   FEP 1,144
+##
+## The pre-CTS optimiser therefore declared closure at +9 ps against a model
+## that is 479 ps optimistic on the worst path and that hides 1,144 failing
+## endpoints and 222 ns of negative TNS -- 1,112 of them reg2reg. This is a
+## bigger number than the 226 ps the derate is worth on the ROUTED database
+## (build/derate-feas-20260826/), and it should be: this row carries the
+## min/max split as well as the derate.
+##
+## READ IT AS WORK MOVED, NOT WORK ADDED. Those 1,144 endpoints are repaired
+## today -- CTS_DERATE=1 above means ccopt and opt_design -post_cts already face
+## the derated model, and rc1 reached +0.005 setup at 03_cts_opt. What this
+## change alters is WHERE the repair happens: at placement, where cells can
+## still be moved, instead of after the clock tree is built, where mostly they
+## can only be resized. The area could plausibly go either way and no run has
+## measured it.
+##
+## PLACE_DERATE=1 REQUIRES PLACE_OCV=1 and the toolkit refuses the pair the
+## other way round -- "without min/max separation a derate pair has only one
+## side to apply to". The four factors are NOT pinned here: 2_place.tcl resolves
+## them tech-pack-first and falls back to the same 0.95/1.05/0.97/1.03 the CTS
+## and route stages use, so all three stages move together the day the pack
+## carries a foundry OCV table. Pinning them here would make that fallback dead
+## code, which is the same argument the ROUTE derate block above makes.
+##
+## THREE THINGS THIS IS NOT, BECAUSE EACH IS EASY TO CLAIM AND WRONG.
+##  * IT IS NOT MEASURED ON THIS DESIGN. The toolkit calls it a knob "because it
+##    has not been measured", and turning it on here does not change that. The
+##    first run at it must be compared against gdsrun-20260826-rc1 on placed
+##    cell count and on place_manifest.txt density, not just on timing.
+##  * IT DOES NOT REPAIR HOLD. Nothing repairs hold before CTS; opt_design
+##    -pre_cts does setup and DRV. Expect the hold number at 01b_place_opt to
+##    get WORSE, because the report finally has min/max to separate. That is the
+##    measurement arriving, not a regression.
+##  * IT IS THE FIRST THING TO DROP IF THE AREA PROJECTION MISSES. It is the
+##    only change in the rc5 set that does not target hold, and 1,144 endpoints
+##    put in front of the pre-CTS optimiser is a cell count nobody has counted.
+##    If the run lands near the ~92.2% wall, take PLACE_DERATE out first and
+##    keep the hold changes.
+##
+## SAFE WITH THE CTS SOURCE-LATENCY GATE, and that is worth stating because the
+## worst defect in this flow's history was OCV enabled at the WRONG time -- in
+## route_setup.tcl, AFTER ccopt, which left every hold check missing its capture
+## source latency (docs/tapeout/23-pnr-flow-notes.md). Moving OCV EARLIER is the
+## safe direction: gate 1 in 3_cts.tcl asserts timing_analysis_type is already
+## ocv before ccopt_design, and this makes it true sooner rather than later.
+export PLACE_OCV     ?= 1
+export PLACE_DERATE  ?= 1
 
 ## ---------------------------------------------------------------------------
 ## RUN REPORT -- every stage's VALUES, in four renderings.
