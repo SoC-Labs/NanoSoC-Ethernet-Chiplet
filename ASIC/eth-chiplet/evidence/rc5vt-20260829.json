@@ -1,0 +1,107 @@
+{
+ "design": "nanosoc_eth_chiplet_pads",
+ "run_tag": "rc5vt-20260829",
+ "stream": "ASIC/eth-chiplet/build/rc5vt-20260829/outputs/nanosoc_eth_chiplet_pads.gds",
+ "supersedes": "NOTHING. rc5vt SUPERSEDES NO CANDIDATE AND IS NOT A SUBMISSION. Every other spec in this directory describes a stream someone proposed to send to a foundry; this one describes a VIRTUAL TAPEOUT whose subject is the FLOW. rc4-20260829 remains the shipping candidate and this file must not be read as replacing it -- see `xor_reference`, which names rc4's stream as the reference precisely so that the two can be told apart geometrically rather than by their file names.\n  WHAT A VALIDATION RUN IS FOR, AND WHY THE DISTINCTION IS NOT COSMETIC. rc2, rc3fix and rc4 are ECO trees: each starts from an existing routed database, applies a targeted edit and re-streams. None of them re-ran synthesis, placement, CTS or route, and none of them carries reports/route_manifest.txt -- which is why scripts/ci/build_freshness.py still names gdsrun-20260826-rc1 (26 August) as the newest FINISHED route three candidates later. The flow that produced the shipping GDS has therefore not been exercised end to end since 26 August, across a constraints change (b7aec51, internal slew + the hold views), an mmmc change (ec7948c, per-corner RC temperature) and an LVS root fix (.GLOBAL VSS). rc5vt runs it, so that the next time somebody needs a full flow it is known to work rather than assumed to.\n  THE MEASUREMENT THAT MATTERS IS NOT THE DIE. It is whether the gates can tell. Grade one iteration with:\n      SIGNOFF_GRADED_BUILD=rc5vt-20260829 scripts/ci/rc5_grade.py --build-tag rc5vt-20260829\n  which answers five questions and, for each, runs the same predicate over THIS RUN'S OWN artefacts mutated to carry the defect, and reports the row NOT-MEASURED if that mutation did not flip the answer.",
+ "base_run": "ASIC/eth-chiplet/build/rc5vt-20260829",
+ "session_logs": [
+  "ASIC/eth-chiplet/build/rc5vt-20260829/work/innovus.log",
+  "ASIC/eth-chiplet/build/rc5vt-20260829/work/innovus.log1",
+  "ASIC/eth-chiplet/build/rc5vt-20260829/work/innovus.log2"
+ ],
+ "require_measurable": [
+  "innovus.log2"
+ ],
+ "lef_root": "ASIC/eth-chiplet/build/rc5vt-20260829/work/libs/lef",
+ "macro_scope": [
+  "flash_cache_data",
+  "flash_cache_tag"
+ ],
+ "calibre_run": "ASIC/eth-chiplet/build/rc5vt-20260829/work/drc_run",
+ "connectivity_reps": [
+  "ASIC/eth-chiplet/build/rc5vt-20260829/reports/nanosoc_eth_chiplet_pads_imp_connectivity_prestream.rep"
+ ],
+ "lvs_report": "ASIC/eth-chiplet/build/rc5vt-20260829/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep",
+ "sta_run": "ASIC/sta/work/rc5vt-20260829",
+ "antenna_run": "ASIC/genus-innovus/calibre_runs/ant_rc5vt_0829",
+ "xor_reference": {
+  "stream": "ASIC/eth-chiplet/build/rc4-20260829/outputs/nanosoc_eth_chiplet_pads_rc4_logo.gds",
+  "why": "rc4's shipped stream, md5 6b0833c4216bdb683ed2427cd0deba75 (verified on disk 2026-08-29). CHOSEN, AND CHOSEN TO MEASURE A DIFFERENCE -- read this before reading the number.\n  EXPECT A NON-ZERO RESULT. rc1's spec named a reference from the same intended layout reached by a different route, and scored gds-layout-identity PASS on a zero. THIS IS NOT THAT COMPARISON and a zero here would be the surprising outcome, not the wanted one. rc5vt is a fresh synthesis, placement, CTS and route under constraints that CHANGED after rc4's lineage was frozen: 3c1953f/b7aec51 added an internal-slew constraint and promoted two hold views, dbb6b15 recomputed the duty-cycle term, ec7948c re-extracted each RC corner at its own temperature. A flow that reproduced rc4's polygons byte for byte through all of that would mean the constraint changes reached nothing, which is a worse finding than a large XOR.\n  SO WHAT IS THE REFERENCE FOR. Three things a bare stream cannot tell you on its own. (1) SCOPE: the arbiter reports the DIFFERENCE PER LAYER, so `which layers moved` is the answer, and it is checkable against what the changed constraints should have touched -- routing and cell placement, not the pad ring, not the seal ring, not the ROM macros, not the logo. A difference on a layer nothing in the delta explains is a finding. (2) TRANSFER: every geometric measurement made on rc4 -- its Calibre four-tier, its LVS discrepancy list, its antenna scope -- transfers to rc5vt exactly as far as the two streams agree, and no further. The XOR is what says how far. (3) A ZERO ON A LAYER IS EVIDENCE TOO: an untouched pad ring and an untouched seal ring are what make rc4's padring-gds and seal-ring results readable on this stream at all.\n  WHAT IT DOES NOT PROVE, stated because a non-zero XOR invites the opposite error. It does not say rc5vt is WRONG. It does not say rc4 is right. Two streams can differ and both be manufacturable; DRC, LVS and LEC answer that, and the foundry's merged view -- dummy fill and seal ring, which are in neither of these files -- answers none of it.\n  MECHANICAL NOTE. evidence_flow.py's gds-layout-identity gate returns FAIL on any non-zero difference. That verdict is EXPECTED here and is registered as such in known_bad under `xor-vs-rc4-expected-nonzero`; it must not be silenced by removing this reference, which would take the row back to NOT-MEASURED and measure nothing at all."
+ },
+ "publish": {
+  "project": "ethchip",
+  "block": "nanosoc_eth_chiplet_pads",
+  "klass": "candidate"
+ },
+ "known_bad": [
+  {
+   "id": "xor-vs-rc4-expected-nonzero",
+   "what": "gds-layout-identity is expected to render FAIL on this run. The gate's only non-zero verdict is FAIL, and rc5vt is a different lineage from its reference by construction -- see xor_reference for what the comparison is FOR. A FAIL here is the gate working; a PASS would mean the constraint changes of 26-29 August reached no polygon.",
+   "decision": "ACCEPTED IN ADVANCE, and bounded by a number rather than by a word. The acceptable outcome is a difference confined to the layers a route-and-place delta can touch. The gate cannot express that, so the ARBITER'S PER-LAYER OUTPUT is the evidence and this row is where it gets read: evidence/gds_xor.json lists layer_differences, and any difference on the pad-ring, seal-ring, LOGO or ROM-macro layers is OUT OF SCOPE for this waiver and is a finding, not an accepted one.",
+   "person": "flow owner -- rc5 virtual tapeout",
+   "date": "2026-08-29",
+   "withdraw_when": "either (a) the per-layer difference is reviewed and every differing layer is one a synthesis/place/route delta explains, at which point this row is rewritten as a measured result rather than an accepted defect, or (b) rc5vt is compared against a reference from its OWN lineage -- a re-stream of its own database -- which would make a zero meaningful and this waiver unnecessary."
+  },
+  {
+   "id": "sta-untested-checks-ENUMERATED",
+   "what": "CLOSED ON rc5vt, and closed by measurement rather than by widening the gate. rc2, rc3fix and rc4 each carry 57,955 UNTESTED timing checks with zero violated -- the same number on all three -- and every one of those specs filed it as NOT-MEASURED with the words 'nobody has enumerated these endpoints'. They are enumerated now. Run on rc4's OWN database on 2026-08-29 via scripts/ci/sta_untested_reasons.tcl (57 s, no extraction: why a check is untested is a property of the netlist and the SDC, not of an RC corner): SETUP mode 43,200 no_endpoint_clock + 9,642 const + 5,113 false_path = 57,955, exactly the coverage table's total; HOLD mode 2,119 false_path + 258 const = 2,377, likewise exact. ZERO unknown on either side. rc4's spec guessed that the identical Setup/Hold and Recovery/Removal counts were 'the signature of one set of endpoints excluded from timing altogether'; the enumeration confirms it and names them.",
+   "decision": "THE GATE MOVED FROM `untested > 0` TO `unknown > 0`, which is a strengthening and not a relaxation, and the reason is that the old arm could not fail usefully. 169,356 of this design's checks are PulseWidth, so the total can never be zero; the arm was therefore either overridden or the whole stage demoted to gate: report. It was demoted. What is gated now is ATTRIBUTION -- every untested check must carry one of Tempus's closed reason set -- and any reason string the parser does not recognise counts as `unknown`, so a format drift fires the gate instead of shrinking the histogram. sta_gate.py --selftest carries five arms for this, including a POSITIVE control (58 untested checks, all attributed, must PASS) so the gate cannot quietly revert to failing on the total under a new name.",
+   "person": "flow owner -- rc5 virtual tapeout",
+   "date": "2026-08-29",
+   "withdraw_when": "the 43,200 no_endpoint_clock PulseWidth checks are dispositioned. THEY ARE THE REAL FINDING AND THEY ARE NOT A DECISION: three quarters of the untested population is a pulse-width check on a CDN async-reset pin where no clock is defined at the endpoint. false_path and const are somebody's SDC; no_endpoint_clock is a constraint hole nobody wrote. Withdraw when either a clock is defined at those pins or a written argument says a CDN pulse-width check is meaningless here -- and note that the count is currently a WARN with the count itself as the tripwire, so it moving is visible."
+  },
+  {
+   "id": "flow-not-exercised-end-to-end-since-0826",
+   "what": "The premise of this run, recorded as a defect because that is what it is. rc2, rc3fix and rc4 are ECO trees. None carries reports/route_manifest.txt, so build_freshness's 'newest finished route' has been gdsrun-20260826-rc1 for three candidates -- and in the meantime the constraints (b7aec51, dbb6b15), the mmmc (ec7948c) and the LVS deck (.GLOBAL VSS) all changed. Nothing has demonstrated that a full flow still completes under them.",
+   "decision": "THIS RUN IS THE WITHDRAWAL. It is recorded rather than assumed so that a green rc5vt is read as closing something specific, and so that if rc5vt does NOT complete, the failure is a known risk materialising rather than a surprise.",
+   "person": "flow owner -- rc5 virtual tapeout",
+   "date": "2026-08-29",
+   "withdraw_when": "ASIC/eth-chiplet/build/rc5vt-20260829/reports/route_manifest.txt exists with a parseable date line, and `SIGNOFF_BUILD_ROOT=... python3 scripts/ci/build_freshness.py` names rc5vt-20260829 as the newest finished route."
+  },
+  {
+   "id": "toolkit-pin-not-on-any-remote",
+   "what": "ASIC/asic-toolkit is pinned at c6ce42d and that commit is on NO remote-tracking ref of its own remote. MEASURED 2026-08-29 by ASIC/asic-toolkit/ci/check-pins.sh, online (not --offline: an offline run can only render this UNVERIFIED, and an unanswerable question is not a pass). A fresh clone of this superproject cannot check the toolkit out, so rc5vt as it stands is reproducible on exactly one disk -- and the toolkit is the engine that builds the GDS.",
+   "decision": "BLOCKING, NOT WAIVED. scripts/ci/rc5_grade.py's pre-flight includes pins-reachable and exits 3 on it, so no rc5 iteration can be graded while this stands. That is deliberate: this is the same class as the reference project's GDS whose synthesis and place-and-route ran at different toolkit commits, and it is not a thing to grade around.",
+   "person": "flow owner -- ESCALATED, needs whoever owns the toolkit remote",
+   "date": "2026-08-29",
+   "withdraw_when": "`ASIC/asic-toolkit/ci/check-pins.sh` (online) reports `ok pins.reachable`. That means pushing the toolkit commit before the pin that names it, which is the ordering the gate's own message asks for."
+  }
+ ],
+ "not_measured": [
+  {
+   "id": "po-r8-post-merge",
+   "asserts": "zero PO.R.8 floating gates after the foundry's library merge",
+   "why": "CARRIED FROM rc4 UNCHANGED IN KIND, and it cannot be otherwise on this site: PO.R.8 counts on every stream in this lineage are produced against a front-end kit with no standard-cell, IO or bond-pad LAYOUT, so a poly-over-diffusion check cannot fire against geometry that is not in the stream. The number this site measures is a floor. Only the foundry's merged view can answer it, and rc5vt is a validation run that will not be submitted, so nothing will ever measure it for THIS stream. Recorded so the report does not imply otherwise."
+  },
+  {
+   "id": "erc-padshorts",
+   "asserts": "ERC and pad-short results for this stream",
+   "why": "CARRIED. Both arrive from IMEC's PadShorts report rather than from the Archive_*/erc report, which has been null on every submission. rc5vt will not be submitted, so no IMEC round trip will happen for it. The local ERC deck runs and is collected, and it is not the same check."
+  },
+  {
+   "id": "bnd-sealring",
+   "asserts": "bond-pad / seal-ring BEOL rules on this stream",
+   "why": "CARRIED. 187 of the local BND deck's 205 rulechecks run over EMPTY layers, so a local zero measures the layer map and not the seal ring. Unchanged by anything in rc5vt."
+  },
+  {
+   "id": "metal-density",
+   "asserts": "the stream meets the foundry density rules",
+   "why": "CARRIED, and rc5vt will make it WORSE-LOOKING rather than better: drc_census counts 6,117 failing density windows on rc4 and metal fill is the fix, which this flow does not yet configure. A validation run is the right place for that number to be visible and the wrong place to act on it."
+  },
+  {
+   "id": "rail-ir-drop-em",
+   "asserts": "IR drop and electromigration on the stream this run produces",
+   "why": "CARRIED FROM rc4's `rail-not-rerun-on-rc4`. The rail flow is pinned to a build tag of its own and rerunning it is hours of Voltus; rc5vt validates the RTL-to-GDS flow, not the power-integrity flow. Read rc2's numbers, and read them as being about rc2."
+  },
+  {
+   "id": "gate-level-simulation",
+   "asserts": "that the netlist this run produces still executes firmware",
+   "why": "NOT RUN. gls-netlist grades PUBLISHED simulation evidence under reports/gls/<item>/verdict.txt, and publishing it is a multi-hour VCS/Xcelium run over a 42 MB netlist whose supplies must be completed first, done by hand. rc5vt publishes none, so that stage will render its own EXPECTED RED -- an absent file, not a netlist finding. It is exempted in scripts/ci/build_freshness.py for exactly this reason and the exemption is self-expiring: the day any GLS evidence appears under the newest build, it lapses."
+  },
+  {
+   "id": "xor-per-layer-review",
+   "asserts": "that every layer differing from rc4 is a layer a place-and-route delta explains",
+   "why": "The arbiter produces the per-layer difference list; NOBODY HAS READ ONE FOR THIS PAIR YET, because rc5vt has not been streamed at the time this spec is written. The known_bad row `xor-vs-rc4-expected-nonzero` is where that review lands, and until it happens the accepted-in-advance FAIL is bounded by an intention and not by a number. Filed separately from the waiver so the waiver cannot be read as though the review had been done."
+  }
+ ]
+}

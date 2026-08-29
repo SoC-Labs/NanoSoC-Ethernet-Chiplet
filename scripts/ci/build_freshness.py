@@ -75,6 +75,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -85,8 +86,32 @@ except ImportError:
     sys.exit("build-freshness: PyYAML required (pip install pyyaml)")
 
 MANIFEST = Path("ci/signoff.yaml")
-BUILD_ROOT = Path("ASIC/eth-chiplet/build")
+# Overridable so a git WORKTREE can grade the build tree that actually exists.
+# ASIC/eth-chiplet/build is gitignored and lives in exactly one checkout; a
+# worktree cut for an rc iteration has none, and without this the gate reports
+# "no route has finished anywhere" — an indictment of the run that is really an
+# artefact of where it was invoked. Read-only: nothing here writes.
+BUILD_ROOT = Path(os.environ.get("SIGNOFF_BUILD_ROOT") or "ASIC/eth-chiplet/build")
 ROUTE_MANIFEST = "reports/route_manifest.txt"
+
+# -----------------------------------------------------------------------------
+# MANIFEST VARIABLES. ci/signoff.yaml names the graded build ONCE, as
+# @GRADED_BUILD@, resolved from the environment by scripts/ci/signoff.py.
+#
+# THIS FILE HAS TO RESOLVE IT TOO, AND THAT IS THE LOAD-BEARING PART. A pin that
+# became a token would otherwise vanish from this scan: `pins()` looks for build
+# names, `@GRADED_BUILD@` is not one, and thirteen stages would quietly stop
+# being freshness-checked at the exact moment they became easy to repoint. That
+# would make tokenising the manifest a way to switch this gate off.
+#
+# The resolver is 20 lines rather than an import of signoff.py because that
+# module computes its ROOT from __file__, and under `prove` this script runs in
+# a sandbox where __file__ is a symlink back into the real tree — it would read
+# the real manifest and the real build directory instead of the fixture's. Every
+# path here stays relative to the current directory. Duplicated deliberately;
+# the shape is asserted by ci/fixtures/build-freshness/fail-unset-variable.
+# -----------------------------------------------------------------------------
+_VAR_RE = re.compile(r"@([A-Z][A-Z0-9_]*)@")
 
 # This stage's own row names build tags in the register below. An exemption is
 # not a pin, so scanning ourselves would report our own documentation as stale.
@@ -162,13 +187,20 @@ def _exempt_gls(newest: Path) -> bool:
     return not list(newest.glob("reports/gls/*/verdict.txt"))
 
 
+# WITHDRAWN 2026-08-29: ("lec", "gdsrun-20260821-slpads").
+#
+# Not waived away — the exemption's own second condition had failed and this
+# gate was correctly reporting it LAPSED: slpads' _gate.v is no longer identical
+# to the newest finished build's, so `lec` was proving equivalence about a
+# netlist nothing ships. The fix is the one the predicate's docstring asks for,
+# not a rewritten reason: `lec` is now pinned to @GRADED_BUILD@ like every other
+# candidate-grading stage. A full-flow rc run synthesises, so it carries the
+# work/fv the exemption said the newest build lacked; an ECO-only tree does not,
+# and `lec` then renders UNVERIFIED against it, which is the true statement.
+#
+# _exempt_lec() is kept below, unreferenced, because it is the argument. Nothing
+# calls it, and `orphan_exemptions()` would report it if the key came back.
 EXEMPT = {
-    ("lec", "gdsrun-20260821-slpads"): (
-        _exempt_lec,
-        "the newest build has no work/fv (it reused this build's synthesis "
-        "outputs without the Genus model), and this build's _gate.v is "
-        "byte-identical to the newest build's — so grading it IS grading the "
-        "shipping netlist"),
     ("lec-selftest", "full-20260814"): (
         _exempt_lec_selftest,
         "RUN_TAG here is only the directory the harness's mutation transcripts "
@@ -307,6 +339,31 @@ def newest_finished(inv):
 _COMMENT_LINE = re.compile(r"^\s*#")
 
 
+def _var_values():
+    """{NAME: value} for every variable ci/signoff.yaml declares, from the env.
+
+    Returns (values, problems). A declared variable with no value in the
+    environment is a PROBLEM, not an empty string: substituting "" would turn
+    `build/@GRADED_BUILD@/outputs` into `build//outputs`, which names no build,
+    matches no directory, and would be reported as a clean scan.
+    """
+    decl = (_load().get("vars") or {})
+    values, problems = {}, []
+    for name, spec in sorted(decl.items()):
+        envvar = (spec or {}).get("env") or ""
+        val = os.environ.get(envvar, "").strip() if envvar else ""
+        if val:
+            values[name] = val
+        else:
+            problems.append(
+                "ci/signoff.yaml resolves its graded build through @%s@ and "
+                "nothing set %s. Every stage that names it is therefore pinned "
+                "to NOTHING, which this scan cannot tell apart from a stage that "
+                "is pinned correctly. Export %s=<build tag> before grading."
+                % (name, envvar or "(no env: declared)", envvar or "<env>"))
+    return values, problems
+
+
 def _text_of(stage):
     """Every parsed value of a stage as one blob, with comment LINES removed.
 
@@ -329,7 +386,13 @@ def _text_of(stage):
 
     walk(stage)
     lines = "\n".join(parts).split("\n")
-    return "\n".join(l for l in lines if not _COMMENT_LINE.match(l))
+    txt = "\n".join(l for l in lines if not _COMMENT_LINE.match(l))
+    # Resolve @GRADED_BUILD@ so the pin this stage actually uses is the pin this
+    # scan judges. An unresolved token is left in place on purpose: it matches no
+    # build name, main() has already recorded the unset variable as a failure,
+    # and silently blanking it would manufacture a path that looks scanned.
+    vals, _ = _var_values()
+    return _VAR_RE.sub(lambda mo: vals.get(mo.group(1), mo.group(0)), txt)
 
 
 # A path-form reference: ASIC/eth-chiplet/build/<something>/
@@ -437,12 +500,48 @@ def main():
 
     bad = []
 
+    # An unset manifest variable comes FIRST: every finding below is computed
+    # from resolved stage text, so an unresolved token makes the rest of this
+    # scan a description of nothing.
+    _vals, _var_problems = _var_values()
+    bad.extend(_var_problems)
+
     for sid in sorted(dangling):
         for tag in sorted(dangling[sid]):
             bad.append("%s names build %r, which does not exist under %s. A pin "
                        "at a build nobody has can only ever render UNVERIFIED — "
                        "it is not a stale measurement, it is no measurement."
                        % (sid, tag, BUILD_ROOT))
+
+    # AN EXEMPTION FOR A PIN THAT NO LONGER EXISTS. The register above is a
+    # waiver list, and a waiver list rots in two directions: an entry whose
+    # REASON has lapsed (checked below, per pin) and an entry whose SUBJECT has
+    # gone — the stage was repointed, renamed or deleted. The second kind is
+    # invisible to the per-pin loop, because that loop only visits pins that
+    # exist, and it is the more dangerous of the two: it reads as a live, granted
+    # exemption in a file people consult before repointing anything.
+    # ONLY FOR STAGES THIS MANIFEST HAS. A fixture manifest carries two or three
+    # stages by design, and reporting every exemption whose stage is simply not
+    # in it would make this arm fire on every fixture — a gate that is red in the
+    # test harness gets the test harness changed, not the gate. The narrower
+    # question is the one worth asking anyway: the stage is here and no longer
+    # names the tag its waiver was written for.
+    manifest_stages = {s.get("id") for s in _load().get("stages", [])}
+    for (sid, tag) in sorted(EXEMPT):
+        # TWO NARROWINGS, both so this arm asks a question the tree can answer.
+        # The stage must EXIST here -- a fixture manifest carries two or three
+        # stages by design and reporting every absent one would make this arm red
+        # in the test harness, which gets the harness changed and not the gate.
+        # And the tag must be a build that EXISTS here -- an exemption naming a
+        # build this checkout does not have is not a waiver whose subject went
+        # away, it is a waiver about somewhere else.
+        if sid not in manifest_stages or not (BUILD_ROOT / tag).is_dir():
+            continue
+        if tag not in named.get(sid, set()):
+            bad.append("EXEMPT names (%s, %s) and %s does not pin %r any more. An "
+                       "exemption whose subject is gone is a waiver nobody can "
+                       "withdraw, and it is read as a live grant. Delete it, or "
+                       "restore the pin it was written for." % (sid, tag, sid, tag))
 
     finished = {n for n, f, _t in inv if f}
     for sid in sorted(named):

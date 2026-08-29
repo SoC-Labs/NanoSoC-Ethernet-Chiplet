@@ -1,23 +1,32 @@
-# Both pins are correct: drc names the newest FINISHED build, and lec
-# names an older one under an exemption that is still earned — the
-# newest build has no work/fv, and the two builds' _gate.v are the same
-# bytes, so grading the older one IS grading the shipping netlist.
-# FIXTURE, not the real ci/signoff.yaml — see ci/fixtures/README.md.
+# BOTH PINS ARE CORRECT: drc names the newest FINISHED build, and gls-netlist
+# names an older one under an exemption that is STILL EARNED -- no GLS
+# evidence is published under the newest build, so repointing would assert
+# an absent file rather than measure a netlist.
+# FIXTURE, not the real ci/signoff.yaml -- see ci/fixtures/README.md.
 # SYNTHETIC BY CONSTRUCTION and it has to be: this gate's subject IS the
-# manifest, so a fixture for it is a manifest. The stage ids below are the real
-# ones (drc, lec) because scripts/ci/build_freshness.py's exemption register is
-# keyed on (stage id, build tag) — a fixture using invented ids could not
-# exercise an exemption at all, which is half of what this gate does.
+# manifest, so a fixture for it is a manifest. The stage ids below are the REAL
+# ones because scripts/ci/build_freshness.py's exemption register is keyed on
+# (stage id, build tag) -- a fixture using invented ids could not exercise an
+# exemption at all, which is half of what this gate does.
+#
+# REWRITTEN 2026-08-29. These two cases used to turn on the (lec,
+# gdsrun-20260821-slpads) exemption. That exemption was WITHDRAWN when `lec` was
+# repointed at @GRADED_BUILD@ -- its own predicate had already lapsed and this
+# gate was correctly saying so -- and a fixture keyed on a waiver that no longer
+# exists proves nothing about the exemption machinery. They now turn on
+# (gls-netlist, fp1505), which is live: its predicate is "no gate-level
+# simulation evidence is published under the newest build", so repointing would
+# assert an absent file rather than measure a netlist.
 design: fixture
 top: fixture
 stages:
   - id: drc
-    description: "fixture stage"
+    description: "fixture stage -- correctly pinned to the newest finished build"
     run: make drc RUN_TAG=gdsrun-20260823-rzG
     needs_implementation:
       - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
-  - id: lec
-    description: "fixture stage"
-    run: make lec-syn RUN_TAG=gdsrun-20260821-slpads
+  - id: gls-netlist
+    description: "fixture stage -- pinned to an older build under an exemption"
+    run: make -C ASIC/gls-netlist gls RUN_TAG=fp1505
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/outputs/lec.dofile
+      - ASIC/eth-chiplet/build/fp1505/reports/gls/boot/verdict.txt

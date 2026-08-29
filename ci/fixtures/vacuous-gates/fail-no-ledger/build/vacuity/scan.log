@@ -1,0 +1,129 @@
+vacuity-scan: rendered 54 signoff.yaml run/check block(s) into the corpus
+vacuity-scan: corpus 381 file(s); 202 of them are this chiplet's
+
+== vacuous-gate scan - /home/dam1n19/SoCLabs/rc5vt-20260829/build/vacuity/mirror ==
+  ok vacuity.arm  22 rule(s) fire on invented specimens
+  ok vacuity.corpus  407 file(s) admitted to the scan
+  ok vacuity.ledger  28 triaged finding(s) on record
+  ok vacuity.vac.floor-sentinel  no undeclared instance
+  ok vacuity.vac.unanswerable-count  no undeclared instance
+  ok vacuity.vac.catch-warn-only  no undeclared instance
+  ok vacuity.vac.silent-continue  no undeclared instance
+  ok vacuity.vac.skip-is-pass  no undeclared instance
+  ok vacuity.vac.empty-var-exit-zero  no undeclared instance
+  ok vacuity.vac.short-circuit-cap  no undeclared instance
+  ok vacuity.ledger.fresh  every ledger entry still describes a finding this scan made
+warn  vacuity.known-real  27 gate(s) on record as UNABLE TO FAIL, not waived: vac.floor-sentinel@flow/genus/1_synthesis.tcl:104 vac.floor-sentinel@flow/innovus/2_place.tcl:129 vac.floor-sentinel@flow/innovus/2_place.tcl:130 vac.floor-sentinel@flow/innovus/2_place.tcl:131 vac.floor-sentinel@flow/innovus/2_place.tcl:132 vac.floor-sentinel@flow/innovus/2_place.tcl:171 vac.floor-sentinel@flow/innovus/2_place.tcl:203 vac.floor-sentinel@flow/innovus/4_route.tcl:194 vac.unanswerab
+
+-- gates on record as unable to fail --
+  vac.floor-sentinel       flow/genus/1_synthesis.tcl:104
+      SYN_MAX_UNCLOCKED defaults to -1, and BOTH arms that use it are guarded by `>= 0`, so neither the "count is readable" gate nor the "count is within limit" gate has ever run. The file's own comment records 16,653 unclocked clock pins - 27 percent of the reference design - sitting behind exactly this warning for a month
+      owner: flow/genus (another agent)
+  vac.floor-sentinel       flow/innovus/2_place.tcl:129
+      six knobs at -1: PLACE_EXPECT_MACROS, PLACE_MIN_ENDCAPS, PLACE_MIN_PG_VIAS, PLACE_MAX_PG_FRAGS, PLACE_EXPECT_PAD_INSTS, PLACE_MIN_MACRO_PG_GAP. place_gate_min and place_gate_max both return early on a negative bound, so all six print a number and gate nothing. The file says so itself: two of them "have defaulted to -1 since they were written and neither has ever gated anything"
+      owner: flow/innovus (another agent)
+  vac.floor-sentinel       flow/innovus/2_place.tcl:130
+      six knobs at -1: PLACE_EXPECT_MACROS, PLACE_MIN_ENDCAPS, PLACE_MIN_PG_VIAS, PLACE_MAX_PG_FRAGS, PLACE_EXPECT_PAD_INSTS, PLACE_MIN_MACRO_PG_GAP. place_gate_min and place_gate_max both return early on a negative bound, so all six print a number and gate nothing. The file says so itself: two of them "have defaulted to -1 since they were written and neither has ever gated anything"
+      owner: flow/innovus (another agent)
+  vac.floor-sentinel       flow/innovus/2_place.tcl:131
+      six knobs at -1: PLACE_EXPECT_MACROS, PLACE_MIN_ENDCAPS, PLACE_MIN_PG_VIAS, PLACE_MAX_PG_FRAGS, PLACE_EXPECT_PAD_INSTS, PLACE_MIN_MACRO_PG_GAP. place_gate_min and place_gate_max both return early on a negative bound, so all six print a number and gate nothing. The file says so itself: two of them "have defaulted to -1 since they were written and neither has ever gated anything"
+      owner: flow/innovus (another agent)
+  vac.floor-sentinel       flow/innovus/2_place.tcl:132
+      six knobs at -1: PLACE_EXPECT_MACROS, PLACE_MIN_ENDCAPS, PLACE_MIN_PG_VIAS, PLACE_MAX_PG_FRAGS, PLACE_EXPECT_PAD_INSTS, PLACE_MIN_MACRO_PG_GAP. place_gate_min and place_gate_max both return early on a negative bound, so all six print a number and gate nothing. The file says so itself: two of them "have defaulted to -1 since they were written and neither has ever gated anything"
+      owner: flow/innovus (another agent)
+  vac.floor-sentinel       flow/innovus/2_place.tcl:171
+      six knobs at -1: PLACE_EXPECT_MACROS, PLACE_MIN_ENDCAPS, PLACE_MIN_PG_VIAS, PLACE_MAX_PG_FRAGS, PLACE_EXPECT_PAD_INSTS, PLACE_MIN_MACRO_PG_GAP. place_gate_min and place_gate_max both return early on a negative bound, so all six print a number and gate nothing. The file says so itself: two of them "have defaulted to -1 since they were written and neither has ever gated anything"
+      owner: flow/innovus (another agent)
+  vac.floor-sentinel       flow/innovus/2_place.tcl:203
+      six knobs at -1: PLACE_EXPECT_MACROS, PLACE_MIN_ENDCAPS, PLACE_MIN_PG_VIAS, PLACE_MAX_PG_FRAGS, PLACE_EXPECT_PAD_INSTS, PLACE_MIN_MACRO_PG_GAP. place_gate_min and place_gate_max both return early on a negative bound, so all six print a number and gate nothing. The file says so itself: two of them "have defaulted to -1 since they were written and neither has ever gated anything"
+      owner: flow/innovus (another agent)
+  vac.floor-sentinel       flow/innovus/4_route.tcl:194
+      ROUTE_EXPECT_BONDPADS defaults to -1, which disables the bond-pad count gate AND the "was the count measurable" gate above it, because both sit behind the same `>= 0`
+      owner: flow/innovus (another agent)
+  vac.unanswerable-count   flow/innovus/3_cts.tcl:1413
+      `if {[pnr_msg_count TCLCMD-1130] > 0}`. pnr_msg_count returns -1 when the tool cannot answer, and its own docstring tells callers to treat that as UNVERIFIED and never as zero. -1 > 0 is false, so a tool that could not answer scores PASS. 2_place.tcl does the same query correctly, testing `< 0` first; CTS is the caller that does not
+      owner: flow/innovus (another agent)
+  vac.catch-warn-only      flow/common/pnr_utils.tcl:910
+      the other half of the same defect: when set_db timing_enable_simultaneous_setup_hold_mode fails, this warns that the summary will be SETUP ONLY and names TCLCMD-1130 as the evidence. The gate that reads TCLCMD-1130 is the one above, which cannot fire. The warning and its backstop are both open
+      owner: flow/common (asic-toolkit)
+  vac.catch-warn-only      flow/innovus/2_place.tcl:1400
+      the unplaced-instance count. The comment two lines above says "A failure to EVALUATE this is reported as unmeasured; it is never allowed to read as a pass" and the code contradicts it - the catch arm is a bare warn, nothing is appended to any failure list, and the stage reaches exit 0. This is the shape place_gate_min was written to avoid, in the file that defines place_gate_min
+      owner: flow/innovus (another agent)
+  vac.catch-warn-only      flow/innovus/4_route.tcl:1945
+      when the GDS map cannot be read, the manifest records `unreadable` for gds_map_lefobs and gds_map_spnet_names. That string is NOT in ci/lib.sh's CI_UNMEASURED_RE, so ci_is_measured returns TRUE for it and every downstream comparison treats it as a real value. The sentinel is honest and the vocabulary does not contain it
+      owner: flow/innovus (another agent)
+  vac.catch-warn-only      flow/steps/filler.tcl:156
+      a failed `route_eco -target` writes <block>_route_eco_FAILED.txt saying "do not stream this database out for manufacture", and NOTHING READS THAT FILE - grep over flow/, mk/ and ci/ finds only the two lines that write and mention it. The run continues, the stage exits 0, and the stream is written
+      owner: flow/steps (another agent)
+  vac.catch-warn-only      scripts/eth-chiplet/ASIC/genus-innovus/scripts/2b_pnr_place_eval.tcl:1165
+       nothing asserts __tr_saved, so on a failed rename the PRODUCTION timingReports are filed into REPORT_DIR as this run's and Status still prints OK; and separately at 1286 unplaced stays the string "not measured" while the banner prints Unplaced: not measured with Status OK and exit 0 
+      owner:  ASIC/genus-innovus (flow owner)
+  vac.catch-warn-only      scripts/eth-chiplet/ASIC/genus-innovus/scripts/2b_pnr_place_eval.tcl:1286
+       nothing asserts __tr_saved, so on a failed rename the PRODUCTION timingReports are filed into REPORT_DIR as this run's and Status still prints OK; and separately at 1286 unplaced stays the string "not measured" while the banner prints Unplaced: not measured with Status OK and exit 0 
+      owner:  ASIC/genus-innovus (flow owner)
+  vac.silent-continue      flow/innovus/4_route.tcl:2754
+      a missing max_transition or max_capacitance row is skipped with no verdict of any kind - no hard entry, no soft entry, no warn. The setup row two hundred lines above is treated as hard when absent; these two are not
+      owner: flow/innovus (another agent)
+  vac.silent-continue      scripts/eth-chiplet/ASIC/genus-innovus/scripts/4b_pnr_route_eval.tcl:2162
+       tran_row and cap_row are PARSED report_timing_summary rows, not enumerated objects; when absent the DRV budget is never judged and route_gate.txt still writes "HARD FAILURES: none" 
+      owner:  ASIC/genus-innovus (flow owner)
+  vac.skip-is-pass         ci/tier.sh:217
+      CI_BASELINE_RUN defaults unset, the arm calls ci_skip and returns 0, and the caller's `if "$@"; then ci_pass "tier.compare"` records a PASS. ci_skip increments no counter, so the run compared nothing and the ladder says it passed. The same function has a second arm with a baseline set and no manifests on disk, where the loop body never runs, rc stays 0, and not even the skip id is emitted
+      owner: ci/ (tier layer)
+  vac.empty-var-exit-zero  mk/rom.mk:634
+      two gates - rom-gate-files on ROM_LIB_FILES and rom-compiler-probe on ROM_COMPILER_PROBE_ARGS - print a NOTE and exit 0 when their variable is empty, and both variables default empty. An undeclared project gets both gates green having opened nothing. The compiler probe is the gate that catches the 32-bit readdir failure that produced ROMs full of random data
+      owner: mk/ (another agent)
+  vac.empty-var-exit-zero  mk/rom.mk:794
+      two gates - rom-gate-files on ROM_LIB_FILES and rom-compiler-probe on ROM_COMPILER_PROBE_ARGS - print a NOTE and exit 0 when their variable is empty, and both variables default empty. An undeclared project gets both gates green having opened nothing. The compiler probe is the gate that catches the 32-bit readdir failure that produced ROMs full of random data
+      owner: mk/ (another agent)
+  vac.empty-var-exit-zero  mk/rom.mk:961
+      two gates - rom-gate-files on ROM_LIB_FILES and rom-compiler-probe on ROM_COMPILER_PROBE_ARGS - print a NOTE and exit 0 when their variable is empty, and both variables default empty. An undeclared project gets both gates green having opened nothing. The compiler probe is the gate that catches the 32-bit readdir failure that produced ROMs full of random data
+      owner: mk/ (another agent)
+  vac.short-circuit-cap    scripts/asic-flow-drc-census:739
+      `saturated = sorted(c for c, n in nonzero.items() if cap and n >= cap)`. When the summary has no `Maximum Results/RuleCheck:` header, cap is None, the `and` short-circuits falsy for every check, and the saturation set is empty. The docstring says this check REFUSES TO VOUCH for a truncated run; with the header absent it vouches. It also flips `blocked` to False, so the manifest records real numbers where it should record `unmeasured`
+      owner: scripts/ (asic-toolkit)
+  vac.short-circuit-cap    scripts/asic-flow-rom-verify:1496
+      `if newest_macro and code_mtime > newest_macro + 1`. newest_macro is max(..., default=0), so an empty macro set makes the whole staleness comparison vanish rather than fail. Probably covered by the views_present check upstream - that is a claim a human should confirm, which is why this is `real` and not `by-design`
+      owner: scripts/ (asic-toolkit)
+  vac.short-circuit-cap    scripts/eth-chiplet/scripts/ci/bnd_census.py:316
+       cap is None when the summary carries no "Maximum Results/RuleCheck:" header, nothing else tests it, and the run then prints PASS ... no check saturated over a truncated report 
+      owner:  scripts/ci (signoff harness owner)
+  vac.short-circuit-cap    scripts/eth-chiplet/scripts/ci/drc_census.py:503
+       same absent-header shape; rdb_capped backstops only the density windows, so a rulecheck summary with no cap header is scored "no check saturated" 
+      owner:  scripts/ci (signoff harness owner)
+  vac.short-circuit-cap    scripts/eth-chiplet/scripts/ci/evidence_flow.py:1705
+       cap = int(man.get("max_results") or 0) and no arm requires max_results, so a manifest lacking it makes every foundry rulecheck read as un-saturated 
+      owner:  scripts/ci (signoff harness owner)
+  vac.short-circuit-cap    scripts/eth-chiplet/scripts/ci/flow_values.py:1429
+       nothing tests cap for None, and drc.total is then emitted as measured with a note claiming no rulecheck reached the None-result cap 
+      owner:  scripts/ci (signoff harness owner)
+
+-- allowlist: instances declared deliberate --
+   ci/check-vacuous-gates.sh          vac.floor-sentinel,vac.unanswerable-count,vac.catch-warn-only,vac.silent-continue,vac.skip-is-pass,vac.empty-var-exit-zero,vac.short-circuit-cap
+      THIS FILE IS THE DETECTOR. It carries the pattern table and the invented arming specimens, so it matches itself by construction  [ci/ (asic-toolkit)]
+   test/*                             vac.floor-sentinel,vac.unanswerable-count,vac.catch-warn-only,vac.silent-continue,vac.skip-is-pass,vac.empty-var-exit-zero,vac.short-circuit-cap
+      the test tree plants these shapes deliberately, one per mutation case, so that the rules above can be shown to fire on something other than their own specimen  [test/ (asic-toolkit)]
+   ci/lib.sh                          vac.skip-is-pass
+      ci_skip is DEFINED here and the definition necessarily contains the word. The defect is at the CALL sites, which this rule finds there  [ci/ (asic-toolkit)]
+### Vacuous-gate scan
+
+| gate | result | detail |
+|---|---|---|
+| `vacuity.arm` | ok | 22 rule(s) fire on invented specimens |
+| `vacuity.corpus` | ok | 407 file(s) admitted to the scan |
+| `vacuity.ledger` | ok | 0 triaged finding(s) on record |
+| `vacuity.vac.floor-sentinel` | ok | no undeclared instance |
+| `vacuity.vac.unanswerable-count` | ok | no undeclared instance |
+| `vacuity.vac.catch-warn-only` | ok | no undeclared instance |
+| `vacuity.vac.silent-continue` | ok | no undeclared instance |
+| `vacuity.vac.skip-is-pass` | ok | no undeclared instance |
+| `vacuity.vac.empty-var-exit-zero` | ok | no undeclared instance |
+| `vacuity.vac.short-circuit-cap` | ok | no undeclared instance |
+| `vacuity.ledger.fresh` | ok | every ledger entry still describes a finding this scan made |
+| `vacuity.known-real` | warn | 27 gate(s) on record as UNABLE TO FAIL, not waived: vac.floor-sentinel@flow/genus/1_synthesis.tcl:104 vac.f... |
+
+All recorded gates passed. Read what that does and does not prove: `docs/source/howto/ci-what-it-checks.md`.
+
+
+vacuity: 11 passed, 0 failed, 1 warned
+vacuity-scan: scanner exited 0 over 381 file(s) (202 from this chiplet)

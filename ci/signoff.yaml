@@ -20,6 +20,46 @@
 design: nanosoc_eth_chiplet
 top: nanosoc_eth_chiplet
 
+# -----------------------------------------------------------------------------
+# vars: — THE GRADED BUILD IS ONE VALUE, AND IT HAS NO DEFAULT.
+#
+# Before 2026-08-29 this file named `gdsrun-20260823-rzG` 56 times,
+# `gdsrun-20260826-rc1` 26 times and `pinfix-20260824` 6 times — and named rc2,
+# rc3fix and rc4, the three candidates that had superseded them, ZERO times.
+# Thirteen physical stages rendered green while grading a die from 23 August.
+# The `build-freshness` stage below is what noticed; the reason it kept
+# happening is that repointing meant 67 hand edits in thirteen places.
+#
+# It is now one environment variable, and an UNSET one is an ERROR — exit 2,
+# naming the variable — never a default. A default is precisely how this file
+# went stale: whatever was current the day it was written becomes what every
+# later run silently grades.
+#
+#     export SIGNOFF_GRADED_BUILD=rc5vt-20260829
+#     scripts/ci/signoff.py run physical
+#
+# scripts/ci/build_freshness.py resolves the SAME variable, so the freshness
+# gate still sees a resolved tag and can still say "that build is three route
+# runs behind". Tokenising a pin must not be a way to make the freshness gate
+# stop seeing it, and that is asserted by build-freshness's own
+# fail-unset-variable fixture.
+#
+# NOT EVERY BUILD NAME BELOW IS THIS VARIABLE. `lec` (gdsrun-20260821-slpads),
+# `lec-selftest` (full-20260814) and `gls-netlist` (fp1505, gdsrun-20260819)
+# stay literal: each is pinned to a different build under a LIVE, self-expiring
+# exemption in scripts/ci/build_freshness.py, and the exemptions say those
+# stages CANNOT be repointed yet. Turning them into @GRADED_BUILD@ would repoint
+# them silently and delete the exemption's reason with it.
+# -----------------------------------------------------------------------------
+vars:
+  GRADED_BUILD:
+    env: SIGNOFF_GRADED_BUILD
+    description: >-
+      the build tag under ASIC/eth-chiplet/build/ that this signoff run grades.
+      Every physical stage reads this candidate's stream, its reports and its
+      routed database. There is no default: an unset tag must be impossible to
+      confuse with a measurement.
+
 stages:
   # --- RTL phase — no PDK, runs on either host --------------------------------
   - id: chip-boundary
@@ -508,6 +548,182 @@ stages:
   # applies to its KNOWN_OPEN register ("it will be handed back the moment it
   # starts passing"). An exemption here is a statement that the newest build
   # CANNOT YET be graded by that stage, and the day it can, this gate says so.
+  # --- THE TWO DETECTORS THIS REPOSITORY HAD AND NEVER CALLED ----------------
+  # Both existed, both worked, and nothing in any pipeline ran either of them.
+  # A detector nobody calls is indistinguishable from a detector nobody wrote,
+  # except that it reads in a review as coverage.
+
+  - id: pins-reachable
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "Every submodule pin this checkout names is on a remote — a fresh clone can build what was built here"
+    # WHY THIS IS BLOCKING AND WHY IT IS NOT `git submodule status`. Measured by
+    # the toolkit's own fixture: `git submodule status` prints an IDENTICAL,
+    # CLEAN line for a submodule with edited tracked files and for one holding
+    # an UNTRACKED file — and the untracked case is precisely "a module that
+    # exists in no commit anywhere". The `+` prefix appears only once the work
+    # has been committed, which is the case that is already safe. So a gate
+    # built on `+` is vacuous for the defect it was written to prevent.
+    #
+    # NOT --offline. Reachability against a STALE remote-tracking cache can only
+    # answer one direction soundly: an ancestor of a stale ref is still on the
+    # remote, but NOT an ancestor cannot tell "never pushed" from "pushed since
+    # this cache was written", and check-pins.sh correctly renders that
+    # UNVERIFIED. An UNVERIFIED reachability row is not a pass, and the check
+    # below rejects it as one — so this stage fetches.
+    #
+    # MEASURED 2026-08-29 on this worktree: pins.reachable FAILS. ASIC/asic-
+    # toolkit is pinned at c6ce42d, which is on NO remote-tracking ref of its
+    # own remote. rc5 as it stands cannot be checked out by anybody else. That
+    # is the finding, it is real, and it is why this row blocks.
+    pre:
+      - mkdir -p build/pins
+    # CI_VERDICT_DIR pinned: the toolkit's ci/lib.sh defaults it to
+    # <tree>/ci-verdicts, so this writes untracked clutter into the REPOSITORY
+    # ROOT otherwise -- in a tree several sessions commit from, and one more
+    # thing for a stray `git add -A` to sweep in.
+    run: CI_VERDICT_DIR=$PWD/build/pins/verdicts ASIC/asic-toolkit/ci/check-pins.sh 2>&1 | tee build/pins/pins.log; exit ${PIPESTATUS[0]}
+    # Re-derives from the log, not from the exit status, and the VACUITY clause
+    # is the census one: a scan that found zero submodules agrees with every
+    # claim below it and has measured nothing.
+    check: |
+      python3 - <<'EOF'
+      import re, sys
+      p = "build/pins/pins.log"
+      try:
+          t = open(p, errors="replace").read()
+      except OSError:
+          print(f"pins-reachable: FAIL — no log at {p}; the stage produced no evidence")
+          sys.exit(1)
+      bad = []
+      mo = re.search(r"pins\.census\s+(\d+) submodule", t)
+      if not mo:
+          bad.append("the log carries no pins.census row — the scan never counted anything")
+      elif int(mo.group(1)) == 0:
+          bad.append("0 submodules censused: every pin claim below that is true of "
+                     "an empty set. That is not a clean checkout")
+      tally = re.search(r"^pins: (\d+) passed, (\d+) failed, (\d+) warned$", t, re.M)
+      if not tally:
+          bad.append("no final tally line — the scan did not reach its own verdict, "
+                     "so this log is a partial run and not a measurement")
+      elif int(tally.group(2)) != 0:
+          bad.append(f"{tally.group(2)} pin gate(s) failed")
+      rows = re.findall(r"^\s*(ok|warn|UNVERIFIED|FAIL)\s+pins\.reachable\s+(.*)$", t, re.M)
+      if not rows:
+          bad.append("no pins.reachable row at all. That is THE row this stage "
+                     "exists for; a log without it says nothing about whether "
+                     "anybody else can obtain this tree")
+      else:
+          state, detail = rows[0]
+          if state == "UNVERIFIED":
+              bad.append("pins.reachable is UNVERIFIED (%s). An unanswerable "
+                         "question is not a pass — run without --offline so the "
+                         "remote-tracking refs are fresh" % detail[:120])
+          elif state != "ok":
+              bad.append("pins.reachable is %s: %s" % (state, detail[:200]))
+      for b in bad:
+          print("pins-reachable: FAIL —", b)
+      sys.exit(1 if bad else 0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/pins-reachable/pass
+      must_fail:
+        # The defect of record, verbatim from this worktree on 2026-08-29.
+        - ci/fixtures/pins-reachable/fail-unreachable
+        # --offline's honest non-answer, which must not read as a pass.
+        - ci/fixtures/pins-reachable/fail-unverified
+        # The vacuity case: zero submodules, every other row green.
+        - ci/fixtures/pins-reachable/fail-zero-submodules
+        # The row this stage exists for, simply absent from an otherwise clean log.
+        - ci/fixtures/pins-reachable/fail-no-reachable-row
+        - ci/fixtures/pins-reachable/fail-truncated
+        - ci/fixtures/pins-reachable/fail-no-log
+    artifacts:
+      - build/pins/pins.log
+
+  - id: vacuous-gates
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "The vacuous-gate scanner, pointed at THIS chiplet's gate code as well as the toolkit's"
+    # THE SCANNER'S CORPUS WAS THE TOOLKIT, AND ONLY THE TOOLKIT.
+    # ASIC/asic-toolkit/ci/check-vacuous-gates.sh censuses `flow tech ci mk
+    # scripts test` under its OWN directory, so in the whole time it has
+    # existed it has never read one line of ASIC/genus-innovus/scripts (the
+    # place-and-route stage gates), of scripts/ci (every signoff gate in this
+    # repository), of ASIC/sta, or of the embedded python and shell inside this
+    # very file. 205 files scanned, and the design's own gates all outside them.
+    #
+    # scripts/ci/vacuity_scan.sh mirrors the toolkit's corpus into build/ and
+    # adds this chiplet's — 407 files, and it renders each stage's run:/check:
+    # body as a .sh so the manifest's own gate logic is finally in scope. First
+    # run found 14 undeclared instances here, triaged in
+    # scripts/ci/vacuity_ledger_chiplet.txt: 7 by-design, 7 real. The 7 real
+    # ones are WARNED every run with an owner, not waived.
+    pre:
+      - mkdir -p build/vacuity
+    run: scripts/ci/vacuity_scan.sh 2>&1 | tee build/vacuity/scan.log; exit ${PIPESTATUS[0]}
+    # THE CHIPLET-COUNT CLAUSE IS THE POINT OF THE ROW. The scanner reports "no
+    # undeclared instance" just as happily over a corpus that contains none of
+    # this repository, and that green is what this stage exists to make
+    # impossible.
+    check: |
+      python3 - <<'EOF'
+      import re, sys
+      p = "build/vacuity/scan.log"
+      FLOOR = 100
+      try:
+          t = open(p, errors="replace").read()
+      except OSError:
+          print(f"vacuous-gates: FAIL — no log at {p}; the stage produced no evidence")
+          sys.exit(1)
+      bad = []
+      mo = re.search(r"^vacuity-scan: corpus (\d+) file\(s\); (\d+) of them are this chiplet",
+                     t, re.M)
+      if not mo:
+          bad.append("the log carries no corpus census line — the mirror did not build")
+      else:
+          allf, chip = int(mo.group(1)), int(mo.group(2))
+          if chip < FLOOR:
+              bad.append(f"only {chip} of {allf} scanned files are this chiplet's "
+                         f"(floor {FLOOR}). Every 'no undeclared instance' below "
+                         f"would be a statement about the toolkit and about "
+                         f"nothing in this repository")
+      led = re.search(r"`vacuity\.ledger` \| ok \| (\d+) triaged", t)
+      if not led:
+          bad.append("no vacuity.ledger census row — the triage ledger was not read")
+      elif int(led.group(1)) == 0:
+          bad.append("0 triaged findings on record: with an empty ledger the scan "
+                     "cannot tell a new defect from a known one")
+      tally = re.search(r"^vacuity: (\d+) passed, (\d+) failed, (\d+) warned$", t, re.M)
+      if not tally:
+          bad.append("no final tally line — the scan did not reach its own verdict")
+      elif int(tally.group(2)) != 0:
+          bad.append(f"{tally.group(2)} vacuity gate(s) failed — an UNDECLARED "
+                     f"unfailable-gate shape is present and nobody has triaged it")
+      rc = re.search(r"^vacuity-scan: scanner exited (\d+)", t, re.M)
+      if not rc:
+          bad.append("the wrapper printed no scanner exit line")
+      elif rc.group(1) != "0":
+          bad.append(f"the scanner exited {rc.group(1)}")
+      for b in bad:
+          print("vacuous-gates: FAIL —", b)
+      sys.exit(1 if bad else 0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/vacuous-gates/pass
+      must_fail:
+        - ci/fixtures/vacuous-gates/fail-scanner-red
+        # THE ROW'S REASON FOR EXISTING: a perfectly green scan of a corpus that
+        # contains none of this chiplet.
+        - ci/fixtures/vacuous-gates/fail-chiplet-absent
+        - ci/fixtures/vacuous-gates/fail-no-ledger
+        - ci/fixtures/vacuous-gates/fail-truncated
+        - ci/fixtures/vacuous-gates/fail-no-log
+    artifacts:
+      - build/vacuity/scan.log
+
   - id: build-freshness
     phase: physical
     gate: block
@@ -564,6 +780,12 @@ stages:
         # same doctrine as ir-drop's census arm: ranking by date is how a gate
         # silently picks the wrong object.
         - ci/fixtures/build-freshness/fail-ambiguous-newest
+        # THE NEW WAY TO GO BLIND, added with the @GRADED_BUILD@ variable on
+        # 2026-08-29. `pins()` scans for build NAMES, and a token is not one, so
+        # a manifest whose graded build is a variable nobody set pins NOTHING —
+        # and without this arm that renders as a clean scan. Thirteen stages
+        # would have gone unchecked in the same commit that made repointing easy.
+        - ci/fixtures/build-freshness/fail-unset-variable
     artifacts:
       - build/freshness/build_inventory.txt
 
@@ -685,6 +907,9 @@ stages:
     gate: block
     label: soclabs-pdk
     description: "Both boot ROM macros contain the boot firmware, word for word"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # The ROMs are MASK PROGRAMMED: wrong bits are a dead die and there is no
     # metal fix. Nothing else in this pipeline reads ROM contents — LEC compares
     # netlists, DRC compares geometry, and a ROM full of noise passes both.
@@ -761,7 +986,7 @@ stages:
     # rather than hard-coded, so it keeps working when the string above moves.
     run: |
       set -uo pipefail
-      ROMTREE="$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs"
+      ROMTREE="$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/romlibs"
       make -C ASIC -f common.mk --no-print-directory romlibs-verify \
            ROMLIBS_DIR="$ROMTREE"
       rc=${PIPESTATUS[0]}
@@ -790,7 +1015,7 @@ stages:
       import json, os, subprocess, sys
       # THE SAME TREE run: NAMES. Change both together, or this stage grades a
       # directory its own run never touched.
-      ROMTREE = os.path.abspath("ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs")
+      ROMTREE = os.path.abspath("ASIC/eth-chiplet/build/@GRADED_BUILD@/romlibs")
       rows = subprocess.run(["make", "-C", "ASIC", "-f", "common.mk",
                              "--no-print-directory", "rom-vars",
                              "ROMLIBS_DIR=" + ROMTREE],
@@ -863,8 +1088,8 @@ stages:
     # bits indicts the DESIGN, and this stage must never report the first as the
     # second. Same string as run: and check: above, on purpose.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs/eth_rom/eth_rom_via.memlib
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/romlibs/cc_rom/rom_via.memlib
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/romlibs/eth_rom/eth_rom_via.memlib
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/romlibs/cc_rom/rom_via.memlib
     check_proof:
       must_pass: ci/fixtures/rom-content/pass
       must_fail:
@@ -894,7 +1119,7 @@ stages:
     # the same defect class as a check that cannot fail. It is now the exact
     # input `run:` consumes below: absent, the stage is UNVERIFIED, not FAIL.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     # Content-correct at synthesis does NOT prove the bits reached the mask. The
     # macro is merged into the stream by write_stream from a hand-maintained
     # $gds_merge_list in scripts/config.tcl; a dropped or stale entry produces a
@@ -909,6 +1134,9 @@ stages:
     # re-encodes records on merge, so 0 of 126 structure hashes match on a
     # CORRECT chip. Content extraction is the only sound test here.
     description: "The ROM words inside the merged tapeout stream are the boot firmware"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # REPOINTED 2026-08-18, AND IT WAS BROKEN TWICE OVER.
     #
     #   1. ROM_GDS named ASIC/genus-innovus/outputs/nanosoc_eth_chiplet_pads.gds.
@@ -965,7 +1193,7 @@ stages:
     # so the 2026-08-17 verification of full-20260814's two boot ROMs says
     # nothing about it; a dropped or stale $gds_merge_list entry is exactly the
     # kind of fault a re-stream introduces.
-    run: make -C ASIC -f common.mk romlibs-verify-gds ROM_GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+    run: make -C ASIC -f common.mk romlibs-verify-gds ROM_GDS=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     check: |
       python3 - <<'EOF'
       import os, subprocess, sys
@@ -1086,14 +1314,18 @@ stages:
     # with 18,326 NON-EQUIVALENT points -- so this move does not turn a green
     # red; it moves a red onto the right subject.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/outputs/lec.dofile
-      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/outputs/nanosoc_eth_chiplet_pads_gate.v
-      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/work/fv
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/lec.dofile
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_gate.v
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/fv
     # NOTE this compares RTL -> SYNTHESISED netlist (via Genus's fv_map). It
     # does NOT read outputs/*_pnr.v — there is no post-P&R LEC anywhere in the
     # repo, despite package_submission.sh's MANIFEST claiming otherwise.
     # Needs work/lec.dofile and work/fv/ from `syn`; `make clean` destroys both.
     description: "Conformal LEC — RTL vs SYNTHESISED netlist equivalence (not post-P&R)"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures — they are cut from the slpads tree this stage was
+    # pinned to before the graded build became one variable.
+    proof_vars: {GRADED_BUILD: gdsrun-20260821-slpads}
     # `lec-syn`, NOT the toolkit's `lec`. Both compare RTL against <block>_gate.v.
     # `lec` runs the generated dofile as Genus wrote it, and Genus bakes that
     # run's absolute logs/, work/fv and outputs/ paths into it plus a native
@@ -1102,7 +1334,7 @@ stages:
     # paths, refuses a dofile that has lost its `set_dofile_abort exit`, and ends
     # with the same computed verdict the gate and pnr legs get -- and it is the
     # leg that has actually been run here.
-    run: make -C ASIC/eth-chiplet lec-syn RUN_TAG=gdsrun-20260821-slpads
+    run: make -C ASIC/eth-chiplet lec-syn RUN_TAG=@GRADED_BUILD@
     # `exit -f` DOES return a nonzero bit-flag status on non-equivalence
     # (-Force only suppresses the confirmation prompt; see Conformal's
     # `<COMMAND> EXIT` help and the exit-status bit table in LEC_debug.html).
@@ -1200,7 +1432,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import re, sys
-      B   = "ASIC/eth-chiplet/build/gdsrun-20260821-slpads"
+      B   = "ASIC/eth-chiplet/build/@GRADED_BUILD@"
       LOG = B + "/logs/lec_syn.log"
       VER = B + "/reports/lec/syn/verdict.txt"
 
@@ -1366,8 +1598,8 @@ stages:
         - ci/fixtures/lec/fail-no-verdict-line
         - ci/fixtures/lec/fail-empty-log
     artifacts:
-      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/logs/lec_syn.log*
-      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/reports/lec/syn/**
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/logs/lec_syn.log*
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/lec/syn/**
 
   - id: lec-selftest
     phase: physical
@@ -1566,8 +1798,8 @@ stages:
     # RESULT=PASS — 61,599 compare points, 61,599 equivalent, 0 non-equivalent,
     # 0 abort, 0 not-compared, golden and revised both named as rzG's own files.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads_gate_power.v
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads_pnr.v
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_gate_power.v
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_pnr.v
     timeout_s: 21600
     # Closes the gap this manifest previously declared under `unsupported`.
     # Golden is outputs/*_gate_power.v — the exact netlist 2_pnr_setup.tcl hands
@@ -1578,6 +1810,9 @@ stages:
     # Unlike `lec` it needs nothing from work/ except its own inputs, so it
     # survives `make clean`.
     description: "Conformal LEC — synthesised netlist vs POST-P&R netlist"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # NOT `make asic-lec-pnr`. That root forwarder now reaches the toolkit too,
     # but it carries no run tag, so it would resolve to RUN_TAG=default AND
     # SYN_RUN_TAG=default (flow.mk:129 defaults SYN_RUN_TAG to RUN_TAG) -- a
@@ -1587,7 +1822,7 @@ stages:
     # run and measure another. Omitting SYN_RUN_TAG would silently look for the
     # golden in build/fp1505/outputs/, where it does not exist, and flow.mk:833
     # would refuse in seconds -- a visible failure, but the wrong one.
-    run: make -C ASIC/eth-chiplet lec-pnr RUN_TAG=gdsrun-20260823-rzG SYN_RUN_TAG=gdsrun-20260823-rzG
+    run: make -C ASIC/eth-chiplet lec-pnr RUN_TAG=@GRADED_BUILD@ SYN_RUN_TAG=@GRADED_BUILD@
     # SAME TOOL, SAME GRAMMAR, SAME CHECK AS `lec` — deliberately, and read the
     # note there for the measurement behind it. This stage held a Conformal seat
     # for up to six hours and then reported on an exit status the Makefile recipe
@@ -1598,7 +1833,7 @@ stages:
     check: |
       python3 - <<'EOF'
       import re, sys
-      L = "ASIC/eth-chiplet/build/gdsrun-20260823-rzG/logs/lec_pnr.log"
+      L = "ASIC/eth-chiplet/build/@GRADED_BUILD@/logs/lec_pnr.log"
       try:
           t = open(L, errors="replace").read()
       except OSError:
@@ -1670,14 +1905,17 @@ stages:
     # describes this comparison; that directory holds the older
     # full-20260814-vs-full-20260814 run and would misattribute if collected.
     artifacts:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/logs/lec_pnr*.log
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/reports/lec/pnr/**
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/logs/lec_pnr*.log
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/lec/pnr/**
 
   - id: lvs-preflight
     phase: physical
     gate: report
     label: soclabs-pdk
     description: "Can LVS run on the build under test? Names any missing input"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # REPOINTED TO THE TOOLKIT 2026-08-18, and READ THE SCOPE CHANGE BELOW
     # BEFORE QUOTING A PASS FROM THIS STAGE. It goes from red to green in the
     # same commit, and that is a change of question, not an improvement.
@@ -1726,13 +1964,13 @@ stages:
     # build/default, which has no GDS, no netlist and no romlibs and exits 2
     # naming each — right for a human, wrong for a gate that must name its
     # build.
-    run: make -C ASIC/eth-chiplet lvs-preflight RUN_TAG=gdsrun-20260823-rzG
+    run: make -C ASIC/eth-chiplet lvs-preflight RUN_TAG=@GRADED_BUILD@
     # The preflight launches no tool and writes no log of its own, so there is
     # nothing here that it produces. LVS_RUNDIR is where the FULL run would
     # write; globbed rather than named so an empty directory collects nothing
     # instead of failing the stage.
     artifacts:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/lvs_run/**
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/lvs_run/**
 
   - id: drc
     phase: physical
@@ -1807,14 +2045,17 @@ stages:
     # Innovus check_drc result. Anyone reading a still-red drc row after this
     # move is reading it correctly.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre DRC on the routed GDS (signoff-grade ruledeck)"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # NOT `make asic-drc`, for the reason spelled out in rom-gds and lec-pnr: that
     # root forwarder now reaches the toolkit, but it carries no run tag, so it
     # resolves to RUN_TAG=default — a different build directory from the one
     # needs_implementation declares and check: reads. A stage must not declare
     # one run and measure another.
-    run: make -C ASIC/eth-chiplet drc RUN_TAG=gdsrun-20260823-rzG
+    run: make -C ASIC/eth-chiplet drc RUN_TAG=@GRADED_BUILD@
     # Calibre exits 0 whether or not it found violations, and the Makefile does
     # not parse the result. Count them here or this stage means nothing.
     #
@@ -1845,7 +2086,7 @@ stages:
     # in code — and it FAILS the gate if it goes stale or if any waived count
     # moves. See the fail-waiver-stale fixture below.
     check: |
-      python3 scripts/ci/drc_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_run
+      python3 scripts/ci/drc_census.py ASIC/eth-chiplet/build/@GRADED_BUILD@/work/drc_run
     # NOTE these fixtures are also a live test of DRC_DESIGN_BUDGET /
     # DRC_DENSITY_BUDGET: fail-design-results carries 7 design-owned results, so
     # if the environment has raised the budget past 7 the must-fail case PASSES
@@ -1918,15 +2159,18 @@ stages:
     # report's `artifacts_missing` list, which trains a reader to skim that list
     # instead of reading it.
     artifacts:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_run/**
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/drc_run/**
 
   - id: erc
     phase: physical
     gate: report
     label: soclabs-pdk
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     description: "Calibre ERC — does the routed GDS carry power/ground TEXT LABELS?"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # ADDED 2026-08-18, IN RESPONSE TO A REAL FOUNDRY SIGNOFF ERROR. IMEC's own
     # ERC run against a GDS we sent them (2026-08-17/18) returned one hard
     # [Error]: "No labels found in topcell. At least power/ground labels are
@@ -1996,12 +2240,12 @@ stages:
     # its execution — after preflight, before the Calibre invocation — which is
     # too late for a `| tee` sitting outside the script.
     run: |
-      mkdir -p ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run
+      mkdir -p ASIC/eth-chiplet/build/@GRADED_BUILD@/work/erc_run
       make -C ASIC/genus-innovus erc \
-        ERC_GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds \
-        ERC_RUNDIR=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run \
+        ERC_GDS=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds \
+        ERC_RUNDIR=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/work/erc_run \
         BLOCK=nanosoc_eth_chiplet_pads \
-        2>&1 | tee ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run/run_erc.log
+        2>&1 | tee ASIC/eth-chiplet/build/@GRADED_BUILD@/work/erc_run/run_erc.log
     # run_erc.sh prints its OVERALL verdict to ITS OWN stdout — it is not
     # written into calibre_erc.sum or any other Calibre artefact — so the tee
     # above is what gives erc_census.py something repo-relative to read. See
@@ -2010,7 +2254,7 @@ stages:
     # deliberately not fatal to the STANDALONE tool, see its own header) and
     # only NOT SIGNED OFF is RC_NOPG.
     check: |
-      python3 scripts/ci/erc_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run
+      python3 scripts/ci/erc_census.py ASIC/eth-chiplet/build/@GRADED_BUILD@/work/erc_run
     check_proof:
       must_pass: ci/fixtures/erc/pass
       must_fail:
@@ -2018,20 +2262,23 @@ stages:
         - ci/fixtures/erc/fail-not-signed-off
         - ci/fixtures/erc/fail-no-output
     artifacts:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/erc_run/**
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/erc_run/**
 
   - id: bnd
     phase: physical
     gate: report
     label: soclabs-pdk
     description: "Calibre BND (bond-pad / seal-ring BEOL) — separate foundry deck from `drc`"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     run: |
       make -C ASIC/genus-innovus bnd \
-        BND_GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds \
-        BND_RUNDIR=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/bnd_run \
+        BND_GDS=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds \
+        BND_RUNDIR=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/work/bnd_run \
         BLOCK=nanosoc_eth_chiplet_pads
     check: |
-      python3 scripts/ci/bnd_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/bnd_run
+      python3 scripts/ci/bnd_census.py ASIC/eth-chiplet/build/@GRADED_BUILD@/work/bnd_run
     check_proof:
       must_pass: ci/fixtures/bnd/pass
       must_fail:
@@ -2044,9 +2291,9 @@ stages:
         # widens that entry to a rule-scoped suppression, this stops failing.
         - ci/fixtures/bnd/fail-waiver-stale
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     artifacts:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/bnd_run/**
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/bnd_run/**
 
   # --- LOGO keep-out (AP-only fix) — same promotion-order row as `bnd`, kept
   # a SEPARATE stage rather than folded in, because its promotion evidence is
@@ -2079,24 +2326,27 @@ stages:
     gate: report
     label: soclabs-pdk
     description: "LOGO keep-out (LOGO.S.1/R.4/O.1) on the AP-only-marked submission artefact"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # DRC_LOGO_RUNDIR pinned into the BUILD TREE, same reasoning as `drc`/
     # `erc`/`bnd` above — see that fix, landed alongside this stage, in
     # ASIC/genus-innovus/Makefile (`drc-logo` target).
     run: |
       make -C ASIC/genus-innovus drc-logo-check \
-        GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds \
-        DRC_LOGO_RUNDIR=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_logo_run
+        GDS=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds \
+        DRC_LOGO_RUNDIR=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/work/drc_logo_run
     check: |
-      python3 scripts/ci/logo_census.py ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_logo_run
+      python3 scripts/ci/logo_census.py ASIC/eth-chiplet/build/@GRADED_BUILD@/work/drc_logo_run
     check_proof:
       must_pass: ci/fixtures/logo/pass
       must_fail:
         - ci/fixtures/logo/fail-nonzero-true
         - ci/fixtures/logo/fail-no-summary
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     artifacts:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/work/drc_logo_run/**
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/drc_logo_run/**
 
   - id: padring-power-domain
     phase: physical
@@ -2229,6 +2479,12 @@ stages:
     gate: report
     label: soclabs-pdk
     description: "Static rail analysis (Voltus rail commands under Innovus): measured IR drop on the routed database, gated on the completeness assertions that decide whether the millivolts mean anything"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+# rc1 and NOT rzG: this stage named both — rc1 in run:/check:,
+# rzG only in stale artifacts: paths. Its fixtures are cut from
+# what the CHECK reads, so the check's tag is the proof value.
+    proof_vars: {GRADED_BUILD: gdsrun-20260826-rc1}
     # ADDED 2026-08-24. THIS WAS THE ONLY PHYSICAL STAGE WITH NO
     # needs_implementation:, AND THE OMISSION CHANGED THE VERDICT'S MEANING.
     # Every other physical row declares the artefacts an implementation run must
@@ -2263,8 +2519,8 @@ stages:
     # one and the others are the stale ones. build-freshness grades that, and
     # moving this row cannot make its verdict worse.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/nanosoc_eth_chiplet_pads_routed
-      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/reports/route_manifest.txt
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/nanosoc_eth_chiplet_pads_routed
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/route_manifest.txt
     # The rzG rail solve took 6m40s wall (stage.started 2026-08-24T10:11:25,
     # census written 10:18:05). Budgeted generously at 4x that: this stage runs
     # Voltus over a 103-macro routed database and a slower host, a colder file
@@ -2299,7 +2555,7 @@ stages:
     # worktree. ir-drop-selftest's `rail-selftest` is unreachable for the
     # identical reason. THE FIX IS TO COMMIT THAT INCLUDE, in
     # ASIC/genus-innovus/Makefile — not to change anything here.
-    run: make -C ASIC/genus-innovus rail RAIL_RUN_TAG=gdsrun-20260826-rc1
+    run: make -C ASIC/genus-innovus rail RAIL_RUN_TAG=@GRADED_BUILD@
     # THE CHECK NEVER CONSULTS AN EXIT CODE — not the tool's and not the stage
     # script's. report_rail, report_resistance and set_power_pads have all been
     # observed printing `**ERROR` and returning SUCCESS on this design, so the
@@ -2365,7 +2621,7 @@ stages:
       set -u
       # -- 1 -- WHICH CENSUS. Named, never ranked. --------------------------
       RAIL_WORK=ASIC/genus-innovus/rail/work
-      PINNED=$RAIL_WORK/gdsrun-20260826-rc1/census.txt
+      PINNED=$RAIL_WORK/@GRADED_BUILD@/census.txt
       CEN="${RAIL_CENSUS:-}"
       case "$CEN" in
         *'*'*|*'?'*|*'['*)
@@ -2466,11 +2722,11 @@ stages:
     # a verdict computed from exactly one of them — which is how a reader ends up
     # attributing a millivolt number to the wrong build.
     artifacts:
-      - ASIC/genus-innovus/rail/work/gdsrun-20260826-rc1/census.txt
-      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/verdict.json
-      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/Reports/*/*.main.rpt
-      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/Reports/*/*.layerbased_ir.rpt
-      - ASIC/genus-innovus/rail/work/gdsrun-20260823-rzG/results/*/*/*_vsrcs.rpt
+      - ASIC/genus-innovus/rail/work/@GRADED_BUILD@/census.txt
+      - ASIC/genus-innovus/rail/work/@GRADED_BUILD@/verdict.json
+      - ASIC/genus-innovus/rail/work/@GRADED_BUILD@/results/*/Reports/*/*.main.rpt
+      - ASIC/genus-innovus/rail/work/@GRADED_BUILD@/results/*/Reports/*/*.layerbased_ir.rpt
+      - ASIC/genus-innovus/rail/work/@GRADED_BUILD@/results/*/*/*_vsrcs.rpt
 
   # --- Can the IR-drop gate actually FAIL? ------------------------------------
   # Same doctrine as rom-selftest and lec-selftest, and runs before the row it
@@ -3640,6 +3896,9 @@ stages:
     gate: block
     label: soclabs-pdk
     description: "GDS-level padframe name/count/order AND corner-orientation check -- the local analog of the broker's CompareCells + Padringcheck"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
     # PROMOTED report -> block, 2026-08-18 (docs/tapeout/53-gate-promotion-plan.md
     # SS1, promotion-order #1). Names/counts/order have been clean on every real
     # build checked (fp1505, full-20260814, and the exact GDS IMEC evaluated --
@@ -3680,7 +3939,7 @@ stages:
     # and docs/tapeout/52-padring-gds-check.md for what running it against the
     # exact GDS IMEC saw found.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     # MOVED fp1505 -> gdsrun-20260823-rzG, 2026-08-24, needs_implementation:
     # and run: together. THE CORNER-ORIENTATION FINDING ABOVE IS fp1505's AND
     # HAS NOT BEEN RE-MEASURED ON rzG, and this is the one stage in the file
@@ -3698,7 +3957,7 @@ stages:
     # block ahead of the physical-phase stages explains why: a bare
     # `make asic-padring-gds` resolves GDS against the LEGACY outputs/ dir,
     # which holds no GDS at all).
-    run: make -C ASIC/genus-innovus padring-gds GDS=$PWD/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+    run: make -C ASIC/genus-innovus padring-gds GDS=$PWD/ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
     # Re-read the JSON report rather than trusting the tool's own exit code --
     # same doctrine as every other block-gated stage in this file. The script's
     # own rc (EXIT_MISMATCH on any non-empty `problems`) is ALREADY an honest
@@ -3855,13 +4114,16 @@ stages:
     gate: report
     label: soclabs-sta
     description: "Signoff STA in Tempus on the routed database with Quantus parasitics: OCV, CPPR both, re-issued derate, graded by ASIC/sta/sta_gate.py against a committed policy"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260826-rc1}
     # The two artefacts ir-drop names, for its reason: work/<block>_routed means
     # a route STARTED, route_manifest.txt is written at the route's END and is
     # the only proof it FINISHED. Declaring them makes an unrouted build render
     # UNVERIFIED (indicts the run) rather than FAIL (indicts the design).
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/nanosoc_eth_chiplet_pads_routed
-      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/reports/route_manifest.txt
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/nanosoc_eth_chiplet_pads_routed
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/route_manifest.txt
     # MEASURED 716 s wall on gdsrun-20260826-rc1 (09:56:24 -> 10:08:20), mostly
     # extraction over 223,168 nets. Budgeted at 5x: a wedged Tempus with no
     # timeout holds a runner and a seat; one set tight kills a healthy run and
@@ -3878,7 +4140,7 @@ stages:
     # prompt if handed a tty, and run_sta.sh does not trust the exit code.
     run: |
       set -u
-      TAG=gdsrun-20260826-rc1
+      TAG=@GRADED_BUILD@
       DB="$PWD/ASIC/eth-chiplet/build/$TAG/work/nanosoc_eth_chiplet_pads_routed"
       W="$PWD/ASIC/sta/work/$TAG"
       mkdir -p "$W/reports" "$W/outputs"
@@ -3898,7 +4160,7 @@ stages:
     # Neither exit code is consulted; both graders assert on artefacts.
     check: |
       set -u
-      TAG=gdsrun-20260826-rc1
+      TAG=@GRADED_BUILD@
       REP="ASIC/sta/work/$TAG/reports"
       python3 scripts/ci/sta_binding.py \
           --reports "$REP" --build-tag "$TAG" \
@@ -3922,13 +4184,13 @@ stages:
     # collected: they are inputs to the numbers, not evidence of them, and their
     # sizes are in the manifest.
     artifacts:
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/sta_manifest.txt
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/timing_summary.rpt
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/timing_summary_hold.rpt
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/analysis_coverage.rpt
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/timing_derate.rpt
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/clocks.rpt
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/tempus_sta.log
+      - ASIC/sta/work/@GRADED_BUILD@/reports/sta_manifest.txt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/timing_summary.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/timing_summary_hold.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/analysis_coverage.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/timing_derate.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/clocks.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/tempus_sta.log
 
   # --- Has this candidate been timed, and is the timing ITS OWN? --------------
   # THIS IS THE ROW THAT BLOCKS. It never looks at a WNS, an endpoint or a
@@ -3948,13 +4210,16 @@ stages:
     # are opposite findings.
     label: soclabs-sim
     description: "A signoff-STA result EXISTS for this candidate, finished, and was produced from this candidate's own routed database — no WNS, no budget, no timing verdict"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: gdsrun-20260826-rc1}
     # Same two artefacts as above, and here they change what a red MEANS:
     #   no route yet       UNVERIFIED  go and route it
     #   routed, not timed  FAIL        go and time it   <- the case this row exists for
     # Both block; they send the reader to different places.
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/work/nanosoc_eth_chiplet_pads_routed
-      - ASIC/eth-chiplet/build/gdsrun-20260826-rc1/reports/route_manifest.txt
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/nanosoc_eth_chiplet_pads_routed
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/route_manifest.txt
     # run: IS THE MUTATION BATTERY, not a no-op to satisfy the schema. 15 arms,
     # ~0.1 s, no licence or PDK, immediately before the check uses it -- the
     # doctrine of rom-selftest and ir-drop-selftest, folded into the row it
@@ -3978,7 +4243,7 @@ stages:
       echo "$OUT" | grep -q '^ok    baseline PASSES' || {
         echo "the positive control did not pass — this check rejects good evidence"; exit 1; }
       # And now the real evidence.
-      TAG=gdsrun-20260826-rc1
+      TAG=@GRADED_BUILD@
       python3 scripts/ci/sta_binding.py \
           --reports "ASIC/sta/work/$TAG/reports" --build-tag "$TAG" \
           --build-root ASIC/eth-chiplet/build
@@ -3994,26 +4259,35 @@ stages:
         - ci/fixtures/sta-binding/fail-predates-route
         - ci/fixtures/sta-binding/fail-battery-cut-down
     artifacts:
-      - ASIC/sta/work/gdsrun-20260826-rc1/reports/sta_manifest.txt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/sta_manifest.txt
 
   - id: evidence-report
     phase: physical
     gate: block
     label: soclabs-pdk
     description: "One report per build: every gate with the artefact it was read from, and NOT-MEASURED counted as its own verdict"
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
+    # fixtures. See the `vars:` block at the head of this file.
+    proof_vars: {GRADED_BUILD: pinfix-20260824}
     # needs_implementation, not a glob that shrugs. Both of these live in
     # gitignored trees, so on a clone this stage is UNVERIFIED — which
     # signoff.py counts as a failure and never as a pass — rather than green
     # over nothing.
+    # REPOINTED 2026-08-29 with the graded build. The old first entry was a
+    # named DRYRUN submission stream, which pins this stage to a SUBMISSION and
+    # therefore renders UNVERIFIED for every run that is not one — rc5 is a
+    # validation run and produces no submission. What this stage actually reads
+    # is the evidence SPEC for the graded build and that build's route gate, so
+    # those are what it declares.
     needs_implementation:
-      - ASIC/submissions/nanosoc_eth_chiplet_pads_DRYRUN_20260824_pinfix.gds
-      - ASIC/eth-chiplet/build/gdsrun-20260824-valid4/reports/route_gate.txt
-    run: make -C ASIC/eth-chiplet evidence RUN_TAG=pinfix-20260824 || true
+      - ASIC/eth-chiplet/evidence/@GRADED_BUILD@.json
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/route_gate.txt
+    run: make -C ASIC/eth-chiplet evidence RUN_TAG=@GRADED_BUILD@ || true
     # `|| true` on the run and the verdict taken from the CHECK. The run exits
     # 5 when the report is real and does not say signed off; that is a working
     # flow reporting an honest verdict, and conflating it with "the flow broke"
     # is what makes people stop running it. The check is what grades.
-    check: python3 scripts/ci/evidence_gate.py build/evidence/pinfix-20260824/evidence_report.json
+    check: python3 scripts/ci/evidence_gate.py build/evidence/@GRADED_BUILD@/evidence_report.json
     check_proof:
       must_pass: ci/fixtures/evidence-report-stage/pass
       must_fail:
@@ -4024,10 +4298,10 @@ stages:
         - ci/fixtures/evidence-report-stage/absent
     timeout_s: 3600
     artifacts:
-      - build/evidence/pinfix-20260824/evidence_report.json
-      - build/evidence/pinfix-20260824/evidence_report.html
-      - build/evidence/pinfix-20260824/evidence/**
-      - build/evidence/pinfix-20260824/NOT-PUBLISHED.txt
+      - build/evidence/@GRADED_BUILD@/evidence_report.json
+      - build/evidence/@GRADED_BUILD@/evidence_report.html
+      - build/evidence/@GRADED_BUILD@/evidence/**
+      - build/evidence/@GRADED_BUILD@/NOT-PUBLISHED.txt
 
 # -----------------------------------------------------------------------------
 # Checks a complete ASIC signoff would include that this pipeline does NOT do.

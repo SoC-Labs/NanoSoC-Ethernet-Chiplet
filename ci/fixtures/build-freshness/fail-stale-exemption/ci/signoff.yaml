@@ -1,19 +1,34 @@
-# THE RATCHET. lec is still pinned to the older build under the
-# exemption granted because the newest build had no work/fv — and the
-# newest build now HAS one, so lec could be repointed and the exemption
-# has lapsed. A waiver that outlives its reason is how a gate goes
-# blind, so it fails here rather than quietly persisting.
-# FIXTURE, not the real ci/signoff.yaml — see ci/fixtures/README.md.
+# THE RATCHET. gls-netlist is still pinned to the older build under the
+# exemption granted because the newest build had no published GLS evidence
+# -- and the newest build now HAS a reports/gls/boot/verdict.txt, so the
+# stage could be repointed and the exemption has LAPSED. A waiver that
+# outlives its reason is how a gate goes blind, so it fails here rather
+# than quietly persisting.
+# FIXTURE, not the real ci/signoff.yaml -- see ci/fixtures/README.md.
 # SYNTHETIC BY CONSTRUCTION and it has to be: this gate's subject IS the
-# manifest, so a fixture for it is a manifest. The stage ids below are the real
-# ones (drc, lec) because scripts/ci/build_freshness.py's exemption register is
-# keyed on (stage id, build tag) — a fixture using invented ids could not
-# exercise an exemption at all, which is half of what this gate does.
+# manifest, so a fixture for it is a manifest. The stage ids below are the REAL
+# ones because scripts/ci/build_freshness.py's exemption register is keyed on
+# (stage id, build tag) -- a fixture using invented ids could not exercise an
+# exemption at all, which is half of what this gate does.
+#
+# REWRITTEN 2026-08-29. These two cases used to turn on the (lec,
+# gdsrun-20260821-slpads) exemption. That exemption was WITHDRAWN when `lec` was
+# repointed at @GRADED_BUILD@ -- its own predicate had already lapsed and this
+# gate was correctly saying so -- and a fixture keyed on a waiver that no longer
+# exists proves nothing about the exemption machinery. They now turn on
+# (gls-netlist, fp1505), which is live: its predicate is "no gate-level
+# simulation evidence is published under the newest build", so repointing would
+# assert an absent file rather than measure a netlist.
 design: fixture
 top: fixture
 stages:
-  - id: lec
-    description: "fixture stage"
-    run: make lec-syn RUN_TAG=gdsrun-20260821-slpads
+  - id: drc
+    description: "fixture stage -- correctly pinned to the newest finished build"
+    run: make drc RUN_TAG=gdsrun-20260823-rzG
     needs_implementation:
-      - ASIC/eth-chiplet/build/gdsrun-20260821-slpads/outputs/lec.dofile
+      - ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads.gds
+  - id: gls-netlist
+    description: "fixture stage -- pinned to an older build under an exemption"
+    run: make -C ASIC/gls-netlist gls RUN_TAG=fp1505
+    needs_implementation:
+      - ASIC/eth-chiplet/build/fp1505/reports/gls/boot/verdict.txt

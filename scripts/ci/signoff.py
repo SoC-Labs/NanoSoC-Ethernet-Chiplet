@@ -90,6 +90,134 @@ ABSENT_SUFFIX = ".__absent__"
 EXCLUSIVE_MARKER = ".__exclusive__"
 
 
+# -----------------------------------------------------------------------------
+# MANIFEST VARIABLES — @NAME@, and why there is no default
+#
+# THE DEFECT THIS CLOSES. On 2026-08-29 this manifest named `gdsrun-20260823-rzG`
+# 56 times, `gdsrun-20260826-rc1` 26 times and `pinfix-20260824` 6 times, and
+# named rc2, rc3fix and rc4 — the three candidates that superseded them — ZERO
+# times. Every physical stage rendered green while grading a die from 23 August.
+# `build-freshness` exists to catch exactly that and DID catch it; the reason it
+# kept happening anyway is that repointing meant a 67-line hand edit across
+# thirteen stages, and a 67-line hand edit is a thing people do late and
+# partially. So the graded build is now ONE value.
+#
+# THE VALUE HAS NO DEFAULT, DELIBERATELY. A default is how this file got stale:
+# whatever was current when the default was written silently becomes the thing
+# every later run grades. An unset variable is an ERROR (exit 2) naming the
+# variable and the environment variable that sets it. That is strictly better
+# than a stale pass, and it is the whole point:
+#
+#     an unset tag must be impossible to confuse with a measurement
+#
+# SPELLING. `@NAME@`, not `${NAME}` and not `$NAME`. The run: and check: bodies
+# are shell and python — they are already full of `${PIPESTATUS[0]}`,
+# `${TSMC_65_HOME}` and `${F:-1}`, and a substituter that ate those would be a
+# new and much worse defect. `@NAME@` appears nowhere in any shell, make, python
+# or Tcl this project runs.
+#
+# PROVING A STAGE STILL WORKS. `prove` runs each check: inside a fixture
+# sandbox, and a fixture is a synthetic tree whose build directory is named by
+# whatever tag the fixture was cut from. Substituting the LIVE tag there would
+# point every check at a directory the fixture does not have, and 23 proofs
+# would go red for a reason that has nothing to do with whether the gate can
+# fail. So in prove mode the value comes from the stage's own `proof_vars:` —
+# the tag ITS fixtures are built around — and `lint` refuses a stage that uses a
+# variable and declares no proof value for it.
+# -----------------------------------------------------------------------------
+VAR_RE = re.compile(r"@([A-Z][A-Z0-9_]*)@")
+
+
+class VarError(Exception):
+    """A manifest variable could not be resolved. Never a warning."""
+
+
+def _map_strings(obj, fn):
+    """Deep-copy obj, applying fn to every string in it."""
+    if isinstance(obj, dict):
+        return {k: _map_strings(v, fn) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_map_strings(v, fn) for v in obj]
+    if isinstance(obj, str):
+        return fn(obj)
+    return obj
+
+
+def vars_used(obj):
+    """Every @NAME@ appearing anywhere in obj."""
+    found = set()
+
+    def see(s):
+        found.update(VAR_RE.findall(s))
+        return s
+
+    _map_strings(obj, see)
+    return found
+
+
+def declared_vars(m):
+    """The manifest's `vars:` block, validated. -> {name: {env, description}}."""
+    v = m.get("vars") or {}
+    if not isinstance(v, dict):
+        raise VarError("top-level `vars:` must be a mapping of NAME -> {env, description}")
+    for name, spec in v.items():
+        if not VAR_RE.fullmatch(f"@{name}@"):
+            raise VarError(f"`vars:` name {name!r} is not UPPER_SNAKE — @{name}@ "
+                           f"would never match")
+        if not isinstance(spec, dict) or not spec.get("env"):
+            raise VarError(f"vars.{name} declares no `env:` — a variable with no "
+                           f"way to set it is a constant spelled expensively")
+        if not spec.get("description"):
+            raise VarError(f"vars.{name} has no description")
+    return v
+
+
+def resolve_stage(stage, m, mode, env=None):
+    """Substitute @NAME@ throughout a stage. mode is 'env' or 'proof'.
+
+    Raises VarError naming the variable and how to set it. NEVER substitutes a
+    default and never leaves a token in place: an unresolved @NAME@ reaching a
+    shell would be passed to a tool as a literal path component, and the tool
+    would report a missing file — which reads as a broken build rather than as
+    an unset variable.
+    """
+    decl = declared_vars(m)
+    used = vars_used(stage)
+    undeclared = sorted(used - set(decl))
+    if undeclared:
+        raise VarError(
+            "%s uses @%s@, which the manifest's `vars:` block does not declare. "
+            "A variable nothing declares is a typo that renders as a path."
+            % (stage.get("id", "<stage>"), "@, @".join(undeclared)))
+    values, missing = {}, []
+    proof = stage.get("proof_vars") or {}
+    for name in sorted(used):
+        if mode == "proof":
+            if name in proof:
+                values[name] = str(proof[name])
+            else:
+                missing.append(
+                    "%s: `proof_vars:` declares no value for @%s@. Its fixtures "
+                    "are built around some specific tag; name it here so the "
+                    "proof tests the CHECK and not the live tree."
+                    % (stage.get("id", "<stage>"), name))
+        else:
+            envvar = decl[name]["env"]
+            val = (env if env is not None else os.environ).get(envvar, "")
+            if val.strip():
+                values[name] = val.strip()
+            else:
+                missing.append(
+                    "%s: @%s@ is unset. Export %s=<the build tag this run "
+                    "grades>. THERE IS NO DEFAULT: %s"
+                    % (stage.get("id", "<stage>"), name, envvar,
+                       decl[name]["description"]))
+    if missing:
+        raise VarError("\n".join(missing))
+    return _map_strings(stage, lambda s: VAR_RE.sub(
+        lambda mo: values.get(mo.group(1), mo.group(0)), s))
+
+
 def load():
     """Load ci/signoff.yaml and return (manifest, stages-by-id)."""
     if not MANIFEST.exists():
@@ -361,7 +489,16 @@ def cmd_run(args):
         if sid not in stages:
             print(f"signoff: unknown stage '{sid}'. Known: {', '.join(stages)}", file=sys.stderr)
             return 2
-        s = stages[sid]
+        # RESOLVE @NAME@ FIRST, and fail the whole invocation rather than the
+        # stage. An unset graded-build variable is not a property of the design
+        # and must never be recorded as one: there is no status.json for this,
+        # because nothing was measured and a row saying UNVERIFIED would invite
+        # someone to re-run it and get the same non-answer.
+        try:
+            s = resolve_stage(stages[sid], m, "env")
+        except VarError as e:
+            print(f"signoff: {e}", file=sys.stderr)
+            return 2
         dest = OUT / sid
         dest.mkdir(parents=True, exist_ok=True)
         gate = s.get("gate", "block")
@@ -751,6 +888,16 @@ def cmd_prove(args):
         sid = s["id"]
         if want and sid not in want:
             continue
+        # In prove mode the value comes from the stage's own `proof_vars:` — the
+        # tag its FIXTURES are cut from. Substituting the live graded build here
+        # would point every check at a directory no fixture has, and 23 proofs
+        # would go red for a reason unrelated to whether the gate discriminates.
+        try:
+            s = resolve_stage(s, m, "proof")
+        except VarError as e:
+            results.append((sid, "proof_vars", "MISSING", str(e).replace("\n", "; ")))
+            bad += 1
+            continue
         if not s.get("check"):
             # No check: means the verdict IS the runner's exit code. That is a
             # per-stage ASSERTION, not a general truth: it holds for
@@ -922,13 +1069,44 @@ def _as_list(v):
 # -----------------------------------------------------------------------------
 STAGE_KEYS = {"id", "phase", "gate", "label", "description", "run", "pre",
               "check", "check_proof", "artifacts", "timeout_s",
-              "needs_implementation"}
+              "needs_implementation", "proof_vars"}
 GAP_KEYS = {"id", "reason", "refuted_by"}
 
 def cmd_lint(args):
     """lint: self-check the manifest and re-run each declared gap's refutation probe."""
     m, stages = load()
     problems, notes = [], []
+
+    # The `vars:` block, and the contract that every use of one is resolvable in
+    # BOTH directions: from the environment when the pipeline runs, and from the
+    # stage's own proof_vars when `prove` runs. A variable resolvable in only one
+    # of those is a stage that can be run but not proved, or proved but not run.
+    try:
+        decl = declared_vars(m)
+    except VarError as e:
+        problems.append(str(e))
+        decl = {}
+    used_anywhere = set()
+    for s in m.get("stages", []):
+        sid = s.get("id", "<no id>")
+        used = vars_used({k: v for k, v in s.items() if k != "proof_vars"})
+        used_anywhere |= used
+        for name in sorted(used - set(decl)):
+            problems.append(f"{sid}: uses @{name}@, which `vars:` does not declare")
+        for name in sorted(used & set(decl)):
+            if name not in (s.get("proof_vars") or {}):
+                problems.append(
+                    f"{sid}: uses @{name}@ but declares no proof_vars.{name} — "
+                    f"`prove` cannot resolve it, so this stage's proofs would be "
+                    f"skipped rather than run, which reads as proven")
+        for name in sorted(set(s.get("proof_vars") or {}) - used):
+            problems.append(
+                f"{sid}: proof_vars.{name} is set but the stage uses no @{name}@ "
+                f"— a stale proof value outlives the thing it described")
+    for name in sorted(set(decl) - used_anywhere):
+        problems.append(f"vars.{name} is declared and used by no stage — a "
+                        f"variable nothing reads is documentation pretending to "
+                        f"be a mechanism")
 
     seen = set()
     for s in m.get("stages", []):

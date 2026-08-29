@@ -60,6 +60,9 @@ DEFAULT_POLICY = {
     # active that is 104. RECOMPUTE THIS IF required_*_views CHANGES:
     # 26 * (len(required_setup_views) + len(required_hold_views)).
     "expected_clock_count": 104,
+    # The untested population is gated on `unknown`, NEVER on the total: see
+    # parse_untested_reasons(). None disables the arm; 0 is the requirement.
+    "untested_unknown_budget": 0,
     "require_qrc_all_rc_corners": True,
     "require_spef_min_bytes": 1_000_000,
     "require_cppr": "both",
@@ -242,6 +245,114 @@ def parse_analysis_coverage(path, r):
     return total_unt
 
 
+# ---------------------------------------------------------------------------
+# THE UNTESTED CHECKS, ENUMERATED.
+#
+# rc2, rc3fix and rc4 each carry 57,955 UNTESTED timing checks with zero
+# violated -- the same number on all three -- and until 2026-08-29 nobody had
+# ever looked at what they were. This gate USED TO FAIL on `untested > 0`, which
+# sounds strict and measures nothing: the number cannot be zero on this design
+# (169,356 PulseWidth checks alone), so the arm could only ever be overridden or
+# the whole stage demoted to `gate: report`. It was demoted. A gate everyone must
+# ignore is a gate that has stopped existing.
+#
+# THE NUMBER IS NOT THE FINDING. THE REASON SET IS. Tempus attributes every
+# untested check to a CLOSED set, and the members are not equivalent:
+#
+#   false_path, user_disable      DECISIONS. Somebody wrote an SDC exception.
+#                                 Auditable, and their COUNT MOVING is the
+#                                 signal, not their existence.
+#   const                         the endpoint is tied off; no path to time.
+#   no_endpoint_clock,            A CONSTRAINT HOLE. Nobody decided this; a
+#   no_startpoint_clock           clock is simply undefined at one end.
+#   unknown                       Tempus declines to say. THIS MUST BE ZERO:
+#                                 a check the tool would not perform and cannot
+#                                 attribute is indistinguishable from a check
+#                                 that would have failed.
+#
+# MEASURED ON rc4's OWN DATABASE, 2026-08-29, first enumeration ever made:
+#   43,200  no_endpoint_clock   (all PulseWidth, on CDN async-reset pins)
+#    9,642  const
+#    5,113  false_path
+#   ------
+#   57,955  == the total in analysis_coverage.rpt, exactly. Zero unknown.
+#
+# ANY REASON STRING THIS PARSER DOES NOT RECOGNISE COUNTS AS `unknown`. That is
+# the anti-vacuity property and it is deliberate: a Tempus format change, a new
+# reason category, or a typo in the table below must make this gate FIRE, never
+# make a population quietly vanish from the histogram. The alternative -- drop
+# what you cannot classify -- is how a coverage report comes to describe less
+# than it measured.
+# ---------------------------------------------------------------------------
+UNTESTED_REASONS = ("const", "false_path", "no_endpoint_clock",
+                    "no_startpoint_clock", "user_disable", "unknown")
+
+# Tempus prints prose in the Reason column ("No endpoint clock"), not the
+# canonical id. Matched case-insensitively on the squeezed string.
+_REASON_ALIASES = {
+    "const": "const",
+    "constant": "const",
+    "falsepath": "false_path",
+    "false_path": "false_path",
+    "noendpointclock": "no_endpoint_clock",
+    "no_endpoint_clock": "no_endpoint_clock",
+    "nostartpointclock": "no_startpoint_clock",
+    "no_startpoint_clock": "no_startpoint_clock",
+    "userdisable": "user_disable",
+    "userdisabled": "user_disable",
+    "user_disable": "user_disable",
+    "disabled": "user_disable",
+    "unknown": "unknown",
+}
+
+# The detail row: "<CheckType>   UNTESTED   <Reason>" at the end of a record.
+# Anchored on the literal UNTESTED so a wrapped pin name (these run to 140
+# characters and Tempus wraps them) cannot be mistaken for a check type.
+_UNTESTED_ROW = re.compile(
+    r"^(?P<pre>.*?)\s{2,}UNTESTED\s+(?P<reason>\S.*?)\s*$")
+
+
+def _canon_reason(s):
+    key = re.sub(r"[^a-z]", "", s.lower())
+    return _REASON_ALIASES.get(key, "unknown")
+
+
+def parse_untested_reasons(path, r):
+    """{canonical_reason: count} from report_analysis_coverage -verbose untested.
+
+    Returns None when the file is absent -- the CALLER decides whether that is
+    acceptable, because with zero untested checks there is nothing to enumerate
+    and an absent file is then correct. An unreadable or unparseable file is a
+    FAILURE here and never None: "the enumeration could not be read" and "there
+    was nothing to enumerate" are opposite findings.
+    """
+    if not os.path.isfile(path):
+        return None
+    text = open(path, errors="replace").read()
+    if not text.strip():
+        r.fail("UNTESTED_ENUM_EMPTY",
+               f"the untested enumeration is an empty file: {path}")
+        return {}
+    counts = {}
+    for line in text.splitlines():
+        mo = _UNTESTED_ROW.match(line)
+        if not mo:
+            continue
+        # The summary table also carries the word UNTESTED as a COLUMN HEADING.
+        # A heading has no reason text after it that survives canonicalisation
+        # to a known id, so it would land in `unknown` and fire the gate for no
+        # reason. Skip the header explicitly rather than by luck.
+        if mo.group("pre").strip().lower().startswith("check type"):
+            continue
+        reason = _canon_reason(mo.group("reason"))
+        counts[reason] = counts.get(reason, 0) + 1
+    if not counts:
+        r.fail("UNTESTED_ENUM_UNPARSED",
+               f"parsed zero untested rows from {path}. An enumeration that "
+               "cannot be read is not evidence of a reason set.")
+    return counts
+
+
 def check(reports_dir, policy, r):
     man_path = os.path.join(reports_dir, "sta_manifest.txt")
     man = parse_manifest(man_path, r)
@@ -349,8 +460,52 @@ def check(reports_dir, policy, r):
     untested = parse_analysis_coverage(os.path.join(reports_dir, "analysis_coverage.rpt"), r)
     if untested is not None:
         r.fact("untested_checks", untested)
-        if untested > 0:
-            r.fail("UNTESTED_CHECKS", f"{untested} timing checks are UNTESTED. These are endpoints the analysis never evaluated; they cannot be assumed to pass.")
+        enum_path = os.path.join(reports_dir, "analysis_coverage_untested.rpt")
+        reasons = parse_untested_reasons(enum_path, r)
+        if untested == 0:
+            pass                       # nothing to enumerate; absence is correct
+        elif reasons is None:
+            # THE REPLACEMENT FOR `untested > 0`. Not "there are untested
+            # checks" -- there always are -- but "there are untested checks and
+            # nobody has said what they are".
+            r.fail("UNTESTED_UNENUMERATED",
+                   f"{untested} timing checks are UNTESTED and no enumeration "
+                   f"exists at {os.path.basename(enum_path)}. Run "
+                   f"scripts/ci/sta_untested_reasons.tcl against this build. An "
+                   f"unenumerated coverage hole cannot be told apart from a "
+                   f"population of checks that would have failed.")
+        elif reasons:
+            total = sum(reasons.values())
+            r.fact("untested_by_reason",
+                   ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
+            if total != untested:
+                # THE CROSS-FOOT. A reason list that does not add up to its own
+                # total has enumerated some other population, and the shortfall
+                # is exactly the part nobody has looked at.
+                r.fail("UNTESTED_ENUM_SHORT",
+                       f"the enumeration accounts for {total} untested checks "
+                       f"but analysis_coverage.rpt reports {untested}. "
+                       f"{abs(untested - total)} check(s) are in neither column "
+                       f"of this evidence.")
+            unknown = reasons.get("unknown", 0)
+            budget = policy.get("untested_unknown_budget", 0)
+            if budget is not None and unknown > budget:
+                r.fail("UNTESTED_UNKNOWN_REASON",
+                       f"{unknown} untested check(s) carry a reason this gate "
+                       f"does not recognise (budget {budget}). Recognised: "
+                       f"{', '.join(UNTESTED_REASONS)}. A check the tool "
+                       f"declined to perform AND declined to attribute is "
+                       f"indistinguishable from one that would have failed.")
+            for kind in ("no_endpoint_clock", "no_startpoint_clock"):
+                if reasons.get(kind):
+                    # A constraint hole is not a decision. Reported, not failed:
+                    # 43,200 of rc4's 57,955 are this, all PulseWidth on CDN
+                    # pins, and failing on it today would only get the row muted
+                    # again. The COUNT is the tripwire.
+                    r.warn("UNTESTED_CONSTRAINT_HOLE",
+                           f"{reasons[kind]} untested check(s) are {kind} — "
+                           f"nobody decided these; a clock is simply undefined "
+                           f"at one end of the check.")
 
     # --- quality ----------------------------------------------------------
     # Tempus splits these across two files: report_timing_summary -checks setup
@@ -489,9 +644,48 @@ MEASURED_COVERAGE = """\
 """
 
 
+# The untested enumeration, in the VERBATIM column layout Tempus 21.11 emits for
+# `report_analysis_coverage -verbose untested -sort reason`, captured from the
+# rc4 database on 2026-08-29. Pin names are elided; the Reason column is not,
+# because the Reason column is the measurement.
+def _enum(pairs):
+    """Build an enumeration report with `n` rows of each (check_type, reason)."""
+    head = ("    ----------------------------------------------------------\n"
+            "     Pin                Reference Pin      Check Type"
+            "         Slack        Reason\n"
+            "    ----------------------------------------------------------\n")
+    body = []
+    for i, (check, reason, n) in enumerate(pairs):
+        for j in range(n):
+            body.append("    some/inst_%d_%d/D\n" % (i, j))
+            body.append("                                 some/inst_%d_%d/CP ^\n" % (i, j))
+            body.append("                                 %-26s UNTESTED     %s\n"
+                        % (check, reason))
+    return head + "".join(body)
+
+
+# Adds up to MEASURED_COVERAGE's 57,955 in the same 3-reason mix rc4 measured,
+# scaled down 1000x so the selftest stays instant. The gate cross-foots the
+# enumeration against the coverage table, so the two fixtures below are a
+# MATCHED PAIR and the scaled coverage table exists for that reason.
+ENUM_COVERAGE = """\
+     Check Type                      No. of   Met              Violated         Untested
+                                     Checks
+    PulseWidth                     200       157 (78%)        0 (0%)           43 (21%)
+    Setup                          100       95 (95%)         0 (0%)           5 (5%)
+    Recovery                       100       90 (90%)         0 (0%)           10 (10%)
+"""
+GOOD_ENUM = _enum([("PulseWidth", "No endpoint clock", 43),
+                   ("Recovery", "const", 10),
+                   ("Setup", "False Path", 5)])
+
+
 def _mk(tmp, manifest=GOOD_MANIFEST, summary=GOOD_SUMMARY, coverage=GOOD_COVERAGE,
-        hold_summary=GOOD_HOLD_SUMMARY):
+        hold_summary=GOOD_HOLD_SUMMARY, enum=None):
     d = tempfile.mkdtemp(dir=tmp)
+    if enum is not None:
+        with open(os.path.join(d, "analysis_coverage_untested.rpt"), "w") as fh:
+            fh.write(enum)
     with open(os.path.join(d, "sta_manifest.txt"), "w") as fh:
         fh.write(manifest)
     if hold_summary is not None:
@@ -525,6 +719,21 @@ def selftest():
             passed += 1
         else:
             print(f"BROKEN baseline FAILS: {r.failures}")
+            failed += 1
+
+        # SECOND POSITIVE CONTROL, and it is the one that keeps the untested
+        # arms honest. The baseline above has ZERO untested checks, so it would
+        # pass with the enumeration code deleted. This one has 58 untested
+        # checks, every one accounted for by a recognised reason, and it must
+        # PASS -- otherwise the gate is back to failing on `untested > 0` under
+        # a new name.
+        r = check(_mk(tmp, coverage=ENUM_COVERAGE, enum=GOOD_ENUM),
+                  dict(DEFAULT_POLICY), Result())
+        if r.ok:
+            print("ok    baseline PASSES with 58 untested checks, all attributed")
+            passed += 1
+        else:
+            print(f"BROKEN an accounted-for untested population FAILS: {r.failures}")
             failed += 1
 
         cases = [
@@ -575,13 +784,39 @@ def selftest():
                  "av_ml_libset_hold,av_ltfix_libset_hold",
                  "analysis_views_hold = default_analysis_view_hold")),
              "VIEW_ABSENT"),
-            ("untested checks present (the real measured coverage hole)",
-             dict(coverage=MEASURED_COVERAGE), "UNTESTED_CHECKS"),
-            ("a single check type goes untested",
+            # THE UNTESTED POPULATION. Five arms, and the shape of the set is
+            # the argument: `untested > 0` is NOT one of them, because on this
+            # design it is always true and a gate that is always red is a gate
+            # that gets muted. What must fail is an untested population nobody
+            # has ACCOUNTED FOR.
+            ("untested checks present and never enumerated (the real 57,955)",
+             dict(coverage=MEASURED_COVERAGE), "UNTESTED_UNENUMERATED"),
+            ("a single check type goes untested, unenumerated",
              dict(coverage=GOOD_COVERAGE.replace(
                  "ClockPeriod                    42        42 (100%)        0 (0%)           0 (0%)",
                  "ClockPeriod                    42        4 (9%)           0 (0%)           38 (90%)")),
-             "UNTESTED_CHECKS"),
+             "UNTESTED_UNENUMERATED"),
+            # A reason string outside the closed set. This is the arm the whole
+            # enumeration exists for: an unattributed untested check.
+            ("an untested check carries an unrecognised reason",
+             dict(coverage=ENUM_COVERAGE,
+                  enum=_enum([("PulseWidth", "No endpoint clock", 43),
+                              ("Recovery", "const", 10),
+                              ("Setup", "Something Tempus Invented", 5)])),
+             "UNTESTED_UNKNOWN_REASON"),
+            # The enumeration is real but describes a smaller population than
+            # the coverage table counts -- the shortfall is the part nobody
+            # looked at, and it is invisible to any per-row check.
+            ("the enumeration does not add up to its own total",
+             dict(coverage=ENUM_COVERAGE,
+                  enum=_enum([("PulseWidth", "No endpoint clock", 40),
+                              ("Recovery", "const", 10),
+                              ("Setup", "False Path", 5)])),
+             "UNTESTED_ENUM_SHORT"),
+            ("the enumeration is present but unreadable",
+             dict(coverage=ENUM_COVERAGE,
+                  enum="Analysis Coverage Report\n  (no rows)\n"),
+             "UNTESTED_ENUM_UNPARSED"),
             ("coverage report missing", dict(coverage=None), "COVERAGE_MISSING"),
             ("coverage report unreadable",
              dict(coverage="Analysis Coverage Report\n  (no data)\n"),

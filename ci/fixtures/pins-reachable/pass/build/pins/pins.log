@@ -1,0 +1,32 @@
+
+== Pin integrity: /home/dam1n19/SoCLabs/rc5vt-20260829 ==
+   worktree: /home/dam1n19/SoCLabs/rc5vt-20260829
+   head:     3ab16f5
+  ok pins.census  44 submodule(s)
+  ok pins.populated  all 44 populated
+  ok pins.conflicted  no conflicted submodules
+  ok pins.pinned  every submodule is at its recorded commit
+  ok pins.visibility  no ignore=dirty/all suppressing submodule dirt
+  ok pins.worktree  no uncommitted or untracked content inside any submodule
+warn  pins.superproject  15 uncommitted path(s) in /home/dam1n19/SoCLabs/rc5vt-20260829 (set PINS_STRICT_SUPER=1 to make this red for a signoff)
+  ok pins.reachable  every pinned commit is reachable on a remote-tracking ref
+
+### Pin integrity
+
+| gate | result | detail |
+|---|---|---|
+| `pins.census` | ok | 44 submodule(s) |
+| `pins.populated` | ok | all 44 populated |
+| `pins.conflicted` | ok | no conflicted submodules |
+| `pins.pinned` | ok | every submodule is at its recorded commit |
+| `pins.visibility` | ok | no ignore=dirty/all suppressing submodule dirt |
+| `pins.worktree` | ok | no uncommitted or untracked content inside any submodule |
+| `pins.superproject` | warn | 15 uncommitted path(s) in /home/dam1n19/SoCLabs/rc5vt-20260829 (set PINS_STRICT_SUPER=1 to make this red fo... |
+| `pins.reachable` | **FAIL** | pinned commit is on NO remote-tracking ref for: ASIC/asic-toolkit(c6ce42d) - a fresh clone of this superpro... |
+
+All recorded gates passed. The gate id is the thing to search for, in this repository and in previous runs.
+
+
+pins: 7 passed, 0 failed, 1 warned
+
+  pins.reachable                     pinned commit is on NO remote-tracking ref for: ASIC/asic-toolkit(c6ce42d) - a fresh clone of this superproject cannot check these out, so the project is not buildable by anybody but this disk. Push the submodule before pushing the pin.

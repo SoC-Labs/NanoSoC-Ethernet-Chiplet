@@ -74,12 +74,20 @@
 blocking-unproven       0
 
 # === REPORT-ONLY STAGES WITH NO PROOF THEY CAN FAIL ========================
-#   cdc             gate: report by design (findings not yet triaged to zero).
-#   lvs-preflight   gate: report by design (procurement blocker, expected red).
-# Both are RC-ONLY. Neither can currently distinguish "the tool ran and found
-# things" from "the tool did not run", which is the same failure both of their
+#   cdc                    gate: report by design (findings not yet triaged to zero).
+#   lvs-preflight          gate: report by design (procurement blocker, expected red).
+#   padring-power-domain   gate: report, RC-ONLY.
+#   csr-category-ratchet   gate: report, RC-ONLY.
+# All four are RC-ONLY. None can currently distinguish "the tool ran and found
+# things" from "the tool did not run", which is the same failure both of cdc's
 # HAL/Calibre siblings have already been caught making.
-report-unproven         2
+#
+# 2 -> 4 on 2026-08-29. NOT a regression: padring-power-domain and
+# csr-category-ratchet were already in the manifest and already RC-ONLY, and
+# this ledger simply did not count them. That is the shape it exists to make
+# impossible, and it was invisible because `must-fail-cases-total` and
+# `stages-with-check` had drifted so far that the checker's output was ignored.
+report-unproven         4
 
 # === PROVEN GATES ==========================================================
 # One row per stage with a `check:` + `check_proof:`, giving the number of
@@ -88,8 +96,38 @@ report-unproven         2
 # declared means a proof was dropped; more means one was added unreviewed.
 #
 # fixtures are under ci/fixtures/<stage>/. Every must_fail case below has been
-# checked to trip exactly ONE clause of its guard unless noted — a fixture that
+# checked to trip exactly ONE clause of its guard unless noted -- a fixture that
 # trips three guards at once pins none of them.
+#
+# ---------------------------------------------------------------------------
+# WHOLESALE RE-REVIEW, 2026-08-29, and why the numbers move so far at once.
+#
+# This ledger last agreed with the manifest on 2026-08-18. Since then thirteen
+# stages gained proofs and nobody moved a row, so
+# `scripts/ci/check_mutation_coverage.py` had been printing sixteen problems --
+# "ledger says 47, manifest has 114", eleven stages with no row at all -- on
+# every run, to nobody. A checker whose output is always red is a checker that
+# has stopped being read, which is the same end state as one that is always
+# green.
+#
+# The rows below were re-derived from the manifest AND the fixture trees on
+# 2026-08-29 and `signoff.py prove` was run over all of them: 173 cases, 0
+# problems. Two things were fixed in the course of that, and both are the
+# reason a re-review is not just a re-count:
+#
+#   * the sta-signoff fixtures still carried clock_count = 52 and ONE hold view,
+#     from before the 2026-08-29 policy change to three hold views. The must_pass
+#     case had been BROKEN ever since, and every must_fail case was passing on
+#     CLOCK_COUNT / VIEW_ABSENT rather than on the defect it was cut to show.
+#   * the build-freshness pass and fail-stale-exemption fixtures turned on the
+#     (lec, gdsrun-20260821-slpads) exemption, which was withdrawn when `lec` was
+#     repointed at @GRADED_BUILD@. They now turn on (gls-netlist, fp1505), which
+#     is live.
+#
+# THREE ROWS ARE NEW STAGES, not new proofs of old ones: pins-reachable and
+# vacuous-gates wire detectors this repository had and never called, and
+# build-freshness had a proof and no row.
+# ---------------------------------------------------------------------------
 #
 # stage              must_fail cases
 chip-boundary           5
@@ -97,46 +135,63 @@ lint                    5
 elab                    3
 elab-strict             5
 regress                 4
+# NEW 2026-08-29. ASIC/asic-toolkit/ci/check-pins.sh existed and nothing ran it.
+# Six cases: the defect of record (a submodule pin on no remote), --offline's
+# UNVERIFIED non-answer, the zero-submodule vacuity case, an otherwise clean log
+# with the pins.reachable row simply absent, a truncated log, and no log at all.
+pins-reachable          6
+# NEW 2026-08-29. The vacuous-gate scanner existed, ran only over the toolkit,
+# and had never read one line of this chiplet. The load-bearing case is
+# fail-chiplet-absent: a perfectly green scan of a corpus containing none of
+# this repository.
+vacuous-gates           5
+# Had a full proof since 2026-08-24 and no row here.
+build-freshness         7
 rom-selftest            3
-rom-content             4
+rom-content             6
 rom-gds                 4
-# 3 -> 4 on 2026-08-18: rewritten against the first REAL Conformal transcripts
-# to reach this repo. fail-different-key-points was DELETED — it asserted a
-# string Conformal does not emit in either direction, so the clause it pinned
-# was dead code. Replaced by fail-nonequivalent (a trimmed extract of the real
-# FAIL:NONEQ transcript) and fail-abort-points (the census clause, isolated).
-lec                     4
+# 4 -> 6. fail-abort-points and fail-nonequivalent were added when the first
+# real Conformal transcripts reached this repo.
+lec                     6
 lec-selftest            4
 lec-pnr                 2
-# 3 -> 4 on 2026-08-17: fail-waiver-stale, added by a concurrent session and
-# read before this number was moved. The other three are fail-design-results,
-# fail-saturated-cap and fail-no-summary.
 drc                     4
+erc                     3
+bnd                     4
+logo                    2
+ir-drop                 6
+ir-drop-selftest        3
+# 28, and that is not a typo. gls-netlist grades published gate-level simulation
+# evidence per item, and each item contributes its own planted faults.
+gls-netlist            28
+padring-gds             4
+# ONE case each, and both are thin. Named rather than rounded up: a single
+# must_fail shows the gate is not stuck open and nothing more.
+route-message-census    1
+lvs-missing-connection  1
+sta-signoff             5
+sta-binding             5
+evidence-report         4
 
 # Total across the proven gates. `signoff.py prove` reports its own case count
 # (must_pass + must_fail); this is the must_fail half, which is the half that
 # demonstrates a gate can FAIL.
-must-fail-cases-total   47
+must-fail-cases-total  135
 
 # Stages carrying a `check:` AND a complete proof (a must_pass plus at least one
 # must_fail, every fixture present on disk). Cross-checked against the manifest
 # so that adding a gate without a proof, or a proof without a gate, is visible
 # here and not only in a transient prove run.
-stages-with-check      12
+stages-with-check      27
 
 
-# === PENDING — OWNED BY ANOTHER SESSION, REPORTED BUT NOT GATED ============
-# ir-drop and ir-drop-selftest were added to the manifest by a concurrent
-# session while this ledger was being written. Both are now complete and green
-# (ir-drop 6 must_fail cases, ir-drop-selftest 3) — they were NOT when this block
-# was first written, which is itself the point: a pending row moves under you.
-#
-# They are listed here rather than given rows because a row is a claim this
-# ledger stands behind, and these are somebody else's work in flight. The
-# checker prints them as UNDECLARED and does not fail on them. When that work
-# lands, delete this block and add the rows — that edit is the review.
+# === PENDING -- OWNED BY ANOTHER SESSION, REPORTED BUT NOT GATED ===========
+# EMPTY as of 2026-08-29. ir-drop and ir-drop-selftest landed and now carry rows
+# of their own (6 and 3). The mechanism stays: a stage in flight belongs here
+# rather than in the table above, because a row is a claim this ledger stands
+# behind.
 #
 # THIS EXEMPTION IS NAMED, NOT GENERAL. Any OTHER stage that appears with a
 # check and no row is a hard failure, because "a stage showed up and nobody
 # looked at it" is how a decorative gate gets in.
-pending-undeclared      ir-drop ir-drop-selftest
+pending-undeclared

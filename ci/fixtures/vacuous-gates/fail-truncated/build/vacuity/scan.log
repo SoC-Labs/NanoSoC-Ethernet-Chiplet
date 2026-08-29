@@ -1,0 +1,5 @@
+vacuity-scan: rendered 54 signoff.yaml run/check block(s) into the corpus
+vacuity-scan: corpus 381 file(s); 202 of them are this chiplet's
+
+== vacuous-gate scan - /home/dam1n19/SoCLabs/rc5vt-20260829/build/vacuity/mirror ==
+  ok vacuity.arm  22 rule(s) fire on invented specimens

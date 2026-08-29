@@ -1,0 +1,32 @@
+# THE PIN THAT VANISHED INTO A VARIABLE.
+# FIXTURE, not the real ci/signoff.yaml — see ci/fixtures/README.md.
+#
+# ci/signoff.yaml names the graded build once, as @GRADED_BUILD@, resolved from
+# the environment. That is a large improvement and it comes with one specific
+# way to make this gate blind: `pins()` scans for BUILD NAMES, and
+# `@GRADED_BUILD@` is not one. If build_freshness.py did not resolve the same
+# variable, tokenising a pin would be a way to switch freshness checking OFF for
+# that stage — thirteen stages at once, silently, in the same commit that made
+# repointing easy.
+#
+# So this manifest declares a variable whose env name NOTHING EVER SETS, and the
+# gate must FAIL rather than report a clean scan over a manifest that pins
+# nothing. The env name is deliberately not SIGNOFF_GRADED_BUILD: `prove` passes
+# the caller's environment into the sandbox, and a fixture that resolved
+# whenever the operator happened to have the real variable exported would prove
+# something different on different days.
+design: fixture
+top: fixture
+vars:
+  GRADED_BUILD:
+    env: SIGNOFF_GRADED_BUILD_FIXTURE_NEVER_SET
+    description: >-
+      the build tag this fixture's stage grades. Nothing sets this environment
+      variable, on purpose.
+stages:
+  - id: drc
+    description: "fixture stage"
+    run: make drc RUN_TAG=@GRADED_BUILD@
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
+    needs_implementation:
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads.gds
