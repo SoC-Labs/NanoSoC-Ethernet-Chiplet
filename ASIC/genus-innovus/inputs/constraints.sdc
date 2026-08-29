@@ -1103,5 +1103,11 @@ set_max_fanout 10 [all_inputs]
 # If a future session wants the knob instead of this line, it must delete this
 # line in the same commit, set BOTH SYN_MAX_TRAN and SYN_MAX_CAP explicitly,
 # and re-measure. One constraint, one source.
-set_max_transition 0.300 [current_design] ;# [MEASURED] 26,050 nets, ~+4.5pt util; see the cost curve above
+set_max_transition 0.300 [current_design] ;# [MEASURED] 26,050 nets, ~84,400 um2, +7.9 util pts
+# THE +7.9 CORRECTS AN EARLIER +4.5 THAT WAS WRONG BY 1.8x. The old figure divided
+# the area by CORE area; Innovus' UTIL column divides by PLACEABLE area, and ~55% of
+# this core is macro. Measured 10,677 um2/pt from five consecutive stage pairs in
+# gdsrun-20260826-rc1/reports/qor_05_route_opt.rep (spread 10,498-10,946, <5%).
+# 84,400 / 10,677 = 7.9. Anyone re-deriving this: use the tool's own UTIL and AREA
+# columns, never a core-area division.
 
