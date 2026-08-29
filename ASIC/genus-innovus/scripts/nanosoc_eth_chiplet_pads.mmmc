@@ -25,9 +25,37 @@ set bootrom_path ${design_home}/ASIC/romlibs/cc_rom
 set eth_rom_path ${design_home}/ASIC/romlibs/eth_rom
 set IO_driver_path $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/
 
+# ---------------------------------------------------------------------------
+# stdcell_nldm -- the standard-cell NLDM directory, DERIVED rather than
+# respelled. Added 2026-08-29 while promoting two hold libsets into this file.
+#
+# WHY IT IS NOT WRITTEN OUT. The directory name is the release-coded name
+# $base_path already carries on line 3, with the trailing _FE dropped. Spelling
+# it again puts ANOTHER copy of a vendor release code into tracked content, and
+# ASIC/asic-toolkit/ci/check-vendor-collateral.sh refuses that at commit (rule
+# `ident`: a cell FAMILY name is public, a release code is a purchase order).
+# It refused exactly this, twice, on the two libsets added at the foot of this
+# file. Deriving the directory adds no new copy and collapses five repetitions
+# of one path into one definition.
+#
+# NOT A GLOB. There is exactly one release directory installed on this host
+# today, so a glob would work and would be shorter. It is still wrong: a second
+# release appearing must change which libraries this design times against when
+# somebody DECIDES it should, not silently on a directory-listing order.
+#
+# ASSERTED, because a wrong derivation would otherwise surface as ten missing
+# libraries at init_design instead of as one wrong line here.
+set stdcell_nldm ${base_path}/Front_End/timing_power_noise/NLDM/[string map {_FE {}} [lindex [file split ${base_path}] end-2]]
+if {![file isdirectory ${stdcell_nldm}]} {
+    error "mmmc: the derived standard-cell NLDM directory does not exist:\
+           ${stdcell_nldm} -- it is \$base_path's release directory with _FE\
+           removed. If the PDK layout changed, fix the derivation; do NOT\
+           respell the release code, see the note above this line."
+}
+
 create_library_set -name default_libset_max\
    -timing\
-    [list ${base_path}/Front_End/timing_power_noise/NLDM/tcbn65lp_220a/tcbn65lpwc.lib \
+    [list ${stdcell_nldm}/tcbn65lpwc.lib \
     ${rf_32k_path}/rf_32k_ss_1p08v_1p08v_125c.lib \
     ${rf_16k_path}/rf_16k_ss_1p08v_1p08v_125c.lib \
     ${rf_08k_path}/rf_08k_ss_1p08v_1p08v_125c.lib \
@@ -42,7 +70,7 @@ create_library_set -name default_libset_max\
 
 create_library_set -name default_libset_min\
    -timing\
-    [list ${base_path}/Front_End/timing_power_noise/NLDM/tcbn65lp_220a/tcbn65lplt.lib \
+    [list ${stdcell_nldm}/tcbn65lplt.lib \
     ${rf_32k_path}/rf_32k_ff_1p32v_1p32v_m40c.lib \
     ${rf_16k_path}/rf_16k_ff_1p32v_1p32v_m40c.lib \
     ${rf_08k_path}/rf_08k_ff_1p32v_1p32v_m40c.lib \
@@ -57,7 +85,7 @@ create_library_set -name default_libset_min\
 
 create_library_set -name typical_libset\
    -timing\
-    [list ${base_path}/Front_End/timing_power_noise/NLDM/tcbn65lp_220a/tcbn65lptc.lib \
+    [list ${stdcell_nldm}/tcbn65lptc.lib \
     ${rf_32k_path}/rf_32k_tt_1p20v_1p20v_25c.lib \
     ${rf_16k_path}/rf_16k_tt_1p20v_1p20v_25c.lib \
     ${rf_08k_path}/rf_08k_tt_1p20v_1p20v_25c.lib \
@@ -116,6 +144,31 @@ create_rc_corner -name default_rc_corner_worst\
 
 create_rc_corner -name default_rc_corner_best\
    -temperature -40\
+   -pre_route_res 1\
+   -post_route_res 1\
+   -pre_route_cap 1\
+   -post_route_cap 1\
+   -post_route_cross_cap 1\
+   -pre_route_clock_res 0\
+   -pre_route_clock_cap 0\
+   -cap_table ${tech_path}/cadence_captable/1p9m_6x2z/rcbest.captbl \
+   -qrc_tech ${qrc_tech_file}
+
+# ---------------------------------------------------------------------------
+# rc_best_125C -- BEST-CASE METAL AT 125 C.  Added 2026-08-29 for rc5.
+#
+# WHY A FOURTH RC CORNER. The three above pair one cap table with one
+# temperature: worst/125, best/-40, typical/25. That leaves the FAST-HOT hold
+# corner unrepresentable -- FF silicon at 1.32 V and 125 C, whose metal is
+# still best-case. It is not an exotic case: it is where a chip sits after it
+# has been running, and av_ml_libset_hold below measured hold -0.078 ns on 22
+# endpoints there, on a population DISJOINT from the -40 C one.
+#
+# It is default_rc_corner_best with the temperature changed and NOTHING else:
+# same rcbest cap table, same qrcTechFile, same res/cap switches. Keep it that
+# way -- the point of the corner is to move ONE variable.
+create_rc_corner -name rc_best_125C\
+   -temperature 125\
    -pre_route_res 1\
    -post_route_res 1\
    -pre_route_cap 1\
@@ -245,4 +298,129 @@ create_analysis_view -name typical_analysis_view_hold -constraint_mode default_c
 
 create_analysis_view -name typical_analysis_view -constraint_mode default_constraint_mode -delay_corner typical_delay_corner
 
-set_analysis_view -setup [list default_analysis_view_setup typical_analysis_view] -hold [list default_analysis_view_hold typical_analysis_view]
+# ===========================================================================
+# THE TWO HOLD CORNERS THAT WERE NOT IN THIS FILE.  Added 2026-08-29 (rc5).
+# ===========================================================================
+#
+# WHY THEY ARE HERE. ASIC/sta/sta_policy.json names THREE required hold views:
+# default_analysis_view_hold, av_ml_libset_hold and av_ltfix_libset_hold. Until
+# this commit the last two existed in NO COMMITTED FILE -- only in generated
+# MMMCs under gitignored build/ directories (build/holdfix-20260828/mmmc/ and
+# build/setupclose-20260829/mmmc/, emitted by a gen_union_mmmc.py that is
+# likewise untracked). A clean checkout therefore could not produce them, and
+# the signoff gate would FAIL [VIEW_ABSENT] twice before saying anything at all
+# about timing. Promoting them into this file is what makes the requirement
+# reachable from a fresh clone.
+#
+# WHAT THEY MEASURE, AND WHY default_analysis_view_hold DOES NOT COVER IT.
+#   av_ml_libset_hold     FF / 1.32 V / 125 C -- the FAST-HOT hold corner.
+#                         Absent from this MMMC entirely until now. Measured
+#                         hold -0.078 ns on 22 endpoints, a population DISJOINT
+#                         from the -40 C one.
+#   av_ltfix_libset_hold  the PVT-CORRECTED -40 C corner. default_libset_min
+#                         above is NOT PVT-consistent: nine libraries at -40 C
+#                         paired with tphn65lpgv2od3_slbc, which is 3.6 V / 0 C.
+#                         Read nom_temperature out of both files and see. The
+#                         3.6 V / -40 C part, tphn65lpgv2od3_sllt, sits unused
+#                         in the same PDK directory. Measured hold -0.159 ns on
+#                         3 RMII transmit endpoints.
+# Neither number is visible in default_analysis_view_hold, and
+# report_timing_summary -checks hold prints a single "View : ALL" row, so the
+# aggregate hold WNS cannot tell you whether three views were folded into it or
+# one. The view list is the only evidence.
+#
+# default_analysis_view_hold IS DELIBERATELY RETAINED even though its IO
+# library is the 0 C one. sta_policy.json requires it, and keeping it makes the
+# comparison against the earlier runs like-for-like. It is a superset of
+# checks, never a substitute for the PVT-consistent ltfix view.
+#
+# EVERY LIBRARY BELOW WAS CHECKED ON DISK AND FOR PVT CONSISTENCY on
+# 2026-08-29: nom_voltage / nom_temperature read out of each of the 20 files,
+# 10/10 consistent per set (1.32 V core, 3.6 V IO, and the declared
+# temperature). A corner built from cells at one temperature and memories at
+# another is worse than no corner, because it looks like a measurement.
+#
+# NO -si SECTION, DELIBERATELY. The three libsets above each name a Celtic
+# .cdb. These two do not, which matches the generated MMMCs that produced the
+# -0.078 and -0.159 numbers. tcbn65lplt.cdb and tcbn65lpml.cdb both exist and
+# could be added, but noise models are not what a fast-corner hold check turns
+# on, and Tempus strips every -si section anyway (see ASIC/sta/make_sta_mmmc.py
+# -- Celtic .cdb is rejected under concurrent MMMC, IMPESI-3490). Add them only
+# with a run that shows they change a number.
+
+create_library_set -name ltfix_libset\
+   -timing\
+    [list ${stdcell_nldm}/tcbn65lplt.lib \
+    ${rf_32k_path}/rf_32k_ff_1p32v_1p32v_m40c.lib \
+    ${rf_16k_path}/rf_16k_ff_1p32v_1p32v_m40c.lib \
+    ${rf_08k_path}/rf_08k_ff_1p32v_1p32v_m40c.lib \
+    ${rf_01k_path}/rf_01k_ff_1p32v_1p32v_m40c.lib \
+    ${flash_cache_data_path}/flash_cache_data_ff_1p32v_1p32v_m40c.lib \
+    ${flash_cache_tag_path}/flash_cache_tag_ff_1p32v_1p32v_m40c.lib \
+    ${bootrom_path}/rom_via_ff_1p32v_1p32v_m40c.lib \
+    ${eth_rom_path}/eth_rom_via_ff_1p32v_1p32v_m40c.lib \
+    ${IO_driver_path}/tphn65lpgv2od3_sllt.lib]
+
+create_library_set -name ml_libset\
+   -timing\
+    [list ${stdcell_nldm}/tcbn65lpml.lib \
+    ${rf_32k_path}/rf_32k_ff_1p32v_1p32v_125c.lib \
+    ${rf_16k_path}/rf_16k_ff_1p32v_1p32v_125c.lib \
+    ${rf_08k_path}/rf_08k_ff_1p32v_1p32v_125c.lib \
+    ${rf_01k_path}/rf_01k_ff_1p32v_1p32v_125c.lib \
+    ${flash_cache_data_path}/flash_cache_data_ff_1p32v_1p32v_125c.lib \
+    ${flash_cache_tag_path}/flash_cache_tag_ff_1p32v_1p32v_125c.lib \
+    ${bootrom_path}/rom_via_ff_1p32v_1p32v_125c.lib \
+    ${eth_rom_path}/eth_rom_via_ff_1p32v_1p32v_125c.lib \
+    ${IO_driver_path}/tphn65lpgv2od3_slml.lib]
+
+create_timing_condition -name tc_ltfix_libset \
+   -library_sets {ltfix_libset}
+
+create_timing_condition -name tc_ml_libset \
+   -library_sets {ml_libset}
+
+# Two-sided by the same rule as the corners above: see the long note there.
+# Each is a single-libset MIN corner, so early and late name the same condition.
+create_delay_corner -name dc_ltfix_libset_min\
+   -early_timing_condition {tc_ltfix_libset}\
+   -late_timing_condition {tc_ltfix_libset}\
+   -rc_corner default_rc_corner_best
+
+create_delay_corner -name dc_ml_libset_min\
+   -early_timing_condition {tc_ml_libset}\
+   -late_timing_condition {tc_ml_libset}\
+   -rc_corner rc_best_125C
+
+create_analysis_view -name av_ltfix_libset_hold -constraint_mode default_constraint_mode -delay_corner dc_ltfix_libset_min
+create_analysis_view -name av_ml_libset_hold    -constraint_mode default_constraint_mode -delay_corner dc_ml_libset_min
+
+# ---------------------------------------------------------------------------
+# ACTIVE VIEWS.
+#
+# THIS LINE IS NOT WHAT THE SIGNOFF GATE COUNTS. Read that twice before
+# changing it. It governs place and CTS. flow/innovus/4_route.tcl:1564,1618
+# RE-ISSUES set_analysis_view from $ROUTE_VIEWS_SETUP / $ROUTE_VIEWS_HOLD
+# immediately before write_db, so the view set the routed database is SAVED
+# with -- and therefore the set ASIC/sta/make_sta_mmmc.py derives the Tempus
+# MMMC from, and therefore the set sta_policy.json checks -- is whatever
+# design.mk sets those two knobs to. The toolkit defaults them to ONE hold view
+# (4_route.tcl:153), and ASIC/eth-chiplet/design.mk deliberately sets nothing.
+#
+# So defining the views here is necessary and NOT sufficient. For rc5,
+# design.mk must also carry
+#     export ROUTE_VIEWS_HOLD ?= default_analysis_view_hold \
+#                                av_ltfix_libset_hold av_ml_libset_hold
+# or the two corners promoted above are defined, inactive at route, absent from
+# the saved database, and the gate fails VIEW_ABSENT exactly as it does today.
+# The evidence that this is how it works: the exported viewDefinition.tcl of
+# every routed database so far ends
+#     set_analysis_view -setup [list default_analysis_view_setup] \
+#                       -hold  [list default_analysis_view_hold]
+# which is NOT this line -- typical_analysis_view is missing from it.
+#
+# typical_analysis_view is kept active here. It is not a signoff corner, but
+# eth-chiplet/hooks/pre_route.tcl derates the ACTIVE corners by name and its
+# header documents three of them; dropping one is a behaviour change with no
+# measurement behind it. Adding the two hold views is additive.
+set_analysis_view -setup [list default_analysis_view_setup typical_analysis_view] -hold [list default_analysis_view_hold av_ltfix_libset_hold av_ml_libset_hold typical_analysis_view]

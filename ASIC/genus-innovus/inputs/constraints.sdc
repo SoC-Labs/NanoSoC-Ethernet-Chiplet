@@ -129,6 +129,14 @@ create_clock -name "$SWDCLK" -period "$SWDCLK_PERIOD" -waveform "0 [expr $SWDCLK
 # with frequency.
 set_clock_transition 0.120 [get_clocks $EXTCLK]  ;# [MEASURED] p50 of 61,174 clk sinks on rc4; rf_16k CLK sink = 0.116
 set_clock_transition 0.110 [get_clocks $SWDCLK]  ;# [MEASURED] p50 0.108 / max 0.125 over the 122 bscan sinks on rc4
+#
+# THESE ARE 2 OF 26. The other 24 clocks are created in the IP SDCs sourced
+# further down, so they CANNOT be constrained here -- their set_clock_transition
+# lines are in "CLOCK TRANSITION, PART 2" immediately after the `source` block.
+# Twenty-two of them now carry a measured value; D2D_TX_CLK_0 and QSPI_SCLK_o
+# deliberately do not, because they have zero sink pins. An independent census
+# on the same rc4 database reproduces the 0.120 above exactly and swdclk's
+# max 0.125 exactly, which is the calibration for the other twenty-two.
 
 # NO create_clock for rtc_clk / user_ref_clk / scan_clk. None of the three is a
 # pad on this chip:
@@ -315,6 +323,109 @@ source ../inputs/ethernet_constraints.sdc
 
 source ../inputs/i2c_constraints.sdc
 source ../inputs/bscan_constraints.sdc
+
+#### CLOCK TRANSITION, PART 2 -- THE OTHER 24 CLOCKS ##########################
+#
+# MUST STAY BELOW THE `source` LINES ABOVE. 22 of these clocks are created in
+# the IP SDCs, so a set_clock_transition placed with the other two (near line
+# 130) would name a clock that does not exist yet and error.
+#
+# WHY. Read the long block near line 86 first; this is the same defect on the
+# rest of the design. Until 2026-08-29 nothing in this file declared a clock
+# slew, so Innovus applied its own fallback -- it prints it on every database
+# load, including today's:
+#       "Set Default Input Pin Transition as 0.1 ps."
+# 0.0001 ns, against an rf_16k constraint table whose related_pin_transition
+# axis begins at 0.035 ns. That fix was then applied to TWO clocks. This block
+# is the other twenty-four.
+#
+# SCOPE, unchanged and worth restating: set_clock_transition applies only while
+# the clock is IDEAL, i.e. Genus synthesis and pre-CTS placement. There is no
+# set_propagated_clock anywhere in this flow -- ccopt makes the tree propagated
+# itself -- so after CTS these values are ignored and the real edge is used.
+# That bounds the benefit AND the risk.
+#
+# HOW THE NUMBERS WERE DERIVED. Not scaled from a period, not copied from clk.
+# Measured 2026-08-29 on the rc4 routed database (a COPY of build/rc4-20260829/
+# db_rc4 taken into the rc5 worktree; nothing in the shipping tree was touched):
+#   1. report_clock_timing -type latency -clock <c> -view default_analysis_view_setup
+#      for each of the 26 clocks Innovus reports, to get that clock's sink pins;
+#   2. get_db pin:<p> .slew_max_rise on every one of them -- with two active
+#      views that is the worst-case (setup) corner, which is the corner the
+#      0.120 for clk was taken at;
+#   3. p50 of the resulting distribution. p50, not max: a LARGER declared slew
+#      makes setup look better and hold look worse, so the median is the
+#      unbiased choice and it is the rule the first two lines already followed.
+#
+# THE METHOD IS CALIBRATED, WHICH IS WHY THESE NUMBERS CAN BE TRUSTED. Run
+# blind over clk it returns p50 = 0.120 -- the value already in this file to
+# three decimal places, measured by a different session over a different
+# population (37,568 sink pins here vs the 61,174 quoted at line ~110). Over
+# swdclk it returns max = 0.125, again the value already in this file exactly.
+#
+# swdclk IS DELIBERATELY LEFT AT 0.110. This census puts its p50 at 0.116 over
+# 372 sinks; the existing line used 0.108 over the 122 bscan sinks. The maxima
+# agree exactly (0.125), so this is a population difference, not a
+# disagreement: 0.110 was measured over the sinks swdclk actually times.
+# Re-deriving it here would be churn over 6 ps with no argument behind it.
+#
+# TWO CLOCKS GET NOTHING, AND THAT IS THE MEASUREMENT TOO:
+#   D2D_TX_CLK_0   generated AT the TL_CLK_TX port
+#   QSPI_SCLK_o    generated AT the QSPI_SCLK port
+# Both report ZERO sink pins. There is no sequential element for a clock slew
+# to index a constraint table for, so a value here would constrain nothing
+# while making the file read as though all 26 were covered. Do not "complete
+# the set" by adding them.
+#
+# WHERE THE MONEY IS. Every hold report in the build tree was grouped by clock.
+# Only three clock groups have ever owned a hold violation: clk, rmii_ref_clk
+# and D2D_RX_CLK_0. On av_ltfix_libset_hold in holdfix-20260828/sta_final,
+# clk's worst hold was -0.001 while rmii_ref_clk's was -0.042 on RMII_TXD[0],
+# RMII_TXD[1] and RMII_TX_EN -- the domain with NO slew declaration owned a
+# violation 42x the constrained domain's. rmii_ref_clk and its two /2 children
+# mii_rx_clk / mii_tx_clk are the lines in this block that matter most.
+#
+# DO NOT read a p50 as a target. These describe what CTS delivered on rc4; if a
+# future run's tree changes materially, re-measure. The census is reproducible:
+# ASIC/genus-innovus/work/rc5_clkslew/{census.tcl,census2.tcl} and its output
+# out/clock_slew_census.csv (gitignored, like every run artefact).
+
+# --- Ethernet.  rmii_ref_clk owns this design's worst measured hold. ---------
+set_clock_transition 0.117 [get_clocks rmii_ref_clk]        ;# [MEASURED] p50 of 37 sinks (min 0.090 / p90 0.118 / max 0.153)
+set_clock_transition 0.124 [get_clocks mii_rx_clk]          ;# [MEASURED] p50 of 2,866 sinks (min 0.079 / p90 0.133 / max 0.138)
+set_clock_transition 0.120 [get_clocks mii_tx_clk]          ;# [MEASURED] p50 of 2,406 sinks (min 0.076 / p90 0.126 / max 0.132)
+
+# --- QSPI.  QSPI_SCLK_o has no sinks; see the note above. -------------------
+set_clock_transition 0.118 [get_clocks QSPI_SCLK]           ;# [MEASURED] p50 of 432 sinks (min 0.052 / p90 0.127 / max 0.128)
+
+# --- TideLink D2D.  D2D_TX_CLK_0 has no sinks; see the note above. ----------
+set_clock_transition 0.115 [get_clocks D2D_RX_CLK_0]        ;# [MEASURED] p50 of 528 sinks (min 0.041 / p90 0.126 / max 0.134)
+set_clock_transition 0.113 [get_clocks D2D_TX_WORD_CLK_0]   ;# [MEASURED] p50 of 1,481 sinks (min 0.075 / p90 0.130 / max 0.133)
+
+# Lane 0 carries the deskew memory, which is why its sink count is 16x the
+# others'. Per-lane values, not one number for all eight: they were measured
+# per lane and they differ.
+set_clock_transition 0.118 [get_clocks D2D_RX_WORD_CLK_0]   ;# [MEASURED] p50 of 8,851 sinks (min 0.075 / p90 0.131 / max 0.138)
+set_clock_transition 0.123 [get_clocks D2D_RX_WORD_CLK_1]   ;# [MEASURED] p50 of 551 sinks (min 0.080 / p90 0.128 / max 0.133)
+set_clock_transition 0.122 [get_clocks D2D_RX_WORD_CLK_2]   ;# [MEASURED] p50 of 551 sinks (min 0.086 / p90 0.129 / max 0.131)
+set_clock_transition 0.124 [get_clocks D2D_RX_WORD_CLK_3]   ;# [MEASURED] p50 of 551 sinks (min 0.081 / p90 0.131 / max 0.133)
+set_clock_transition 0.124 [get_clocks D2D_RX_WORD_CLK_4]   ;# [MEASURED] p50 of 551 sinks (min 0.078 / p90 0.131 / max 0.134)
+set_clock_transition 0.122 [get_clocks D2D_RX_WORD_CLK_5]   ;# [MEASURED] p50 of 551 sinks (min 0.079 / p90 0.128 / max 0.133)
+set_clock_transition 0.122 [get_clocks D2D_RX_WORD_CLK_6]   ;# [MEASURED] p50 of 551 sinks (min 0.075 / p90 0.128 / max 0.131)
+set_clock_transition 0.126 [get_clocks D2D_RX_WORD_CLK_7]   ;# [MEASURED] p50 of 551 sinks (min 0.078 / p90 0.132 / max 0.134)
+
+# The WORDN clocks are the negedge phase of the same eight nets: 16 sinks each,
+# all at one value per lane, which is why min == p50 == max below. Small, but
+# 0.098 is 980x the 0.0001 ns they read at today.
+set_clock_transition 0.098 [get_clocks D2D_RX_WORDN_CLK_0]  ;# [MEASURED] 16 sinks, all 0.098
+set_clock_transition 0.103 [get_clocks D2D_RX_WORDN_CLK_1]  ;# [MEASURED] 16 sinks, all 0.103
+set_clock_transition 0.116 [get_clocks D2D_RX_WORDN_CLK_2]  ;# [MEASURED] 16 sinks, all 0.116
+set_clock_transition 0.099 [get_clocks D2D_RX_WORDN_CLK_3]  ;# [MEASURED] 16 sinks, all 0.099
+set_clock_transition 0.098 [get_clocks D2D_RX_WORDN_CLK_4]  ;# [MEASURED] 16 sinks, all 0.098
+set_clock_transition 0.103 [get_clocks D2D_RX_WORDN_CLK_5]  ;# [MEASURED] 16 sinks, all 0.103
+set_clock_transition 0.106 [get_clocks D2D_RX_WORDN_CLK_6]  ;# [MEASURED] 16 sinks, all 0.106
+set_clock_transition 0.104 [get_clocks D2D_RX_WORDN_CLK_7]  ;# [MEASURED] 16 sinks, all 0.104
+
 
 #### DELAY DEFINITION
 
@@ -942,5 +1053,55 @@ set_max_fanout 10 [all_inputs]
 # it caught ZERO internal pins and added 22 unfixable IO ones. A limit looser
 # than the library default is not merely inert -- it is worse than nothing,
 # because the file then reads as though the problem had been addressed.
+#
+# ---------------------------------------------------------------------------
+# DOES [current_design] SURVIVE write_sdc?  YES -- MEASURED 2026-08-29, and it
+# had to be, because P&R's ONLY SDC source is the Genus-written
+# outputs/<block>_syn.sdc (named by genus-innovus/scripts/*.mmmc's
+# create_constraint_mode). If the design scope were dropped on the way out,
+# this line would be silently absent from the run it is supposed to fix and
+# the failure would look like a bad target instead of a missing constraint.
+#
+# The concern was not idle. In the last real synthesis
+# (build/gdsrun-20260826-rc1/outputs/nanosoc_eth_chiplet_pads_syn.sdc) there
+# are exactly 8 set_max_transition lines and ALL 8 are per-port -- the QSPI
+# 2.5 ns and I2C 300.0 ns ones from the sourced IP SDCs. Zero design-scope.
+# And Genus demonstrably REWRITES collection scopes: `set_max_capacitance 100
+# [all_outputs]` above comes out as 34 per-port lines, `set_max_fanout 10
+# [all_inputs]` as 37. So "Genus expands scopes on write" was a live theory.
+#
+# THE PROOF, on the same Genus that wrote that file (21.15-s080_1): read_libs
+# tcbn65lptc.lib, elaborate a 2-flop stub, then write_sdc four times while
+# adding one constraint at a time. Verbatim output:
+#     A (nothing set)                       -> no set_max_transition at all
+#     B  set_max_transition 0.300 [current_design]
+#                                           -> set_max_transition 0.3 [current_design]
+#     C  + set_max_transition 2.5 [get_ports q0]
+#                                           -> BOTH lines, design scope first
+#     D  + set_max_capacitance 0.15 [current_design]
+#                                           -> set_max_capacitance 0.15 [current_design]
+# A is the control: it proves the probe can report absence. [current_design] is
+# written through UNEXPANDED. Readback agreed: get_db [current_design]
+# .max_transition == 300.0 (ps).
+#
+# THIS IS THE SINGLE MECHANISM. DO NOT ALSO TURN ON SYN_DRV_FIX.
+# asic-toolkit/flow/genus/1_synthesis.tcl:781-787 does the same thing behind a
+# knob, and its comment says design-scoped DRV reaches P&R -- correct, per D
+# above. But it is SYN_DRV_FIX=0 by default (1_synthesis.tcl:70) and
+# eth-chiplet/design.mk sets nothing, so it is INERT: there is no duplicate
+# today, and this line is the only design-scope rule in force. Enabling it
+# would be actively wrong for two reasons, not one:
+#   1. SYN_MAX_TRAN defaults to the tech value or 0.40 (1_synthesis.tcl:86),
+#      both LOOSER than 0.300. Harmless on its own -- min() wins -- but it puts
+#      a second number for one constraint into a second file, which is exactly
+#      how this project got bitten before.
+#   2. The same block ALSO issues `set_max_capacitance $SYN_MAX_CAP
+#      [current_design]`, default 0.15 pF. That contradicts the measured 100 pF
+#      decision 120 lines up and would put every output pad permanently red --
+#      and probe D proves it would land in the written SDC, so P&R would sign
+#      off against it.
+# If a future session wants the knob instead of this line, it must delete this
+# line in the same commit, set BOTH SYN_MAX_TRAN and SYN_MAX_CAP explicitly,
+# and re-measure. One constraint, one source.
 set_max_transition 0.300 [current_design] ;# [MEASURED] 26,050 nets, ~+4.5pt util; see the cost curve above
 
