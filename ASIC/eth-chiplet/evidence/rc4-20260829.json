@@ -1,0 +1,194 @@
+{
+ "design": "nanosoc_eth_chiplet_pads",
+ "run_tag": "rc4-20260829",
+ "stream": "ASIC/eth-chiplet/build/rc4-20260829/outputs/nanosoc_eth_chiplet_pads_rc4_logo.gds",
+ "supersedes": "rc3fix-20260828, on SETUP ONLY. rc3fix left one setup endpoint at -0.001 ns (FEP 1); rc4 closes it at +0.015 / 0.000 / 0 with hold unmoved. THE TWO STREAMS ARE DRC-IDENTICAL: 2,002 rulechecks compared line by line between drc_rc3fix_logo_0828 and drc_rc4_logo_0829, ZERO differ -- same 108 non-zero rulechecks, same 2,211 total results. The delta is three cell resizes plus re-fill, not a geometry change.\n  PROVENANCE, CHECKED NOT ASSUMED. Tempus timed ASIC/eth-chiplet/build/setupclose-20260829/work/nanosoc_eth_chiplet_pads_rc3setup and Innovus streamed from ASIC/eth-chiplet/build/rc4-20260829/db_rc4 -- two different paths, so they were compared: `diff -r` reports no difference over 53 files each. base_run is the ECO/STA tree because the sta-signoff gate requires sta_db under base_run/work, a check that exists because six earlier Tempus runs had all silently read full-20260814.\n  TWO THINGS WERE PUT IN PLACE FOR GATES TO MEASURE, RECORDED RATHER THAN DONE SILENTLY. (1) gdsout.stream.map was copied into base_run/work/tech: it is a shared tech input, all 35 copies under build/*/work/tech carry one md5 e0e4239959963b1b5a78b00c0500f0ff, and it is the map restream.sh used. (2) The connectivity report is `check_connectivity -type regular`, run for this purpose (eco/conn_regular_rc4.tcl, cloned from holdfix's). The DEFAULT all-nets check reports the 51 special-wire opens and 727 dangling that are the standing PG known-bad, and pointing the signal-net gate at it yields a FAIL that is really a PG record filed in the wrong row.",
+ "base_run": "ASIC/eth-chiplet/build/setupclose-20260829",
+ "eco_tree": "ASIC/eth-chiplet/build/setupclose-20260829",
+ "session_logs": [
+  "ASIC/eth-chiplet/build/setupclose-20260829/logs/a1_apply_console.log",
+  "ASIC/eth-chiplet/build/setupclose-20260829/logs/e1_wrapper.log"
+ ],
+ "require_measurable": [
+  "a1_apply_console.log"
+ ],
+ "lef_root": "ASIC/eth-chiplet/build/rc4-20260829/db_rc4/libs/lef",
+ "macro_scope": [
+  "flash_cache_data",
+  "flash_cache_tag"
+ ],
+ "calibre_run": "ASIC/genus-innovus/calibre_runs/drc_rc4_logo_0829",
+ "connectivity_reps": [
+  "ASIC/eth-chiplet/build/setupclose-20260829/reports/conn/conn_regular_rc4.rep"
+ ],
+ "lvs_report": "ASIC/eth-chiplet/build/rc4-20260829/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep",
+ "sta_run": "ASIC/eth-chiplet/build/setupclose-20260829/sta_rc3setup",
+ "antenna_run": "ASIC/genus-innovus/calibre_runs/ant_rc4_0829",
+ "publish": {
+  "project": "ethchip",
+  "block": "nanosoc_eth_chiplet_pads",
+  "klass": "candidate"
+ },
+ "known_bad": [
+  {
+   "id": "lvs-below-top-missing-connection-OPEN",
+   "what": "CLOSED ON rc3fix, by root cause rather than by widening the gate. On rc2 this was OPEN: lvs_missing_connection.py returned FAIL (2 rows, one net). Root cause, measured: the source CDL declared `.GLOBAL VDD VDDIO VSSIO` with VSS ABSENT, leaving 18,322 one-pin dangling <inst>/VSS source nets that Calibre pairs arbitrarily ('1036 nets and 46 instances were matched arbitrarily' in every report). rc3fix ran with VSS in .GLOBAL (commit 77f06a2, which first renames the ROM's internal virtual ground so the global does not fabricate a short across its power gate -- the naive fix trips the preflight collision scan with 2 collisions). Orphan /VSS nets 18,322 -> 172, report 24.7 MB -> 1.59 MB, and the gate returns PASS with required 0 got 0.",
+   "decision": "CLOSED. Not waived, not reclassified. Note this ALSO changes what an LVS pass means here: before the fix a STRANDED VSS pin was an exact match to the source phantom while a CONNECTED one was a mismatch, so breaking a power pin made LVS cleaner and the check could not detect a stranded PG pin at all. rc3fix is the first candidate on this design whose LVS result bears on power connectivity. Residual, recorded not fixed: the gate still excludes TOP-LEVEL supply nets, an exclusion that existed only because of the flood, so widening it to grade them is now safe and is the next change.",
+   "person": "flow owner -- ESCALATED, awaiting the tapeout owner",
+   "date": "2026-08-28",
+   "withdraw_when": "either (a) scripts/ci/lvs_missing_connection.py returns 0 on rc2's own report after a classifier change whose selftest demonstrates it still FAILs on a genuine below-top missing connection, or (b) the tapeout owner signs a waiver naming this net, this DISC number and this measurement. Re-running LVS and getting the same 2 rows does not withdraw it, and neither does relaxing the required count."
+  },
+  {
+   "id": "hold-fep",
+   "what": "REWRITTEN FOR rc3fix. rc2 closed hold only at the corner it was optimised at, and only because all three RC corners were extracted at 25 degC. Corrected, rc2 fails at three corners (-0.006/94, -0.078/22, -0.159/3). rc3fix closes all three: +0.003/0, +0.003/0, +0.006/0, with all three hold views active (default_analysis_view_hold, av_ml_libset_hold = FF/1.32V/125C, av_ltfix_libset_hold = PVT-corrected -40C IO) and all four RC corners extracted at their own temperatures. At typical, hold is +0.012/0 where rc2 was -0.001/1.\n  RE-MEASURED ON rc4 AND UNCHANGED: +0.003 (default_analysis_view_hold), +0.003 (av_ltfix_libset_hold), +0.006 (av_ml_libset_hold), FEP 0 at all three, TNS 0.000. The setup ECO did not cost hold anywhere. Same union MMMC, same four RC corners at their own temperatures, same 0.95/1.05/0.97/1.03.",
+   "decision": "The FEP half is CLOSED at every corner this kit can model. What does NOT withdraw is the derate: there is still no AOCV/SOCV/LVF data for this node anywhere on site, so the 0.95/1.05/0.97/1.03 factors remain a stated engineering assumption. rc3fix meets that assumption with margin rather than sitting exactly on it -- rc2's hold closed only inside a derate window 2.2e-4 wide, measured over 72 configurations. THE REMAINING DEBT IS SETUP, NOT HOLD: -0.001 ns on one endpoint at SS/1.08V/125C. See known_bad[setup-one-endpoint-1ps].",
+   "person": "flow owner",
+   "date": "2026-08-28",
+   "withdraw_when": "the tapeout owner rules IN WRITING on which derate this design signs off at, and that ruling is recorded in ASIC/genus-innovus/scripts (the file that currently calls the factors a guess) rather than in a session log. Three outcomes and all three retire this row: (a) 'the flat 0.95/1.05/0.97/1.03 guess is the signoff condition' -- rc2 already meets it and this becomes a closed record; (b) 'sign off underived' -- re-run the four-point matched-control probe on rc2's database and record the underived numbers, which on rc1 were setup +0.287/0/0 and hold -0.014/-0.025/6; (c) characterised AOCV/SOCV/LVF is obtained for TSMC 65 LP and the design is re-timed against it. It does NOT withdraw on another run reporting FEP 0 at the same guess: that is this run again, not the ruling."
+  },
+  {
+   "id": "via3r4-m4-CLEARED-by-post-route-eco",
+   "what": "CARRIED FORWARD FROM rc1 AND RE-MEASURED ON rc2's OWN STREAMS, because a marker-driven edit does not transfer between runs. rc2's un-edited base stream outputs/nanosoc_eth_chiplet_pads_rc2.gds carries VIA3.R.4:M4 = 1 (calibre_runs/drc_rc2_base_0827: 738 results over 1,926 parsed rulechecks). The edit is marker-driven and CANNOT SEEK: the offending cut is vendor geometry inside a merged memory macro and Innovus has no object for it (get_obj_in_area returns 0 vias, 0 special_vias), so the arm needs THIS RUN'S OWN .drc.results as input and DRC runs twice. AFTER THE EDIT: drc_rc2v3r4_sign_0827 over ..._rc2v3r4.gds and drc_rc2v3r4_logo_0827 over the submission stream ..._rc2v3r4_logo.gds both read 737 with VIA3.R.4:M4 = 0, and every one of the other 1,925 parsed rulechecks is unmoved in either direction. THE CONTROL DISCRIMINATES: the matched no-change arm (same database copy, V3R4_DRY_RUN=1, everything else identical) re-streamed to ..._rc2v3r4ctl.gds and drc_rc2v3r4_ctl_0827 still reads 738 with the violation present. The geometry probe separates the arms independently of any log line -- eco site {wide-M4 regions, special_vias} 26 7 -> 21 7 CHANGED, ctl 26 7 -> 26 7 UNCHANGED (reports/site_{before,after}_{eco,ctl}.rep) -- and the stream sizes agree: ctl is 309,421,274 bytes, the same SIZE as the un-edited base, while eco is 309,423,590 (+2,316).\n  ONE LOG LINE IN THE CONTROL ARM IS WRONG AND IS CORRECTED IN THE RECORD, NOT PAPERED OVER. logs/ctl.console prints `V3R4_DRY_RUN : 0  (edit APPLIED)` and that is FALSE -- the control skipped the edit as intended. arm_rc2_ctl.tcl was generated from the ECO arm by sed; the sed changed the variable but not the SUMMARY line, which carried a hardcoded literal 0 in both the printed value and the ternary. Both arm scripts now read $V3R4_DRY_RUN in the summary, so the class is gone rather than the instance. The arms were NOT re-run: re-streaming to fix a log line would change both md5s and orphan the Calibre runs bound to them for no change in geometry. See PLAN.txt's CORRECTION section of 2026-08-27 21:05.",
+   "decision": "CLEARED, not waived -- same disposition as rc1 and for the same reason. imec's report has no waiver mechanism for this rule, and in that report's BY CELL section our top cell carries TOTAL Result Count = 2 of which VIA3.R.4:M4 is one. The edit is applied to a copy of this run's own database, fed this run's own markers, and re-measured on the foundry deck against a matched control.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "WITHDRAWN as a defect on these bytes -- kept as the record of what was cleared and how. It re-opens the moment any run streams without the arm: there is still NO in-flow arm for this rule (see known_bad[no-in-flow-arm-for-via3r4]), so ANY RUN THAT STREAMS WITHOUT IT SHIPS VIA3.R.4:M4 = 1."
+  },
+  {
+   "id": "lvs-verdict-incorrect",
+   "what": "The LVS VERDICT is permanently INCORRECT and remains so on rc2: `.GLOBAL VSS` floods the source side and the pad ring has no LEF PINs, so declared pins extract as extra ports. MEASURED on rc2's own report (build/rc2-20260827/lvs_run/nanosoc_eth_chiplet_pads.lvs.rep, matched/unmatched table): ports 52/52 with 0 unmatched either side; instances 17,267/17,267 MN(NCH) and 51,539/51,539 MP(PCH) with 0 unmatched; nets 271,096 matched / 190 unmatched layout / 18,343 unmatched source. rc1's same table read 52/52, 17,267/17,267, and 270,804 / 189 / 18,053. The unmatched-source flood grew by 290, which is the order of the 292 cells the ECO inserted, each contributing its own implicit <inst>/VSS.",
+   "decision": "Grade the DISCREPANCY LIST, not the verdict -- UNCHANGED AS A METHOD, AND ON rc2 THAT METHOD RETURNS FAIL. rc1's version of this entry ended '...which is 0 here'. On rc2 it is 2. THIS ENTRY NO LONGER CARRIES THE SUB-TOP RESULT: it is an OPEN item with its own row, known_bad[lvs-below-top-missing-connection-OPEN], and this entry must not be read as covering it. What this entry still covers, and only this, is why the top-line INCORRECT verdict is not itself gradable.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "the pad ring gains LEF PINs and .GLOBAL VSS is scoped, at which point the verdict itself becomes gradable"
+  },
+  {
+   "id": "innovus-drc-3-macro-pin-mincut",
+   "what": "Three Innovus MINCUT markers, all `Pin of Cell .../u_ethmac_0_u_inner_u_eth_top_wishbone_bd_ram_u_sram_u_rf (M4)` at (1127.220,1174.700), (1128.210,1161.660) and (1157.470,1174.700). MEASURED on rc2's own database at those exact three coordinates: reports/drc_before_eco.rep and reports/drc_after_eco.rep each end `Total Violations : 3 Viols.`, and rc1's equivalent arm probes (build/rc1eco-20260826/reports/drc_{before,after}_{eco,ctl}.rep) each read 3 as well. Unchanged in number, kind and coordinate.\n  A SECOND, DISAGREEING MEASUREMENT IN THE SAME RUN, RECORDED RATHER THAN RESOLVED. The ECO apply session ran the SAME command -- check_drc -limit 200000 -- twice, at 20:30 and 20:32, and both times wrote 'No DRC violations were found' (eco/reports/nanosoc_eth_chiplet_pads_imp_drc{,_prerepair}.rep). The arm sessions read the database that session wrote and report 3. Same design, same command, 0 vs 3, twenty minutes apart. The difference has NOT been root-caused; the two sessions differ in what they source before checking. THE 3 IS TAKEN AS THE NUMBER, because a check that finds three known markers is the one that measured something and a zero that disagrees with a matched prior run is this project's most common failure shape. Anyone quoting 'Innovus check_drc clean on rc2' is quoting the wrong one of the two.\n  ON rc4 THE INNOVUS COUNT IS ZERO, NOT THREE. The apply run's own classifier reads drc.40_after_refill = total=0 SHORT=0 SPACING=0 MINCUT=0 against a declared baseline of 3 MINCUT, so no repair pass was needed or run (manifest: repair = 'not needed - DRC already at the pre-existing baseline'). DO NOT READ THIS AS A FIX. The three markers were always an artefact of the rf SRAM's LEF ABSTRACT, and the adjudicator is Calibre over the merged stream, which is byte-for-byte identical between rc3fix and rc4 across all 2,002 rulechecks. A zero here and a zero there are consistent; neither is evidence the other is right.",
+   "decision": "Carried, unchanged in kind from rc1. They are a PG-via-to-macro-pin cut count against the rf SRAM's LEF ABSTRACT; Calibre over the merged stream, which carries the macro's real geometry, is the adjudicator, and the four-tier count is where they are answered -- 737 / 46 / 13 / 0 on rc2's submission stream, with 0 results at any of the three coordinates. The apply session's disagreeing zero is recorded here so it is not later cited as an improvement.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "Calibre reports a real-geometry result at any of the three coordinates, or the power plan stops landing a single-cut VIA4 array on that macro pin. Separately, the 0-vs-3 session disagreement withdraws when one session's setup is shown to explain it."
+  },
+  {
+   "id": "pg-opens-and-dangling",
+   "what": "check_connectivity -type special on the database that streamed reports 51 IMPVFC-200 (special-wire pieces not connected together) and 727 IMPVFC-94 (dangling PG wires), 778 total info lines. MEASURED on rc2 in eco/reports/nanosoc_eth_chiplet_pads_imp_connectivity.rep and again in the arm probes reports/conn_special_{before,after}_{eco,ctl}.rep. The same 51 / 727 / 778 rc1 measured, and the same before and after the VIA3.R.4 edit.",
+   "decision": "Carried, unchanged in kind. `-type regular` -- the signal check -- is clean on rc2 both before and after the edit: reports/conn_regular_before_eco.rep and reports/conn_regular_after_eco.rep both read 'Found no problems or warnings.' Those two are what the signal-net-connectivity gate reads; this PG report is deliberately not fed to it, because that gate counts open nets and would read 778 PG info lines as 778 open signal nets.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "the power plan stops leaving VDDIO/VSSIO stripe fragments unjoined"
+  },
+  {
+   "id": "no-in-flow-arm-for-via3r4",
+   "what": "CARRIED UNCHANGED FROM rc1, and rc2 could not re-measure it: hooks/post_powerplan.tcl runs a VIA3.R.4:M4 CENSUS (pg_drc_v3r4_census.tcl) but not an edit arm, and rc2 has no power-plan stage of its own -- it starts from rc1's routed database, so the census did not run and no reports/pg_v3r4_candidates.rep exists in this build. rc1's measurement stands as the basis: on that run's own power-plan database, 36,029 wide PG M4 pads within 0.800 um of one of the 21 merged-GDS macros, 4,273 of our M4 rectangles crossing a merged macro footprint, 11 narrow crossings carrying a strictly-wide (>= 0.305) M4 region within 0.800 um, all 11 with fewer than 2 of our own VIA3 cuts on the branch, and Calibre reporting 1. The deciding fact -- how many VIA3 cuts the VENDOR's pin stub carries in the shadow -- is inside merged macro GDS and Innovus has no object for it.",
+   "decision": "The marker-driven POST-ROUTE ECO remains the answer and must be applied to every stream this flow produces, as it was on rc2. The census is a guard, not a fix. For an ECO-only candidate like rc2 the guard does not run at all, which makes the post-route arm the ONLY thing standing between this lineage and a stream that ships VIA3.R.4:M4 = 1.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "a tool exists that reads VIA3 cuts out of the merged macro GDS and transforms them per instance, so the deck's GoodBranch test can be evaluated in flow; at that point the census becomes a seeker and the edit arm can be added"
+  },
+  {
+   "id": "canonical-hash-is-not-a-layout-comparison",
+   "what": "CARRIED UNCHANGED FROM rc1 AND STILL LIVE. Every published stream in this project carries an Artifactory property named `layout.canonical_hash`, written by scripts/ci/gds_canonical_hash.py. The name reads like a layout identity and the value cannot support that reading: measured 2026-08-26, KLayout strmxor 0.30.10 reported NO DIFFERENCES between two streams across all 49 layer/datatype pairs while their canonical hashes DIFFERED at identical byte count (302,688,050) and identical record count (34,791,830), because write_stream is not order-deterministic. rc2 gives that its own corroboration without an XOR: outputs/nanosoc_eth_chiplet_pads_rc2.gds (md5 0b72b1301f2087f943bb0c3dabcb2731) and outputs/nanosoc_eth_chiplet_pads_rc2v3r4ctl.gds (md5 9769ede7851d5bd466c1f06102e8306d) are two write_stream invocations of the same unedited geometry, identical in size at 309,421,274 bytes and different in md5.",
+   "decision": "NOT withdrawn and NOT rewritten. The digest is correct for what it computes and the raw md5/sha256 beside it are load-bearing -- a foundry Final Report cites the md5. What is wrong is the DIRECTION a reader may take from it, so gds_canonical_hash.py now returns a `claim` field saying a MATCH implies the same layout and a MISMATCH implies nothing, and the layout question is answered separately by scripts/ci/gds_xor_arbiter.py. NOTE FOR THIS CANDIDATE: that arbiter has no reference to run against here (see `supersedes`), so on rc2 the canonical hash is the ONLY digest-shaped thing in the record and the temptation to read it as a layout answer is correspondingly larger.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "the store stops publishing this digest under a `layout.*` name -- either renamed to something that says RECORD SEQUENCE, or accompanied by the gds-layout-identity gate's verdict as a sibling property. Until then, treat a `layout.canonical_hash` mismatch as a prompt to run the arbiter and never as a finding."
+  },
+  {
+   "id": "lec-rtl-to-gate",
+   "what": "TWO OF THE THREE LEGS STILL COVER rc2. ONE DOES NOT, AND THAT IS A NEW GAP.\n  STILL COVERED. rc2 does not re-synthesise; it starts from rc1's routed database. The syn leg's revised netlist, build/gdsrun-20260826-rc1/outputs/nanosoc_eth_chiplet_pads_gate.v, still hashes to sha1 58724c88514ca0976f292009654f9e5fec463138 -- the exact sha1 rc1's acceptance is bound to, re-verified on 2026-08-27 -- and the gate leg's revised, ..._gate_power.v, still hashes to md5 4f0043247e0088ccd651f1f1dd899502. So the RTL->gate result carries over intact: Conformal's own verdict is PASS on both halves (58,592 EQ / 0 NON-EQ / 0 aborted / 0 uncompared flat; 42 of 42 module pairs EQ hierarchically), the harness RESULT=FAIL is on 96 golden flops synthesis removed, all of them u_tidechart/u_tidechart_controller/u_enum/root_port_cursor_r_reg[0..31][0..2] and no other point in the design, and those flops are dead in the RTL at NUM_PORTS=1 for the four independently measured reasons recorded in ASIC/eth-chiplet/evidence/gdsrun-20260826-rc1.json, which remains the full text of that acceptance.\n  NOT COVERED, AND NEWLY SO. rc1's chain closed with a pnr leg, gate_power.v -> _pnr.v, PASS 61,599/61,599 exit 0, joined by sha1 -- and its revised was rc1's outputs/nanosoc_eth_chiplet_pads_pnr.v at sha1 2053949d92cc5cce1f43a5ecdebd2213fb563d48, described in rc1's own spec as 'the netlist behind the shipped stream'. rc2's shipped stream comes from a DIFFERENT netlist: build/rc2-20260827/outputs/nanosoc_eth_chiplet_pads_pnr.v, sha1 58c650d87b38524585db5bb7a815a448be4da581, carrying 292 instances rc1's does not. NOTHING HAS PROVEN THAT NETLIST EQUIVALENT TO ANYTHING. Searched: build/rc2-20260827 contains no reports/lec directory and no lec logs; there is no lec-rc2 or lecgate-rc2 tree under ASIC/eth-chiplet/build (the only such trees are lec-rc1-0826 and lecgate-rc1-0826).",
+   "decision": "The RTL->gate acceptance is CARRIED, bound to the same two sha1/md5 values it was bound to on rc1 and re-verified here. The pnr leg is NOT carried and is NOT quietly inherited: it is an open gap on this candidate. The gap is small in principle -- a hold/setup ECO inserts buffers and resizes cells, which should be combinationally equivalent -- and 'should be' is the reason to run the leg rather than a reason not to. `make -C ASIC/eth-chiplet lec-pnr` against rc2's outputs closes it in one run and nothing about this candidate should be signed off before it does. Recorded here rather than in `not_measured` because the flow CAN measure it on this site today; this is an unrun check, not an unmeasurable one.",
+   "person": "dam1n19",
+   "date": "2026-08-27",
+   "withdraw_when": "the pnr leg is run on rc2's own files -- golden build/gdsrun-20260826-rc1/outputs/..._gate_power.v md5 4f0043247e0088ccd651f1f1dd899502, revised build/rc2-20260827/outputs/..._pnr.v sha1 58c650d8... -- and reports PASS with 0 non-equivalent and 0 aborted in the final comparison. The rc1 conditions (a)-(d) on NUM_PORTS, APB_ADDR_W, the subtree consumers and the exact 96-name unmapped set continue to apply unchanged to the syn and gate legs."
+  },
+  {
+   "id": "electromigration-vss-pad-feed-metal1-metal2",
+   "what": "RE-MEASURED ON rc3fix (ASIC/genus-innovus/rail/work/rc3fix-20260829). 49 elements over the derated limit, worst J/Jmax 1.437 -- IDENTICAL count to rc2 (49, worst 1.433). All are metal1/metal2 stubs directly under the four VSS bond pads; ZERO lie inside the core box. VDD is 0 over limit with max 0.606. The +1,504 ECO cells moved the worst ratio by 0.004 and the count not at all, which is what a pad-entry-limited defect should do.\n  NOT RE-RUN ON rc4. The last rail measurement is on rc3fix (ASIC/genus-innovus/rail/work/rc3fix-20260829). rc4 differs from rc3fix by three cell resizes and a re-fill, so this result is CARRIED FORWARD BY ARGUMENT, not re-measured: two of the three resizes step drive strength up by one, which raises local current draw slightly. The direction of the error is therefore known and adverse, and the margin it eats is unquantified. See not_measured[rail-not-rerun-on-rc4].",
+   "decision": "CARRIED, unchanged from rc2. It is a pad-entry stack property, not a core-routing one, and no core-side change reaches it.",
+   "person": "flow owner",
+   "date": "2026-08-29",
+   "withdraw_when": "a rail run ON rc2's OWN DATABASE reports em_over_limit_total = 0 with em_model_accepted true and em.derate_applied passing, i.e. rail_gate.py's em.current_density check green against em.max_violations = 0 in rail_budgets.txt. It does not withdraw on a re-run that merely analyses EM again, and it must not be closed by raising em.max_violations: that key carries an anti-ratchet note for this exact reason."
+  },
+  {
+   "id": "ir-drop-mean-collapse-over-budget",
+   "what": "RE-MEASURED ON rc3fix. Worst effective collapse 1.3361% (rc2 1.3324%), p99 1.3093% (rc2 1.3046%), against a 1.0% budget. 97.2% of the VDD drop and 97.6% of the VSS drop is spent at metal7 and above -- the pad-entry stack, not the core mesh. Demand rose 50.2674 -> 50.4224 mA (+0.3%) from the ECO cells and the collapse moved 0.0037 percentage points.\n  NOT RE-RUN ON rc4. The last rail measurement is on rc3fix (ASIC/genus-innovus/rail/work/rc3fix-20260829). rc4 differs from rc3fix by three cell resizes and a re-fill, so this result is CARRIED FORWARD BY ARGUMENT, not re-measured: two of the three resizes step drive strength up by one, which raises local current draw slightly. The direction of the error is therefore known and adverse, and the margin it eats is unquantified. See not_measured[rail-not-rerun-on-rc4].",
+   "decision": "CARRIED, unchanged from rc2. Also note the run is STATIC at an assumed switching activity: the SAIF study measured the real workload at ~0.133 of this current, so these figures are conservative by roughly 5-8x, not optimistic.",
+   "person": "flow owner",
+   "date": "2026-08-29",
+   "withdraw_when": "a rail run ON rc2's OWN DATABASE reports eff_mean_pct at or under ir.eff_collapse_mean_pct_max in rail_budgets.txt (1.0% of 1.08 V) with the coverage checks still passing -- instance coverage >= 0.99 and the charge-conservation ratio inside 0.90-1.10. Widening the budget does not withdraw it."
+  },
+  {
+   "id": "route-message-census-false-red",
+   "what": "CARRIED AS A WITHDRAWN RECORD, AND RE-MEASURED ON rc2's DIFFERENT LOG SHAPE. On rc1 the route stage hard-failed on two router messages that turned out to be Innovus echoing its own Tcl SOURCE into the session log, plus a third complaint about a missing `Total Violations` trailer that is Innovus omitting it from a report with zero violations. rc2 has no route STAGE at all: its routing is route_eco inside the apply session. MEASURED here by running scripts/ci/route_message_census.py over rc2's three chain logs -- work/innovus.log (s1_defill.tcl, 1,045 lines, no routing section, 0 router messages), work/innovus.log1 (s3_apply_eco.tcl, 2,140 lines, 6 routing markers, 26 router messages: NRDB-2106 x1, NRDB-2138 x9, NRDB-405 x9, NRDB-942 x2, NRGR-22 x1, NRIF-78 x4) and work/innovus.log2 (restream.tcl, 1,222 lines, no routing section). Verdict PASS with require_measurable=innovus.log1: 0 nets with no global route, 0 open nets declined, over a log that positively demonstrates routing ran.",
+   "decision": "WITHDRAWN -- the gate passes on rc2, over positive evidence rather than over silence. THE require_measurable SETTING IS LOAD-BEARING AND IS WHY THIS ENTRY IS KEPT: rc2's defill and restream sessions never route, so their zeros measure nothing, and without naming innovus.log1 as the log that MUST be measurable the census correctly returns NOT-MEASURED for the whole run. A future ECO candidate that copies this spec and renames its sessions will silently lose the only measured log.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "WITHDRAWN -- the gate passes. Re-open if it reverts."
+  },
+  {
+   "id": "foundry-antenna-rerun-on-rc3fix-scope-limited",
+   "what": "RE-RUN ON rc3fix's OWN SUBMISSION BYTES and clean: zero A.R.*, zero DNW.R.* over 721 rulechecks, bound by the report's own Layout Path(s) to nanosoc_eth_chiplet_pads_rc3fix_logo.gds with the stream md5 identical before and after the run, and ant_manifest.txt present (the runner writes it LAST, so its presence means the run finished). Non-vacuity proven by the deck's own controls: ANTCTL.GATE/SD/POLY/OD/M1.POPULATION all exceeded 1000 results. Deck is the foundry's, same revision imec runs.",
+   "decision": "REPORT AS 'no violation found within a stated scope', NOT as 'antenna is clean'. Only 9 cells in the design carry gate area and all are memory-macro internals; every standard cell, IO cell and bond pad streams as a LEF abstract with metal only. So a net routing a long antenna to a STANDARD-CELL input has no gate area at its far end and CANNOT be flagged by this run. imec's run over full transistor population covers what ours cannot. Also: no discrimination control exists -- the deck's own coverage note cites ci/fixtures/antenna-deck-fires/, which does not exist -- so the run is proven non-vacuous but NOT proven able to fire.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "an antenna run exists whose ant_manifest.txt records layout_md5 = 6d64126c80b86497c015774cb71c3bb4 (rc2's submission stream), reaches ant_finished, carries all seven ANTCTL.* coverage controls non-empty, and reports 0 on every foundry rulecheck -- at which point spec.antenna_run names it and the gate answers the row."
+  },
+  {
+   "id": "clp-power-intent-not-rerun-on-rc2",
+   "what": "rc1's upf-power-intent gate FAILED and rc2 has no CLP run at all, so on rc2 the same row will read NOT-MEASURED. THE FAILURE HAS NOT GONE AWAY. rc1's measurement, from build/gdsrun-20260826-rc1-clp/{cpf,upf}/clp_manifest.txt: the CPF elaborates and checks run and it carries 138 error-severity Conformal Low Power violations over 3 rules (ISO7=64, PDM1=72, PG_CON1=2); the UPF is worse in the way that matters -- intent_elaborated=no, checks_ran=no -- so its smaller violation count is an elaboration failure, not a cleaner design. THE INPUT IS UNCHANGED: both runs read build/gdsrun-20260826-rc1/outputs/nanosoc_eth_chiplet_pads_gate_power.v, whose md5 is still 4f0043247e0088ccd651f1f1dd899502 as re-verified on 2026-08-27, and rc2 does not re-synthesise, so it emits no power intent and no gate netlist of its own. The 138 violations are as true of rc2's design as of rc1's.\n  WHY THE GATE CANNOT SAY SO. gate_upf_power_intent requires the CLP run's `netlist` to sit under spec.base_run/outputs, and rc2's base_run is its own build directory, whose outputs/ holds only P&R netlists. Pointing clp_runs at the rc1 tree would produce exactly that refusal with a correct reason; naming nothing produces a refusal with a vaguer one. Neither is a pass and this entry is the record of which.",
+   "decision": "CARRIED AS AN INHERITED FAIL. Do not read rc2's NOT-MEASURED CLP row as an improvement on rc1's FAIL. The cheap fix before publishing is to re-run `ASIC/genus-innovus/scripts/conformal/run_clp.sh` against a build whose outputs/ holds the gate netlist, or to record the rc1 result explicitly as this entry does. The underlying UPF elaboration failure is a separate open item and is not made better by either.",
+   "person": "flow owner",
+   "date": "2026-08-27",
+   "withdraw_when": "a Conformal Low Power run reports 0 error-severity violations with intent_elaborated=yes and checks_ran=yes on BOTH the CPF and the UPF emitted for the netlist behind this stream. A run that elaborates neither, or one whose violation count merely falls because the intent stopped compiling, does not withdraw it."
+  },
+  {
+   "id": "setup-one-endpoint-1ps",
+   "what": "CLOSED ON rc4. On rc3fix this was the last open timing debt: one setup endpoint at the signoff corner (SS/1.08V/125C, 125C RC extraction) at WNS -0.001, TNS -0.001, FEP 1 of 68,303. rc4 reads setup +0.015 / 0.000 / 0 at the same corner, in the same Tempus run that reads hold +0.003 / 0.000 / 0. HOW: three cell resizes on the ONE contended net, applied by ECO and read back from the database after place_eco, route_eco, re-fill and fix_drc (final.resizes_verified = 3/3): u_..._u_tidelink/g57706 FA1D0->FA1D1, u_..._u_soc/g127940 ND2D3->CKND2D3, u_..._u_tidelink/g33463 OAI21D1->OAI21D2. Netlist diff is exactly 3 lines. AN EARLIER READING OF THIS ROW WAS WRONG AND IS CORRECTED HERE: the claim that '~13 ps had to be allocated between setup and hold' was an artefact of a GLOBAL hold_target_slack sweep. The contention was one net, not the design; three local resizes recovered the setup with hold measurably untouched at all three views.",
+   "decision": "WITHDRAWN as a debt. rc4 needs no frequency de-rating: it closes at the declared 100.00 MHz. The reasons rc3fix was shippable at 99.99 MHz still hold and are no longer needed. NOTE what did NOT change: the derate factors remain the stated engineering assumption recorded under known_bad[hold-fep], and both checks remain CPPR-financed -- with CPPR off this design reads setup -0.154 and hold -0.605. rc4 improves the margin inside that assumption; it does not retire the assumption.",
+   "person": "flow owner",
+   "date": "2026-08-29",
+   "withdraw_when": "WITHDRAWN 2026-08-29 on rc4. Re-open only if a re-run at the signoff corner reads FEP > 0."
+  },
+  {
+   "id": "rail-power-connectivity-VERIFIED-on-rc3fix",
+   "what": "Voltus static rail on rc3fix's own database answers the question LVS on this design was structurally incapable of answering. instances_analysed 367,244 of 367,737 in the database -- the +1,504 ECO cells are ALL analysed and ALL reached. iv_disconnected_functional = 0. The 18 disconnected instances are FILL/DCAP endcaps in one contiguous pre-existing island, IDENTICAL in count to rc2, with zero logic cells. The 493 instances outside the analysis are the IO ring (VDDIO/VSSIO excluded by name), name-for-name the same as rc2's.\n  NOT RE-RUN ON rc4. The last rail measurement is on rc3fix (ASIC/genus-innovus/rail/work/rc3fix-20260829). rc4 differs from rc3fix by three cell resizes and a re-fill, so this result is CARRIED FORWARD BY ARGUMENT, not re-measured: two of the three resizes step drive strength up by one, which raises local current draw slightly. The direction of the error is therefore known and adverse, and the margin it eats is unquantified. See not_measured[rail-not-rerun-on-rc4].",
+   "decision": "This is EVIDENCE, recorded here because it is the only power-connectivity evidence that exists for any candidate. It matters because before commit 77f06a2 this project's LVS could not detect a stranded PG pin at all -- its sign was inverted, and breaking a ground pin made LVS cleaner. SCOPE, stated: static at assumed activity, techonly PGV so cell internals are not modelled, die-only with no package model, and the IO ring is not analysed at all -- nothing in this project establishes that any IO cell reaches a VDDIO/VSSIO pad.",
+   "person": "flow owner",
+   "date": "2026-08-29",
+   "withdraw_when": "not a defect - this entry records a measurement and is withdrawn only if superseded by a rail run on a later database."
+  }
+ ],
+ "not_measured": [
+  {
+   "id": "po-r8-post-merge",
+   "asserts": "zero PO.R.8 floating gates after the foundry's library merge",
+   "why": "691 on rc2's submission stream, exactly as on rc1's and on every stream in this lineage -- read from calibre_runs/drc_rc2v3r4_logo_0827's summary, where PO.R.8 is the single largest non-zero rulecheck and is the value drc_census.py subtracts as waived. The stream carries LEF abstracts, not real standard-cell polysilicon, so only another foundry run closes it. imec's 24-Aug run on the rzG lineage found 14 REAL post-merge floating gates, which is a separate and still-open finding and is NOT covered by this row."
+  },
+  {
+   "id": "erc-padshorts",
+   "asserts": "ERC and pad-short results for this stream",
+   "why": "no imec run has seen this candidate. rc2's stream was written on 27 Aug and the most recent imec submission predates it."
+  },
+  {
+   "id": "bnd-sealring",
+   "asserts": "bond-pad / seal-ring BEOL rules on this stream",
+   "why": "not in the design data; the local BND deck runs over empty layers, so a local run would report a zero that measured nothing."
+  },
+  {
+   "id": "metal-density",
+   "asserts": "the stream meets the foundry density rules",
+   "why": "METAL_FILL is 0 on this lineage and METAL_FILL_OWNER is foundry: the stream carries no dummy metal by design, so the density windows are MEASURED and DECLARED, not fixed. rc2's Calibre run emits the same 158 *.density artefacts as rc1's over the same 36,064 window rows, and 33 of the 737 results are .DN. checks. The per-window CONTENTS do differ from rc1's -- 19 of 780 rows on M1.DN.1, 8 of 957 on M4.DN.1, 2 of 1,861 on M8.DN.1 -- which is the 292 inserted cells showing up as local density, with no rulecheck verdict changed. The '6117 failing density windows' figure carried on rc1's declaration was NOT re-derived here and should not be quoted against rc2 without re-deriving it."
+  },
+  {
+   "id": "sta-untested-checks",
+   "asserts": "that every timing check in the design was evaluated",
+   "why": "57,955 timing checks are UNTESTED in rc4's signoff run and sta_gate.py FAILS on them. THIS IS NOT AN rc4 REGRESSION: the number is IDENTICAL -- 57,955 -- in rc2's sta_final and rc3fix's sta_final6. Breakdown: PulseWidth 49,466/169,356; Library Clock Gating Setup 3,007/6,014; Recovery 2,998/43,284; Setup 2,377/68,303. VIOLATED IS ZERO IN EVERY CATEGORY. The untested set looks structural rather than directional: the SAME counts appear in both directions (Setup 2,377 and Hold 2,377; Library Clock Gating Setup 3,007 and Hold 3,007; Recovery 2,998 and Removal 2,998), which is the signature of one set of endpoints excluded from timing altogether -- unclocked, constant-tied or case-analysis-disabled -- not of an analysis that ran one way and not the other. The tied-off SE with no scan chain is a plausible contributor and has NOT been confirmed. Nobody has enumerated these endpoints. Until someone does, 'setup and hold close' means 'over the 96% of checks that were evaluated'."
+  },
+  {
+   "id": "rail-not-rerun-on-rc4",
+   "asserts": "IR drop and electromigration on the stream being submitted",
+   "why": "The Voltus static rail run is on rc3fix, not rc4. rc4 adds three up-sized cells and a re-fill. Both known_bad rail rows (49 EM elements over the derated limit, worst J/Jmax 1.437; worst IR collapse 1.336% against a 1.0% budget) are carried forward by argument. Two of the three resizes increase drive strength, so the carried numbers are optimistic by an unmeasured amount. A rail re-run on rc4-20260829/db_rc4 would close this and takes roughly the same wall time as the rc3fix run."
+  }
+ ]
+}

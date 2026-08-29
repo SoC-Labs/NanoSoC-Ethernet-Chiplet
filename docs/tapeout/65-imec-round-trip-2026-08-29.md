@@ -137,6 +137,15 @@ welcome it, but it is not a blocker and we are not asking you to chase it.
   area and all are memory-macro internals, so it cannot see a net that routes a
   long antenna to a standard-cell input. Report it as "no violation found within
   a stated scope", never as "antenna is clean".
-- If the candidate changes between now and submission (a setup ECO is in
-  flight), the geometry does not: rc2 and rc3fix are DRC-identical, zero of
-  1,926 rulechecks differ. Everything in this mail applies to either.
+- If the candidate changes between now and submission the geometry does not,
+  and this is now measured across all three: rc2, rc3fix and rc4 are
+  DRC-IDENTICAL. The setup ECO that was "in flight" when this was drafted has
+  landed as rc4 (md5 6b0833c4216bdb683ed2427cd0deba75, 29 Aug), and its Calibre
+  summary matches rc3fix's line for line -- same 1,926 rulechecks executed, same
+  737 results, same four tiers. The streams are NOT the same bytes: flat
+  original-layer geometries read 178,282,662 against rc3fix's 178,282,660, so
+  the three resized cells really are in there. Everything in this mail applies
+  to any of the three.
+  WHICH ONE WE SUBMIT is a separate decision: rc4 is the only candidate with no
+  timing waiver (setup +0.015 / hold +0.003, FEP 0 at both), and it is the one
+  to name if imec asks for a final md5.
