@@ -270,18 +270,57 @@ export TSMC65_IO_DRIVER_LEF ?= $(PAD_LEF)
 # CLK_PERIOD comes from ../common.mk:174 (10.0 ns). Not restated here - one
 # definition, and a sweep is `make syn CLK_PERIOD=8.0` either way.
 
-# ── ANALYSIS VIEW NAMES: DELIBERATELY NOT SET ───────────────────────────────
+# ── ANALYSIS VIEW NAMES ─────────────────────────────────────────────────────
 #
-# The engine defaults CTS_SETUP_VIEW / CTS_HOLD_VIEW / ROUTE_VIEWS_SETUP /
-# ROUTE_VIEWS_HOLD to `default_analysis_view_setup` and
-# `default_analysis_view_hold`, and this design's mmmc names its views EXACTLY
-# THAT. So the correct action is to set nothing. Overriding them to view names
-# this mmmc does not define aborts CTS - flow/innovus/3_cts.tcl asserts the named
-# views are present - after placement has already been paid for.
+# THIS BLOCK USED TO SAY "DELIBERATELY NOT SET" AND "the correct action is to
+# set nothing". That was true while the mmmc defined exactly one hold view. It
+# stopped being true on 2026-08-29, when the mmmc gained av_ltfix_libset_hold
+# and av_ml_libset_hold - the two hold corners signoff already read and P&R
+# never did - and the old advice would now instruct the next reader to undo the
+# line below. It is rewritten rather than deleted so that history is legible.
 #
-# The mmmc also defines `typical_analysis_view`. Setting ROUTE_VIEWS_TYPICAL to
-# it enables an extra typical-corner reporting pass in route; left unset that
-# pass is skipped. A reporting difference, not a timing one.
+# THE ONE THAT MUST BE SET, AND WHY IT IS NOT COSMETIC.
+# flow/innovus/4_route.tcl:153 defaults ROUTE_VIEWS_HOLD to the single view
+# {default_analysis_view_hold}, and :1618 issues
+#     set_analysis_view -setup $ROUTE_VIEWS_SETUP -hold $ROUTE_VIEWS_HOLD
+# as the LAST set_analysis_view before `pnr_write_db routed` at :1894. The
+# active-view state a database carries is therefore whatever that knob held, not
+# whatever the mmmc defines - and that saved state is what make_sta_mmmc.py
+# copies and sta_gate.py grades. Left unset, a routed database records ONE
+# active hold view however many the mmmc creates, and rc5 fails the signoff
+# gate on VIEW_ABSENT for the two missing views plus a clock count of 52 where
+# the policy requires 104, before anything is said about timing. Measured on
+# db_rc4: five views defined, one setup and one hold active, clock_count 52.
+#
+# THE THREE NAMES ARE sta_policy.json's required_hold_views, exactly. The
+# clock count follows from the view count -- 26 clocks x (1 setup + 3 hold) =
+# 104 -- so this line and expected_clock_count move together or not at all.
+#
+# ROUTE_VIEWS_SETUP IS DELIBERATELY LEFT ALONE. Its default is the single
+# default_analysis_view_setup, which is what required_setup_views asks for.
+# Adding typical_analysis_view here would make the count 26 x 5 = 130 and break
+# the gate for no measurement gained.
+#
+# NOTHING NEEDS SETTING FOR CTS, and that is a measurement rather than an
+# omission. grep set_analysis_view across flow/innovus/3_cts.tcl and
+# flow/steps/ -- there are no hits, so CTS never re-issues the view set and
+# inherits whatever the mmmc made active, which now includes both new hold
+# views. CTS_SETUP_VIEW / CTS_HOLD_VIEW are a DIFFERENT KIND OF KNOB: singular
+# view NAMES that the source-latency writeback census (3_cts.tcl sections 12
+# and 13) and report_clock_timing key on, not a view SET. 3_cts.tcl:571 asserts
+# each names a view the design defines and aborts the stage after placement has
+# been paid for if it does not. Both defaults - default_analysis_view_hold and
+# default_analysis_view_setup - are still created by the mmmc, at :294 and
+# :293, so the assertion passes and the census still keys on the view the OCV
+# defect lived in. Setting either to a LIST would break it: the assertion is an
+# exact-match lsearch for one name.
+#
+# ROUTE_VIEWS_TYPICAL. The mmmc also defines `typical_analysis_view`. Setting
+# ROUTE_VIEWS_TYPICAL to it enables an extra typical-corner reporting pass in
+# route; left unset that pass is skipped. A reporting difference, not a timing
+# one. Note that typical_analysis_view IS active for hold in the mmmc, so the
+# optimiser works on it; it is simply not in the graded set.
+export ROUTE_VIEWS_HOLD ?= default_analysis_view_hold av_ltfix_libset_hold av_ml_libset_hold
 
 
 # ── 7. RESOURCES ────────────────────────────────────────────────────────────
@@ -863,6 +902,19 @@ export ROUTE_OPT_MODE
 ## The first row is the one to read twice: only NINE endpoints are actually
 ## negative. Everything a hold target buys above that is margin bought on
 ## endpoints that already pass, which is why the price climbs so steeply.
+##
+## THESE COUNTS ARE A FLOOR, AND THE REASON IS ON THIS BRANCH. The census ran
+## against the hold views rc1 had active, which were default_analysis_view_hold
+## and typical_analysis_view, and report_timing returned rows for the first only.
+## The mmmc is separately gaining the two libset hold views signoff already uses
+## plus a 125 C RC corner, and every extra active hold view can only ADD
+## endpoints to the population below a target - never remove one. So read the
+## table as the cheapest the change can possibly be. RE-RUN IT once the mmmc
+## settles; on a copy of a route_preopt database it is one read_db and one
+## report_timing, about six minutes, and it is the number that decides whether
+## 0.080 still fits under the wall. hooks/pre_cts.tcl prints the active hold
+## views at the top of every CTS run so a later reader can tell which population
+## a given run's target was actually applied to.
 ##
 ## The 0.050 row prices itself against a known outcome and that is what makes
 ## the rest of the table usable: B asked for 0.050 and inserted 12,831 buffers

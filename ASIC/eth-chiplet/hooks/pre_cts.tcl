@@ -126,14 +126,21 @@
 # ------------------------------------------------------------------------------
 # WHAT THIS HOOK DOES NOT DO, STATED SO IT CANNOT BE CITED AS DOING IT
 # ------------------------------------------------------------------------------
-# * IT CANNOT FIX A CORNER THAT IS NOT IN THE MMMC. P&R optimises the two hold
-#   views this project's mmmc makes active - default_analysis_view_hold and
-#   typical_analysis_view. The signoff MMMC carries two more hold views, and the
-#   worst hold corner of all (fast/high-V/hot) is in NEITHER file: it reads
-#   -0.078 on 22 endpoints and was measured only by a hand-built MMMC (see the
-#   2026-08-28 timing-audit commit). No optimisation target can close a corner
-#   the optimiser is not shown. A green rc5 hold number is a statement about two
-#   views and must be reported as one.
+# * IT CANNOT FIX A CORNER THAT IS NOT IN THE MMMC, AND THAT IS NOT THIS FILE'S
+#   TO FIX. A hold target is only ever as good as the views it is applied to.
+#   As of gdsrun-20260826-rc1 the project mmmc made exactly two hold views
+#   active - default_analysis_view_hold and typical_analysis_view - while
+#   signoff read two more, and the worst hold corner of all, fast/high-V/hot,
+#   was in NEITHER: it reads -0.078 on 22 endpoints and was found only by a
+#   hand-built MMMC (2026-08-28 timing-audit commit). Closing that gap is the
+#   mmmc's job and it is being done separately on this branch.
+#
+#   WHICH IS WHY THIS HOOK PRINTS THE ACTIVE HOLD VIEWS instead of asserting
+#   them. Do not read a hold number from a run without reading that line: the
+#   same target against two views and against four is two different experiments,
+#   and only the log can say which one was run. It also changes the PRICE - the
+#   area census in design.mk was taken on default_analysis_view_hold alone, so
+#   with more hold views active its endpoint counts are a FLOOR.
 # * IT IS NOT MEASURED. Neither attribute has ever been set at CTS on this
 #   design, so the cost of 0.100 is a projection and not a number. Compare the
 #   cell census and the density in cts_manifest.txt against gdsrun-20260826-rc1
@@ -169,6 +176,49 @@
 ################################################################################
 
 step "clock optimisation effort and CTS optimisation targets"
+
+# --- WHICH VIEWS IS THE HOLD TARGET ABOUT TO BE APPLIED TO? ---------------------
+# First, because it frames every number the stage goes on to produce, and
+# because it is the one fact about a hold target that no report states. A target
+# of 0.080 against one hold view and against three is two different experiments,
+# and the endpoint population - hence the area - differs between them.
+#
+# READ FROM THE VIEW OBJECTS, NOT FROM THE PRUNING LIST, and that choice is
+# measured. opt_view_pruning_hold_views_active_list looks like the answer and is
+# the wrong one: issue set_analysis_view and then read it back in the same
+# session and it still returns the PREVIOUS set (measured 2026-08-29 - after
+# activating three hold views it still named two, while the same database
+# reported the new clock count of 104 immediately). The per-view .is_setup and
+# .is_hold attributes track set_analysis_view straight away. The pruning list is
+# printed too, second and labelled, because it is what the ccopt log quotes and
+# a reader comparing the two should see both rather than wonder which they have.
+#
+# Reported, never gated: this hook does not own the mmmc.
+set __setup_v {} ; set __hold_v {}
+if {[catch {
+        foreach __av [get_db analysis_views] {
+            set __n [get_db $__av .name]
+            if {[get_db $__av .is_setup]} { lappend __setup_v $__n }
+            if {[get_db $__av .is_hold]}  { lappend __hold_v  $__n }
+        }
+    } __e]} {
+    warn "could not enumerate active analysis views ($__e) - the hold target"
+    warn "  below is being applied to a view set this run does not record."
+} else {
+    say "ACTIVE HOLD VIEWS  ([llength $__hold_v]): [join $__hold_v { }]"
+    say "ACTIVE SETUP VIEWS ([llength $__setup_v]): [join $__setup_v { }]"
+    if {[llength $__hold_v] < 2} {
+        warn "only [llength $__hold_v] hold view is active. This design's signoff"
+        warn "  policy requires three - default_analysis_view_hold,"
+        warn "  av_ml_libset_hold and av_ltfix_libset_hold - and a hold target"
+        warn "  met in one view says nothing about the other two. Check the mmmc"
+        warn "  this run used before reading its hold numbers as closure."
+    }
+}
+set __v "<unreadable>"
+catch { set __v [get_db opt_view_pruning_hold_views_active_list] }
+say "opt's own hold pruning list (can lag set_analysis_view): $__v"
+unset -nocomplain __setup_v __hold_v __av __n __e __v
 
 # --- knobs ---------------------------------------------------------------------
 # Declared with `opt` so the value lands in cts_manifest.txt: a run that cannot
