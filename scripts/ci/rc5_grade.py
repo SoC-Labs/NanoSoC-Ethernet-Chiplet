@@ -67,6 +67,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
+sys.path.insert(0, str(HERE))
+import drc_tiers                                              # noqa: E402
 
 PASS, FAIL, NOT_MEASURED = "PASS", "FAIL", "NOT-MEASURED"
 BLOCK = "nanosoc_eth_chiplet_pads"
@@ -298,11 +300,46 @@ def probe_hold(d, required):
 
 
 def probe_drc(d):
+    """Is DRC clean ON THE SCOPE THIS PROJECT CAN ACT ON?
+
+    RESCOPED 2026-08-29, and the rescope is the point. The first version of this
+    row failed rc4 with "6117 failing density windows > budget 0". That number is
+    real, it is finer than anything else in the project, and it is the WRONG
+    THING TO GATE ON:
+
+      * it is a fifth scope. The summary's `.DN.` rulechecks sum to 66, not
+        6,117 -- the 6,117 are per-window rows out of 36,064 in the 158
+        *.density files, which is a different quantity from every other DRC
+        figure this project quotes.
+      * WE DO NOT SHIP THE DUMMY FILL. The foundry adds it at merge. A pre-fill
+        stream is EXPECTED to be short of the density minima and nothing
+        place-and-route does changes that.
+      * the evidence system already encodes the split: `drc-tiers` is the hard
+        gate and `metal-density` is a separate row declared foundry-side.
+      * imec graded this exact md5 post-merge on 28 August and reported no
+        design-rule violation of any kind -- no density family at all.
+
+    So this row now grades TIER 4, `real geometry`, computed by
+    scripts/ci/drc_tiers.py -- the same code evidence_flow.py's drc-tiers gate
+    uses, so the two cannot disagree. On rc4: 737 total / 46 reported / 13
+    non-density / 0 real geometry, which is exactly what the evidence report
+    says. Density moved to its own row, where an ABSOLUTE shortfall is declared
+    foundry-side and a REGRESSION against a reference is ours.
+
+    A FAIL here is now a thing a flow iteration can fix.
+    """
     txt = d.get("drc_summary")
     if txt is None:
         return NOT_MEASURED, "no <block>.drc.summary: Calibre DRC has not run on this build"
-    cap = _CAP.search(txt)
-    if not cap:
+    if d.get("drc_waiver_problems"):
+        # A waiver that does not match what it claims to explain removes results
+        # from `reported` on a false premise, and every tier above it inherits
+        # that. Not a FAIL -- the design may be fine -- but not a number either.
+        return NOT_MEASURED, ("drc_census reports waiver problem(s), so the "
+                              "waived figure the tiers subtract cannot be "
+                              "trusted: " + str(d.get("drc_waiver_detail"))[:200])
+    cls = drc_tiers.classify(txt, waived=d.get("drc_waived"))
+    if cls["limit"] is None:
         # THE ABSENT-CAP SHORT-CIRCUIT, CLOSED HERE. Every saturation test in
         # this repository guards the comparison on the cap's own truthiness, so
         # when the header is missing the test evaluates to False and a TRUNCATED
@@ -316,34 +353,127 @@ def probe_drc(d):
         return NOT_MEASURED, ("the summary carries no `Maximum Results/RuleCheck:` "
                               "header, so no result count in it can be shown to be "
                               "un-truncated. A capped check has an unknown true count.")
-    capn = int(cap.group(1))
-    ex = _EXECUTED.search(txt)
-    if not ex:
+    if cls["executed"] is None:
         return NOT_MEASURED, "the summary has no `TOTAL DRC RuleChecks Executed` line"
-    if int(ex.group(1)) == 0:
+    if cls["executed"] == 0:
         return NOT_MEASURED, ("0 rulechecks executed. Every count in this report is "
                               "zero because nothing ran, which agrees with every "
                               "budget and measures nothing.")
-    rows = _RULECHECK.findall(txt)
-    if not rows:
-        return NOT_MEASURED, f"{ex.group(1)} rulechecks executed and zero RULECHECK rows parsed"
-    sat = sorted(n for n, c in rows if int(c) >= capn)
-    if sat:
+    if cls["total"] is None:
+        return NOT_MEASURED, "the summary has no `TOTAL DRC Results Generated` trailer"
+    if cls["total"] > 0 and not cls["checks"]:
+        return NOT_MEASURED, (f"{cls['total']} results generated and zero RULECHECK "
+                              f"rows parsed from the MAIN section")
+    if cls["saturated"] is None:
+        return NOT_MEASURED, ("the summary declares no result cap, so no count in "
+                              "it can be shown to be un-truncated")
+    if cls["saturated"]:
         return NOT_MEASURED, ("%d rulecheck(s) SATURATED the %d-result cap (%s): a "
                               "capped count is not a count."
-                              % (len(sat), capn, ", ".join(sat[:4])))
-    rc = d.get("drc_census_rc")
-    if rc is None:
-        return NOT_MEASURED, "scripts/ci/drc_census.py did not run"
-    verdict = (d.get("drc_census_out") or "").strip().splitlines()
-    tail = [l for l in verdict if l.startswith(("FAIL:", "PASS:"))]
-    if not tail:
-        return NOT_MEASURED, "drc_census printed no PASS:/FAIL: verdict line"
-    if rc != 0:
-        return FAIL, "; ".join(l.strip() for l in tail)[:300]
-    nonzero = sum(1 for _n, c in rows if int(c) > 0)
-    return PASS, ("%s  [%d of %d rulechecks non-zero, cap %d, none saturated]"
-                  % (tail[0].strip()[:180], nonzero, len(rows), capn))
+                              % (len(cls["saturated"]), cls["limit"],
+                                 ", ".join(cls["saturated"][:4])))
+    tup = ("%s/%s/%s/%s total/reported/non-density/real-geometry"
+           % (cls["total"], cls["reported"], cls["non_density"], cls["real_geometry"]))
+    rg = cls["real_geometry"]
+    if rg is None:
+        return NOT_MEASURED, "the real-geometry tier could not be computed"
+    if rg > 0:
+        return FAIL, ("%d real-geometry result(s): %s  [%s]"
+                      % (rg, ", ".join("%s=%d" % kv
+                                       for kv in sorted(cls["real_geometry_checks"].items()))[:200],
+                         tup))
+    return PASS, ("real geometry 0  [%s; %d non-density are dummy-fill markers "
+                  "and advisories, density is graded in its own row]"
+                  % (tup, cls["non_density"]))
+
+
+def probe_density(d):
+    """PRE-FILL metal density: measured always, gated only against a reference.
+
+    THE ABSOLUTE NUMBER IS NOT OURS. We stream without dummy fill; the foundry
+    adds it at merge; imec's post-merge grade of this exact md5 reported no
+    density family. So "6,117 core windows short" is the expected state of a
+    pre-fill stream and failing on it would send an rc5 loop chasing something
+    place-and-route structurally cannot fix.
+
+    A REGRESSION IS OURS. If rc5 is worse than rc4 on the same windows, that is
+    a placement or power-plan change eating routing resource, and it is
+    actionable now rather than after a merge. So the row's question is the
+    comparison, and WITHOUT A REFERENCE IT IS NOT-MEASURED -- named that way so
+    the absence of a baseline cannot read as a pass.
+
+    THE POPULATION CONTROL IS THE VALUABLE PART. A density check that silently
+    measures nothing is the exact failure this project keeps hitting: 187 of 205
+    local BND rulechecks run over empty layers, the DRC gate was blind to
+    unmapped layers, and a capped Calibre run writes its truncated value into
+    both count fields. So an empty window set is NOT-MEASURED, never clean.
+    """
+    raw = d.get("density")
+    if raw is None:
+        return NOT_MEASURED, "no density census: drc_census.py did not run over this rundir"
+    if not raw:
+        return NOT_MEASURED, ("the rundir holds no *.density file at all. Nothing "
+                              "was windowed, so there is no population to be short "
+                              "on -- that is not a clean density result.")
+    # THE GATED POPULATION IS THE BACK-END ONE, and it is drc_census.py's own
+    # split, imported rather than re-derived: front-end OD./PO. windows are
+    # artefacts of an abstract-cell stream (PO.DN.2 alone is 22,670 of them) and
+    # counting them here would have been a sixth scope in a file written to stop
+    # there being a fifth.
+    dens = drc_tiers.back_end_density(raw)
+    if not dens:
+        return NOT_MEASURED, ("%d density file(s), and NOT ONE back-end check has "
+                              "a failing window. On a pre-fill stream that is not "
+                              "a clean result, it is a census that found nothing "
+                              "to measure." % len(raw))
+    windows = sum(f for f, _c, _cap in dens.values())
+    core = sum(c for _f, c, _cap in dens.values())
+    if windows == 0:
+        # POPULATION CONTROL. Files present, every one of them empty.
+        return NOT_MEASURED, ("%d density file(s) and ZERO window rows in any of "
+                              "them. A density check over an empty window set "
+                              "agrees with every budget and measures nothing."
+                              % len(raw))
+    capped = sorted(k for k, (_f, _c, cap) in dens.items() if cap)
+    if capped:
+        return NOT_MEASURED, ("density output TRUNCATED for %s: a capped window "
+                              "count is not a count (set `DRC MAXIMUM RESULTS "
+                              "DENSITY ALL` in the deck header)."
+                              % ", ".join(capped[:4]))
+    base = d.get("density_baseline")
+    scope = ("%d core-only failing window(s) of %d, across %d check(s) -- PRE-FILL, "
+             "foundry-cleared at merge" % (core, windows, len(dens)))
+    if base is None:
+        return NOT_MEASURED, (scope + ". NO REFERENCE: the absolute shortfall is "
+                              "expected and is not ours to fix, so this row grades "
+                              "a REGRESSION and needs a baseline. Pass "
+                              "--baseline-drc-run <the previous candidate's "
+                              "Calibre rundir>.")
+    base = drc_tiers.back_end_density(base)
+    worse, gone = [], []
+    for k, (_f, c, _cap) in sorted(dens.items()):
+        b = base.get(k)
+        if b is None:
+            if c:
+                worse.append("%s +%d (check absent from the reference)" % (k, c))
+            continue
+        if c > b[1]:
+            worse.append("%s %d -> %d (+%d)" % (k, b[1], c, c - b[1]))
+    for k in sorted(base):
+        if k not in dens:
+            gone.append(k)
+    base_core = sum(c for _f, c, _cap in base.values())
+    delta = core - base_core
+    if worse:
+        return FAIL, ("density REGRESSED against the reference on %d check(s): %s. "
+                      "Total core windows %d -> %d (%+d). An absolute shortfall is "
+                      "the foundry's; getting worse is ours."
+                      % (len(worse), "; ".join(worse[:4]), base_core, core, delta))
+    return PASS, (scope + "; no check is worse than the reference (total core "
+                  "%d -> %d, %+d)%s"
+                  % (base_core, core, delta,
+                     ("; %d check(s) present in the reference and absent here: %s"
+                      % (len(gone), ", ".join(gone[:4]))) if gone else ""))
 
 
 def probe_binding(d):
@@ -455,6 +585,25 @@ def _bump_fep(text, to=7):
     return "\n".join(out) + "\n"
 
 
+# A control is (name, how, wanted[, kind]).
+#
+#   kind "flip"        the mutation carries a defect and the probe MUST return a
+#                      different answer. Every row needs at least one, and a row
+#                      with none is NOT-MEASURED however green it looked.
+#   kind "insensitive" the mutation carries something the row is DELIBERATELY not
+#                      about, and the probe must return the SAME answer. These
+#                      exist because a rescope that only renames a scope is
+#                      indistinguishable from one that changed it: drc-clean must
+#                      be provably unmoved by a density-only change, or "density
+#                      is graded elsewhere" is a claim and not a fact.
+#
+# `wanted = None` ON AN INSENSITIVITY CONTROL MEANS "whatever this row said
+# unmutated". Writing PASS there instead was wrong and measurably so: against an
+# older baseline rc4's density genuinely REGRESSES, the row's true answer is
+# FAIL, and an improve-one-check mutation correctly left it FAIL -- whereupon a
+# control hard-coded to expect PASS declared the row unable to discriminate. An
+# insensitivity control asserts that the answer did not MOVE, which is a
+# different statement from asserting what the answer is.
 CONTROLS = {
     "setup-closed": [
         ("a failing setup endpoint",
@@ -472,10 +621,33 @@ CONTROLS = {
          NOT_MEASURED),
     ],
     "drc-clean": [
-        ("the census reports a design-owned violation", "drc_inject", FAIL),
+        # THE ONE THAT MATTERS AFTER THE RESCOPE. A real-geometry violation is a
+        # non-density, non-dummy-fill rulecheck with a non-zero count -- exactly
+        # the class a place-and-route iteration can introduce and fix.
+        ("a real-geometry violation appears", "drc_real_violation", FAIL),
+        # THE RESCOPE ITSELF, ASSERTED. Density moved out of this row; a
+        # density-only change must therefore move nothing here. If this control
+        # ever flips, density has crept back into the hard verdict.
+        ("a density-only violation must NOT move this row", "drc_density_only",
+         None, "insensitive"),
         ("the result cap header is missing", "drc_nocap", NOT_MEASURED),
         ("a rulecheck saturated its cap", "drc_saturate", NOT_MEASURED),
         ("zero rulechecks executed", "drc_zero", NOT_MEASURED),
+        ("a waiver does not match what it claims", "drc_waiver_bad", NOT_MEASURED),
+    ],
+    "density-pre-fill": [
+        # THE POPULATION CONTROL. Files present, every one empty -- a density
+        # check that measured nothing, which is the failure mode this project
+        # keeps hitting and the reason this row is worth having at all.
+        ("every density file is empty", "dens_empty", NOT_MEASURED),
+        ("the rundir holds no density file at all", "dens_no_files", NOT_MEASURED),
+        ("a check gets WORSE than the reference", "dens_regress", FAIL),
+        # A row that failed on any change would be a regression detector in name
+        # only, and on a pre-fill stream it would be red forever.
+        ("a check gets BETTER than the reference must not make it worse",
+         "dens_improve", None, "insensitive"),
+        ("density output was truncated", "dens_capped", NOT_MEASURED),
+        ("no reference to compare against", "dens_no_baseline", NOT_MEASURED),
     ],
     "stream-binding": [
         ("a gate read another build's stream", "bind_foreign", FAIL),
@@ -488,6 +660,32 @@ CONTROLS = {
         ("the coverage table cannot be read", "unt_blind", NOT_MEASURED),
     ],
 }
+
+
+def _inject_rulecheck(text, name, n):
+    """Add a RULECHECK row to the MAIN section, and move the trailer with it."""
+    # ANCHOR ON A LINE START. `"RULECHECK "` occurs INSIDE the section header
+    # itself ("--- RULECHECK RESULTS STATISTICS"), so searching for the bare word
+    # inserted the line into the middle of the header, destroyed it, and left
+    # main_section() finding only the BY CELL section -- the control then read
+    # PASS and reported "this row cannot fail". Caught by the control's own
+    # wanted/got, which is the argument for declaring what a control must return
+    # rather than just running it.
+    marker = "--- RULECHECK RESULTS STATISTICS"
+    i = text.index(marker)
+    j = text.index("\nRULECHECK ", i) + 1
+    line = "RULECHECK %s %s TOTAL Result Count = %d   (%d)\n" % (
+        name, "." * max(1, 40 - len(name)), n, n)
+    out = text[:j] + line + text[j:]
+    return re.sub(r"^(TOTAL DRC Results Generated:\s+)(\d+)",
+                  lambda mo: mo.group(1) + str(int(mo.group(2)) + n),
+                  out, count=1, flags=re.M)
+
+
+def _dens(d, fn):
+    """Rebuild the density census through fn(check, failing, core, capped)."""
+    src = d.get("density") or {}
+    return mut(d, density={k: fn(k, *v) for k, v in src.items()})
 
 
 def apply_named_mutation(name, d, required):
@@ -508,10 +706,46 @@ def apply_named_mutation(name, d, required):
             lambda mo: mo.group(1) + required[0], man, flags=re.M))
     if name == "hold_view_blind":
         return mut(d, **{"hold_view:" + required[-1]: None})
-    if name == "drc_inject":
-        t = d.get("drc_summary") or ""
-        return mut(d, drc_summary=t, drc_census_rc=1,
-                   drc_census_out="FAIL: 1 design-owned results > budget 0.")
+    if name == "drc_real_violation":
+        # M3.S.1 is a metal spacing rule: not `.DN.`, not a dummy-fill marker,
+        # not advisory -- so it lands in tier 4 and nothing else.
+        return mut(d, drc_summary=_inject_rulecheck(d.get("drc_summary") or "",
+                                                    "M3.S.1", 3))
+    if name == "drc_density_only":
+        # Bump an existing density rulecheck by 500. Tier 4 must not move.
+        return mut(d, drc_summary=re.sub(
+            r"^(RULECHECK \S+\.DN\.\S* \.+ TOTAL Result Count = )(\d+)",
+            lambda mo: mo.group(1) + str(int(mo.group(2)) + 500),
+            d.get("drc_summary") or "", count=1, flags=re.M))
+    if name == "drc_waiver_bad":
+        return mut(d, drc_waiver_problems=True,
+                   drc_waiver_detail="fixture: a waiver claims a cell that is "
+                                     "not in the BY CELL section")
+    if name == "dens_empty":
+        return _dens(d, lambda k, f, c, cap: (0, 0, cap))
+    if name == "dens_no_files":
+        return mut(d, density={})
+    # EVERY DENSITY MUTATION PICKS ITS TARGET FROM THE BACK-END POPULATION, which
+    # is the population the row grades. The first cut picked the largest check in
+    # the RAW census -- PO.DN.2, 22,670 windows -- which is front-end, which the
+    # probe filters out, so three controls mutated something the row is designed
+    # not to see and reported it as "this row cannot fail". A control that
+    # perturbs the wrong population is not a weaker control, it is a false one.
+    if name in ("dens_capped", "dens_regress", "dens_improve"):
+        be = drc_tiers.back_end_density(d.get("density") or {})
+        if not be:
+            return mut(d, density={})            # nothing to perturb; row is blind anyway
+        if name == "dens_capped":
+            k0 = sorted(be)[0]
+            return _dens(d, lambda k, f, c, cap: (f, c, True if k == k0 else cap))
+        k0 = max(be, key=lambda k: be[k][1])
+        if name == "dens_regress":
+            return _dens(d, lambda k, f, c, cap:
+                         (f + 25, c + 25, cap) if k == k0 else (f, c, cap))
+        return _dens(d, lambda k, f, c, cap:
+                     (max(0, f - 25), max(0, c - 25), cap) if k == k0 else (f, c, cap))
+    if name == "dens_no_baseline":
+        return mut(d, density_baseline=None)
     if name == "drc_nocap":
         return mut(d, drc_summary=re.sub(r"^Maximum Results/RuleCheck:.*$", "",
                                          d.get("drc_summary") or "", flags=re.M))
@@ -593,13 +827,44 @@ def collect(args):
 
     drc = Path(args.drc_run) if args.drc_run else build / "work" / "drc_run"
     d["drc_run"] = str(drc)
-    d["drc_summary"] = read(drc / f"{BLOCK}.drc.summary")
+    sp = drc_tiers.summary_path(str(drc)) if drc.is_dir() else None
+    d["drc_summary"] = read(sp) if sp else None
     if d["drc_summary"] is not None:
-        p = subprocess.run([sys.executable, str(HERE / "drc_census.py"), str(drc)],
-                           capture_output=True, text=True, cwd=str(ROOT),
-                           stdin=subprocess.DEVNULL, timeout=1800)
-        d["drc_census_rc"] = p.returncode
-        d["drc_census_out"] = (p.stdout or "") + (p.stderr or "")
+        # drc_census is still run, but its EXIT STATUS is no longer the verdict:
+        # it folds density into that rc, and density is a different question
+        # (see probe_drc). What is taken from it is the waived figure the tiers
+        # subtract and its waiver-consistency finding, both of which are about
+        # the rulecheck scope this row does grade.
+        pr = subprocess.run([sys.executable, str(HERE / "drc_census.py"), str(drc)],
+                            capture_output=True, text=True, cwd=str(ROOT),
+                            stdin=subprocess.DEVNULL, timeout=1800)
+        out = (pr.stdout or "") + (pr.stderr or "")
+        d["drc_census_rc"] = pr.returncode
+        d["drc_census_out"] = out
+        mo = re.search(r"less waived\s+:\s+(\d+)", out)
+        d["drc_waived"] = int(mo.group(1)) if mo else None
+        mo = re.search(r"FAIL: (\d+) waiver problem\(s\)", out)
+        d["drc_waiver_problems"] = bool(mo)
+        d["drc_waiver_detail"] = mo.group(0) if mo else ""
+        try:
+            d["density"], d["die_box"] = drc_tiers.density_windows(
+                str(drc), args.pad_inset)
+        except Exception as e:                                # noqa: BLE001
+            notes.append("density census failed on %s: %r" % (drc, e))
+            d["density"] = None
+    base = args.baseline_drc_run or os.environ.get("RC5_DENSITY_BASELINE") or ""
+    if base.strip():
+        if not Path(base).is_dir():
+            notes.append("--baseline-drc-run %s is not a directory; the density "
+                         "row will render NOT-MEASURED rather than skip its "
+                         "comparison" % base)
+        else:
+            try:
+                d["density_baseline"], _ = drc_tiers.density_windows(
+                    base, args.pad_inset)
+                d["density_baseline_run"] = base
+            except Exception as e:                            # noqa: BLE001
+                notes.append("baseline density census failed on %s: %r" % (base, e))
     ant = Path(args.antenna_run) if args.antenna_run else None
     if ant is None:
         cands = sorted((ROOT / "ASIC/genus-innovus/calibre_runs").glob(f"ant_*{tag.split('-')[0]}*"))
@@ -617,7 +882,11 @@ def grade(d, required):
         ("setup-closed", "did setup close?", lambda x: probe_setup(x)),
         ("hold-closed", "did hold close at all %d required views?" % len(required),
          lambda x: probe_hold(x, required)),
-        ("drc-clean", "is Calibre DRC clean?", lambda x: probe_drc(x)),
+        ("drc-clean", "is Calibre DRC clean on the scope this flow owns?",
+         lambda x: probe_drc(x)),
+        ("density-pre-fill",
+         "is pre-fill metal density no worse than the reference?",
+         lambda x: probe_density(x)),
         ("stream-binding", "did every gate read THIS run's stream?",
          lambda x: probe_binding(x)),
         ("untested-attributed",
@@ -628,18 +897,31 @@ def grade(d, required):
     for rid, question, probe in rows:
         verdict, detail = probe(d)
         controls, blind = [], []
+        n_flip_ok = n_flip = 0
         for spec in CONTROLS[rid]:
-            cname, how, wanted = spec
+            cname, how, wanted = spec[0], spec[1], spec[2]
+            kind = spec[3] if len(spec) > 3 else "flip"
             try:
                 mutated = how(d) if callable(how) else apply_named_mutation(how, d, required)
                 cv, cd = probe(mutated)
             except Exception as e:                            # noqa: BLE001
                 cv, cd = "ERROR", repr(e)
-            ok = (cv == wanted)
-            controls.append({"control": cname, "wanted": wanted, "got": cv,
-                             "flipped": ok, "detail": cd[:200]})
+            want = verdict if (kind == "insensitive" and wanted is None) else wanted
+            ok = (cv == want)
+            if kind == "flip":
+                n_flip += 1
+                n_flip_ok += 1 if ok else 0
+            controls.append({"control": cname, "kind": kind, "wanted": want,
+                             "got": cv, "flipped": ok, "detail": cd[:200]})
             if not ok:
-                blind.append(f"{cname}: wanted {wanted}, got {cv}")
+                blind.append(f"{cname}: wanted {want}, got {cv}")
+        # AN INSENSITIVITY CONTROL IS NOT EVIDENCE OF DISCRIMINATION. A row whose
+        # only satisfied controls are the ones asserting it does NOT react has
+        # been shown to be inert, not to be a gate.
+        if n_flip_ok == 0:
+            blind.append("no control of kind `flip` returned the other answer "
+                         f"({n_flip} declared) — nothing shows this row can "
+                         "change its mind")
         if blind:
             # A row whose control did not flip has not been shown to measure
             # anything, whatever it said. The ANSWER is kept beside the
@@ -740,6 +1022,18 @@ def main():
     ap.add_argument("--sta-reports", help="default ASIC/sta/work/<tag>/reports")
     ap.add_argument("--drc-run", help="default <build>/work/drc_run")
     ap.add_argument("--antenna-run")
+    ap.add_argument("--baseline-drc-run",
+                    help="the PREVIOUS candidate's Calibre rundir. Pre-fill "
+                         "metal density is graded as a REGRESSION against it, "
+                         "never as an absolute: we do not ship the dummy fill, "
+                         "the foundry adds it at merge, and imec's post-merge "
+                         "grade of this lineage reports no density family at "
+                         "all. Without it the density row is NOT-MEASURED, "
+                         "which is the honest answer and not a skip. Also read "
+                         "from $RC5_DENSITY_BASELINE.")
+    ap.add_argument("--pad-inset", type=float, default=135.0,
+                    help="pad band excluded from the CORE window count "
+                         "(default 135 um, drc_census.py's own default)")
     ap.add_argument("--lvs-report")
     ap.add_argument("--hold-views", nargs="+", default=None,
                     help="required hold views (default: from ASIC/sta/sta_policy.json)")
@@ -813,6 +1107,7 @@ def main():
            "build_root": str(args.build_root),
            "stream": d.get("stream_path"), "stream_md5": d.get("stream_md5"),
            "sta_reports": d.get("sta_reports"), "drc_run": d.get("drc_run"),
+           "density_baseline_run": d.get("density_baseline_run"),
            "required_hold_views": args.hold_views,
            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "preflight": pf_rows, "preflight_ok": pf_ok,

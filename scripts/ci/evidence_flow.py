@@ -66,6 +66,7 @@ from evidence_report import (  # noqa: E402
     PASS, FAIL, NOT_MEASURED, KNOWN_BAD,
     md5_of, sha256_of, now, render_html)
 import artifactory  # noqa: E402
+import drc_tiers  # noqa: E402
 import gds_canonical_hash  # noqa: E402
 
 
@@ -744,44 +745,46 @@ def gate_drc(spec, bundle):
         if c:
             cites.append(c)
 
-    # PARSE THE SUMMARY DIRECTLY. The four tiers are arithmetic over the
-    # MAIN rulecheck section; the BY CELL section repeats every result under
-    # its owning cell, so a regex over the whole file double-counts.
-    limit, total, checks = 0, None, {}
-    if summary:
-        body = open(summary, errors="replace").read()
-        m = re.search(r"Maximum Results/RuleCheck:\s+(\d+)", body)
-        limit = int(m.group(1)) if m else 0
-        m = re.search(r"TOTAL DRC Results Generated:\s+(\d+)", body)
-        total = int(m.group(1)) if m else None
-        main = body.split("--- RULECHECK RESULTS STATISTICS")[1:2]
-        main = main[0].split("--- RULECHECK RESULTS STATISTICS (BY CELL)")[0] if main else ""
-        for name, n in re.findall(r"^RULECHECK (\S+) \.+ TOTAL Result Count = (\d+)",
-                                  main, re.M):
-            if int(n):
-                checks[name] = int(n)
-
-    reported = None
-    m = re.search(r"REPORTED\s+:\s+(\d+)", txt)
-    if m:
-        reported = int(m.group(1))
-
-    # NON-DENSITY: design-owned results whose check name lacks `.DN.`.
-    # REAL GEOMETRY: non-density less the dummy-fill markers and the ESD
-    # warning. THE EXCLUSION SET IS DECLARED HERE, in code, because it was
-    # previously a hand-derivation with no implementation anywhere -- the
-    # number was right and the mechanism did not exist, which is the shape of
-    # a figure that quietly goes stale.
+    # THE ARITHMETIC LIVES IN scripts/ci/drc_tiers.py, and it lives there because
+    # on 2026-08-29 a new gate invented a FIFTH scope for "design-owned" -- the
+    # 6,117 core density WINDOWS -- and failed on it. That is a finer measurement
+    # than anything here and it is a different question: we do not ship the dummy
+    # fill, the foundry adds it at merge, and imec graded this exact md5 post-
+    # merge with no density family reported at all. The tiers below are unchanged
+    # in definition; they were MOVED so that the two readers cannot drift.
     waived = None
     m = re.search(r"less waived\s+:\s+(\d+)", txt)
     if m:
         waived = int(m.group(1))
-    dummy = re.compile(r"^(DM\d+|DOD|DPO|DRM|DNW|DPW)\.")
-    advisory_only = {"ESD.WARN.1"}
-    design = {k: v for k, v in checks.items() if not _is_waived(k, waived, checks)}
-    nond = {k: v for k, v in design.items() if ".DN." not in k}
-    real = {k: v for k, v in nond.items()
-            if not dummy.match(k) and k not in advisory_only}
+    body = open(summary, errors="replace").read() if summary else ""
+    cls = drc_tiers.classify(body, waived=waived)
+    if cls["saturated"] is None:
+        # No `Maximum Results/RuleCheck:` header. DrcTiers.__post_init__ guards
+        # its saturation test on `self.limit`, so a limit of 0 marks NOTHING
+        # saturated and a truncated run would report four confident tiers. The
+        # cap is what makes a count a count; without it there is no tier.
+        return None, Gate(
+            id="drc-tiers", verdict=NOT_MEASURED,
+            asserts="all four DRC tiers are present and none saturated its limit",
+            why="the Calibre summary declares no `Maximum Results/RuleCheck:` "
+                "header, so no result count in it can be shown to be "
+                "un-truncated -- Calibre writes the capped value into both "
+                "count fields.",
+            cites=cites)
+    limit = cls["limit"] or 0
+    total = cls["total"]
+    checks = cls["checks"]
+    nond = cls["non_density_checks"]
+    real = cls["real_geometry_checks"]
+    advisory_only = drc_tiers.ADVISORY_ONLY
+
+    # `reported` still comes from drc_census.py's own line rather than from the
+    # subtraction, so the two remain cross-checkable: they have agreed at 46 on
+    # every run and a disagreement would be a finding about the waiver file.
+    reported = None
+    m = re.search(r"REPORTED\s+:\s+(\d+)", txt)
+    if m:
+        reported = int(m.group(1))
 
     tiers = [
         DrcTier("total", total if total is not None else NOT_MEASURED,
