@@ -277,7 +277,8 @@ def sh(cmd, log_path, env=None, timeout=None, cwd=None):
                 cmd, shell=True, executable="/bin/bash",
                 cwd=str(cwd or ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, errors="replace",
-                env={**os.environ, **(env or {})},
+                env={k: v for k, v in {**os.environ, **(env or {})}.items()
+                     if v is not None},
             )
             for line in p.stdout:            # stream so a hung tool still logs
                 sys.stdout.write(line)
@@ -871,9 +872,37 @@ def _sandbox(fixture: Path, dest: Path):
         shutil.copy2(fixture / f, dest / f)
 
 
+def _sandbox_env(m):
+    """The environment a fixture check runs in: the operator's, MINUS every
+    variable that could reach out of the sandbox.
+
+    MEASURED 2026-08-29, and it is the ugliest kind of vacuity because it turns
+    a working gate off from OUTSIDE the gate. `scripts/ci/rc5_grade.py` exports
+    SIGNOFF_BUILD_ROOT so that a git worktree can grade the build tree that
+    actually exists -- an ABSOLUTE path into another checkout. build_freshness.py
+    reads it, and inside a prove sandbox that absolute path escapes the fixture
+    entirely: the check then reads the real 74-build tree instead of the
+    fixture's synthetic two, its must_pass case went BROKEN and, far worse, its
+    fail-dangling-pin case PASSED. `prove` reported "this gate cannot fail" -- of
+    a gate that is fine, switched off by an environment variable set four
+    processes away.
+
+    So the sandbox scrubs them. This is not a workaround: `prove` resolves
+    manifest variables from each stage's `proof_vars`, never from the
+    environment, so by construction the environment's copy is not what a proof is
+    supposed to read. Anything a check needs must come from the fixture.
+    """
+    drop = {"SIGNOFF_BUILD_ROOT"}
+    for spec in (m.get("vars") or {}).values():
+        if isinstance(spec, dict) and spec.get("env"):
+            drop.add(spec["env"])
+    return {k: None for k in drop}
+
+
 def cmd_prove(args):
     """prove: run each stage check against its must-pass and must-fail fixtures."""
     m, stages = load()
+    sandbox_env = _sandbox_env(m)
     want = set(args.stages or [])
     for w in want:
         if w not in stages:
@@ -948,7 +977,8 @@ def cmd_prove(args):
             sand.mkdir(parents=True, exist_ok=True)
             _sandbox(fixture, sand)
             log = base / sid / f"{Path(rel).name}.log"
-            rc, secs = sh(s["check"], log, cwd=sand, timeout=args.timeout)
+            rc, secs = sh(s["check"], log, cwd=sand, timeout=args.timeout,
+                          env=sandbox_env)
             ok = (rc == 0) if expect_pass else (rc != 0)
             if ok:
                 results.append((sid, label, "ok", f"rc={rc}  {secs}s"))
@@ -964,7 +994,7 @@ def cmd_prove(args):
                                 f"{log.relative_to(ROOT)}, sandbox kept: "
                                 f"{sand.relative_to(ROOT)})"))
 
-    bad += _prove_gaps(m, base, args, results, want)
+    bad += _prove_gaps(m, base, args, results, want, sandbox_env)
 
     print(f"\n{'stage':<16}{'case':<44}{'result':<11}detail")
     print("-" * 110)
@@ -1009,7 +1039,7 @@ def cmd_prove(args):
 GAP_FIXTURE_ROOT = Path("ci/fixtures")
 
 
-def _prove_gaps(m, base, args, results, want):
+def _prove_gaps(m, base, args, results, want, sandbox_env=None):
     """Run each declared gap's refuted_by against both fixtures. -> problem count."""
     if want:
         return 0                       # `prove <stage>` named stages, not gaps
@@ -1038,7 +1068,8 @@ def _prove_gaps(m, base, args, results, want):
             sand.mkdir(parents=True, exist_ok=True)
             _sandbox(fixture, sand)
             log = base / f"gap-{uid}" / f"{case}.log"
-            rc, secs = sh(cmd, log, cwd=sand, timeout=args.timeout)
+            rc, secs = sh(cmd, log, cwd=sand, timeout=args.timeout,
+                          env=sandbox_env)
             if rc == want_rc:
                 results.append((uid, label, "ok", f"rc={rc}  {secs}s"))
                 if not args.keep_sandboxes:
