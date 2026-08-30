@@ -1,0 +1,58 @@
+eval_legacy { setEcoMode -batchMode false }
+eval_legacy { setEcoMode -honorDontTouch true }
+eval_legacy { setEcoMode -honorDontUse true }
+eval_legacy { setEcoMode -honorFixedNetWire true }
+eval_legacy { setEcoMode -honorFixedStatus true }
+eval_legacy { setEcoMode -legalizeDuringCommit true }
+eval_legacy { setEcoMode -prefixName ECO }
+eval_legacy { setEcoMode -refinePlace true }
+eval_legacy { setEcoMode -updateTiming true }
+eval_legacy { setEcoMode -batchMode false }
+eval_legacy { setEcoMode -honorDontTouch true }
+eval_legacy { setEcoMode -honorDontUse true }
+eval_legacy { setEcoMode -honorFixedStatus true }
+eval_legacy { setEcoMode -honorFixedNetWire true }
+eval_legacy { setEcoMode -legalizeDuringCommit true }
+eval_legacy { setEcoMode -prefixName ECO }
+eval_legacy { setEcoMode -refinePlace true }
+eval_legacy { setEcoMode -updateTiming true }
+# Optimization ECO commands
+# opt_signoff -setup
+# set_db settings :
+# 	 opt_signoff_setup_target_slack 0.015
+# 	 opt_signoff_eco_file_prefix "<RUN_DIR>/eco1/reports/optsignoff"
+# 	 opt_signoff_prefix "SFIX1ECO"
+# 	 opt_signoff_legal_only true
+# 	 opt_signoff_select_setup_endpoints "<RUN_DIR>/eco1/reports/setup_endpoints.txt"
+# 	 opt_signoff_set_hold_endpoints_margin "<RUN_DIR>/eco1/reports/hold_endpoint_margin.txt"
+# 	 opt_signoff_optimize_core_only false
+# 	 opt_signoff_allow_skewing false
+# =====================
+
+catch {set_db eco_legalize_during_commit false}
+report_resource
+set_db eco_update_timing false
+set_db eco_refine_place false 
+set_db eco_prefix SFIX1ECO
+set_db eco_batch_mode true 
+set_db eco_honor_dont_use false 
+set_db eco_honor_dont_touch false 
+set_db eco_honor_fixed_status false
+catch { set_db eco_honor_fixed_wires false }
+eco_update_cell -insts {u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink/g57706} -cells FA1D1 -location { 504.200000 1078.000000 } -orient MY
+eco_update_cell -insts {u_nanosoc_eth_chiplet_chip_u_soc_u_soc/g127940} -cells CKND2D3 -location { 946.200000 1087.000000 } -orient MX
+eco_update_cell -insts {u_nanosoc_eth_chiplet_chip_u_soc_u_tidelink/g33463} -cells OAI21D2 -location { 520.000000 1067.200000 } -orient MY
+report_resource
+set_db eco_batch_mode false
+ 
+report_resource
+set_db eco_update_timing true
+set_db eco_refine_place true
+set_db eco_prefix -reset
+set_db eco_honor_dont_use true
+set_db eco_honor_dont_touch true
+set_db eco_honor_fixed_status true
+set_db eco_honor_fixed_wires true
+ 
+catch {set_db eco_legalize_during_commit true}
+place_detail -eco true -hard_fence false
