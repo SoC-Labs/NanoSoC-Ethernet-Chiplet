@@ -931,3 +931,144 @@ pinned at `c6ce42d`, so it is not this run's to change): add a fourth category �
 a primary output/input, identified by the `Delay Assertion` marker on the `Path N:` line —
 and treat it like the cross-clock case: report the number, do not gate on it, and skip the
 zero-signature test, because a zero capture source latency is structural there.
+
+---
+
+## F14 — F12 PROVEN BY CONTROLLED EXPERIMENT, and the flow reaches GDS
+
+Attempt 7 re-ran **cts → route** from the same placed database with one thing changed:
+`CTS_POST_HOLD_SETUP=0` on the make command line. It is a documented knob
+(`post_cts.tcl:90`, `design.mk:1126` uses `?=`). **No pinned file was edited, no gate was
+patched, relaxed or bypassed**, and the preflight's byte-identity check on every pinned
+input passed unchanged.
+
+### Everything before the recovery pass reproduced bit for bit
+
+    stage                       attempt 6                    attempt 7
+    02_cts                setup 0.076/0  hold -0.701/9122   IDENTICAL
+    after ccopt_design    setup 0.076/0  hold -0.701/9122   IDENTICAL
+    after -post_cts       setup 0.050/0  hold -0.703/8893   IDENTICAL
+    after -post_cts -hold setup 0.066/0  hold +0.003/   0   IDENTICAL
+
+The useful-skew result reproduced too: the pass ran, `Found 0 advances` / `Found 0 delays`
+of 58,611 sinks. **F11 is deterministic.**
+
+### The single variable, and its effect
+
+    03_cts_opt   attempt 6 (recovery pass ON)   setup +0.082/0   hold -0.700/8718
+    03_cts_opt   attempt 7 (recovery pass OFF)  setup +0.066/0   hold +0.003/   0
+                                                CTS-WARN: CTS_POST_HOLD_SETUP=0 -
+                                                no setup recovery after the CTS hold pass.
+
+Same inputs, one knob, 16 ps of setup against 703 ps of hold and 8,718 endpoints. **F12 is
+no longer an inference from two adjacent measurements; it is a controlled result.** The
+hold-repair cells survive into the written database — `cts.summary.gz` density is 85.282%
+in attempt 7 where it was 80.575% in attempt 6.
+
+For the first time on this design, CTS handed route a database with **zero failing setup
+endpoints and zero failing hold endpoints**.
+
+### F13 cleared itself, exactly as predicted
+
+    ROUTE: clock source latency symmetric to 0.0 ns - hold view is sane
+
+The worst early path is now internal, and symmetric:
+
+    Path 1: MET (0.003 ns) Hold Check ... u_tidelink/u_link_clk_div/byp_en_r_reg/D
+                           Capture       Launch
+            Src Latency:+   -1.222       -1.222
+
+The attempt-6 refusal was a symptom of F12, not a property of the design. Fixing the proven
+defect cleared the arguable one without touching it.
+
+**The underlying gate defect is still real and still worth fixing**, and attempt 7 supplies
+the diagnosis in one line. The two gates that ask this question select paths differently:
+
+    CTS gate 3   (3_cts.tcl:1213)  report_timing -early ... \
+                                     -from [all_registers -clock_pins] \
+                                     -to   [all_registers -data_pins]     <- reg2reg only
+    route gate   (4_route.tcl:815) report_timing -early -max_paths 1 -path_type full_clock
+                                                                          <- ANY path
+
+That is why, in attempt 6, CTS gate 3 said *"hold path source latency symmetric to
+0.0000 ns"* and the route gate 3½ hours later said *"asymmetric by 0.84 ns ... FIX CTS"* —
+about the same database. **The fix is to give the route probe the same `-from`/`-to`
+restriction the CTS probe already has.** It belongs in `asic-toolkit` (submodule, pinned at
+`c6ce42d`), so it is not this run's to land.
+
+## MEASUREMENT 3 ANSWERED: route completes and produces a GDS, then hard-fails its budget gate
+
+    == STAGE route starting 2026-08-30T16:55:10 ==
+    == STAGE route FAILED  2026-08-30T18:25:31 ==   (90 min)
+
+**Route did all of its work.** It produced `work/..._routed`, `outputs/..._pnr.v`,
+`..._pnr_pg.v` and a 341 MB `outputs/nanosoc_eth_chiplet_pads.gds`. rc5 therefore went
+**RTL → GDS end to end**, which was the run's purpose.
+
+### Where it beats rc1 outright
+
+| | rc1 | rc5 attempt 7 |
+|---|---|---|
+| `check_drc` | **could not be measured** — no `Total Violations` trailer, "its count of 0 is not evidence of anything" | **0 violations, positively attested** (`drc_attested clean-sentinel`) |
+| unrouted nets | 1 net with no global route (`...RAMCLD0WDATA_123`) | **0 net(s) have incomplete routes** |
+| declined open nets | 4 | none |
+| router-message gate | FAILED | **clean over 6 session logs** |
+| setup at post-fill | +0.009 / 0 | **+0.105 / 0** |
+
+The bit-123 net that has sunk earlier runs is routed. (Every `RAMCLD0WDATA_123` string in
+rc5's log is inside echoed Tcl — `@file NNNN: #` — not a router message.)
+
+### Why it still hard-failed
+
+    ROUTE-FAIL: signoff budgets exceeded:
+      380 missing power vias over {M1 AP} > budget 0
+          (M3->M4 16, M4->M5 192, M5->M6 106, M6->M7 45, M7->M8 1, M8->M9 3, M9->AP 1; VDD VSS)
+      PG opens 51            > budget 0  (IMPVFC-200)
+      dangling PG wires 727  > budget 0  (IMPVFC-94)
+      hold FEP 66            > budget 0  (WNS -0.100)
+      max_transition FEP 195 > budget 0  (worst -6.023)
+    ROUTE-FAIL: strict mode is set - stopping here.
+
+`51 opens / 727 dangling` are the standing PG known-bad this project already carries
+(rc4's evidence record names exactly those two numbers). The PG-via count and the two
+timing rows are the actionable items.
+
+### The route stage repeats F12's mistake, one seventh the size
+
+`ROUTE_OPT_MODE hold_then_setup`, `ROUTE_OPT_SETUP_RECOVERY true`:
+
+    04_route (after detail route)          hold  +0.003 /  0
+    opt_design -post_route -hold  17:37    hold  -0.021 /  2   density 85.688%
+    opt_design -post_route        17:58    setup +0.105 /  0   density 85.843%
+    05_route_opt                           hold  -0.099 / 66
+    06_post_fill                           hold  -0.100 / 66
+
+**Route's setup-recovery pass cost 78 ps of hold and 64 endpoints** — the same trade as
+F12, 7x smaller because the placement is frozen and detail-routed (which is the mechanism
+F12 hypothesised). `ROUTE_OPT_SETUP_RECOVERY=false` is the obvious next experiment: hold
+was `+0.003 / 0` entering route_opt and the whole 66-endpoint hold failure is downstream of
+that one pass. Setup at 04_route was -0.400/315, though, so unlike CTS there IS real setup
+work to do here — this is a trade, not a free win, and it has not been measured.
+
+### Utilisation against the wall
+
+    preCTS   79.105%      (rc1 75.384%)
+    cts      85.282%      (rc1 77.516%)  <- includes the hold repair that rc1 never kept
+    routed   85.843%      (rc1 77.784%)
+
+The projection was 88.9-90.8% against a ~92.2% wall. **Measured 85.8%**, about 6.4 points
+of headroom. Utilisation was never the constraint in this run, and the +6.2 points the CTS
+hold repair costs are affordable — which is the one thing `pre_cts.tcl` said it could not
+know in advance.
+
+---
+
+## rc5 SCORECARD
+
+| question | answer |
+|---|---|
+| **1. Does CTS finally schedule useful skew?** | **No — 0 of 58,611 sinks, twice, deterministically.** But the pass RAN for the first time (rc1 never invoked it), so this is a real negative about the design rather than an unmeasured configuration. The metric the hypothesis was built on could not have distinguished the two cases. |
+| **2. Does the CTS hold target work?** | **Yes, completely: -0.703/8893 → +0.003 with ZERO failing endpoints in every group, against four hold views, for +6.2 density points.** It was then deleted by rc5's own post-CTS setup-recovery pass; disabling that one knob keeps it. |
+| **3. Does route close with no manual ECO?** | **No, but it completes.** Routing, DRC and connectivity are clean — better than rc1 on all three. It hard-fails a 5-item signoff budget: 380 PG vias, the standing 51 opens / 727 dangling, hold 66 FEP, max_transition 195 FEP. No manual ECO was applied and none was needed to reach the gate. |
+| **utilisation** | 85.8% routed vs a ~92.2% wall. Not the constraint. |
+| **flow end to end** | **RTL → GDS, 341 MB stream, no manual intervention in any stage.** Two blocking defects fixed on the way (F7, F8), one experiment corrected (F12), no guard bypassed. |
