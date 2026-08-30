@@ -772,6 +772,15 @@ def run(args, capture=False):
     lef_dirs = list(args.lef_dir)
     if os.environ.get("MEM_LIB_ROOT"):
         lef_dirs.append(os.environ["MEM_LIB_ROOT"])
+    # THIS RUN'S ROMs FIRST, then the shared drop.  ASIC/romlibs is gitignored:
+    # it exists in the checkout it was compiled in and nowhere else, so in a git
+    # worktree or a fresh clone this line contributes nothing and the two ROM
+    # macros have no SIZE record.  ROMLIBS_DIR is what ASIC/eth-chiplet/design.mk
+    # exports to name the per-run build, and config.tcl and the mmmc both give it
+    # this same precedence.  (2026-08-30: the same missing directory refused
+    # check_floorplan_hazards outright and hard-stopped Innovus at init_design.)
+    if os.environ.get("ROMLIBS_DIR"):
+        lef_dirs.append(os.environ["ROMLIBS_DIR"])
     lef_dirs.append(os.path.join(REPO, "ASIC/romlibs"))
     lef_dirs.append(os.path.dirname(os.path.dirname(mmap_path)))  # <run>/ - has work/*/libs/lef
     lef_dirs = [d for d in lef_dirs if os.path.isdir(d)]

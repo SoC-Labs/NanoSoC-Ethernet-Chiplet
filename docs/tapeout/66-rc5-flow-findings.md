@@ -279,3 +279,84 @@ The gate has never run in CI or in a fresh clone, because it *could not* — it 
 refused there for this reason every time. That it passed for weeks is evidence about one
 directory on one host, not about the check. Any future "this gate passes" claim should
 name the checkout it passed in.
+
+---
+
+## F8 — the same defect a second time: the MMMC also read the gitignored ROM directory, so P&R and synthesis were never reading the same ROM
+
+**Found by relaunching after F7. Forty seconds into the place stage:**
+
+    **ERROR: (TCLCMD-995): Can not open file
+      '<repo>/ASIC/romlibs/cc_rom/rom_via_ss_1p08v_1p08v_125c.lib' for library set
+    **ERROR: (TCLCMD-995): Can not open file
+      '<repo>/ASIC/romlibs/eth_rom/eth_rom_via_ss_1p08v_1p08v_125c.lib' for library set
+    **ERROR: (IMPSE-110): File '.../nanosoc_eth_chiplet_pads.mmmc' line 56: errors out.
+    make: *** [flow.mk:498: place] Error 1
+
+`nanosoc_eth_chiplet_pads.mmmc:24-25` set the two boot-ROM directories from
+`$design_home/ASIC/romlibs` — the same gitignored path F7 was about, absent in this
+worktree.
+
+### This is not just F7 again in a second file. It is a live inconsistency
+
+Three files decide where the boot ROMs come from, and **only two of them had been
+migrated to the per-run build**:
+
+| file | resolves ROMs from | used by |
+|---|---|---|
+| `scripts/config.tcl:156-162` | `$ROMLIBS_DIR`, else shared | **synthesis** (Genus) |
+| `config/design_config.tcl:101-107` | `$ROMLIBS_DIR`, else `DESIGN_HOME`, else `NANOSOC_ETH_CHIPLET_HOME` | **synthesis** (`DESIGN_LEFS`/`DESIGN_LIBS_*`) |
+| `scripts/*.mmmc:24-25` | `$design_home/ASIC/romlibs`, **no override** | **P&R** (`read_mmmc`) |
+
+So in every run to date on the main checkout, Genus read the run's own freshly compiled
+ROM Liberty and Innovus read the shared drop. That is precisely the split the per-run ROM
+build was introduced to close — `config.tcl`'s own comment says the macros "are MASK
+PROGRAMMED", that the shared drop "shipped holding something else", and that the override
+exists so "synthesis, P&R and stream-out read the SAME build". P&R was never included.
+
+**It has been harmless so far, and that is measurable rather than assumed.** The shared
+and per-run Liberty for `rom_via` differ in 8 lines, all of them one timestamp
+(`Creation Date` / `date`); the LEFs differ only in the `-code_file` path inside a
+configuration comment. Same compiler, same `.bintxt`, same bits. The defect is that
+nothing in the flow was checking that, and the two directories are free to diverge —
+which for a mask-programmed ROM is the failure mode this project has already had twice.
+
+In a worktree the same defect is not harmless at all: it is a hard stop.
+
+### Fix
+
+`ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc` (and the run's pinned copy,
+kept identical):
+
+* `ROMLIBS_DIR` first, `$design_home/ASIC/romlibs` as the fallback — the same precedence
+  `config.tcl` and `design_config.tcl` use, so all three now agree;
+* a `file isdirectory` check on each ROM directory that errors with the path it computed
+  and the variable that produced it, instead of surfacing ten lines later as an
+  unattributable "cannot open file" from inside `read_mmmc`;
+* **it prints which source it used** — `mmmc: boot ROM macros from <dir> (ROMLIBS_DIR --
+  this run's own ROM build)`. Without that line no artefact of the run records which of
+  the two directories was opened, because the macros' only textual difference is a
+  comment.
+
+`$::env` is used rather than a `config.tcl` global, matching the existing reasoning at the
+top of the file: the MMMC is loaded by `read_mmmc`, not `source`d, so config.tcl globals
+may not be in scope.
+
+`scripts/checks/fp_guard.py` had the identical `os.path.join(REPO, "ASIC/romlibs")`
+assumption in its LEF search and got the same precedence. It is not on the flow's path
+today (only referenced from a comment in `post_powerplan.tcl`), so it was latent.
+
+### Verified
+
+Both arms evaluated in `tclsh` against the real filesystem: with `ROMLIBS_DIR` set it
+prints the run's romlibs and continues; unset, it raises the named error. Both copies pass
+the run's own `tcl_complete.tcl` balance check and are byte-identical to each other.
+Place relaunched and got past `read_mmmc`.
+
+### Class
+
+Third instance today of *flows read the worktree*: a path that is correct in one checkout
+and absent in every other, discovered only because rc5 is the first run executed outside
+the checkout that happens to contain it. rc5 was commissioned to validate the flow end to
+end; two blocking defects in the first hour, both invisible to every previous run, is
+that validation working.

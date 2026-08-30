@@ -21,8 +21,54 @@ set design_home [expr {[info exists ::env(DESIGN_HOME)]
                        ? $::env(DESIGN_HOME)
                        : $::env(NANOSOC_ETH_CHIPLET_HOME)}]
 
-set bootrom_path ${design_home}/ASIC/romlibs/cc_rom
-set eth_rom_path ${design_home}/ASIC/romlibs/eth_rom
+# ── THE BOOT ROMs COME FROM THIS RUN, NOT THE SHARED DROP ──────────────────
+#
+# SAME PRECEDENCE AS scripts/config.tcl:156-162 AND
+# ASIC/eth-chiplet/config/design_config.tcl:101-107, AND IT HAS TO BE, because
+# those two decide what SYNTHESIS reads and this file decides what P&R reads.
+# ASIC/rom_build.mk compiles both mask-programmed macros per run into
+# <run>/romlibs and ASIC/eth-chiplet/design.mk:692 exports ROMLIBS_DIR naming
+# it; config.tcl was given that override and this file was NOT, so every P&R
+# stage timed the ROMs against $design_home/ASIC/romlibs while synthesis read
+# the run's own build. That divergence is exactly what pinning the ROMs per run
+# was introduced to prevent -- these macros have shipped the wrong bits twice.
+#
+# AND IT WAS A HARD STOP, NOT ONLY AN INCONSISTENCY (measured 2026-08-30, rc5).
+# ASIC/romlibs is GITIGNORED. It exists in the checkout it was compiled in and
+# nowhere else: not in a git worktree, not in a fresh clone, not in CI. Running
+# P&R from the rc5 worktree, init_design died on
+#   **ERROR: (TCLCMD-995): Can not open file '.../ASIC/romlibs/cc_rom/
+#            rom_via_ss_1p08v_1p08v_125c.lib' for library set
+# forty seconds into the place stage. read_mmmc reports it as an error on THIS
+# file's line number, which is the only reason it was quick to find.
+#
+# $::env is visible in every Tcl context, which is why the override is written
+# this way here rather than via a config.tcl global -- see the note above
+# $design_home: this file is loaded by read_mmmc, not sourced.
+set romlib_root [expr {[info exists ::env(ROMLIBS_DIR)]
+                       ? $::env(ROMLIBS_DIR)
+                       : "${design_home}/ASIC/romlibs"}]
+set bootrom_path ${romlib_root}/cc_rom
+set eth_rom_path ${romlib_root}/eth_rom
+
+# SAY WHICH ONE, AND SAY IT BEFORE THE LIBRARY SETS ARE BUILT. A run that cannot
+# name the ROM build it timed against cannot be attributed, and the two candidate
+# directories hold macros whose Liberty differs only in a creation-date comment --
+# so no downstream report would ever show which was read.
+if {[info exists ::env(ROMLIBS_DIR)]} {
+    set _romsrc "ROMLIBS_DIR -- this run's own ROM build"
+} else {
+    set _romsrc "the shared drop -- ROMLIBS_DIR is unset"
+}
+puts "mmmc: boot ROM macros from ${romlib_root} (${_romsrc})"
+foreach {_rd _rn} [list ${bootrom_path} cc_rom ${eth_rom_path} eth_rom] {
+    if {![file isdirectory $_rd]} {
+        error "mmmc: no $_rn macro directory at $_rd\
+             \n  source: $_romsrc\
+             \n  Build this run's ROMs:  make -C ASIC -f common.mk rom-run ROM_RUN_DIR=$romlib_root"
+    }
+}
+unset _rd _rn _romsrc
 set IO_driver_path $::env(TSMC_65_HOME)/CMOS/LP/IO2.5V/iolib/STAGGERED/tphn65lpgv2od3_sl_210a_FE/TSMCHOME/digital/Front_End/timing_power_noise/NLDM/tphn65lpgv2od3_sl_210a/
 
 # ---------------------------------------------------------------------------
