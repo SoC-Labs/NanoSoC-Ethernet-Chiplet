@@ -610,3 +610,324 @@ wrong one, and F2 did not stop at all. They are one defect: **an input the build
 does not declare is an input nobody renders**, and the only reason three of them
 were survivable is that someone had run the tool by hand in this working
 directory.
+
+---
+
+## F9 — the CTS hold target that ran is 0.080, not the 0.100 its own rationale derives
+
+`hooks/pre_cts.tcl` devotes a section to the value of the CTS hold target:
+
+    #   CTS hold target   0.100     route hold target 0.080 (design.mk)   (:92)
+    # HOLD DECREASES DOWNSTREAM, SETUP INCREASES.
+    # WHY 0.100 AT CTS. It is the route target plus the degradation the flow's own
+    # stage table above shows between the end of CTS and the end of fill: 03_cts_opt
+    # -0.003 to 06_post_fill -0.012 is 9 ps, rounded up to the next 10 ps.   (:111)
+
+`design.mk:1103` ships `CTS_OPT_HOLD_TARGET ?= 0.080`, and rc5's own log confirms what
+took:
+
+    CTS: opt_hold_target_slack = 0.08 (was 0.0)
+
+So the asymmetry the hook argues for — **ask CTS for more hold than route, because
+post-route hold repair is blunt and expensive** — is not what rc5 runs. CTS and route are
+asked for the same 0.080, and the 9 ps of measured CTS→fill degradation the rationale is
+built on is not budgeted for anywhere.
+
+This is not a bug in either file; each is internally consistent. It is that the run's
+configuration and the run's documented reasoning are two different numbers, and only the
+log says which one executed. Recorded because rc5's hold result will be quoted later, and
+it is a measurement of **0.080 at CTS with a 0.080 route target**, not of the ladder
+`pre_cts.tcl` describes. Whichever value is right, the two files should be made to agree
+before this experiment is repeated.
+
+**Not changed mid-run.** Editing it now would make rc5 measure a third thing and would
+invalidate the manifest the run started under.
+
+---
+
+## F10 — rc5's hold numbers are against FOUR hold views; rc1's were against two
+
+From rc5's own `pre_cts` hook output, which prints this precisely so the comparison cannot
+be made silently:
+
+    CTS: ACTIVE HOLD VIEWS  (4): typical_analysis_view default_analysis_view_hold
+                                 av_ml_libset_hold av_ltfix_libset_hold
+    CTS: ACTIVE SETUP VIEWS (2): typical_analysis_view default_analysis_view_setup
+
+rc1 ran with two hold views. `pre_cts.tcl` states the consequence up front: "a hold target
+met in one view says nothing about the other two", and the endpoint population — hence the
+area cost — differs between them.
+
+**Therefore rc5's hold WNS/FEP are NOT directly comparable to rc1's.** rc5 is being graded
+by a stricter examiner. A rc5 hold number that looks worse than rc1's may be the same
+silicon measured against more corners. Any comparison in either direction has to say which
+view set it is over. This is the mmmc gap the 2026-08-28 timing audit opened being closed,
+and it landed between rc1 and rc5.
+
+---
+
+## F11 — MEASUREMENT 1 ANSWERED: extreme effort makes the useful-skew pass RUN for the first time, and it finds nothing
+
+**Answer: still 0 skewed sinks — but for a completely different reason than before, and the
+metric `pre_cts.tcl` chose to test this could never have told them apart.**
+
+### The knobs took
+
+    CTS: design_flow_effort = extreme (was standard)
+    CTS: opt_skew_ccopt = extreme (was standard)
+    CTS: opt_hold_target_slack = 0.08 (was 0.0)
+    CTS: opt_setup_target_slack = 0.0749 (was 0.0)
+    CTS: pre_cts set 4 attribute(s)
+
+and ccopt behaved measurably differently as a result. Three attributes appear as
+non-default in rc5's ccopt log and are **absent from rc1's**:
+
+    ccopt_cluster_when_starting_skew_adjustment: true (default: false)
+    cts_manage_local_overskew: true (default: false)
+    cts_approximate_balance_buffer_output_of_leaf_drivers_that_meet_skew_target: true (default: false)
+
+GigaOpt was invoked with `-usefulSkew ... -ensureReclusterForSkew -usefulSkew`; rc1's
+invocation carries `-usefulSkew` once and never reaches the pass.
+
+### THE TWO LOG LINES ARE NOT THE SAME LINE, AND THAT IS THE FINDING
+
+`pre_cts.tcl:39-41` builds its whole case on this quotation from rc1:
+
+    Found 0 advancing pin insertion delay (0.000% of 58618 clock tree sinks)
+    Found 0 delaying pin insertion delay (0.000% of 58618 clock tree sinks)
+
+In rc1 that line sits at **log line 78**, inside `CCOpt::Phase::PreparingToBalance`, before
+any clustering has happened. It is a **census of insertion-delay adjustments already
+present on entry**. It is not a report of what CTS scheduled, and it cannot become one: it
+is printed before the work.
+
+rc5 emits that same line, in the same place, also 0 (line 1018). **And then, 4,286 lines
+later, it emits something rc1 never emitted at all:**
+
+    Useful skew: advancing
+    ======================
+    Found 0 advances (0.000% of 58611 clock tree sinks)
+
+    Useful skew: delaying
+    =====================
+    Found 0 delays (0.000% of 58611 clock tree sinks)
+
+`grep -c "Found .* advances\|Found .* delays"` over rc1's ccopt log returns **0**. The
+useful-skew pass did not run in rc1. In rc5 it ran, and reported zero candidates in both
+directions.
+
+### What that changes
+
+* **The hypothesis is refuted.** `pre_cts.tcl` argued that CCOpt "simply does very little
+  of it at the default effort" and that the lever "has never been pulled". The lever has
+  now been pulled. The pass runs, examines 58,611 sinks, and schedules nothing.
+* **rc1's zero measured nothing.** It was a pre-balance census that would have read 0
+  whatever effort was set — as rc5 demonstrates by reading 0 on the very same line while
+  the tool goes on to do demonstrably different work. Another instance of the project's
+  *"a zero that measured nothing"* class, and this one was load-bearing for a design change.
+* **rc5's zero is a real negative.** The pass ran and declined. That is evidence about the
+  design, not about the configuration.
+
+### Why zero, most likely — LABELLED AS HYPOTHESIS, NOT MEASURED
+
+Setup was already closed entering CTS (`01b_place_opt` setup WNS **+0.002**, 0 failing
+endpoints). CCOpt's useful skew advances and delays sinks to move *setup* slack between
+adjacent stages; with no failing setup endpoint there is no slack to redistribute and every
+candidate move is rejected. If that is right, useful skew is not a lever for this design's
+hold problem at all — the two are only coupled through setup, and setup is not the
+constraint. **Not tested here.** The experiment that would test it is a CTS run at extreme
+effort against a database that still carries failing setup.
+
+### What is NOT claimed
+
+That extreme effort was wasted. It also enabled the three clustering attributes above and
+produced a materially different tree — `skew_group clk` skew 1.541 (rc1: 1.676),
+`D2D_RX_CLK_0` 0.545 (rc1: 0.441), and different insertion delays throughout. Whether that
+tree is better is a question for the hold and setup numbers, not for this section.
+
+---
+
+## F12 — MEASUREMENT 2 ANSWERED, IN TWO HALVES: the CTS hold target works completely, and rc5's own setup-recovery pass then deletes the repair
+
+**This is the most consequential result of the run and it needs both halves stated
+together, because either one alone is misleading.**
+
+### Half one: the hold target works, and it works better than anyone projected
+
+`opt_design -post_cts -hold` with `opt_hold_target_slack = 0.080`, from the tool's own
+`opt_design Final Summary`:
+
+    Hold mode           all      reg2reg   reg2cgate  default
+    WNS (ns):          0.003      0.003      0.082      0.083
+    TNS (ns):          0.000      0.000      0.000      0.000
+    Violating Paths:     0          0          0          0
+    All Paths:       1.09e+05   1.02e+05     3009       4575
+    Density: 85.282%
+
+**Hold closed completely at CTS: WNS +0.003, TNS 0.000, ZERO violating paths out of
+109,000 — against FOUR active hold views.** It entered the pass at -0.703 / 8,893 failing.
+
+rc1, for contrast, reached -0.003 / 43 failing against TWO hold views. rc5 is positive,
+has no failing endpoints at all, and is graded by a stricter examiner (F10).
+
+The price is visible and was paid in area: density 79.105% (preCTS) → **85.282%**, i.e.
+**+6.18 points** of standard-cell density spent on hold repair. `pre_cts.tcl` said this
+cost was "a projection and not a number". It is now a number.
+
+### Half two: the recovery pass then throws all of it away
+
+`hooks/post_cts.tcl`'s setup-recovery pass — the one thing in that file that is "NOT A
+RESTORE", added for rc5 — ran next, with the hold target still set (`opt_hold_target_slack
+0.08` is in its own attribute dump). Straight from the log, two consecutive QOR lines:
+
+    CTS: QOR after opt_design -post_cts -hold   | setup  0.066 / 0 | hold  +0.003 /    0
+    CTS: QOR after post-hold setup recovery     | setup  0.082 / 0 | hold  -0.700 / 8718
+
+**It bought 16 ps of setup and gave back 703 ps of hold and 8,718 endpoints.**
+
+And it did not merely fail to preserve the repair — it *removed the cells*:
+
+    density after opt_design -post_cts -hold   85.282%
+    density after the setup-recovery pass      80.575%
+
+Nearly all of the +6.18 points of hold-repair area was ripped out. The hold state handed
+to route is -0.700 / 8,718, essentially identical to the -0.703 / 8,893 that existed
+*before* the hold pass ran. The hold pass's ~25 minutes and 6 density points bought
+nothing that survived the same stage.
+
+### Why the rationale did not transfer, and why the file said so
+
+`design.mk:1105-1130` derives the recovery pass from a measurement taken **at route**:
+
+> at route, a heavy hold pass took setup from +0.010 to -0.023 AND introduced 6 real
+> max_capacitance and 2 real max_transition endpoints where there had been none, and the
+> setup pass run after it put setup back to +0.025, **kept the hold repair**, and returned
+> both DRV counts to zero for 12 cells and 8 min 15 s.
+
+At route the setup pass kept the hold repair. **At CTS it does not.** The same file
+already flagged the risk in as many words:
+
+> NOT MEASURED AT CTS. Every one of those numbers is post-route. No run on this design has
+> ever issued a second `opt_design -post_cts`.
+
+rc5 is the run that measures it. The answer is that the move is actively harmful at CTS,
+and by a margin of roughly 44:1 in picoseconds against 8,718 endpoints to nothing.
+
+The plausible mechanism — **hypothesis, not measured here** — is that at CTS the design is
+pre-route with estimated parasitics and cells can still move freely, so the setup pass
+legalises and re-optimises across the whole core and treats the hold buffers as free area
+to reclaim; at route the placement is frozen and detail-routed, so the same pass can only
+resize a handful of cells and physically cannot delete 4.7 points of density.
+
+### The consequence for this run
+
+Route is running on the **post-recovery** database, so rc5's route result is a measurement
+of a design with -0.700 / 8,718 hold entering route, not of the hold-clean database the
+CTS target produced. That makes rc5's answer to measurement 3 a test of the configuration
+as staged — which is worth having — but it is *not* a test of "what does route do when CTS
+hands it closed hold". That experiment has not been run.
+
+### THE FIX, AND WHY IT IS NOT BEING APPLIED MID-RUN
+
+Disable the recovery pass at CTS (`post_cts.tcl` gates it on `CTS_OPT_HOLD_TARGET` being
+non-empty, and `design.mk` documents setting it to 0 for the stock two-pass order), keeping
+it at route where it is measured to help. The hold pass alone leaves setup at +0.066 with
+zero failing setup endpoints — there is nothing for the recovery pass to recover.
+
+Not changed now: rc5 started under a staged manifest, and editing a pinned hook mid-flight
+would make the run measure a third configuration and invalidate its own provenance. The
+change belongs to the next run, with this section as its justification.
+
+---
+
+## F13 — MEASUREMENT 3, FIRST ATTEMPT: route hard-failed at a PRE-route gate, on a path that exists only because of F12
+
+Route ran for 3 minutes and refused before routing anything:
+
+    ROUTE-FAIL: clock source latency is asymmetric by 0.84 ns between
+    ROUTE-FAIL: the capture and launch sides of the worst hold path.
+    ROUTE-FAIL: That makes every hold number in this run fiction.
+    ROUTE-FAIL: FIX CTS, NOT ROUTE.
+    ROUTE-FAIL: strict mode is set - stopping here.
+
+### What the gate actually looked at
+
+`reports/nanosoc_eth_chiplet_pads_srclat_precheck.rep`, from
+`report_timing -early -max_paths 1 -path_type full_clock`:
+
+    Path 1: VIOLATED (-0.700 ns) Early Output Delay Assertion
+                   View: av_ltfix_libset_hold        Group: rmii_ref_clk
+             Startpoint: (R) .../u_rmii_to_mii/rmii_txd_reg[1]/CP    Clock: rmii_ref_clk
+               Endpoint: (R) RMII_TXD[1]                             Clock: rmii_ref_clk
+
+                           Capture       Launch
+             Clock Edge:+    0.000        0.000
+            Src Latency:+    0.000       -0.840
+            Net Latency:+    0.000 (P)    0.794 (P)
+           Output Delay:-   -2.000
+
+**The endpoint is a primary output port, not a register.** There is no capture clock
+*network*: the capture reference is a `set_output_delay -min -2.000 -clock rmii_ref_clk`
+assertion, so `Src Latency` and `Net Latency` on the capture side are 0.000 by
+construction. The 0.84 ns is the launch clock's own `-source` latency measured against
+nothing, not skew between two clock paths.
+
+### The gate's taxonomy has three categories and this path is in none of them
+
+`flow/innovus/4_route.tcl:810-865` classifies the worst early path as:
+
+| case | action |
+|---|---|
+| cross-clock (launch clock name != capture clock name) | do **not** gate on delta; test only the zero-signature |
+| same clock, delta > `ROUTE_SRCLAT_TOL` | **FAIL** |
+| same clock, symmetric | pass |
+
+Here both ends print `Clock: rmii_ref_clk` — the output delay is *referenced* to that clock
+— so `srclat_xclk` is false and the path takes the same-clock branch and fails.
+
+The file's own comments show it has already been burned once by exactly this shape of
+mistake, and it says so: a cross-clock path "can never pass a 50 ps tolerance - on ANY
+database, however good ... A perfectly healthy run, permanently blocked by a gate reading a
+number that was never skew." A **port endpoint** is the same problem one category over, and
+it was not anticipated. Note too that `route_srclat_zero` would also have fired here
+("capture lost it"), for a zero that is structural rather than a writeback defect.
+
+### But the gate is NOT simply wrong, and this run is not going to pretend it is
+
+Two things are true at once:
+
+1. Its *diagnosis* is misdirected for this path. "FIX CTS" cannot help an output-delay
+   assertion, and "every hold number in this run is fiction" does not follow.
+2. There may still be a real constraint question underneath — whether the RMII output
+   budget should be computed against a clock reference that carries -0.840 ns of source
+   latency on the launch side and none on the capture side is an **SDC** question, and it
+   has not been answered here.
+
+So the gate was **not patched, not relaxed and not bypassed.** `ROUTE_HOLD_SANITY=0` exists
+and was not used.
+
+### The decisive observation: this path is a symptom of F12
+
+`report_timing -early -max_paths 1` returns whatever the single worst early path happens to
+be. From the QOR tables, hold in the `reg2out` group was:
+
+    after opt_design -post_cts        reg2out  -0.703 / 3 failing
+    after opt_design -post_cts -hold  reg2out  +0.083 / 0 failing   <- CLOSED
+    after the setup-recovery pass     reg2out  -0.700 / 3 failing   <- reverted
+
+**With the F12 recovery pass disabled, `reg2out` is +0.083 and the worst early path is an
+ordinary internal `reg2reg` path at +0.003**, whose launch and capture source latencies are
+the same number because both ends sit on the same clock network. The gate would then have a
+symmetric path to look at and would pass on its own terms.
+
+That is the experiment attempt 7 runs: fix the defect that is proven (F12) rather than the
+one that is arguable (this one), and see whether the gate clears itself.
+
+### Still a real latent defect
+
+Whatever attempt 7 shows, the gate will misfire on any design whose worst early path is an
+I/O delay assertion. The fix belongs in `asic-toolkit` (`ASIC/asic-toolkit` is a submodule
+pinned at `c6ce42d`, so it is not this run's to change): add a fourth category — endpoint is
+a primary output/input, identified by the `Delay Assertion` marker on the `Path N:` line —
+and treat it like the cross-clock case: report the number, do not gate on it, and skip the
+zero-signature test, because a zero capture source latency is structural there.
