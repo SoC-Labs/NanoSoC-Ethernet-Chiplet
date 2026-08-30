@@ -120,3 +120,51 @@ open problem. The two findings should be read together, but they do not overlap.
 only, on one machine, with the toolchain currently installed. It says nothing
 about the other 47 firmware artefacts, and nothing about whether the ASIC flow
 downstream of it is reproducible.
+
+---
+
+## F6 — the floorplan-hazard gate now refuses on the SHIPPED lineage's own netlist
+
+**This one is about rc4, not just rc5.**
+
+rc5's synthesis completed and the flow then stopped at the pre-P&R floorplan gate:
+
+    check_floorplan_hazards: COULD NOT MEASURE
+      2 place_macro pattern(s) did not resolve against ..._gate_power.v
+      Exiting 2.  A check that measures nothing must not pass.
+
+That refusal is correct behaviour and exactly the discipline this project has been
+building. The problem is what it refuses on.
+
+**Isolated by experiment.** Running the same checker with the same floorplan against
+**rc1's own netlist** produces the identical failure, same two patterns. So it is not
+rc5's netlist:
+
+    rc5 netlist  -> 2 patterns unresolved
+    rc1 netlist  -> 2 patterns unresolved      <- the SHIPPED lineage
+
+**And everything else is identical.** rc1's pinned floorplan and rc5's pinned floorplan
+are the same file (md5 7731a050be86, 21 place_macro patterns, zero differing lines).
+The macro instances are the same: 21 in each netlist, and a set-difference of the
+(cell, instance) pairs is EMPTY both ways. `check_floorplan_hazards.py` has no commits
+after 2026-08-25 16:32, which is before rc1 ran.
+
+**Yet rc1's stored report says `verdict = PASS`, `hard = 0`, `netlist_macro_instances = 21`,
+written 2026-08-26 02:36.**
+
+So a gate that guarded the shipping floorplan passed on 26 August and refuses on the same
+inputs today, through something that is neither the checker file, the floorplan, nor the
+netlist. Two readings, and they need different responses:
+
+  (a) it was passing VACUOUSLY before and is now correctly refusing -- in which case the
+      rc1/rc4 lineage never had a real floorplan-hazard result; or
+  (b) something in its environment has regressed -- in which case the gate is broken now.
+
+**Either way the rc1/rc4 floorplan-hazard PASS is not currently reproducible**, and that
+is worth knowing two days before tapeout. It does not by itself indicate a defect in the
+silicon: the hazard classes it grades were separately clean on rc1, and rc4 is
+DRC-identical to the lineage it descends from.
+
+**NOT BYPASSED.** rc5 is stopped at this gate. Overriding a check that refuses to measure
+is precisely the move this project's discipline exists to prevent, so it waits for a
+decision rather than an `EVP_*` escape hatch.
