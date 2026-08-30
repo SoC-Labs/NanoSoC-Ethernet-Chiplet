@@ -168,3 +168,114 @@ DRC-identical to the lineage it descends from.
 **NOT BYPASSED.** rc5 is stopped at this gate. Overriding a check that refuses to measure
 is precisely the move this project's discipline exists to prevent, so it waits for a
 decision rather than an `EVP_*` escape hatch.
+
+---
+
+## F7 — F6 RESOLVED: the gate's ROM LEFs came from a gitignored directory, so it only ever worked in one checkout
+
+**Answer to F6: NEITHER reading (a) nor (b). rc1 was not vacuous, and the gate has not
+regressed. The gate is correct and was correct; its LEF *search path* was not portable.**
+
+### The two patterns are the two boot ROMs
+
+`check_floorplan_hazards.py` resolves each `place_macro` glob against a hierarchical
+walk of the gate netlist, and that walk only emits an instance as a *macro* if some
+LEF it read declared that cell (`netlist_macro_instances(..., macro_cells, ...)`,
+`if cell in macro_cells`). Instrumenting the resolver on rc5's netlist:
+
+    macro cells declared by the LEFs found : 7      (expected 9)
+    macro instances found in the netlist   : 19     (expected 21)
+    place_macro patterns                   : 21
+      BAD  n=0   *u_network_core*u_region_bootrom_0*rom_via*
+      BAD  n=0   *u_chip_core*u_region_bootrom_0*rom_via*
+      OK   n=1   x19
+
+The two unresolved patterns are exactly the two boot ROMs, and the two missing cells
+are exactly `rom_via` and `eth_rom_via`. Nothing else is involved.
+
+### Why the cells were missing
+
+`lef_globs()` looked in two places: `$MEM_BASE/*/*.lef`, and `<repo>/ASIC/romlibs/*/*.lef`.
+
+**`ASIC/romlibs` is gitignored** — `.gitignore:200`, `git ls-files ASIC/romlibs` returns
+nothing. It is a compiled output that exists in the checkout it was built in and nowhere
+else: not in a git worktree, not in a fresh clone, not in CI.
+
+rc1 ran in the main checkout, where that directory happens to exist, so the ROM cells were
+declared, all 21 patterns resolved and the gate measured. rc5 runs from the
+`rc5vt-20260829` git worktree, where the path does not exist at all. Same checker, same
+floorplan, same netlist content — different filesystem.
+
+Meanwhile the *flow* had already moved on. `ASIC/rom_build.mk` compiles both ROM macros
+**per run** into `$(RUN_DIR)/romlibs`, `ASIC/eth-chiplet/design.mk:692` exports
+`ROMLIBS_DIR` pointing at it, and `config/design_config.tcl:101-107` gives that variable
+first precedence when it builds `DESIGN_LEFS`. rc5's preflight even prints
+`OK: this run's ROMs are staged and pinned (.../build/rc5vt-20260829/romlibs)`.
+So Genus and Innovus read this run's ROM LEFs while the hazard gate was still looking for
+a shared directory the run does not use — and in a worktree, does not have.
+
+This is the *"clean checkout builds different silicon"* class again, in its milder form:
+the flow reads the worktree, and a check that hardcodes a path outside the run's own
+inputs is measuring a different design from the one being built.
+
+### Proof, both directions
+
+Supplying the run's own ROM LEFs explicitly with `--lef`, changing nothing else:
+
+    21/21 patterns resolved, 21 netlist macro instances, 9 macro LEF cells declared
+    VERDICT: PASS  (0 hard, 8 class-3 advisories)
+
+### Reading (a) is refuted by rc1's own stored census
+
+rc1's `reports/floorplan_hazards.json` records `patterns_resolved: 21`,
+`patterns_unresolved: 0`, `macro_lef_cells_declared: 9`, `netlist_macro_instances: 21`,
+`macro_edges_tested: 42`, `escape_pins_tested: 1994`. A vacuous run cannot produce those
+numbers — the checker raises before writing JSON when anything is unresolved, which is
+why rc5 produced no JSON at all. **The rc1/rc4 lineage did have a real floorplan-hazard
+result covering all 21 macros.** rc4's shipped floorplan is not implicated.
+
+### The fix (not an override)
+
+`scripts/ci/check_floorplan_hazards.py`, `lef_globs()` now searches, in precedence order:
+
+    $MEM_BASE/*/*.lef
+    $ROMLIBS_DIR/*/*.lef        <- NEW: this run's own compiled ROMs, when set
+    <repo>/ASIC/romlibs/*/*.lef <- kept as the fallback for a shared-tree run
+
+`cell_lef` records cells with `setdefault`, so the run's ROMs win over the shared drop —
+the same precedence `design_config.tcl` gives them, so the gate now reads the two macros
+the flow actually places rather than whichever copy a shared directory happens to hold.
+
+Two smaller defects fixed alongside, both of which cost time here:
+
+* **The failure printed almost none of what it knew.** `main()` discards `Report.lines`
+  on a `Vacuous` and prints only the exception, so `PATTERN RESOLUTION FAILED` and the
+  per-pattern hit counts were assembled and thrown away. The exception now carries the
+  failing patterns, the instance and declared-cell counts, and the LEF globs searched.
+* **`globs` was unbound when `--lef` was given**, so the "no macro LEF parsed" refusal
+  would have raised `NameError` instead of refusing cleanly. Bound in both arms.
+
+### Verification
+
+* `--selftest` (all six sections, including the discrimination arm that proves each
+  suggested move clears the finding it was suggested for): **PASS**
+* Without `ROMLIBS_DIR`: still refuses, now naming the two patterns, the 19/21 instance
+  count, the 7/9 cell count and the globs it searched.
+* `make floorplan-hazards` through the real entry point with rc5's pins: **PASS**,
+  `reports/floorplan_hazards.json` written.
+* **rc5's result is substantively identical to rc1's**: every one of the 18 census rows
+  equal, `counts` equal (`1:0, 2:0, 3:8, 4a:0, 4b_halo:3`), and the set-difference of
+  (class, macro) findings is EMPTY in both directions.
+
+### NOTHING WAS OVERRIDDEN
+
+No `EVP_*` escape hatch, no `--strict` relaxation, no gate skipped. The hard classes
+(1, 2, 4a) are measured and zero on rc5's real inputs. The 8 class-3 entries are the same
+over-approximating advisories rc1 carried and shipped with.
+
+### What this leaves open
+
+The gate has never run in CI or in a fresh clone, because it *could not* — it would have
+refused there for this reason every time. That it passed for weeks is evidence about one
+directory on one host, not about the check. Any future "this gate passes" claim should
+name the checkout it passed in.

@@ -211,10 +211,33 @@ def _site(var, what):
 
 
 def lef_globs():
-    return [
+    # ORDER IS PRECEDENCE.  The caller records cell -> LEF with setdefault, so
+    # the first glob that declares a cell wins.
+    #
+    # THIS RUN'S BOOT ROMs COME FIRST; THE SHARED DROP IS ONLY A FALLBACK.
+    # ASIC/rom_build.mk compiles both ROM macros per run into $(RUN_DIR)/romlibs
+    # and ASIC/eth-chiplet/design.mk exports ROMLIBS_DIR pointing at it;
+    # config/design_config.tcl gives that variable exactly this precedence.  So
+    # after this change the gate reads the same two macros the flow places.
+    #
+    # WHY THIS IS NOT MERELY TIDINESS -- MEASURED 2026-08-30 on rc5.  The shared
+    # $(REPO)/ASIC/romlibs is GITIGNORED (.gitignore:200).  It exists in the one
+    # checkout it was compiled in and nowhere else: not in a git worktree, not in
+    # a fresh clone, not in CI.  With that glob as the only ROM source, a run
+    # outside that checkout declared 7 macro cells instead of 9; the netlist walk
+    # then did not recognise the two ROM instances as macros and descended past
+    # them (19 instances found, not 21); and both `*rom_via*` place_macro
+    # patterns resolved to zero instances.  The gate refused to measure ANY of
+    # the four hazard classes -- correctly, by its own contract -- for a reason
+    # that had nothing whatever to do with the floorplan it was asked about.
+    globs = [
         f'{_site("MEM_BASE", "the precompiled macro-LEF root for this process node")}/*/*.lef',
-        str(REPO / "ASIC/romlibs/*/*.lef"),
     ]
+    romlibs = os.environ.get("ROMLIBS_DIR")
+    if romlibs:
+        globs.append(str(Path(romlibs.rstrip("/")) / "*" / "*.lef"))
+    globs.append(str(REPO / "ASIC/romlibs/*/*.lef"))
+    return globs
 
 
 def tech_lef_globs():
@@ -1139,6 +1162,10 @@ def run(args) -> tuple[int, Report, dict]:
     # ---- LEFs (header scan now, full parse only for the cells we place) --
     lef_paths = []
     if args.lef:
+        # Bound in BOTH arms: the "no macro LEF parsed" refusal below prints it,
+        # and with --lef supplied it used to raise NameError instead of the
+        # refusal it was written to give.
+        globs = ["(--lef, given on the command line)"]
         lef_paths = [Path(p) for p in args.lef]
     else:
         globs = lef_globs()
@@ -1217,8 +1244,22 @@ def run(args) -> tuple[int, Report, dict]:
         R.h("PATTERN RESOLUTION FAILED")
         for pat, n in unresolved:
             R.p(f"  '{pat}' matched {n} macro instances, expected exactly 1")
-        raise Vacuous(f"{len(unresolved)} place_macro pattern(s) did not resolve "
-                      f"against {nl}; nothing downstream would be measured")
+        # THE DETAIL GOES IN THE EXCEPTION, NOT ONLY IN R.  main() discards
+        # R.lines on Vacuous and prints the exception alone, so everything above
+        # was invisible to the person reading the failure -- which cost most of a
+        # morning on 2026-08-30.  A pattern that matches ZERO instances usually
+        # means the netlist walk never saw the cell, and the netlist walk only
+        # sees cells some LEF declared: print the LEF search set with it.
+        detail = "; ".join(f"'{pat}' matched {n}, expected 1" for pat, n in unresolved)
+        raise Vacuous(
+            f"{len(unresolved)} place_macro pattern(s) did not resolve "
+            f"against {nl}; nothing downstream would be measured\n"
+            f"    {detail}\n"
+            f"    {len(insts)} macro instances were found in that netlist, from "
+            f"{len(cell_lef)} macro cells declared by the LEFs searched:\n"
+            + "".join(f"      {g}\n" for g in globs)
+            + "    A pattern matching 0 means no LEF in that set declares the cell, "
+              "so the\n    netlist walk descended straight past the instance.")
 
     want = {c for _, _, c in resolved}
     cells = {}
