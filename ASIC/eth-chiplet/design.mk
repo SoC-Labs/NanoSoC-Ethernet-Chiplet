@@ -1248,7 +1248,7 @@ run-report-publish:
 	@python3 "$(RUN_REPORT_SCRIPT)" --root "$(DESIGN_HOME)" --run-dir "$(RUN_DIR)" \
 	    --publish --klass "$(or $(RUN_REPORT_KLASS),candidate)"
 
-.PHONY: legacy-paths asic-flist romlibs-check rom-ensure cpf-patch
+.PHONY: legacy-paths asic-flist chip-wrapper romlibs-check rom-ensure cpf-patch
 
 # ── STAGE ORDERING, AND THE ROM WRITE-WRITE RACE ────────────────────────────
 #
@@ -1328,6 +1328,14 @@ legacy-paths:
 ## set_env.sh scripts in dependency order.
 asic-flist:
 	$(MAKE) -C $(NANOSOC_ETH_CHIPLET_HOME) --no-print-directory asic-flist
+
+## Re-render the chip-level wrapper RTL, for the same reason: it is generated,
+## gitignored, listed by $(RTL_FLIST), and it is the top instance synthesis
+## elaborates. Delegated to the top-level make, which owns the emitter and
+## asserts the artefact. The emitter rewrites the file only when its content
+## changes, so this costs a second and never disturbs an mtime.
+chip-wrapper:
+	$(MAKE) -C $(NANOSOC_ETH_CHIPLET_HOME) --no-print-directory chip-wrapper
 
 ## ── THE BOOT ROMs, BUILT FOR THIS RUN ──────────────────────────────────────
 ## Genus reads the two ROM .libs through the library search path; without them
@@ -1422,10 +1430,29 @@ cpf-patch:
 #                  that LEF from the read-only PDK; it is a build product, so it
 #                  must exist before the tech pack reads TSMC65_IO_DRIVER_LEF.
 #                  Idempotent and licence-free, so this costs nothing.
-#   syn            the generated sub-flists and the ROM libraries
+#   syn            the input preflight, the generated sub-flists, the generated
+#                  chip-level RTL, and the ROM libraries
 #   place          the CPF patch, between the two tools
+#
+# WHY chip-wrapper AND flow-preflight ARE HERE (F4/F1/F5, 2026-08-29). Three of
+# syn's inputs are generated and gitignored -- the two sub-flists, the chip-level
+# wrapper RTL, and the boot-ROM code files -- and a fourth, the XHB500 crossbar
+# RTL, is licensed and cannot be in this repository at all. Only the sub-flists
+# were declared. So `make all` in a clean checkout stopped at the ROM stage with
+# a message naming the remedy, and would then have failed twice more, once per
+# twenty-minute cycle, on inputs nothing named at all.
+#
+#   chip-wrapper    renders build/chip/rtl/$(TOP)_chip.v, which
+#                   flist/nanosoc_eth_chiplet_asic.flist lists and Genus
+#                   elaborates as the top instance. Content-preserving, ~1 s.
+#   flow-preflight  ../common.mk. Reports EVERY missing external input at once
+#                   with the command that fixes each, and fails only on the ones
+#                   this repository cannot produce. Sub-second, no licence, no
+#                   writes. It is an unordered sibling of the targets that build
+#                   the generated inputs, which is exactly why it reports those
+#                   as PENDING rather than failing on them.
 syn place cts route: legacy-paths pad-lef rom-ensure
-syn:   asic-flist romlibs-check
+syn:   flow-preflight asic-flist chip-wrapper romlibs-check
 place: cpf-patch
 
 # The order-only barrier. `|` makes rom-ensure a prerequisite for ORDERING only:

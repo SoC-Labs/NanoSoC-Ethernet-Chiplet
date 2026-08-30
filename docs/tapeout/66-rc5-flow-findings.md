@@ -360,3 +360,253 @@ and absent in every other, discovered only because rc5 is the first run executed
 the checkout that happens to contain it. rc5 was commissioned to validate the flow end to
 end; two blocking defects in the first hour, both invisible to every previous run, is
 that validation working.
+
+---
+
+## Numbering note
+
+F7 and F8 above were written by the session driving the rc5 run itself, in
+parallel with these. The findings below continue from F9 and cover the FIXES for
+F1, F2, F4 and F5, one new defect found while proving them, and what a clean
+checkout now does. They were written against `88b05f6`; the two sets do not
+overlap — F7/F8 are about the floorplan gate and the MMMC, F9-F12 about the
+dependency graph.
+
+---
+
+## F9 — the four undeclared prerequisites are now edges in the graph
+
+**What was wrong.** Four of `syn`'s inputs are generated or external and none of
+them is in the repository. Exactly one of the four was declared:
+
+    boot-ROM firmware      NOT declared   -> F1, the ROM stage stopped
+    build_soc/ memory map  NOT declared   -> F2, and it failed SILENTLY
+    chip wrapper RTL       NOT declared   -> F4, unresolved top instance
+    XHB500 crossbar RTL    NOT declared   -> F5, unresolved module, minutes in
+    generated sub-flists   declared       (`syn: asic-flist`, and it worked)
+
+The one that was declared is the one that never bit. That is the whole finding.
+
+**What changed.** Prerequisite-only rules, no recipes touched:
+
+    ASIC/eth-chiplet/design.mk:1455   syn: flow-preflight asic-flist chip-wrapper romlibs-check
+    ASIC/eth-chiplet/design.mk:1337   chip-wrapper:  delegates to the root make
+    ASIC/common.mk:496                eth-bintxt cc-bintxt: firmware-ensure
+    ASIC/common.mk:468                firmware-ensure:  build if absent, then ASSERT
+    nanosoc-multicore-system/Makefile:139   firmware: $(NANOSOC_MEMMAP_CMAKE)
+
+**Proved, not asserted.** The make database now reads (`make -pRrq` on a goal
+that does not exist, so nothing runs):
+
+    syn: dirs check-quiet legacy-paths pad-lef rom-ensure flow-preflight \
+         asic-flist chip-wrapper romlibs-check
+    eth-bintxt: firmware-ensure
+    cc-bintxt:  firmware-ensure
+
+`firmware-ensure` is a prerequisite of BOTH code-file targets on purpose: make
+updates any target at most once per invocation, so `make -j` runs one firmware
+build and not two. Measured — `make -f common.mk rom-bintxt` printed
+`OK: boot-ROM firmware present` exactly once and both code files came back
+`unchanged, mtime preserved`.
+
+**The ROM path is covered twice, and both routes lead to the firmware.**
+`syn -> romlibs-check -> rom-run -> rom-run-stage -> rom-bintxt` and the cheap
+per-stage guard `rom-ensure -> (only if the run has no staged ROMs) -> rom-run`
+both arrive at `eth-bintxt`/`cc-bintxt`.
+
+---
+
+## F10 — a build that produces nothing can no longer exit 0
+
+**The F2 defect, reproduced first.** With
+`build_soc/firmware/nanosoc_memmap.cmake` renamed away, in an isolated build
+tree (`NANOSOC_BUILD_TAG=-f2proof`, so nothing live was touched):
+
+    cmake --preset gcc-m0plus-le        rc=0
+      -- nanosoc-multicore-system: nanosoc_memmap.cmake not found in
+         .../build_soc/firmware - skipping firmware/ targets.
+    cmake --build --preset gcc-m0plus-le   rc=0
+    hex=0  elf=0
+
+**The same state, after the fix.** Same renamed-away memory map, same isolated
+build tag:
+
+    $ NANOSOC_BUILD_TAG=-f2proof make firmware
+    [firmware] nanosoc_memmap.cmake is absent, so CMake would SKIP every firmware
+               target and still exit 0. Generating it: make soc
+    ... 1m25s ...
+    OK: firmware built — 140 hex, 123 elf, stage-0 boot ROM present
+
+**TWO INDEPENDENT DEFENCES, because one of them is a promise made by the thing
+that lied.**
+
+1. `firmware: $(NANOSOC_MEMMAP_CMAKE)` — a FILE prerequisite, not the phony
+   `soc`. Absent, it is generated; present, nothing happens. The phony would
+   re-render `build_soc/` on every firmware build, rewriting the SoC RTL under
+   whatever is reading it and undoing a deliberate `soc_model_fpga` render.
+2. `nanosoc-multicore-system/Makefile:139` then ASSERTS the stage-0 boot ROM hex
+   and a non-zero `.elf` count, and `ASIC/common.mk:468` asserts BOTH hex files
+   again after calling it. The callee's exit code is not the caller's verdict.
+
+**The assertion was proved to fail.** Pointed at a stand-in whose `firmware`
+target prints "configuring done / generating done" and exits 0:
+
+    == boot-ROM firmware is not built — building it now ==
+    [fake] configuring done / generating done
+    FAIL: the firmware build reported success and left no .../stage0_bootrom.hex
+          A CMake configure that SKIPS the firmware subtree exits 0 and writes
+          nothing — look in the log above for 'skipping firmware/ targets'.
+    make: *** [common.mk:470: firmware-ensure] Error 1
+
+and to pass, with a stand-in that writes the two files. Both directions, on the
+same target, on the same day.
+
+**A POSITIVE, and a third reproduction of F3.** The regenerated `build_soc/` was
+compared file-by-file against the copy that was there: 332 files, **329
+byte-identical**; the 3 that differ are `interconnect/*/logs/*.log`, differing in
+their `Run Date` line and a "Deleting the ... file" section. The boot ROM built
+out of that fully regenerated memory map is again
+`527b1c9e3a20f03ef7b41063fc7f59c6` — the 17 July bytes, now reproduced from a
+regenerated SoC render rather than an existing one. `build_soc/` was restored
+from a byte-verified snapshot afterwards.
+
+---
+
+## F11 — the crossbar's absence fails in seconds now, and names the remedy
+
+**Why it took minutes before.** `make asic-flist` sources
+`tidelink/set_env.sh`, which generates the XHB500 RTL from the tracked
+`deps/xhb500/configs` when it is absent — and when it CANNOT (no
+`XHB500_IP_DIR`, no generator, python outside [3.7,3.11)) it prints `[ERROR]`
+and **returns 1 into a `source` whose status nothing checked**. The flist was
+then written with ~150 paths that do not exist, and the first thing to notice
+was Genus, minutes later, naming a MODULE rather than the missing dependency.
+
+**THE 195 MB IS NOT VENDORED IN AND MUST NOT BE.** It is licensed Arm IP and
+this repository is public. Only the ~8 KB of generator configs is tracked, which
+is correct. The fix is to fail early and say so.
+
+**Three changes, all in the make layer:**
+
+1. `Makefile:621` — after rendering, `asic-flist` checks that every file the two
+   generated flists name EXISTS, prints the first five that do not, and fails
+   with `make preflight` as the pointer to the remedy.
+2. `Makefile:558`+ — each flist is rendered to a `.tmp` and moved only if the
+   renderer succeeded AND wrote something. `python3 ... > $@` truncates the
+   target before python runs, so a renderer that dies used to leave a
+   zero-length flist behind: present, readable, describing no design. Under
+   `.ONESHELL` with the default `.SHELLFLAGS` the recipe would not even have
+   stopped — only the LAST command's status is the recipe's status. The move is
+   also content-preserving (`cmp` first), so a target that runs before every
+   `syn` no longer bumps an mtime on a run where nothing changed.
+3. `ASIC/common.mk:757` — `flow-preflight`, below.
+
+**The preflight.** `make preflight` at the repo root, `make flow-preflight`
+inside the ASIC flow, and a prerequisite of `syn`. **0.6 seconds**, no licence,
+no writes. It checks, and prints the fixing command for every line that fails:
+
+    foundry / IP      TSMC_65_HOME, the resolved tech LEF and GDS-out map,
+                      PHYS_IP, the Arm target library, CMSDK, Cortex-M0+,
+                      the three memory-macro LEFs
+    licensed / submodule   XHB500 crossbar RTL (both bridge leaves),
+                      tidelink-phy
+    generated         build_soc memory map, both boot-ROM hex files, the chip
+                      wrapper RTL, both generated sub-flists
+    host tools        python3, cmake, arm-none-eabi-gcc
+    the flist itself  every file named by flist/nanosoc_eth_chiplet_asic.flist
+                      and by each flist it -f-includes — 603 files today
+
+**TWO CLASSES, and the distinction is load-bearing.** `NEEDED` (nothing here can
+produce it) is fatal. `PENDING` (a declared prerequisite of `syn` builds it) is
+reported and is NOT fatal — preflight is an unordered sibling of the targets
+that produce those, so failing on them would be a race that fails a build make
+was about to fix. The flist walk applies the same rule: a missing path under
+`build/` counts as PENDING, anything else as a failure.
+
+**It walks two levels and says so.** If a level-2 flist ever gains its own `-f`
+include, the walk reports `PARTIAL ... nested -f include(s) NOT walked` and
+fails, rather than quietly measuring less than it claims.
+
+**Proved in both directions**, by overriding paths on the command line — no
+files moved:
+
+    make preflight                                      -> PREFLIGHT: OK, rc 0
+    ... TSMC_65_HOME=/nonexistent-pdk XHB500_GEN_DIR=... -> 4 MISSING, rc 2
+    ... CHIP_TL_FLIST=<a flist naming 2 absent files>    -> "2 of 3 listed
+                                                            files absent", rc 2
+    PATH without arm-none-eabi-gcc, hex absent           -> MISSING, rc 2
+    PATH without arm-none-eabi-gcc, hex present          -> "not needed here"
+
+The XHB500 failure prints what to do:
+
+    MISSING XHB500 crossbar RTL    .../tidelink/deps/xhb500/generated
+            The Arm XHB-500 bridge RTL is LICENSED and is deliberately not
+            in this repository (it is public); only the ~8 KB of generator
+            configs under tidelink/deps/xhb500/configs is tracked. Absent,
+            synthesis elaborates for minutes and then dies naming a MODULE,
+            not this. Regenerate it from the tracked configs:
+              export XHB500_IP_DIR=<Arm XHB-500 root: the dir holding logical/generate>
+              source .../tidelink/set_env.sh
+
+**NOT FIXED, and it is the one thing here that is still only a message.**
+`tidelink/set_env.sh` is in a submodule this change does not own, so its
+`_generate_xhb500` failure still returns into a `source` nobody checks. The
+preflight and the flist check catch the CONSEQUENCE in seconds; they do not
+repair the CAUSE. `tidelink/site.env` is also absent in this worktree, so
+`XHB500_IP_DIR` and `CMSDK_DIR` come from the environment or not at all — the
+generated tree survives here only because it was copied in by hand.
+
+---
+
+## F12 — the chip wrapper stamps a wall-clock time into the RTL it emits
+
+Found while proving F4, and it is small but it invalidates a hash.
+
+**Measured.** `scripts/check_chip_boundary.py --emit` writes
+
+    // Generated: 2026-08-30 13:29:47
+
+into `build/chip/rtl/nanosoc_eth_chiplet_chip.v`. Two fresh emits, 39 seconds
+apart, differ in that line and in NOTHING else — same 8622 bytes, same 179
+lines, `diff` reports exactly one changed line — and hash differently
+(`1b5524ab...` vs `50983e0c...`).
+
+The emitter is otherwise content-preserving: with the file present and the
+design unchanged it does not rewrite it, and the mtime survives. So the churn
+happens only on a FRESH emit — which is exactly what a clean checkout does.
+
+**Consequences.**
+  * The md5 of this file is not the identity of the design it describes. Any
+    provenance record that hashes it will differ per checkout while the RTL is
+    the same. This run's `PRE_RUN_MANIFEST.txt:21` records
+    `chip wrapper 6d41c9c56168230f975e15311c6dd51c`; proving F4 required
+    deleting and re-emitting the file, so that value is now stale. The RTL it
+    names is unchanged — the A/B diff above is the proof of what a re-emit can
+    and cannot change.
+  * Same class as the GDS write-clock finding: a generated artefact that carries
+    the time it was generated cannot be compared by hash.
+
+**Not fixed here.** `scripts/check_chip_boundary.py` is outside the makefiles
+this change owns, and another session is working in that directory. The fix is
+one line — drop the timestamp, or move it out of the emitted file — and it
+should be taken with the LEC/provenance work rather than folded into a build
+change.
+
+---
+
+## What a clean checkout does now
+
+    make preflight        0.6 s. Lists every missing input at once, with the
+                          command that fixes each. Fails only on what this
+                          repository cannot produce.
+    make all              syn's prerequisites now render the chip wrapper and
+                          the sub-flists, build the firmware (and the SoC memory
+                          map it needs) and build the ROMs — or stop within
+                          seconds naming the exact remedy.
+
+The four defects were four different failure DISTANCES from the cause: F1
+stopped in seconds with the right message, F4 and F5 stopped minutes in with the
+wrong one, and F2 did not stop at all. They are one defect: **an input the build
+does not declare is an input nobody renders**, and the only reason three of them
+were survivable is that someone had run the tool by hand in this working
+directory.

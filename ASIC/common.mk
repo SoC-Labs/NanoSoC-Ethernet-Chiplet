@@ -437,6 +437,64 @@ cc-bintxt:
 
 rom-bintxt: eth-bintxt cc-bintxt
 
+# ── THE FIRMWARE THOSE CODE FILES ARE DERIVED FROM ──────────────────────────
+#
+# rom_bintxt_regen above stops with "not built — build firmware first" when the
+# hex is absent. The message is honest and even names the remedy, but it made
+# the firmware build a DOCUMENTED step rather than a DECLARED one: the toolkit's
+# `all` (syn -> place -> cts -> route) reaches this file through
+# syn -> romlibs-check -> rom-run -> rom-run-stage -> rom-bintxt and named no
+# firmware prerequisite anywhere on that path, so the documented one-command
+# flow could not run from a clean checkout. Measured 2026-08-29, recorded as F1
+# in docs/tapeout/66-rc5-flow-findings.md. A dependency belongs in the graph,
+# not in a diagnostic string.
+#
+# ONE BUILD, NOT TWO. Both code-file targets take this as a prerequisite; make
+# updates any target at most once per invocation, so `make -j rom-bintxt` runs
+# a single firmware build. (`romlibs-check: | rom-ensure` below closes the other
+# half of the same class of race, for the ROM staging directory.)
+#
+# GUARDED, NOT UNCONDITIONAL. cmake is re-entered only when a hex is MISSING. A
+# hex that is already there is left exactly as it is, mtime included, because
+# rom_verify.py's provenance check reasons from mtimes: a gratuitous rebuild
+# would make every previously-built ROM retrospectively "stale".
+#
+# THE ASSERTION RUNS EITHER WAY, and that is the point. The submodule's
+# `firmware` target now asserts its own artefacts, but this flow does not get to
+# assume that of its callee: a CMake configure that skips the whole firmware
+# subtree writes nothing and exits 0, which is precisely how this defect
+# survived. Check the file, never the status.
+.PHONY: firmware-ensure
+firmware-ensure:
+	@if [ -f "$(ETH_HEX)" ] && [ -f "$(CC_HEX)" ]; then \
+	    echo "OK: boot-ROM firmware present ($(FW_BUILD_DIR))"; \
+	else \
+	    echo "== boot-ROM firmware is not built — building it now =="; \
+	    echo "   make -C $(NANOSOC_MULTICORE_HOME) firmware"; \
+	    $(MAKE) -C $(NANOSOC_MULTICORE_HOME) --no-print-directory firmware || { \
+	        echo ""; \
+	        echo "FAIL: the firmware build failed (log above)."; \
+	        echo "      It needs cmake >= 3.21 and arm-none-eabi-gcc on PATH, and it"; \
+	        echo "      renders build_soc/ first when that has never been generated."; \
+	        echo "      Run it on its own to see the whole log:"; \
+	        echo "        make -C $(NANOSOC_MULTICORE_HOME) soc"; \
+	        echo "        make -C $(NANOSOC_MULTICORE_HOME) firmware"; \
+	        exit 1; }; \
+	fi
+	@for h in "$(ETH_HEX)" "$(CC_HEX)"; do \
+	    test -f "$$h" || { \
+	        echo "FAIL: the firmware build reported success and left no"; \
+	        echo "      $$h"; \
+	        echo "      A CMake configure that SKIPS the firmware subtree exits 0 and"; \
+	        echo "      writes nothing — look in the log above for a line reading"; \
+	        echo "      'skipping firmware/ targets' and fix what it names."; \
+	        echo "      Remedy:  make -C $(NANOSOC_MULTICORE_HOME) soc"; \
+	        echo "               make -C $(NANOSOC_MULTICORE_HOME) firmware"; \
+	        exit 1; }; \
+	done
+
+eth-bintxt cc-bintxt: firmware-ensure
+
 # --- the eth SIMULATION boot-ROM slot ----------------------------------------
 # src/rtl/bootrom/eth_ss_bootrom.sv is a GITIGNORED MUTABLE SLOT (submodule
 # .gitignore:179). The submodule materialises it from the tracked
@@ -636,6 +694,187 @@ pad-lef:
 pad-lef-verify:
 	@python3 $(PAD_LEF_GEN) -o $(PAD_LEF) --check || exit 1
 	@python3 $(PAD_LEF_GEN) --print-delta
+
+# ── FLOW PREFLIGHT: everything the flow needs and does not contain ─────────
+#
+# WHAT IT IS FOR. Four of this flow's inputs are GENERATED or EXTERNAL and none
+# of them is in the repository: the firmware the boot ROMs are burned from, the
+# chip-level wrapper RTL, the XHB500 crossbar RTL, and the foundry/IP mounts.
+# Before this target existed a clean checkout learned about them ONE PER RUN —
+# and the crossbar's absence was not learned at all until Genus had elaborated
+# for minutes and died on an unresolved module name. This answers the whole
+# question in seconds, licence-free, and every line that fails names the command
+# that fixes it.
+#
+# TWO CLASSES, AND THE DIFFERENCE IS LOAD-BEARING:
+#   BUILT   the flow builds it itself (a declared prerequisite of syn). Reported
+#           when absent, never fatal — preflight is an unordered sibling of the
+#           targets that produce these, so a `FAIL` here would be a race.
+#   NEEDED  nothing in this repository can produce it. Absent -> exit 1.
+#
+# It is a prerequisite of `syn` (design.mk), so `make all` on a clean tree stops
+# in seconds with the full list rather than after the first twenty-minute cycle.
+XHB500_GEN_DIR   ?= $(TIDELINK_HOME)/deps/xhb500/generated
+# The terminal leaf every flist consumes — the same marker tidelink/set_env.sh
+# uses to decide whether a generation completed, so the two agree about what
+# "generated" means. A half-written tree fails this, as it should.
+XHB500_SLV_FLOP  := $(XHB500_GEN_DIR)/xhb_chiplet_slv/logical/models/cells/generic/xhb500_flop.sv
+XHB500_MST_FLOP  := $(XHB500_GEN_DIR)/xhb_chiplet_mst/logical/models/cells/generic/xhb500_flop.sv
+TIDELINK_PHY_RTL := $(TIDELINK_HOME)/deps/tidelink-phy/rtl
+# The chip-level wrapper: the top instance synthesis elaborates. Emitted by
+# `make chip-wrapper` at the repo root, listed by flist/nanosoc_eth_chiplet_asic.flist.
+CHIP_WRAPPER_RTL := $(NANOSOC_ETH_CHIPLET_HOME)/build/chip/rtl/nanosoc_eth_chiplet_chip.v
+# The two generated sub-flists that flist `-f`-includes. Same paths the root
+# Makefile renders into (CHIPLET_SOC_ASIC_FLIST / CHIPLET_TL_ASIC_FLIST).
+CHIP_SOC_FLIST   := $(NANOSOC_ETH_CHIPLET_HOME)/build/chip/flist/soc.flist
+CHIP_TL_FLIST    := $(NANOSOC_ETH_CHIPLET_HOME)/build/chip/flist/tidelink_asic.flist
+# nanosoc_gen's CMake memory map — the input whose absence makes the firmware
+# build a silent no-op (F2).
+SOC_MEMMAP_CMAKE := $(NANOSOC_MULTICORE_HOME)/build_soc/firmware/nanosoc_memmap.cmake
+
+# $(1)=label  $(2)=path  $(3)=BUILT|NEEDED  $(4)=the command that fixes it.
+# One logical shell line: every physical line ends in a backslash so the whole
+# preflight runs in ONE shell and can keep a running failure count. A `define`
+# whose expansion contained a bare newline would become a NEW recipe line, i.e.
+# a new shell, and the count would reset to zero on every check.
+define _pf_check
+	if [ -e "$(2)" ]; then \
+	    printf '  %-7s %-22s %s\n' "OK" "$(1)" "$(2)"; \
+	elif [ "$(3)" = "BUILT" ]; then \
+	    pend=$$((pend+1)); \
+	    printf '  %-7s %-22s %s\n' "PENDING" "$(1)" "absent - the flow builds it"; \
+	    printf '  %-7s %-22s   $(4)\n' "" ""; \
+	else \
+	    fail=$$((fail+1)); \
+	    printf '  %-7s %-22s %s\n' "MISSING" "$(1)" "$(if $(strip $(2)),$(2),(unresolved: the variable expanded to nothing))"; \
+	    printf '  %-7s %-22s   $(4)\n' "" ""; \
+	fi; \
+
+endef
+
+.PHONY: flow-preflight
+## make -f common.mk flow-preflight — every external input, checked up front.
+flow-preflight:
+	@fail=0; pend=0; \
+	echo "== flow preflight: $(NANOSOC_ETH_CHIPLET_HOME) =="; \
+	echo "-- foundry and IP mounts (NEEDED: nothing here can produce them) --"; \
+	$(call _pf_check,PDK root,$(TSMC_65_HOME),NEEDED,export TSMC_65_HOME=<the group-shared TSMC65 PDK mount>) \
+	$(call _pf_check,PDK tech LEF,$(PDK_TECH_LEF),NEEDED,make -f ASIC/common.mk pdk-paths   # shows what each glob resolved to) \
+	$(call _pf_check,PDK GDS-out map,$(PDK_GDSMAP),NEEDED,make -f ASIC/common.mk pdk-paths) \
+	$(call _pf_check,Arm phys IP,$(PHYS_IP),NEEDED,export PHYS_IP=<the shared Arm physical-IP library>) \
+	$(call _pf_check,Arm target lib,$(TARGET_LIB),NEEDED,export PHYS_IP=<...>   then: make -f ASIC/common.mk pdk-paths) \
+	$(call _pf_check,Arm CMSDK,$(CMSDK_DIR),NEEDED,export CMSDK_DIR=<the Arm CMSDK package root>) \
+	$(call _pf_check,Cortex-M0+ RTL,$(ARM_CORTEXM0PLUS_IP_PATH),NEEDED,export ARM_CORTEXM0PLUS_IP_PATH=<the Cortex-M0+ release dir>) \
+	for lef in $(MEM_LEFS); do \
+	    if [ -e "$$lef" ]; then printf '  %-7s %-22s %s\n' "OK" "memory macro" "$$lef"; \
+	    else fail=$$((fail+1)); printf '  %-7s %-22s %s\n' "MISSING" "memory macro" "$$lef"; \
+	         printf '  %-7s %-22s   export MEM_BASE=<the precompiled-memory mount>\n' "" ""; fi; \
+	done; \
+	echo "-- submodule and licensed-IP RTL (NEEDED) --"; \
+	$(call _pf_check,TideLink V2 PHY,$(TIDELINK_PHY_RTL),NEEDED,git -C $(TIDELINK_HOME) submodule update --init deps/tidelink-phy) \
+	if [ -e "$(XHB500_SLV_FLOP)" ] && [ -e "$(XHB500_MST_FLOP)" ]; then \
+	    printf '  %-7s %-22s %s\n' "OK" "XHB500 crossbar RTL" "$(XHB500_GEN_DIR)"; \
+	else \
+	    fail=$$((fail+1)); \
+	    printf '  %-7s %-22s %s\n' "MISSING" "XHB500 crossbar RTL" "$(XHB500_GEN_DIR)"; \
+	    printf '          The Arm XHB-500 bridge RTL is LICENSED and is deliberately not\n'; \
+	    printf '          in this repository (it is public); only the ~8 KB of generator\n'; \
+	    printf '          configs under tidelink/deps/xhb500/configs is tracked. Absent,\n'; \
+	    printf '          synthesis elaborates for minutes and then dies naming a MODULE,\n'; \
+	    printf '          not this. Regenerate it from the tracked configs:\n'; \
+	    printf '            export XHB500_IP_DIR=<Arm XHB-500 root: the dir holding logical/generate>\n'; \
+	    printf '            source $(TIDELINK_HOME)/set_env.sh\n'; \
+	    printf '          (or set XHB500_IP_DIR permanently in $(TIDELINK_HOME)/site.env,\n'; \
+	    printf '           copied from site.env.example - the generator needs python3 in\n'; \
+	    printf '           [3.7,3.11) and the perl module File::Slurp)\n'; \
+	fi; \
+	echo "-- generated inputs (BUILT: declared prerequisites of syn) --"; \
+	$(call _pf_check,SoC memory map,$(SOC_MEMMAP_CMAKE),BUILT,make -C nanosoc-multicore-system soc) \
+	$(call _pf_check,eth boot-ROM hex,$(ETH_HEX),BUILT,make -C nanosoc-multicore-system firmware) \
+	$(call _pf_check,cc boot-ROM hex,$(CC_HEX),BUILT,make -C nanosoc-multicore-system firmware) \
+	$(call _pf_check,chip wrapper RTL,$(CHIP_WRAPPER_RTL),BUILT,make chip-wrapper) \
+	$(call _pf_check,SoC sub-flist,$(CHIP_SOC_FLIST),BUILT,make asic-flist) \
+	$(call _pf_check,TideLink sub-flist,$(CHIP_TL_FLIST),BUILT,make asic-flist) \
+	echo "-- host tools --"; \
+	for t in python3 cmake arm-none-eabi-gcc; do \
+	    if command -v "$$t" >/dev/null 2>&1; then \
+	        printf '  %-7s %-22s %s\n' "OK" "$$t" "$$(command -v $$t)"; \
+	    elif [ -f "$(ETH_HEX)" ] && [ -f "$(CC_HEX)" ]; then \
+	        printf '  %-7s %-22s %s\n' "absent" "$$t" "not needed here - the firmware it builds is already built"; \
+	    else \
+	        fail=$$((fail+1)); \
+	        printf '  %-7s %-22s %s\n' "MISSING" "$$t" "and the firmware it builds is NOT built"; \
+	        printf '  %-7s %-22s   put it on PATH (cmake >= 3.21; the Arm bare-metal gcc)\n' "" ""; \
+	    fi; \
+	done; \
+	echo "-- every file the ASIC flist names --"; \
+	pf_expand() { sed -e 's://.*::' \
+	    -e 's|$${NANOSOC_ETH_CHIPLET_HOME}|$(NANOSOC_ETH_CHIPLET_HOME)|g' \
+	    -e 's|$${TIDELINK_HOME}|$(TIDELINK_HOME)|g' \
+	    -e 's|$${TIDECHART_HOME}|$(TIDECHART_HOME)|g' \
+	    -e 's|$${CMSDK_DIR}|$(CMSDK_DIR)|g' "$$1"; }; \
+	pf_paths() { pf_expand "$$1" | grep -v '^[[:space:]]*[-+]' | grep -v '^[[:space:]]*$$' | awk '{print $$1}'; }; \
+	pf_incs() { pf_expand "$$1" | awk '$$1 == "-f" { print $$2 }'; }; \
+	pf_walk() { \
+	    n=0; m=0; g=0; \
+	    for f in $$(pf_paths "$$1"); do \
+	        n=$$((n+1)); \
+	        if [ -e "$$f" ]; then continue; fi; \
+	        case "$$f" in \
+	          $(NANOSOC_ETH_CHIPLET_HOME)/build/*) \
+	            g=$$((g+1)); \
+	            [ $$g -le 5 ] && printf '          not built yet: %s\n' "$$f" ;; \
+	          *) m=$$((m+1)); [ $$m -le 5 ] && printf '          missing: %s\n' "$$f" ;; \
+	        esac; \
+	    done; \
+	    if [ $$m -eq 0 ] && [ $$g -eq 0 ]; then \
+	        printf '  %-7s %-22s %s\n' "OK" "$$(basename $$1)" "$$n files, all present"; \
+	    elif [ $$m -eq 0 ]; then \
+	        pend=$$((pend+1)); \
+	        printf '  %-7s %-22s %s\n' "PENDING" "$$(basename $$1)" "$$g of $$n are generated and not built yet"; \
+	    else \
+	        fail=$$((fail+1)); \
+	        printf '  %-7s %-22s %s\n' "MISSING" "$$(basename $$1)" "$$m of $$n listed files absent"; \
+	        printf '          then re-render:  make asic-flist\n'; \
+	    fi; }; \
+	if [ ! -f "$(ASIC_FLIST)" ]; then \
+	    fail=$$((fail+1)); printf '  %-7s %-22s %s\n' "MISSING" "ASIC flist" "$(ASIC_FLIST)"; \
+	else \
+	    pf_walk "$(ASIC_FLIST)"; \
+	    for inc in $$(pf_incs "$(ASIC_FLIST)"); do \
+	        if [ -f "$$inc" ]; then \
+	            pf_walk "$$inc"; \
+	            deep=$$(pf_incs "$$inc" | wc -l); \
+	            if [ "$$deep" -gt 0 ]; then \
+	                fail=$$((fail+1)); \
+	                printf '  %-7s %-22s %s\n' "PARTIAL" "$$(basename $$inc)" "$$deep nested -f include(s) NOT walked"; \
+	                printf '          This check walks two levels. It has stopped measuring what\n'; \
+	                printf '          it claims to measure - extend pf_walk in ASIC/common.mk.\n'; \
+	            fi; \
+	        else \
+	            case "$$inc" in \
+	              $(NANOSOC_ETH_CHIPLET_HOME)/build/*) \
+	                pend=$$((pend+1)); \
+	                printf '  %-7s %-22s %s\n' "PENDING" "$$(basename $$inc)" "not rendered yet"; \
+	                printf '  %-7s %-22s   make asic-flist\n' "" "" ;; \
+	              *) fail=$$((fail+1)); \
+	                printf '  %-7s %-22s %s\n' "MISSING" "$$(basename $$inc)" "$$inc"; \
+	                printf '          The ASIC flist -f-includes it and it does not exist.\n' ;; \
+	            esac; \
+	        fi; \
+	    done; \
+	fi; \
+	echo ""; \
+	if [ $$fail -gt 0 ]; then \
+	    echo "PREFLIGHT: FAIL - $$fail input(s) this repository cannot produce are missing."; \
+	    echo "           Fix the lines above; nothing was built and no licence was taken."; \
+	    exit 1; \
+	fi; \
+	if [ $$pend -gt 0 ]; then \
+	    echo "PREFLIGHT: OK - $$pend generated input(s) not built yet; the flow builds them."; \
+	else \
+	    echo "PREFLIGHT: OK - every external input is present."; \
+	fi
 
 # ── ROM content verification ───────────────────────────────────────────────
 # romlibs-verify / -verify-static / -verify-content / -verify-gds / -selftest.

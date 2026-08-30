@@ -107,6 +107,7 @@ LEGACY_ASIC_DIR := $(CHIPLET_HOME)/ASIC/genus-innovus
 TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
+.PHONY: preflight
 .PHONY: vendor-check hooks
 .PHONY: bscan bscan-table bscan-gen bscan-splice bscan-check bscan-sim
 .PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc asic-padring-gds
@@ -476,6 +477,19 @@ bscan: bscan-table bscan-gen bscan-splice bscan-check
 
 ##@2 Fast checks — no EDA licence, runnable in a fresh clone
 
+## preflight: every input the flow needs and this repo does not contain.
+#  Sub-second, no licence, no writes. Checks the PDK and IP mounts, the licensed
+#  XHB500 crossbar RTL, the tidelink-phy submodule, the host toolchain, the
+#  generated inputs (firmware, chip wrapper, sub-flists) and every file the two
+#  generated flists name. Anything the flow cannot produce itself and is missing
+#  is a FAIL, and every FAIL prints the command that fixes it.
+#
+#  A clean checkout should run this FIRST: before it existed, the four generated
+#  or external inputs were each learned one per run — and the worst of them not
+#  until Genus had elaborated for minutes. It is also a prerequisite of `syn`.
+preflight:
+	@$(MAKE) -C "$(CHIPLET_HOME)/ASIC" -f common.mk --no-print-directory flow-preflight
+
 ## chip-boundary: check the boundary spec covers every RTL port exactly once.
 #  Fails on an unclassified port, a stale name, or a direction/width mismatch.
 #  An unclassified port is dropped from the wrapper and its inputs then float.
@@ -483,8 +497,24 @@ chip-boundary:
 	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py"
 
 ## chip-wrapper: chip-boundary, then emit build/chip/rtl/*_chip.v.
+#  THE ASIC FLOW DEPENDS ON THIS OUTPUT. flist/nanosoc_eth_chiplet_asic.flist:93
+#  lists $(CHIP_WRAPPER_RTL) — the chip-level top synthesis elaborates — and it
+#  is generated, gitignored and absent in a clean checkout. `syn` in
+#  ASIC/eth-chiplet/design.mk now declares this target, alongside `asic-flist`,
+#  for exactly the reason the trap note at the top of this file gives for the
+#  flists: a generated input the build does not declare is one nobody renders.
+#  Recorded as F4 in docs/tapeout/66-rc5-flow-findings.md.
+CHIP_WRAPPER_RTL := $(CHIPLET_HOME)/build/chip/rtl/$(TOP)_chip.v
 chip-wrapper:
 	python3 "$(CHIPLET_HOME)/scripts/check_chip_boundary.py" --emit "$(CHIPLET_HOME)/build/chip/rtl"
+	# Assert the artefact, not the exit code — the emitter could report success
+	# and write nothing, and the next thing to notice would be Genus, minutes in,
+	# with an unresolved top instance.
+	test -s "$(CHIP_WRAPPER_RTL)" || { \
+	    echo "FAIL: chip-wrapper exited 0 and produced no $(CHIP_WRAPPER_RTL)"; \
+	    echo "      Nothing downstream can elaborate the chip top without it."; \
+	    exit 1; }
+	@echo "OK: chip wrapper — $(CHIP_WRAPPER_RTL) ($$(wc -l < "$(CHIP_WRAPPER_RTL)") lines)"
 
 ##@3 Simulation and structural gates — need a tool licence
 
@@ -534,10 +564,78 @@ asic-flist:
 	    echo "asic-flist: MISSING $${TIDELINK_HOME}/deps/tidelink-phy — the V2 PHY."; \
 	    echo "            run: git -C $${TIDELINK_HOME} submodule update --init deps/tidelink-phy"; \
 	    exit 1; }
+	# RENDER VIA A TEMPORARY, then move. `python3 ... > $@` truncates the target
+	# BEFORE python runs, so a renderer that dies leaves a zero-length flist
+	# behind — present, readable, and describing no design. With .ONESHELL and
+	# the default .SHELLFLAGS the recipe would not even stop: only the LAST
+	# command's status is the recipe's status.
 	python3 "$(CHIPLET_HOME)/flist/flatten_soc_flist.py" \
-	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore_asic.flist" > "$(CHIPLET_SOC_ASIC_FLIST)"
+	    "$${NANOSOC_MULTICORE_HOME}/flist/nanosoc_multicore_asic.flist" \
+	    > "$(CHIPLET_SOC_ASIC_FLIST).tmp" || { \
+	        rm -f "$(CHIPLET_SOC_ASIC_FLIST).tmp"; \
+	        echo "FAIL: flatten_soc_flist.py failed (above). The SoC sub-flist was NOT replaced."; \
+	        exit 1; }
+	test -s "$(CHIPLET_SOC_ASIC_FLIST).tmp" || { \
+	    rm -f "$(CHIPLET_SOC_ASIC_FLIST).tmp"; \
+	    echo "FAIL: flatten_soc_flist.py exited 0 and wrote an EMPTY SoC flist."; \
+	    echo "      Usually build_soc/ has never been rendered:"; \
+	    echo "        make -C nanosoc-multicore-system soc"; \
+	    exit 1; }
+	# CONTENT-PRESERVING REPLACE. An unconditional mv bumps the mtime on every
+	# invocation, and this target runs before every `syn`; anything downstream
+	# that compares mtimes would see a freshly changed input on a run where
+	# nothing changed. Same discipline as the ROM code files in ASIC/common.mk.
+	if cmp -s "$(CHIPLET_SOC_ASIC_FLIST).tmp" "$(CHIPLET_SOC_ASIC_FLIST)"; then
+	    rm -f "$(CHIPLET_SOC_ASIC_FLIST).tmp"
+	else
+	    mv -f "$(CHIPLET_SOC_ASIC_FLIST).tmp" "$(CHIPLET_SOC_ASIC_FLIST)"
+	    echo "   (rendered: $(CHIPLET_SOC_ASIC_FLIST))"
+	fi
 	python3 "$(CHIPLET_HOME)/flist/resolve_tidelink_flist.py" \
-	    "$${TIDELINK_HOME}/flists/tidelink_top_full_asic_v2.flist" > "$(CHIPLET_TL_ASIC_FLIST)"
+	    "$${TIDELINK_HOME}/flists/tidelink_top_full_asic_v2.flist" \
+	    > "$(CHIPLET_TL_ASIC_FLIST).tmp" || { \
+	        rm -f "$(CHIPLET_TL_ASIC_FLIST).tmp"; \
+	        echo "FAIL: resolve_tidelink_flist.py failed (above). The TideLink sub-flist was NOT replaced."; \
+	        exit 1; }
+	test -s "$(CHIPLET_TL_ASIC_FLIST).tmp" || { \
+	    rm -f "$(CHIPLET_TL_ASIC_FLIST).tmp"; \
+	    echo "FAIL: resolve_tidelink_flist.py exited 0 and wrote an EMPTY TideLink flist."; \
+	    exit 1; }
+	# CONTENT-PRESERVING REPLACE. An unconditional mv bumps the mtime on every
+	# invocation, and this target runs before every `syn`; anything downstream
+	# that compares mtimes would see a freshly changed input on a run where
+	# nothing changed. Same discipline as the ROM code files in ASIC/common.mk.
+	if cmp -s "$(CHIPLET_TL_ASIC_FLIST).tmp" "$(CHIPLET_TL_ASIC_FLIST)"; then
+	    rm -f "$(CHIPLET_TL_ASIC_FLIST).tmp"
+	else
+	    mv -f "$(CHIPLET_TL_ASIC_FLIST).tmp" "$(CHIPLET_TL_ASIC_FLIST)"
+	    echo "   (rendered: $(CHIPLET_TL_ASIC_FLIST))"
+	fi
+	# A RENDERED FLIST IS NOT A RESOLVABLE ONE. tidelink/set_env.sh generates the
+	# XHB500 crossbar RTL when it is absent, and when it CANNOT (no XHB500_IP_DIR,
+	# no generator, wrong python) it prints [ERROR] and returns 1 — into a
+	# `source` whose status nothing here checks. The flist is then written with
+	# ~150 paths that do not exist, and the first thing to notice is Genus, minutes
+	# later, naming a MODULE rather than the missing dependency. So: check the
+	# files the flists name, here, now. F5 in docs/tapeout/66-rc5-flow-findings.md.
+	for fl in "$(CHIPLET_SOC_ASIC_FLIST)" "$(CHIPLET_TL_ASIC_FLIST)"; do
+	    n=0; m=0; first=""
+	    for f in $$(sed -e 's://.*::' "$$fl" | grep -v '^[[:space:]]*[-+]' | grep -v '^[[:space:]]*$$' | awk '{print $$1}'); do
+	        n=$$((n+1))
+	        if [ ! -e "$$f" ]; then
+	            m=$$((m+1))
+	            [ $$m -le 5 ] && echo "          missing: $$f"
+	        fi
+	    done
+	    if [ $$m -gt 0 ]; then
+	        echo "FAIL: $$fl names $$m file(s) of $$n that DO NOT EXIST."
+	        echo "      Synthesis would read this flist and die on an unresolved module"
+	        echo "      name ten minutes in. The full input check names the remedy:"
+	        echo "        make preflight"
+	        exit 1
+	    fi
+	    echo "OK: $$fl — $$n files, all present"
+	done
 
 ##@9 Cleaning
 
