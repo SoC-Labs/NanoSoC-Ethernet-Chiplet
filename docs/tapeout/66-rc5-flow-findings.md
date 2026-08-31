@@ -2285,6 +2285,35 @@ against rc5's real census with `rf_16k` dropped from 3 instances to 1:
     HARD  R6  macro instance total: baseline 21, netlist 19
     rc=1
 
+### The offline half is judged on its ARTEFACT, not on its exit code
+
+`synth_macro_gate.py` is invoked from inside Genus with `exec python3`, and a non-zero
+status from that has two unrelated meanings: the gate ran and refused (exit 1 = a hard
+finding, including the baseline mismatch only it can see; exit 2 = the census was
+unmeasurable), or it never ran at all — no `python3`, an import error, the wrong tree.
+Conflating them either lets a real refusal through or aborts a healthy synthesis on a host
+without an interpreter, and the second failure would print `see synth_macro_gate.rep`
+about a file that does not exist.
+
+The hook deletes that report first, then decides on whether it came back:
+
+    report written, exit non-zero   -> HARD R6, the stage stops
+    report absent                   -> four lines of WARNING naming R6 as NOT CHECKED,
+                                       the stage continues, and the PASS line itself reads
+                                       "INSTANCE BASELINE NOT CHECKED (the offline gate
+                                       did not run)" instead of listing a check that
+                                       did not happen
+
+Both arms exercised against rc5's real database, with `DESIGN_HOME` pointed at a tree
+whose `synth_macro_gate.py` exits 9 without writing anything:
+
+    t_ok       ... instance census matches the committed baseline           hook rc=0
+    t_notrun   WARNING: synth_macro_gate.py wrote no .../synth_macro_gate.rep,
+               so it did not run. THE COMMITTED INSTANCE BASELINE (R6) WAS NOT
+               CHECKED this run ...
+               ... INSTANCE BASELINE NOT CHECKED (the offline gate did not run)
+                                                                            hook rc=0
+
 ### Two latent traps found while proving the above, both now closed in the hook
 
 * **`$REPORT_DIR` versus `$::REPORT_DIR`.** `flow_hook` sources a hook with

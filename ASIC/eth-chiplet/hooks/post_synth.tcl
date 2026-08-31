@@ -770,6 +770,7 @@ foreach f $::_find {
 # LIVE tree here. The resolved path and its mtime are printed for exactly that
 # reason: this project has a documented class of "the flow read the worktree".
 #-----------------------------------------------------------------------------
+set ::_baseline_checked 0
 set _repo ""
 foreach _v {DESIGN_HOME NANOSOC_ETH_CHIPLET_HOME} {
     if {[info exists ::env($_v)] && \
@@ -803,17 +804,41 @@ if {$_repo eq ""} {
             continue
         }
         sv_say "running $_p (mtime [clock format [file mtime $_p] -format %Y-%m-%dT%H:%M:%S])"
+        # Delete the artefact FIRST. A stale report from an earlier run is
+        # indistinguishable from a fresh one, and "the file is there" is about
+        # to be load-bearing.
+        set _out $SV_REPORTS/synth_macro_gate.rep
+        if {$_script eq "synth_macro_gate.py"} { file delete -force $_out }
         set _rc [catch { exec python3 $_p {*}$_args 2>@1 } _o]
         foreach _l [split $_o \n] { if {[string trim $_l] ne ""} { sv_say "  | $_l" } }
-        if {$_rc && $_script eq "synth_macro_gate.py"} {
-            # exit 1 = a hard finding (including a baseline mismatch, which the
-            # in-process gate above cannot see); exit 2 = it refused.
-            lappend ::_find [list HARD R6 "scripts/ci/synth_macro_gate.py returned\
-                non-zero — see $SV_REPORTS/synth_macro_gate.rep"]
-            incr ::_hard
-        } elseif {$_rc} {
-            sv_say "WARNING: $_script returned non-zero; the depth report may be"
-            sv_say "  missing. This does not gate — read the raw reports."
+        if {$_script ne "synth_macro_gate.py"} {
+            if {$_rc} {
+                sv_say "WARNING: $_script returned non-zero; the depth report may"
+                sv_say "  be missing. This does not gate — read the raw reports."
+            }
+            continue
+        }
+        # ASSERT ON THE ARTEFACT, NOT ON THE EXIT CODE. A non-zero here has two
+        # completely different meanings and they must not be conflated: the gate
+        # RAN and refused (exit 1 = a hard finding including a baseline
+        # mismatch, exit 2 = the census was unmeasurable), or it never ran at
+        # all (no python3, wrong interpreter, an import error). The first must
+        # stop the stage; the second must not, because the in-process gate above
+        # already covered R0-R5 and R7-R9 — but it must be loud, because R6, the
+        # committed instance baseline, is the one rule only this script applies.
+        if {[file exists $_out]} {
+            set ::_baseline_checked 1
+            if {$_rc} {
+                lappend ::_find [list HARD R6 "scripts/ci/synth_macro_gate.py\
+                    refused or failed (exit $_rc) — see $_out"]
+                incr ::_hard
+            }
+        } else {
+            sv_say "WARNING: $_script wrote no $_out, so it did not run. The"
+            sv_say "  COMMITTED INSTANCE BASELINE (R6) WAS NOT CHECKED this run:"
+            sv_say "  a memory that stopped being a macro would not be caught."
+            sv_say "  The in-process gate above did run. This is a hole, not a pass."
+            if {$_rc} { sv_say "  exit status was $_rc; output above, if any." }
         }
     }
 }
@@ -845,10 +870,14 @@ if {$::_hard} {
     set _lefclause [expr {$_lef_measured
         ? "every cell has a LEF across [llength $_lef_ok] files"
         : "LEF COVERAGE NOT MEASURED"}]
+    set _baseclause [expr {$::_baseline_checked
+        ? "instance census matches the committed baseline"
+        : "INSTANCE BASELINE NOT CHECKED (the offline gate did not run)"}]
     sv_say "macro model gate: PASS — $_unres unresolved references;\
             [llength $_macro_insts] macro instances of [llength $_macro_cells]\
             cell types, every model with timing arcs and a named source;\
-            $_lefclause; no unexpected black box among [llength $_bb_insts]."
+            $_lefclause; no unexpected black box among [llength $_bb_insts];\
+            $_baseclause."
     if {$_soft} {
         sv_say "  $_soft advisory finding(s) -- including anything above marked"
         sv_say "  NOT MEASURED. Read $SV_REPORTS/synth_macro_models.rep."
