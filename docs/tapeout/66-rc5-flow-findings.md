@@ -3605,3 +3605,116 @@ number is extraction-backed is the one open question this work did not close.
    that these are compared against are Tempus. `ASIC/sta/run_sta.sh` exists,
    works, takes ~15-30 min and needs a database 20 minutes cold; it was not run
    on rc6hold because route had not finished writing one.
+
+---
+
+## ADDENDUM — rc6hold's POST-FILL NUMBERS, INCLUDING ONE THE CHANGE MADE WORSE
+
+`06_post_fill` landed after the section above was written. It confirms the hold
+result at the per-view level and it contains a regression that the earlier
+sections do not mention, because it had not been measured yet.
+
+    06_post_fill              rc5 attempt 7        rc6hold-20260831
+    setup   View : ALL        +0.105 /  0          -0.060 /  43
+    hold    View : ALL        -0.100 / 66          +0.003 /   0
+    max_transition             195 (-6.023)         227 (-6.024)
+    max_capacitance              0                    0
+
+### The hold result is confirmed per view, not just in aggregate
+
+`report_timing -early -view <v> -max_paths 20000 -max_slack 0`, one file per
+active hold view, on the post-fill database:
+
+    hold_06_post_fill_default_analysis_view_hold.rep    0 violating paths
+    hold_06_post_fill_av_ml_libset_hold.rep             0 violating paths
+    hold_06_post_fill_av_ltfix_libset_hold.rep          0 violating paths
+
+rc5's same three files carry **59, 55 and 59** paths. This is the artefact the
+"hold at every corner" claim rests on, and it is three separate files each
+independently empty — not one aggregate row that could be hiding a folded view.
+
+### AND max_transition GOT WORSE, WHICH THE ORDER CHANGE CAUSED
+
+    05_route_opt max_transition   rc5: 195 = 96 IO +  99 internal, worst internal -0.223
+                                 rc6:  230 = 96 IO + 134 internal, worst internal -0.261
+
+CTS handed route **fewer** internal transition violations than rc5 did (242
+against 359 — F26), and route still ended with **more** (134 against 99). The
+difference is made in the post-route passes: rc6hold's last pass is the hold
+pass, and hold repair is buffer insertion, and buffers on already-marginal nets
+make transition worse. rc5's last pass was the setup pass, which repairs DRV as
+it goes.
+
+**So the order change moves the problem rather than removing it**, in a third
+dimension the F28 table did not show:
+
+    order                     setup      hold        internal max_tran
+    -hold then -setup (rc5)   +0.105/0   -0.099/66   99   worst -0.223
+    -setup then -hold (rc6)   -0.059/42  +0.003/ 0   134  worst -0.261
+
+Hold is the one that went to zero, and hold is the dimension this design has
+never been able to close without an ECO — so the trade is still the right one to
+have made. But **"the route stage now closes hold" is the whole of the claim**;
+it is not "the route stage now closes", and the DRV row is evidence against any
+stronger reading.
+
+This makes `ROUTE_OPT_MODE=setup_hold` (`build/rc6route-20260831`, running) more
+clearly the right next experiment rather than less: the simultaneous arm is the
+only one that is not obliged to make its last pass someone's problem. Its
+`05_route_opt` should be compared on **three** numbers, not two.
+
+### The IO-ring rows are still present in this run, by construction
+
+96 of those 227 are the chip-boundary pins of F18. `rc6hold` carries rc5's mmmc
+and therefore has **no** IO-ring DRV override — that change is in `rc6full`,
+which needs a place stage to read it. rc6hold's max_transition count is
+therefore not the number the fixed flow produces; `rc6full`'s will be, and
+rc6full's place stage already shows the mechanism working (`tran -0.030` where
+rc5 had `-6.023`, F27).
+
+### THE ROUTE GATE VERDICT, AND THE ROW THAT IS NO LONGER ON IT
+
+rc6hold's route finished at 04:15:32 and produced a database. It then hard-failed
+the signoff budget gate, as every run of this design does. **What matters is the
+diff between the two failure lists, not the fact of the failure.**
+
+    rc5 attempt 7                          rc6hold-20260831
+    380 missing power vias  > budget 0     380 missing power vias  > budget 0
+    PG opens 51             > budget 0     PG opens 51             > budget 0
+    dangling PG wires 727   > budget 0     dangling PG wires 727   > budget 0
+    hold FEP 66             > budget 0     -- ABSENT --
+    max_transition FEP 195  > budget 0     max_transition FEP 227  > budget 0
+    (setup FEP 0, not listed)              setup FEP 43            > budget 0
+
+**The hold row is gone.** For the first time in this design's history a routed
+database reaches the route stage's own signoff gate with nothing to say about
+hold — `ROUTE_BUDGET_HOLD_FEP` is 0, `ROUTE_STRICT=1`, and hold does not appear.
+The three PG rows are byte-for-byte the standing known-bad that rc4's evidence
+record names (F23) and are untouched by this workstream.
+
+Two rows moved the wrong way and both are already accounted for above: setup 0
+→ 43 (F28, the order trade) and max_transition 195 → 227 (the addendum above,
+of which 96 are F18's IO-ring constant that `rc6hold` has no override for).
+
+**The harness behaved correctly on the way out**, which is worth one line
+because this project has been bitten by the opposite:
+
+    == STAGE route FAILED (rc) 2026-08-31T04:15:32+01:00 ==
+    == STAGE route done  2026-08-31T04:15:32+01:00, database present ==
+
+`make` returned non-zero and the launcher recorded it, then asserted on the
+**artefact** and found the routed database present, so it reported the stage as
+done rather than aborting. A gate refusing to certify a database is not the same
+event as a stage failing to produce one, and the run distinguishes them.
+
+### AND THE THIRD RUN IS A TRUE ONE-VARIABLE COMPARISON
+
+`rc6route-20260831` (`ROUTE_OPT_MODE=setup_hold`) reproduced rc6hold's route
+input and its detail-route result exactly:
+
+    ROUTE: QOR post-cts (as read)  setup +0.062/0   hold +0.004/0   (identical)
+    ROUTE: QOR 04_route            setup -0.316/218 hold +0.003/0   (identical)
+
+Everything up to the post-route optimisation arm is the same database and the
+same numbers. Whatever its `05_route_opt` line says is attributable to the one
+knob and to nothing else.
