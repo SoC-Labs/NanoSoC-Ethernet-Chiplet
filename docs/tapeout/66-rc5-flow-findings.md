@@ -1428,15 +1428,17 @@ green pipeline row.
 
 ## F19 — rc5's post-P&R netlist is verified equivalent, and BOTH verdicts say so
 
-Two legs of the three-link chain ran to completion on rc5. Both pass, and both pass twice:
-once by Conformal's own `Compare Results:` line and once by the harness's independently
-computed `LEC-VERDICT: RESULT=`, which applies four rules Conformal's line does not have.
+All three links of the chain ran to completion on rc5 — the first time that has happened
+in this repository. The two netlist-to-netlist legs pass twice each: once by Conformal's
+own `Compare Results:` line and once by the harness's independently computed
+`LEC-VERDICT: RESULT=`, which applies four rules Conformal's line does not have. The third
+leg is where the two verdicts part company, and F22 is about which of them is right.
 
 | leg | golden | revised | Conformal | harness | compare points | elapsed |
 |---|---|---|---|---|---|---|
 | `gate` | `_gate.v` | `_gate_power.v` | PASS | RESULT=PASS | 61,599 / 61,599 equivalent | 271 s, 852 MB |
 | `pnr`  | `_gate_power.v` | `_pnr.v` | PASS | RESULT=PASS | 61,599 / 61,599 equivalent | 448 s, 924 MB |
-| `syn`  | RTL, via Genus's dofile | `_gate.v` | see F22 | see F22 | see F22 | still running at time of writing |
+| `syn`  | RTL, via Genus's dofile | `_gate.v` | **PASS** twice — 58,592 flat, then 44 of 44 modules | **RESULT=FAIL**, three reasons | see F22 | 5,512 s, 1.8 GB |
 
 `pnr` is the one that matters, and a whole-tree `grep -l 'LEC-VERDICT: tag=pnr'` over
 every archived `verdict.txt` in the frozen checkout returns **five** — full-20260814,
@@ -1680,10 +1682,73 @@ false FAIL on a hierarchical one.** That rule is engine-owned and was not touche
 is written down so the next reader does not re-derive it from the residual state.
 
 That abort pass is also where the leg's runtime goes. Measured on slpads, compare #2 cost
-4,868 s elapsed / 6,890 s CPU, and the single aborting SoC sub-compare accounts for 3,063 s
-of it before `analyze abort` even starts. rc5's run reproduces the shape exactly: at the
-time of writing it is at module pair 21 of 44, that pair reported 1,380 abort points
-(1,375 DFF + 5 BBOX) after 3,568 s, and it is inside `analyze abort -compare`.
+4,868 s elapsed / 6,890 s CPU, and the single largest aborting sub-compare accounts for
+3,063 s of it before `analyze abort` even starts.
+
+### rc5's own syn leg finished, and it reproduces slpads to the digit
+
+**5,512 s, 1.8 GB, 45 `compare` invocations.** Conformal's two verdicts:
+
+    compare #1  fv_map -> _gate.v, FLAT           PASS   58,592 points, 3,010 unreachable
+    compare #2  RTL -> fv_map, HIERARCHICAL       PASS   Total Equivalent modules = 44
+                                                         NEQ 0, ABORT 0
+                                                         "Non-equivalent points do not exist"
+
+Two sub-compares aborted and both were resolved by `analyze abort -compare`, exactly as on
+slpads — 1,380 points (1,375 DFF + 5 BBOX) on the multicore SoC module, resolved to 10,914
+equivalent; 948 points (16 PO + 931 DFF + 1 BBOX) on pair 40, resolved to 10,263. The
+running tally never left `ABORT: 0`.
+
+And the harness's residual-state block is **numerically identical to slpads'**, on a
+design that was re-synthesised in between:
+
+    compare_points=5433 equivalent=5433 nonequivalent=0 abort=0 notcompared=0
+    unmapped_extra_golden=96   unreachable_golden=446 unreachable_revised=319
+    tool_exit_code=40 flags=unmapped-or-extra-PO,abort-any-compare        RESULT=FAIL
+
+Four numbers — 5,433 / 96 / 446 / 319 — the same in both runs. That is not a property of
+either netlist; it is what the residual top-level context after `run_hier_compare` always
+looks like for this dofile.
+
+### The third reason is worse than a sticky flag: the unreachable rule CANNOT pass here
+
+With both runs on disk the 446/319 asymmetry can be looked at rather than counted, and it
+is not an asymmetry between comparable things:
+
+    golden  446 points, ALL DFF   — RTL registers:  .../u_tlapb_bridge/sample_wdata_reg_reg
+    revised 319 points, ALL DLAT  — clock gates:    .../cg_RC_CG_HIER_INST0/RC_CGIC_INST/sttb_$U1/udp1/U$1
+
+Every revised-side unreachable point is the internal latch of an integrated clock gate,
+inside a `cg_RC_CG_HIER_INST*` wrapper that exists only in the netlist. Every golden-side
+one is an RTL register. **A by-name symmetry rule cannot match those, ever, on any design
+with clock gating** — the two sides are not naming the same kind of object, and on an
+RTL-golden leg they never will.
+
+`lec_rules.tcl`'s rule 9 has no RTL-golden exemption (rule 8's TIE-E allowance does, gated
+on `LEC_GOLDEN_IS_RTL`), so it applies here unconditionally and returns FAIL on a correct
+result, permanently. That is precisely the failure mode the rule's own comment describes
+and rejects for the tri-state test it declined to write: *"a false alarm on a good netlist,
+on every run, permanently."* The same argument applies to itself one leg over, and nobody
+had run the leg to find out.
+
+### So: of the three, one indicts the design
+
+| reason | verdict on the reason |
+|---|---|
+| 96 extra unmapped golden DFFs, all `root_port_cursor_r_reg` | **REAL.** Synthesis deletes them, rc5 still does, and only a second verdict was ever going to notice. Adjudicated safe at `NUM_PORTS=1` by simulation on 2026-08-24, latent defect above that. |
+| unreachable not symmetric, 446 G / 319 R | **STRUCTURALLY UNSATISFIABLE** on an RTL golden — RTL registers against ICG latches. Needs the same `LEC_GOLDEN_IS_RTL` bound rule 8 already has. |
+| tool abort/uncompared flag, exit code 40 | **STICKY FLAG.** Both aborts were resolved by Conformal itself. |
+
+Both of the last two are engine-owned (`ASIC/asic-toolkit/flow/verify/lec_rules.tcl`) and
+were not touched here. They are written down because the syn leg is now runnable and will
+be red for these reasons on every future run until they are bounded — and a row that is
+permanently red for a reason unrelated to the design is a row people learn to ignore.
+
+**What the leg does establish, and it is not nothing:** Conformal compared RTL against the
+synthesised netlist over 44 module pairs and found every one equivalent, with no
+non-equivalent point anywhere in the design. That is the first end-to-end RTL→gate result
+this repository has produced, and combined with F19's `gate ≡ gate_power ≡ pnr` it closes
+the whole chain from RTL to the netlist that becomes the GDS.
 
 ## F23 — rc4, the netlist that went to the foundry, now has equivalence evidence
 
@@ -1856,18 +1921,30 @@ stage's 5 and `lec-pnr`'s 6 among them.
     build/rc5lec-gate/reports/lec/gate/           _gate.v vs _gate_power.v   PASS
     build/rc5lec-pnr/reports/lec/pnr/             _gate_power.v vs _pnr.v    PASS
     build/rc5lec-pnr/reports/lec/pnr/cellswap.*   the cell-swap census
-    build/rc5lec-syn/reports/lec/syn/             RTL vs _gate.v             (running)
+    build/rc5lec-syn/reports/lec/syn/             RTL vs _gate.v             see F22
     build/rc5lecctl/reports/lec/control-unmutated/  the population control   PASS
     build/rc5lecmut{A,B,C}/reports/lec/mut-*/     the three mutants          FAIL x3
     build/rc5lecrc4/reports/lec/rc1pnr-vs-rc4pnr/ rc1 -> rc4                 PASS
+    build/lecswap-rc5/reports/lec/pnr/cellswap.*  the lec-cellswap stage, end to end
 
 All of it is under `build/`, which is gitignored: **this evidence is host-only and will not
 survive a clone**, which is a standing problem in this repo and not one solved here.
 
-The one command outstanding is re-running the `pnr` leg with
-`RUN_TAG=rc5vt-20260829 SYN_RUN_TAG=rc5vt-20260829` so the transcript and the verdict land
-where `ci/signoff.yaml`'s `lec-pnr` and `lec-cellswap` rows read them. Nothing about the
-result changes; only where it is filed.
+### Three things left, in order of how cheap they are
+
+1. **Re-run the `pnr` leg with `RUN_TAG=rc5vt-20260829 SYN_RUN_TAG=rc5vt-20260829`** so the
+   transcript and the verdict land where `ci/signoff.yaml`'s `lec-pnr` and `lec-cellswap`
+   rows read them. Nothing about the result changes; only where it is filed. Eight minutes.
+2. **Bound the two syn-leg rules** named in F22 — the unreachable-symmetry rule to
+   `LEC_GOLDEN_IS_RTL` the way the TIE-E allowance already is, and the exit-code abort bit
+   to a flat compare. Both are in `ASIC/asic-toolkit/flow/verify/lec_rules.tcl`, which is
+   engine-owned; both are unit-testable without a licence against the archived reports this
+   run just produced, which is what `test/verify/lec_rules.test` is for. Until then the
+   syn row is permanently red for reasons that are not about the design, and the 96 flops —
+   the one reason that IS — are buried among them.
+3. **Run `lec-pnr` and `lec-cellswap` on rc2, rc3 and rc4's own trees.** rc4 is now covered
+   transitively through rc1 (F23), but transitively is weaker than directly, and the
+   cell-swap census costs no licence at all.
 
 ---
 
