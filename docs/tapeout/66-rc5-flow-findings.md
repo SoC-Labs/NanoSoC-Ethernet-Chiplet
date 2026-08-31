@@ -1633,9 +1633,49 @@ finishes.
 The safety question is already settled elsewhere and is not reopened here: the removal is
 safe at `NUM_PORTS=1`, which is what this chiplet ships, and is a real defect for anyone
 instantiating the IP with more — proven by simulation with a `NUM_PORTS=2` control on
-2026-08-24. The LEC-side correction is only this: **the FAIL was correct and it had three
-causes, one of which was the tool's own exit status.** Treating it as a harness artefact
-would have discarded the asymmetric-unreachable finding (446 vs 319) with it.
+2026-08-24. The LEC-side correction is only this: **the FAIL had three causes and not one,
+and one of the three is Conformal's own exit status.** Writing the whole verdict off as a
+harness artefact would have discarded the asymmetric-unreachable finding (446 vs 319) with
+it. Which of the three survive scrutiny is the next section, and the answer is two of them.
+
+### Which of the three is a harness over-read — read the archived transcript, not the verdict
+
+`build/gdsrun-20260821-slpads/logs/lec_syn.log` is 2.1 MB and settles the rest. That leg
+**ran to completion**, and Conformal's verdict for the hierarchical RTL→`fv_map`
+comparison is at line 15756:
+
+    6. Compare Results:                       PASS
+       Total Equivalent modules  = 49
+    2. Incomplete verification:               0
+       All primary outputs are mapped:        yes
+       Not-mapped DFF/DLAT is detected:       no
+       All compared points are compared:      yes
+
+49 module pairs, 49 equivalent, zero non-equivalent, zero aborted. So the three reasons
+sort into two kinds, and the distinction is the whole point of running two verdicts:
+
+**Real, and exactly what the harness exists to surface.** `Total Equivalent modules = 49`
+counts module pairs whose COMPARE POINTS were equivalent. It says nothing about unmapped
+points — the `Processed N of 49 … EQ / NEQ / ABORT` tally has no column for them — so a
+pair with 96 golden flops that have no counterpart at all is still counted equivalent, and
+Conformal's own line would never have said otherwise. The 96, and the 446/319 unreachable
+asymmetry, are findings that exist ONLY because a second verdict looked for them.
+
+**An over-read.** The abort bit in exit code 40 is not. Two of the 49 sub-compares DID
+abort — 1,382 points (1,377 DFF + 5 BBOX) on the SoC module and 1,214 on another — and
+Conformal's own `analyze abort -compare` then RESOLVED every one of them: the follow-up
+table on the same module reads 10,914 equivalent, zero abort, and the running tally never
+leaves `ABORT: 0`. The exit-code bit is sticky across the session, so it records "an abort
+happened at some point", which on a hierarchical leg is a normal step in the proof and not
+a verdict. **`lec_rules.tcl`'s exit-code decode is sound for a flat compare and produces a
+false FAIL on a hierarchical one.** That rule is engine-owned and was not touched here; it
+is written down so the next reader does not re-derive it from the residual state.
+
+That abort pass is also where the leg's runtime goes. Measured on slpads, compare #2 cost
+4,868 s elapsed / 6,890 s CPU, and the single aborting SoC sub-compare accounts for 3,063 s
+of it before `analyze abort` even starts. rc5's run reproduces the shape exactly: at the
+time of writing it is at module pair 21 of 44, that pair reported 1,380 abort points
+(1,375 DFF + 5 BBOX) after 3,568 s, and it is inside `analyze abort -compare`.
 
 ## F23 — rc4, the netlist that went to the foundry, now has equivalence evidence
 
@@ -1779,6 +1819,21 @@ field**; `ci/fixtures/lec-cellswap/fail-result-contradicts-census` is a census w
 census of `gdsrun-20260823-rzG`, computed from that build's two netlists with that build's
 own libraries, paths scrubbed — not a synthetic file shaped like one.
 
+The stage was also executed end to end on rc5's real netlists rather than only against its
+fixtures — `run:` and `check:` extracted from the manifest verbatim, `@GRADED_BUILD@`
+resolved to a tree holding rc5's two netlists, `lec-pnr`'s `inputs.txt` and its
+`lec_stubs.v`. Both green, and the row reads:
+
+    lec-cellswap: 194870 -> 243169 leaf instances (56158 added, 7859 deleted,
+                  21579 substituted in place)
+    lec-cellswap: sequential unchanged - FLOP 58505, ICG 3007, LATCH 1
+    lec-cellswap: clock gates substituted: 2724 of 3007 - CKLNQD1->CKLNQD6 x838,
+                  CKLNQD1->CKLNQD2 x707, CKLNQD1->CKLNQD16 x431, ...
+
+A fixture proves a gate can fail. Running the manifest's own two blocks against the real
+thing proves the gate is WIRED UP, which no fixture can, and which this pipeline has been
+caught not being at least twice.
+
 `signoff.py lint` is clean and `signoff.py prove` is 181 cases, 0 problems, with the new
 stage's 5 and `lec-pnr`'s 6 among them.
 
@@ -1800,3 +1855,460 @@ The one command outstanding is re-running the `pnr` leg with
 `RUN_TAG=rc5vt-20260829 SYN_RUN_TAG=rc5vt-20260829` so the transcript and the verdict land
 where `ci/signoff.yaml`'s `lec-pnr` and `lec-cellswap` rows read them. Nothing about the
 result changes; only where it is filed.
+
+---
+
+## F26 — logic depth was never asked for, and rc5's deepest path meets timing by 91 ps
+
+**Nothing in this flow surfaced logic depth at synthesis.** Genus has the command; it was
+never called. The consequence is the one the CTS and route findings above keep circling:
+the first anyone learns of a deep combinational cone is a timing failure hours later, in a
+stage whose reports are 35 MB and whose remaining fix options are placement ones.
+
+### What existed, and exactly why it cannot answer the question
+
+Two things in `1_synthesis.tcl` carry any depth information at all:
+
+    :1072  report_timing -max_paths 50 -nworst 5   -> syn_timing.rep
+    :1075  report_qor -levels_of_logic             -> syn_qor.rep
+
+`syn_qor.rep` gives ONE number per cost group — "No of gates on Critical Path" — for the
+worst-**slack** path only. `syn_timing.rep` gives fifty full paths, also ordered by slack.
+On rc5 those fifty span **36 to 85 levels of logic and 0 to 5 ps of slack**, and *nothing
+in the report says which is which*. Depth is present in the file and absent from the
+report.
+
+And the fifty do not contain the deep path. rc5's deepest endpoint is
+
+    90 levels   r2r_clk
+      u_soc/u_network_core/...cortexm0plus...core_op_q_reg[8]/CP
+      -> u_tidelink/u_tidelink_fifo_u_apb_regs_released_credits_acc_reg[14]/D
+      MET, slack +91 ps
+
+It is not among the fifty, and it could not be: the whole `r2r_clk` group sits inside 5 ps,
+so a slack ranking is a coin toss among thousands of endpoints and this one has 91 ps to
+spare. The worst-slack path (0 ps) is **63 levels** — 27 shallower than the deepest.
+*That* is the path a reader of rc5's reports would have taken away as "the deep one".
+
+Twelve endpoints reported in full at 84-89 levels have slack from **+3 ps to +128 ps**.
+Every one of them is a path that passes today and has nothing left to give at CTS.
+
+### `report_logic_levels_histogram` — 188 s, 109,257 endpoints, never run
+
+Genus walks every timing endpoint and reports its depth whether or not it meets timing.
+`grep -rn report_logic_levels` over the whole repository before this change: **zero hits.**
+
+rc5, all cells counted, view `default_emulate_view` (WCCOM, ss 1.08 V 125 C), 109,257
+endpoints:
+
+     levels        endpoints
+      0 -  9      82282   75.3%
+     10 - 19       8384    7.7%
+     20 - 29       5293    4.8%
+     30 - 39       1541    1.4%
+     40 - 49       2256    2.1%
+     50 - 59        970    0.9%
+     60 - 69       1290    1.2%
+     70 - 79       6938    6.4%      <- 6.4% of the design is 70+ levels deep
+     80 - 89        302    0.3%
+     90 - 99          1    0.0%
+                                     worst 90
+
+### DEPTH versus LOAD, at design scale, in two numbers
+
+The same command with `-skip_buffer -skip_inverter` re-counts the same 109,257 endpoints
+without the drive:
+
+    worst depth, buffers and inverters counted     90 levels
+    worst depth, buffers and inverters NOT counted 80 levels
+
+**10 of the deepest path's 90 levels (11%) are drive; 80 are structure.** Buffering is not
+what makes this design deep, and no amount of sizing will shorten it. The non-buffer
+histogram also shows 6,879 endpoints in a single 60-64 band — a large, flat population of
+genuinely deep cones, not a handful of outliers.
+
+Per path the same split is exact, because `synth_libcell_class.tsv` carries Genus's own
+`is_buffer`/`is_inverter` for all 882 lib cells rather than a guess at TSMC's naming (a
+regex cannot separate `CKND2`, a clock inverter, from `CKND2D2`, a clock NAND2). Over the
+60 paths reported in full the buffer/inverter share of levels runs **0% to 24%, median
+13%**.
+
+### Depth by cost group — where the structural margin is, whatever the slack says
+
+    worst  median       n  cost group
+       90      68   15619  r2r_clk
+       87      30     292  cg_enable_group_D2D_RX_WORD_CLK_0
+       84      68     437  cg_enable_group_clk
+       83      26    1170  r2r_D2D_RX_WORD_CLK_0
+       82      26      39  r2r_mii_rx_clk
+       73      71     129  QSPI_SCLK
+       62      50     830  r2r_D2D_TX_WORD_CLK_0
+                            (population: endpoints at >= 20 levels, 18,591 of 109,257)
+
+`r2r_clk`'s **median** is 68 levels over 15,619 endpoints. This is not a design with one
+long path; it is a design whose typical constrained path is deep. `QSPI_SCLK` at median 71
+of a worst 73 is the same shape in miniature.
+
+### The measurement validates itself
+
+Two independent level counts appear in the report and they are reconciled rather than
+mixed:
+
+* on the twelve deepest endpoints, where `report_timing -to` returns the same path the
+  histogram ranked, **tool − counted = 1, constant** — a definitional offset and nothing
+  else. Sections 1 and 2 print the tool's number; sections 3 and 4 count combinational
+  cells between the launch and capture elements.
+* the counted number matches Genus's own third opinion: `syn_qor.rep` says the `r2r_clk`
+  critical path has **63** gates, and the counter says **63** for that path.
+* on the fifty slack-ordered paths the delta spreads −1 to +9, because there
+  `report_timing` returns the *slowest* path to an endpoint and the histogram reports its
+  *deepest*. Two of the fifty have a counted path **deeper** than the histogram's figure
+  for the same endpoint, so **that figure is the tool's per-endpoint depth and not a
+  guaranteed maximum.** The report says so on the line it prints it.
+
+### PRIOR MEASUREMENT, CHECKED: "82 of ~100 levels are outside TideLink" — CONFIRMED, with the split moved
+
+The 2026-08-08 note recorded the worst path as CM0+ `core_op_q_reg[3]` → TideLink
+`released_credits_acc_reg[14]`, ~100 levels, of which ~18 were TideLink's.
+
+rc5's deepest path is **the same two registers** — `core_op_q_reg[8]` →
+`released_credits_acc_reg[14]` — at 89 counted levels, and it splits:
+
+    60 levels  u_soc          (48 of them u_soc/u_network_core, the second CM0+)
+    27 levels  u_tidelink     (16 in tidelink proper, 11 in u_tidelink_fifo)
+     2 levels  (top)
+    ----------------------------------------------------------------
+    62 of 89 (70%) outside TideLink
+
+Across all 60 paths reported in full, **3,380 of 3,921 levels (86.2%) are outside
+TideLink**; TideLink owns 541 (13.8%).
+
+**So the claim holds in substance and has drifted in detail.** The great majority of the
+depth is still CPU and fabric, still not TideLink's to fix, and still not retimeable (it is
+Arm IP). But TideLink's share of the *deepest single path* has gone from ~18% to 30%, and
+the accumulator end of it is now 27 levels rather than ~18. Anyone quoting "82 of 100"
+should quote the scope with it: it is 86% across the worst 60 paths and 70% on the single
+deepest one.
+
+### The load story is four nets
+
+38 of the 60 paths trip a load or fanout threshold, and they largely trip the *same* one.
+Four drivers are the heaviest-load stage on 27 of them:
+
+     9 paths  u_soc/u_network_core/...cortexm0plus...core_mul_4962_43_g6205/ZN  CKND8   131.5 fF
+     7 paths  u_soc/g87431/ZN                                                  INVD12  107.2 fF
+     7 paths  u_soc/g129776/ZN                                                 CKND16  182.9 fF  fanout 55
+     4 paths  u_soc/g293/ZN                                                    CKND12   65.1 fF
+
+That is a small, concrete, flow-side list — and it is exactly the part of the problem that
+placement CAN fix, which is why separating it from depth is worth the column.
+
+### What is written now
+
+`hooks/post_synth.tcl` sections 2a and 2b, and `scripts/ci/synth_depth_report.py`:
+
+    synth_logic_levels.rep         every endpoint, every level
+    synth_logic_levels_nobuf.rep   every endpoint, drive not counted
+    synth_logic_levels_detail.rep  one row per endpoint: start, end, depth, cost group
+    synth_deep_paths.rep           report_timing -to, the N deepest endpoints in full
+    synth_libcell_class.tsv        882 lib cells: buffer/inverter/macro/sequential/pad/area
+    synth_depth.rep                the report to read at 2am -- five sections, worst first
+    synth_depth.json               the same numbers, for a gate or a diff
+
+`synth_depth.rep`'s five sections are: the design-wide distribution with and without
+drive; the deepest endpoints whether or not they meet timing; the worst paths by slack
+each carrying its depth; per-path anatomy with a DEPTH / LOAD / DEPTH+LOAD verdict and the
+numbers that produced it; and a hierarchy rollup at two depths. Every table states its
+population, its analysis view, and whether buffers were counted. Synthesis clock-gate
+wrappers (`cg_RC_CG_HIER_INST*`) are folded into their parent, and ungrouped hierarchy
+(`u_a_u_b_u_c`) is split back apart — without that the rollup is one bucket wide and the
+"whose cone is this" question cannot be answered at all.
+
+**Cost, measured on rc5:** histograms 188 s, twelve deepest-endpoint path reports 4 s,
+libcell table under 1 s. About 3.5 minutes on a 100-minute synthesis. `SYNTH_DEPTH_REPORTS=0`
+turns it off and says in the log that the record now has a hole.
+
+`scripts/ci/synth_depth_report.py --selftest` proves the classifier can reach all four
+verdicts, that the level counter excludes the launch and capture elements, that the
+hierarchy splitter dissolves both `_u_` and `_cg_RC_CG_` joins, that segmentation preserves
+order and re-entry, that the class table overrides the name guess, and that a report over
+zero paths **refuses (exit 2)** instead of printing an empty table.
+
+---
+
+## F27 — the macro-model gate, and the black box that no attribute-based check can see
+
+**Measured, not argued: an unresolved module reaches the netlist, Genus exits 0, and
+`is_black_box` is false on everything.**
+
+### The gate that exists, and the three knobs that switch it off
+
+`1_synthesis.tcl` guards black boxes in exactly two places, both at ELABORATE:
+
+    :289  if {$SYN_STRICT && !$SYN_BLACKBOX_OK} { set_db hdl_error_on_blackbox true }
+    :535  if {$unresolved && !$SYN_BLACKBOX_OK} { flow_fail ... }
+
+Both fired for real during rc5 — `syn.log` and `syn.log1` are two aborted attempts, on
+`u_nanosoc_eth_chiplet_chip` and on `u_xhb_sub`. The guard works. What it does not do is
+survive its own configuration:
+
+* `SYN_BLACKBOX_OK=1` disables **both** — the same variable is in both conditions;
+* `SYN_STRICT=0` disables both too, because it un-sets the elaborate error *and* makes
+  `flow_fail` advisory (`flow_utils.tcl:92-95`);
+* `SYN_CHECKS=0` skips `check_design` entirely;
+* and `try_step "unresolved" { set unresolved [check_design -unresolved -status] }` at
+  :522 **swallows an exception**: `unresolved` was pre-set to 0 at :521, so a
+  `check_design` that throws leaves 0, `[string is integer -strict 0]` is true, the
+  "did not return a count" warning at :527 does not fire, and the gate passes having
+  measured nothing. (`asic-toolkit`, not this run's to fix — see F28.)
+
+### The demonstration, on real Genus, not a fixture
+
+A two-module design whose only macro has no model anywhere, run with
+`hdl_error_on_blackbox false` (what `SYN_BLACKBOX_OK=1` sets), Genus 21.15, the real
+`tcbn65lpwc.lib`:
+
+    elaborate rc                          = 0
+    check_design -unresolved -status      = 1
+    netlist written                       = 4734 bytes, containing `mystery_ram`
+    Genus process exit                    = 0   ("Normal exit")
+    get_db insts                          = 64
+    get_db insts -if {.is_black_box}      = 0     <-- ZERO
+    get_db insts -if {.is_macro}          = 0
+    the unresolved module appears as      hinst u_mem (mystery_ram)
+
+**An unresolved reference is not an inst and does not set `is_black_box`.** Every rule
+written against instance attributes — including every rule in the first draft of this
+gate — is blind to the single most obvious way to get a black box into a netlist.
+
+### Why `is_black_box` is not the check either
+
+On a **healthy** rc5 netlist:
+
+    black-box instances                55
+      21  the macros        (all 8 cell types: rf_01k/08k/16k/32k, flash_cache_data/_tag,
+                             rom_via, eth_rom_via)
+      34  the supply pads   (PVDD1DGZ_G, PVDD2DGZ_G, PVDD2POC_G, PVSS1DGZ_G, PVSS2DGZ_G)
+
+Genus's definition is "timing is understood, function is not", which is precisely what a
+RAM's Liberty and a supply pad's are. A gate on that attribute fires 55 times on a clean
+design and is switched off within a day.
+
+### What the gate is instead
+
+A census with eight rules, applied in Tcl inside Genus (so the stage stops without needing
+Python) and re-applied offline by `scripts/ci/synth_macro_gate.py`, which also
+**cross-checks its verdict against the one the hook recorded** — two implementations that
+disagree is itself reported, which is how drift between them is caught rather than hidden.
+
+    R0  no unresolved reference survived to the end of synthesis
+        (check_design -unresolved, run again AFTER syn_opt, as a post-condition on what
+        is about to be written -- and treating a non-count as NOT MEASURED, not as zero)
+    R1  every Liberty DESIGN_LIBS_MAX names was actually loaded
+    R2  every macro cell's library was built from a file the design named
+    R3  every macro model has timing arcs and non-zero area
+    R4  every cell in the netlist is declared by a LEF place-and-route will read
+    R5  every black-box instance is a macro, a pad, or a cell with no signal pins
+    R6  the per-macro instance census matches the committed baseline   (offline only)
+    R7  every macro model has at least one instance
+    R9  the collateral synthesis does NOT read is readable: DESIGN_LIBS_MIN,
+        DESIGN_LIBS_TYP, DESIGN_GDS_MERGE
+    R8  (advisory) no two Liberty files share one library() name
+
+**R4 matters more than it looks.** rc5 ran `SYN_MMMC=0`, and `read_physical` is guarded by
+`if {($SYN_PLE || $SYN_ISPATIAL) && $SYN_MMMC}` (:453). The log confirms the other branch:
+`SYN-WARN: SYN_PLE without SYN_MMMC: no LEF is read`. **Genus read zero LEFs**, so
+`lib_cell.lef_inconsistent` is vacuous and synthesis can hand P&R a netlist full of cells
+P&R has no physical view of. R4 scans the twelve LEF files P&R will open — about 10 MB,
+one second — and asks the question at the stage where the answer is cheap. This is F7 one
+stage earlier.
+
+### rc5's verdict
+
+    VERDICT: PASS   (0 hard, 1 advisory)
+
+    cell                insts   arcs  pins       area  lef  library
+    flash_cache_data        8    649    81      11337  yes  FLASH_CACHE_DATA_ss_1p08v_1p08v_125c
+    rf_08k                  4    719   116      48045  yes  RF_LIB_08K_ss_1p08v_1p08v_125c
+    rf_16k                  3    721   117      88941  yes  RF_LIB_16K_ss_1p08v_1p08v_125c
+    flash_cache_tag         2    293    50       5485  yes  FLASH_CACHE_TAG_ss_1p08v_1p08v_125c
+    eth_rom_via             1   1549   102       9836  yes  USERLIB_ss_1p08v_1p08v_125c
+    rf_01k                  1    713   113      10465  yes  RF_LIB_01K_ss_1p08v_1p08v_125c
+    rf_32k                  1    723   118     166997  yes  RF_LIB_32K_ss_1p08v_1p08v_125c
+    rom_via                 1   1549   102       9836  yes  USERLIB_ss_1p08v_1p08v_125c
+                           21
+
+    unresolved references after syn_opt   0
+    cells declared by the 12 LEFs P&R reads   969; netlist cells with no LEF   0
+    black boxes   55, all 21 macro + 34 pad, none unexpected
+
+### CORRECTION TO F7: it is 8 macro cell types, not 9
+
+F7 records "macro LEF cells declared: 9 (expected 9)". The design instantiates **eight**.
+The ninth is `sram_16k`, which `$MEM_BASE/*/*.lef` matches, which is not in
+`DESIGN_LIBS_MAX`, `DESIGN_LEFS` or `DESIGN_GDS_MERGE`, and which has zero instances in
+the netlist. F7's number is a count of LEFs a glob found, not a count of the design's
+macros — the two happened to be reconcilable because the glob's extra cell is unused. Both
+of F7's other numbers (21 patterns, 21 instances) are correct and are re-confirmed here
+independently, from Genus rather than from a text walk of the netlist.
+
+### NEW (advisory, R8): both boot ROMs declare the SAME Liberty library name
+
+    library(USERLIB_ss_1p08v_1p08v_125c)   in romlibs/cc_rom/rom_via_ss_1p08v_1p08v_125c.lib
+    library(USERLIB_ss_1p08v_1p08v_125c)   in romlibs/eth_rom/eth_rom_via_ss_1p08v_1p08v_125c.lib
+
+Genus merges them into one library object whose `.files` is a two-element list. Both cells
+are present and correct, so this is not a defect today — but **the database can no longer
+say which file `rom_via` came from and which `eth_rom_via`**. F8 went to some trouble to
+make synthesis, P&R and stream-out read the same ROM directory; this says that even so,
+the per-cell mapping is not recoverable from the tool afterwards, and for a
+*mask-programmed* macro that is exactly the question worth being able to ask.
+
+The fix is one line in each of two files:
+
+    ASIC/tech_wrappers/tsmc65/eth_rom.spec:19      libname = USERLIB
+    ASIC/tech_wrappers/tsmc65/nanosoc_rom.spec:19  libname = USERLIB
+
+Distinct names there give distinct library objects and restore per-cell provenance. It is
+not free: `libname` is part of the compiler input, so both ROMs rebuild (~171 s each) and
+both cache keys change. The RF and flash-cache macros already have distinct library names
+(`RF_LIB_32K_...`, `FLASH_CACHE_TAG_...`); only the two ROMs collide.
+
+It also cost a false alarm during development, worth recording as a method note: reading
+`[lindex [get_db $lc .library.files] 0]` attributed both ROMs to whichever file was read
+first and then reported the other as *never read* — a HARD R1 on a healthy design, in the
+opposite direction from the defect the rule exists for.
+
+### DISCRIMINATION — the gate is shown able to say no, twice over
+
+**On real Genus output, against rc5's own post-syn_opt database** (`read_db` of this run's
+`_syn_session`, the hook sourced unmodified, one input mutated per trial):
+
+    trial                what was changed                        result
+    control              nothing                                 PASS, hook rc=0
+    missing_lib          DESIGN_LIBS_MAX also names sram_16k's   FAIL R1, hook rc=1
+                         Liberty, which the run did not load
+    missing_lef          rf_32k.lef removed from lef_file_list   FAIL R4, hook rc=1
+    no_lefs              every named LEF unreadable              FAIL R4, hook rc=1
+    missing_lef_ungated  as missing_lef, SYNTH_MACRO_GATE=0      reported and DOWNGRADED,
+                                                                 rc=0, and the report says
+                                                                 "*** NOT ENFORCED ***"
+
+`missing_lib` and `missing_lef` are the F8 and F7 defects reproduced exactly: a
+Liberty the design names and the tool never loaded, and a macro LEF that is absent in this
+checkout. Both are caught at synthesis, in seconds, by the run's own inputs.
+
+**On real Genus output, for the direction attributes cannot see:** the two-module
+unresolved-macro design above, with the hook sourced over it —
+
+    SYNVIS: unresolved references after syn_opt: 1
+    HARD R0  1 unresolved reference(s) are STILL PRESENT after syn_opt and are about to be
+             written into the netlist. They are invisible to is_black_box and absent from
+             get_db insts, so nothing else here can see them. Candidates: u_mem (mystery_ram).
+    hook rc = 1   (the stage stops)
+
+**On mutated census data,** `scripts/ci/synth_macro_gate.py --selftest` — sixteen
+mutations, each carrying exactly one defect, each required to fire exactly the named rule:
+
+    a requested Liberty was never loaded                       -> R1
+    a macro read from a source the design did not name         -> R2
+    a macro model has no timing arcs (times as a wire)         -> R3
+    a macro model has zero area                                -> R3
+    a macro has a Liberty and no LEF                           -> R4
+    a LEF the flow names is unreadable                         -> R4
+    no LEF readable at all, but LEFs were named                -> R4
+    a netlist cell no LEF declares                             -> R4
+    an unexpected black box appears                            -> R5
+    a black box with no lib_cell at all                        -> R5
+    a memory lost two instances (synthesised into flops?)      -> R6
+    the whole macro cell disappeared from the netlist          -> R6
+    a macro model exists and has no instances                  -> R7
+    an unresolved module reached the netlist                   -> R0
+    the fast-corner Liberty for a macro is missing             -> R9
+    a macro GDS is missing (an empty box at stream-out)        -> R9
+
+plus: the clean census passes; two Liberty files under one library name is an ADVISORY and
+not a failure; an absent, unparseable, key-less or zero-macro census **refuses (exit 2)
+rather than passing**; a census with no LEF list prints `-- N of those advisories is a
+check that DID NOT RUN` and `A PASS here does not cover: R4`; and a recorded finding this
+script did not derive is reported as drift.
+
+`R6` — the committed baseline in `scripts/ci/synth_macro_expect.json`, generated from
+rc5 — is the one that catches the direction nothing else can: a memory that stops being a
+macro. If a behavioural model wins over the Liberty the RAM is synthesised into
+flip-flops, and there is no black box, no unresolved reference and no error. Checked
+against rc5's real census with `rf_16k` dropped from 3 instances to 1:
+
+    HARD  R6  macro rf_16k: baseline 3 instances, netlist 1
+    HARD  R6  macro instance total: baseline 21, netlist 19
+    rc=1
+
+### Two latent traps found while proving the above, both now closed in the hook
+
+* **`$REPORT_DIR` versus `$::REPORT_DIR`.** `flow_hook` sources a hook with
+  `uplevel 1 [list source $path]` and is called from the top level, so today a bare
+  `$REPORT_DIR` happens to resolve globally. One frame deeper it is a local lookup and the
+  hook dies *after synthesis has finished*. Named explicitly, with a refusal that says
+  which variable was unset.
+* **`array set X {}` does not clear an array**, it merges an empty list into it. Sourced
+  twice in one session, the second census would carry the first one's cells. All seven
+  arrays are `array unset` first. This is not hypothetical: it is what the first run of
+  the mutation harness did — the findings went to `::_find` while the report read a local
+  `$_find`, and the gate printed **PASS, 0 findings** having found things. Every finding
+  variable is now namespace-qualified on both the write and the read.
+
+---
+
+## F28 — what F26 and F27 leave open
+
+Not fixed here, and each one is somebody else's file.
+
+1. **`asic-toolkit` — `try_step` hides a thrown `check_design`.**
+   `1_synthesis.tcl:521-533` pre-sets `unresolved` to 0, then calls `check_design
+   -unresolved -status` inside `try_step`, which catches and warns. A throw therefore
+   leaves 0, the "not a count" guard sees a valid integer, and the black-box gate passes
+   having measured nothing. The fix is to initialise the variable to a non-integer
+   sentinel so the existing guard fires — the hook's own R0 does exactly that and is the
+   worked example. **Two lines.**
+
+2. **`asic-toolkit` — one knob disables two independent gates.** `SYN_BLACKBOX_OK`
+   appears in both :289 and :535. A design that genuinely instantiates a hard macro with
+   no HDL view needs the *elaborate* error relaxed; it does not need the post-elaborate
+   `check_design` gate switched off as well. Splitting them costs one variable.
+
+3. **The boot ROM Liberty library names collide.** `libname = USERLIB` in both
+   `ASIC/tech_wrappers/tsmc65/eth_rom.spec:19` and
+   `ASIC/tech_wrappers/tsmc65/nanosoc_rom.spec:19`. Not this task's files, and changing
+   them forces both ROMs to recompile and both cache keys to change — a deliberate act,
+   not a drive-by. Until then the per-cell answer to "which ROM file did this cell come
+   from" does not exist in the synthesis database, and R8 says so on every run.
+
+4. **`ASIC/eth-chiplet/design.mk` — no `make` target reaches the two new scripts.**
+   `hooks/post_synth.tcl` invokes both directly during synthesis, so a run gets them; a
+   human wanting to re-read a finished run has to type
+   `scripts/ci/synth_depth_report.py --reports-dir <run>/reports` and
+   `scripts/ci/synth_macro_gate.py --run-dir <run>`. Two phony targets (`synth-depth`,
+   `synth-macro-gate`) would make them discoverable. design.mk is another agent's file.
+
+5. **`ci/signoff.yaml` — the macro gate is not a signoff stage.** It gates synthesis,
+   which is the right place for it to *stop* a run, but a finished run's
+   `synth_macro_gate.rep` is not read by anything. `signoff.py` has 24 stages and none
+   of them asks whether the netlist it is signing off has a black box in it.
+
+6. **The hook has never run inside a real synthesis.** Everything in F26 and F27 was
+   measured by `read_db` of rc5's own `outputs/nanosoc_eth_chiplet_pads_syn_session` and
+   sourcing the hook over it — the same database, the same netlist, but a restored session
+   rather than a live one. The reports now in `build/rc5vt-20260829/reports/synth_*` carry
+   a `synth_visibility_PROVENANCE.txt` saying exactly that. One path is genuinely
+   untested: in a live run `$::lef_file_list` comes from the toolkit's `flow_collateral`;
+   here it was taken from `work/nanosoc_eth_chiplet_pads_placed/libs/lef/`, the twelve LEFs
+   Innovus actually opened. Same twelve files, different code path.
+
+7. **`build/` is gitignored, so the evidence is host-only** — the same gap F7 and the
+   `index/` note above record. The numbers are copied into F26 and F27 for that reason.
+
+8. **The depth reports are not yet a gate, deliberately.** Nothing fails on a 90-level
+   path. Setting a ratchet (say: the worst non-buffer depth may not increase) needs a
+   baseline whose first value someone has to accept, and accepting 80 non-buffer levels as
+   the standing figure is a decision, not a default. `synth_depth.json` carries everything
+   such a ratchet would need.
