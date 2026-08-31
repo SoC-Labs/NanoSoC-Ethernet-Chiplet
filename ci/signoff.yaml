@@ -44,12 +44,19 @@ top: nanosoc_eth_chiplet
 # stop seeing it, and that is asserted by build-freshness's own
 # fail-unset-variable fixture.
 #
-# NOT EVERY BUILD NAME BELOW IS THIS VARIABLE. `lec` (gdsrun-20260821-slpads),
-# `lec-selftest` (full-20260814) and `gls-netlist` (fp1505, gdsrun-20260819)
-# stay literal: each is pinned to a different build under a LIVE, self-expiring
-# exemption in scripts/ci/build_freshness.py, and the exemptions say those
-# stages CANNOT be repointed yet. Turning them into @GRADED_BUILD@ would repoint
-# them silently and delete the exemption's reason with it.
+# NOT EVERY BUILD NAME BELOW IS THIS VARIABLE. `lec-selftest` (full-20260814)
+# and `gls-netlist` (fp1505, gdsrun-20260819) stay literal: each is pinned to a
+# different build under a LIVE, self-expiring exemption in
+# scripts/ci/build_freshness.py, and the exemptions say those stages CANNOT be
+# repointed yet. Turning them into @GRADED_BUILD@ would repoint them silently
+# and delete the exemption's reason with it.
+#
+# `lec` WAS ON THAT LIST AND IS NOT ANY MORE. Its exemption was WITHDRAWN on
+# 2026-08-29 -- build_freshness.py keeps the withdrawal note and the now-unused
+# _exempt_lec() beside it -- and the stage has read @GRADED_BUILD@ ever since.
+# This paragraph went on naming it for two days, which is the same defect the
+# paragraph is about: a pin recorded in prose that the manifest no longer has.
+# Corrected 2026-08-31.
 # -----------------------------------------------------------------------------
 vars:
   GRADED_BUILD:
@@ -1652,6 +1659,35 @@ stages:
     # is exactly what this stage exists to say out loud, and until it is
     # resolved in the toolkit the honest reading of `lec` and `lec-pnr` is that
     # their harness has a known-broken self-test case.
+    #
+    # ── 2026-08-31: BOTH HALVES OF THAT PARAGRAPH ARE NOW OUT OF DATE. ──────
+    #
+    # RE-MEASURED on a seat, this host, LEC 22.10-s200, into
+    # build/rc5lec-self/: ALL TEN cases behaved as declared. pg_decoration is
+    # green -- the toolkit's own note records the cause and the fix (the
+    # self-test netlists declared the supplies `inout`, and Conformal derives
+    # FIVE key points from a bidirectional port; `write_hdl -pg` writes them as
+    # `input`, so the netlists were changed to match the real one and the
+    # tolerance was left alone). Nothing was widened.
+    #
+    # AND THE COUNT WAS WRONG IN THE OTHER DIRECTION. The assertion below read
+    # `!= 9` and the harness prints TEN: nine `_case` invocations plus the
+    # stub-coverage assertion that runs before them, which increments the same
+    # tally. So on the day the last red case went green this stage would have
+    # gone red anyway, on an off-by-one, and the message would have said "a case
+    # was dropped" about a harness that had gained one. An EXACT count is still
+    # right -- a `[0-9]+` window is the rom-selftest mistake -- but an exact
+    # count is a thing to re-measure whenever the harness changes, and this is
+    # the second time it has been the stale half of a correct rule.
+    #
+    # Two open classifications in the toolkit's own comments are also settled by
+    # that run, and are recorded here because nothing else will hold them:
+    #   * `extra_state` (an extra flop and an extra output in revised) comes
+    #     back as EXTRA -- unmapped_extra_revised=2 -- not as not-mapped.
+    #   * `asym_unreachable` comes back as UNREACHABLE on one side
+    #     (unreachable_golden=1 / revised=0), so the reason is "not symmetric",
+    #     not "extra unmapped point". The toolkit case asserts an alternation of
+    #     the two pending exactly this measurement; it can now be narrowed.
     # DELIBERATELY NOT MOVED TO fp1505, 2026-08-18 -- DO NOT "FIX" THIS EITHER,
     # and for a DIFFERENT reason from `lec` above. This stage does not grade the
     # design at all. It pushes the toolkit's nine deliberately mutated netlists
@@ -1702,11 +1738,12 @@ stages:
           f = re.search(r"SELFTEST: (\d+) of (\d+) cases misbehaved", summary)
           bad.append(f"{f.group(1)} of {f.group(2)} cases misbehaved — DO NOT TRUST lec/lec-pnr"
                      if f else "no 'SELFTEST: all N cases behaved as declared' line")
-      elif int(m.group(1)) != 9:
-          bad.append(f"the harness ran {m.group(1)} cases, not the 9 the toolkit's "
+      elif int(m.group(1)) != 10:
+          bad.append(f"the harness ran {m.group(1)} cases, not the 10 the toolkit's "
                      f"flow/verify/run_lec.sh declares (equivalent, nonequivalent, "
                      f"extra_state, missing_input, empty_input, bad_pg_pin, "
-                     f"pg_decoration, extra_nonsupply_pi, asym_unreachable) — a case "
+                     f"pg_decoration, extra_nonsupply_pi, asym_unreachable, and the "
+                     f"stub-coverage assertion that runs before all nine) — a case "
                      f"was dropped and the tally still reads clean")
       def verdict(case):
           p = os.path.join(D, f"lec_selftest_{case}.log")
@@ -1830,10 +1867,44 @@ stages:
     # logs/lec_pnr.log left by an earlier run satisfied the stage without being
     # contradicted by anything, and this is the only comparison in the pipeline
     # that can see what place/CTS/route did to the logic.
+    # ── 2026-08-31: THE HARNESS'S VERDICT IS NOW GRADED TOO, NOT ONLY THE
+    # TOOL'S. Until today every clause below read logs/lec_pnr.log and nothing
+    # read reports/lec/pnr/verdict.txt, so this stage graded CONFORMAL and never
+    # graded RUN_LEC.SH -- while the `lec` stage beside it grades both, for
+    # reasons its own note spells out at length.
+    #
+    # That asymmetry matters because the two verdicts are not the same verdict
+    # and are not always the same answer. run_lec.sh computes its own from the
+    # final compare state and applies rules Conformal's `Compare Results:` line
+    # does not have: not-mapped points, extra points, inverted-equivalent
+    # points, by-name unreachable symmetry. The archived RTL-to-gate leg is the
+    # existing proof that the two can disagree -- gdsrun-20260821-slpads reports
+    # `Compare Results: PASS`, 5,433 of 5,433 points equivalent, and
+    # `LEC: RESULT=FAIL` on 96 golden flops that have no counterpart at all.
+    # A stage reading only the first line calls that netlist verified.
+    #
+    # So both must be present and both must say PASS, and a contradiction
+    # between them is its own named failure rather than whichever one happened
+    # to be read. The verdict is also required to name THIS leg (`tag=pnr`) and
+    # THIS build's two netlists, so a complete and healthy verdict from the
+    # `gate` leg, or from an earlier build, cannot satisfy it -- the same
+    # defence ci/fixtures/lec/fail-wrong-leg pins for `lec`.
+    #
+    # AND THE ROW NOW CARRIES WHAT WAS VERIFIED, not just that it was.
+    # Measured 2026-08-31 on rc5: the same two netlists compare over 61,599
+    # points in one run and 58,592 in another, the 3,007-point difference being
+    # every integrated clock gate in the design, unmapped as unreachable after
+    # Conformal folds the enable into the gated flops' data cones. Both are
+    # sound and both print RESULT=PASS. Printing the population and the
+    # unreachable split is what lets a reader tell the two aparts; there is
+    # deliberately NO threshold on it, because the right number is not known and
+    # a guessed one would fail good runs.
     check: |
       python3 - <<'EOF'
-      import re, sys
-      L = "ASIC/eth-chiplet/build/@GRADED_BUILD@/logs/lec_pnr.log"
+      import os, re, sys
+      B = "ASIC/eth-chiplet/build/@GRADED_BUILD@"
+      L = B + "/logs/lec_pnr.log"
+      V = B + "/reports/lec/pnr/verdict.txt"
       try:
           t = open(L, errors="replace").read()
       except OSError:
@@ -1843,11 +1914,14 @@ stages:
           print(f"lec-pnr: FAIL — {L} is empty; Conformal produced no transcript")
           sys.exit(1)
       bad = []
+
+      # ---- 1. THE TOOL'S OWN VERDICT ------------------------------------
       m = re.search(r"^\s*\d*\.?\s*Compare Results:\s+(\S+)", t, re.M)
+      tool = m.group(1).upper() if m else None
       if not m:
           bad.append("no 'Compare Results:' verdict line — the six-hour run did not "
                      "reach a conclusion, which is not the same as equivalent")
-      elif m.group(1).upper() != "PASS":
+      elif tool != "PASS":
           bad.append(f"Conformal's verdict is {m.group(1)!r}, not PASS — place/CTS/"
                      f"route changed the logic")
       for label, what in (("Non-equivalent", "post-P&R points are NOT equivalent"),
@@ -1858,6 +1932,94 @@ stages:
               bad.append(f"no '{label} point(s) reported' census line")
           elif int(c.group(1)) != 0:
               bad.append(f"{c.group(1)} {what}")
+
+      # ---- 2. THE HARNESS'S OWN VERDICT, out of band --------------------
+      harness = None
+      try:
+          v = open(V, errors="replace").read()
+      except OSError:
+          v = None
+          bad.append(f"no harness verdict at {V}. run_lec.sh writes it for every "
+                     f"leg that reaches a conclusion, so its absence means the "
+                     f"runner did not finish — a transcript alone is Conformal's "
+                     f"opinion with nothing checking it")
+      if v is not None:
+          if not v.strip():
+              bad.append(f"{V} is empty")
+          if not re.search(r"^LEC-VERDICT: tag=pnr$", v, re.M):
+              got = re.search(r"^LEC-VERDICT: tag=(\S+)", v, re.M)
+              bad.append(f"the verdict names leg {got.group(1)!r} and not 'pnr'"
+                         if got else
+                         "the verdict carries no 'LEC-VERDICT: tag=' line, so "
+                         "nothing says which comparison it describes")
+          # THE REVISED SIDE MUST BE THIS BUILD'S. The golden need not be, and
+          # requiring it would break a configuration the toolkit supports on
+          # purpose: SYN_RUN_TAG may differ from RUN_TAG when a run reuses an
+          # earlier synthesis, and then the golden is the netlist P&R actually
+          # consumed, from that other tree. This stage passes both tags as
+          # @GRADED_BUILD@ so they are equal here — but a check that would
+          # redden a legitimate two-tag run is a check that gets loosened in a
+          # hurry by whoever meets it first. So: the golden's shape is asserted
+          # and its BUILD IS PRINTED, which makes a split visible instead of
+          # either forbidden or silent.
+          g = re.search(r"^LEC-VERDICT: golden=(\S+)", v, re.M)
+          if not g:
+              bad.append("the verdict names no golden netlist")
+          elif not g.group(1).endswith("_gate_power.v"):
+              bad.append(f"the verdict's golden is {g.group(1)!r}, which is not a "
+                         f"_gate_power.v — this leg compares the SYNTHESISED netlist "
+                         f"against the routed one and that is not the synthesised one")
+          else:
+              gb = re.search(r"/build/([^/]+)/outputs/", g.group(1))
+              if gb and gb.group(1) != "@GRADED_BUILD@":
+                  print(f"lec-pnr: golden came from build {gb.group(1)!r}, not "
+                        f"@GRADED_BUILD@ — a two-tag run (SYN_RUN_TAG != RUN_TAG)")
+          r_ = re.search(r"^LEC-VERDICT: revised=(\S+)", v, re.M)
+          if not r_:
+              bad.append("the verdict names no revised netlist")
+          elif not (r_.group(1).endswith("_pnr.v") and "@GRADED_BUILD@" in r_.group(1)):
+              bad.append(f"the verdict's revised is {r_.group(1)!r}, which is not "
+                         f"@GRADED_BUILD@'s _pnr.v — this verdict grades some other "
+                         f"candidate")
+          for key in ("nonequivalent", "abort", "notcompared",
+                      "notmapped_golden", "notmapped_revised"):
+              c = re.search(rf"^LEC-VERDICT: (?:.* )?{key}=(\d+)", v, re.M)
+              if c is None:
+                  bad.append(f"the verdict has no '{key}' counter — the runner did "
+                             f"not reach the line that prints it, and not measured "
+                             f"is not zero")
+              elif int(c.group(1)) != 0:
+                  bad.append(f"the harness reports {key}={c.group(1)}")
+          harness = "PASS" if re.search(r"^LEC-VERDICT: RESULT=PASS$", v, re.M) else "FAIL"
+          if harness != "PASS":
+              for r in re.findall(r"^LEC-VERDICT: reason=(.+)$", v, re.M):
+                  bad.append("harness reason: " + " ".join(r.split())[:300])
+              if not re.search(r"^LEC-VERDICT: RESULT=", v, re.M):
+                  bad.append("the verdict carries no 'LEC-VERDICT: RESULT=' line")
+          if not re.search(r"^LEC: RESULT=PASS$", v, re.M):
+              bad.append(f"{V} does not end in 'LEC: RESULT=PASS' — run_lec.sh's own "
+                         f"re-derivation from the transcript did not agree")
+
+      # ---- 3. THEY MUST AGREE WITH EACH OTHER ---------------------------
+      if tool and harness and tool != harness:
+          bad.append(f"CONTRADICTION: Conformal says {tool} and the harness says "
+                     f"{harness}. Two independent verdicts that disagree is not a "
+                     f"pass by whichever one is read first")
+
+      # ---- 4. what was actually verified, on the row --------------------
+      if v:
+          for key in ("compare_points", "unreachable_golden"):
+              c = re.search(rf"^LEC-VERDICT: ({key}=.*)$", v, re.M)
+              if c:
+                  print("lec-pnr: " + c.group(1))
+          cp = re.search(r"^LEC-VERDICT: compare_points=(\d+)", v, re.M)
+          if cp is None:
+              bad.append("no 'compare_points=' census line — the verdict does not "
+                         "say how large a population was compared, and 'equivalent' "
+                         "over an unstated population is not a measurement")
+          elif int(cp.group(1)) == 0:
+              bad.append("compare_points=0 — nothing was verified")
+
       for b in bad:
           print("lec-pnr: FAIL —", b)
       sys.exit(1 if bad else 0)
@@ -1898,6 +2060,24 @@ stages:
       must_fail:
         - ci/fixtures/lec-pnr/fail-nonequivalent
         - ci/fixtures/lec-pnr/fail-no-log
+        # THE THREE ADDED WITH THE HARNESS CLAUSES, 2026-08-31. Each attacks one
+        # of them and would pass a check that reads only the transcript:
+        #   fail-verdict-absent    a perfect Conformal log with NO verdict.txt
+        #                          beside it - the shape a killed runner leaves,
+        #                          and the shape a stale log left by an earlier
+        #                          run has always had
+        #   fail-harness-disagrees the same perfect log, and a verdict reporting
+        #                          96 not-mapped golden flops. Conformal's
+        #                          `Compare Results:` line does not fail on
+        #                          not-mapped points; this is the archived
+        #                          RTL-to-gate leg's exact shape, moved onto this
+        #                          one
+        #   fail-wrong-leg         a complete, healthy, PASSING verdict from the
+        #                          `gate` leg. Right build, right harness, wrong
+        #                          comparison
+        - ci/fixtures/lec-pnr/fail-verdict-absent
+        - ci/fixtures/lec-pnr/fail-harness-disagrees
+        - ci/fixtures/lec-pnr/fail-wrong-leg
     # fp1505, matching check: and the REVISED half of needs_implementation --
     # LOG_DIR and REPORT_DIR follow RUN_TAG, not SYN_RUN_TAG, so this run's
     # transcript and verdict land under build/fp1505/ even though its golden
@@ -1907,6 +2087,185 @@ stages:
     artifacts:
       - ASIC/eth-chiplet/build/@GRADED_BUILD@/logs/lec_pnr*.log
       - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/lec/pnr/**
+
+  - id: lec-cellswap
+    phase: physical
+    gate: block
+    label: soclabs-pdk
+    description: "What place/CTS/route CHANGED, cell by cell — and no sequential key point added, deleted or re-familied"
+    # WHY THIS EXISTS BESIDE lec-pnr AND NOT INSTEAD OF IT
+    #
+    # lec-pnr answers "are these two netlists the same logic" and answers it
+    # properly. It cannot answer the question a reader asks next, and the gap is
+    # not small: measured 2026-08-31 on rc5, place/CTS/route SUBSTITUTED 2,724 of
+    # the design's 3,007 integrated clock gates — every one of them upsized out
+    # of the minimum-drive CKLNQD1/CKLHQD1 that synthesis emitted, 431 of them
+    # all the way to D16 — and Conformal reports exactly the same sentence it
+    # reports for a netlist where none were touched. A resized clock gate and an
+    # untouched one are the same key point, mapped, equivalent, in both runs.
+    # Clock gating is where power and clock-tree behaviour live; "equivalent" is
+    # true and is not the whole answer.
+    #
+    # So this reports the swaps, and fails on the three that are never benign:
+    # a sequential key point appearing or disappearing, a sequential cell whose
+    # FAMILY changes rather than its drive (a clock gate replaced by a buffer, a
+    # set-flop by a clear-flop, a scan flop by a non-scan one), and a cell no
+    # library defines — because every other rule then runs on a guessed class.
+    #
+    # IT IS NOT A SUBSTITUTE FOR THE CONFORMAL RUN AND MUST NOT BE READ AS ONE.
+    # It compares INSTANCE NAMES AND CELL TYPES. It cannot see a rewired net, and
+    # a rewired net is the thing lec-pnr exists to catch. What it adds is (a) the
+    # census, which nothing else in this pipeline produces, and (b) reach:
+    # forty seconds, no Conformal seat, on ANY pair of netlists — including the
+    # ECO-only trees (rc2, rc3, rc4) that carry no work/fv and can host no
+    # RTL-to-gate comparison at all, and including a candidate whose LEC has not
+    # been run yet.
+    #
+    # THE CELL CLASSES COME FROM LIBERTY, NOT FROM CELL NAMES, and the library
+    # list comes from lec-pnr's own reports/lec/pnr/inputs.txt — the file
+    # run_lec.sh writes naming every .lib that comparison read. There is
+    # therefore no second list of libraries in this repository to drift out of
+    # step with the first, which is the same discipline flow/verify/
+    # lec_resolve.tcl imposes on the comparison itself. The physical-only cells
+    # (bond pads: 82 of them in this design, in no .lib anywhere) come from that
+    # run's generated work/lec_stubs.v for the same reason.
+    #
+    # THE COUPLING THAT FOLLOWS FROM THAT: this stage needs a FINISHED lec-pnr
+    # in the same build tag, and renders UNVERIFIED without one. That is
+    # deliberate. The alternative — a copy of the library list here — is the
+    # defect this project has hit repeatedly, most recently in the LVS deck.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_gate_power.v
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_pnr.v
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/lec/pnr/inputs.txt
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/lec_stubs.v
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's fixtures. The
+    # must_pass census is the REAL one, computed from that build's two netlists
+    # with its own libraries, with the absolute paths scrubbed — not a synthetic
+    # file shaped like one.
+    proof_vars: {GRADED_BUILD: gdsrun-20260823-rzG}
+    # THE SELF-TEST RUNS FIRST AND ITS OUTPUT IS AN ARTEFACT, for the reason
+    # lec-selftest exists: a census produced by a tool that has stopped
+    # discriminating is not evidence, and nothing else in this stage would
+    # notice. Ten cases, no libraries of the site's, no licence, about a second.
+    # `set -o pipefail` because the census is tee'd and its exit status is the
+    # one that matters.
+    run: |
+      set -o pipefail
+      B=ASIC/eth-chiplet/build/@GRADED_BUILD@
+      mkdir -p "$B/logs" "$B/reports/lec/pnr"
+      python3 scripts/ci/lec_cellswap.py --selftest \
+          2>&1 | tee "$B/logs/lec_cellswap_selftest.log"
+      python3 scripts/ci/lec_cellswap.py \
+          --golden  "$B/outputs/nanosoc_eth_chiplet_pads_gate_power.v" \
+          --revised "$B/outputs/nanosoc_eth_chiplet_pads_pnr.v" \
+          --top nanosoc_eth_chiplet_pads \
+          --libs-from "$B/reports/lec/pnr/inputs.txt" \
+          --stubs "$B/work/lec_stubs.v" \
+          --unreachable-report "$B/reports/lec/pnr/lec_pnr_unmapped_unreachable.rpt" \
+          --json "$B/reports/lec/pnr/cellswap.json" \
+          2>&1 | tee "$B/reports/lec/pnr/cellswap.txt"
+    # RE-DERIVED FROM THE NUMBERS, NOT READ OFF `result`. The tool computes its
+    # own verdict and writes it into the census; a check that reads that field
+    # and stops is a check that agrees with the tool by construction, which is
+    # the failure mode this whole pipeline is built against. So the sequential
+    # populations are compared here, from the census's own class table, and
+    # ci/fixtures/lec-cellswap/fail-result-contradicts-census is a census whose
+    # `result` says PASS over a class table that has lost a flop.
+    check: |
+      python3 - <<'EOF'
+      import json, os, re, sys
+      B = "ASIC/eth-chiplet/build/@GRADED_BUILD@"
+      C = B + "/reports/lec/pnr/cellswap.json"
+      S = B + "/logs/lec_cellswap_selftest.log"
+      bad = []
+
+      # 1. the gate's own discrimination, first - see the note above
+      try:
+          st = open(S, errors="replace").read()
+      except OSError:
+          print(f"lec-cellswap: FAIL — no self-test log at {S}; nothing says the "
+                f"census tool can still tell a deleted flop from a resize")
+          sys.exit(1)
+      m = re.search(r"SELFTEST: all (\d+) cases behaved as declared", st)
+      if not m:
+          f = re.search(r"SELFTEST: (\d+) of (\d+) cases misbehaved", st)
+          bad.append(f"{f.group(1)} of {f.group(2)} self-test cases misbehaved — "
+                     f"DO NOT TRUST the census" if f else
+                     "no 'SELFTEST: all N cases behaved as declared' line")
+      elif int(m.group(1)) != 10:
+          bad.append(f"the self-test ran {m.group(1)} cases, not the 10 "
+                     f"scripts/ci/lec_cellswap.py declares — a case was dropped and "
+                     f"the tally still reads clean")
+
+      # 2. the census
+      try:
+          d = json.load(open(C))
+      except OSError:
+          print(f"lec-cellswap: FAIL — no census at {C}; the stage did not run")
+          sys.exit(1)
+      except ValueError as e:
+          print(f"lec-cellswap: FAIL — {C} is not readable JSON ({e}); a truncated "
+                f"census is not a clean one")
+          sys.exit(1)
+
+      g, r = d.get("golden_by_class", {}), d.get("revised_by_class", {})
+      if not g or not r:
+          bad.append("the census carries no per-class table, so the sequential "
+                     "populations could not be compared")
+      for k in ("FLOP", "LATCH", "ICG"):
+          a, b = g.get(k, 0), r.get(k, 0)
+          if a != b:
+              bad.append(f"{k} population changed between the synthesised and the "
+                         f"routed netlist: {a} -> {b} ({b - a:+d}). A register or a "
+                         f"clock gate appearing or disappearing in place-and-route "
+                         f"is never benign")
+      if not d.get("golden_instances") or not d.get("revised_instances"):
+          bad.append("a netlist flattened to zero instances — nothing was compared")
+      for k, what in (("sequential_deleted", "deleted"),
+                      ("sequential_added", "added"),
+                      ("sequential_family_changed", "changed cell family")):
+          v = d.get(k) or {}
+          if v:
+              bad.append(f"{len(v)} sequential key point(s) {what}: " +
+                         "; ".join(f"{n} ({t})" for n, t in list(v.items())[:6]))
+      if d.get("unknown_cells"):
+          bad.append(f"{len(d['unknown_cells'])} cell type(s) are in no library and "
+                     f"in no stub file, so their class was guessed: " +
+                     ", ".join(d["unknown_cells"][:10]))
+      if d.get("result") != "PASS" or d.get("fails"):
+          for f in (d.get("fails") or ["the census records RESULT=" +
+                                       str(d.get("result"))]):
+              bad.append("census: " + str(f)[:300])
+
+      # 3. what changed, on the row - this is the half that is not a gate
+      print(f"lec-cellswap: {d.get('golden_instances')} -> "
+            f"{d.get('revised_instances')} leaf instances "
+            f"({d.get('added')} added, {d.get('deleted')} deleted, "
+            f"{d.get('swapped')} substituted in place)")
+      print(f"lec-cellswap: sequential unchanged — FLOP {g.get('FLOP')}, "
+            f"ICG {g.get('ICG')}, LATCH {g.get('LATCH')}")
+      icg = sorted(((v, k) for k, v in (d.get("swap_pairs") or {}).items()
+                    if k.startswith("CKL")), reverse=True)
+      if icg:
+          print(f"lec-cellswap: clock gates substituted: "
+                f"{sum(v for v, _ in icg)} of {g.get('ICG')} — " +
+                ", ".join(f"{k} x{v}" for v, k in icg[:6]))
+
+      for b in bad:
+          print("lec-cellswap: FAIL —", b)
+      sys.exit(1 if bad else 0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/lec-cellswap/pass
+      must_fail:
+        - ci/fixtures/lec-cellswap/fail-sequential-change
+        - ci/fixtures/lec-cellswap/fail-census-absent
+        - ci/fixtures/lec-cellswap/fail-selftest-short
+        - ci/fixtures/lec-cellswap/fail-result-contradicts-census
+    artifacts:
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/lec/pnr/cellswap.*
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/logs/lec_cellswap_selftest.log
 
   - id: lvs-preflight
     phase: physical

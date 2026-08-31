@@ -1,0 +1,18 @@
+LEC-VERDICT: tag=pnr
+LEC-VERDICT: design=nanosoc_eth_chiplet_pads
+LEC-VERDICT: golden=/repo/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads_gate_power.v
+LEC-VERDICT: revised=/repo/ASIC/eth-chiplet/build/gdsrun-20260823-rzG/outputs/nanosoc_eth_chiplet_pads_pnr.v
+LEC-VERDICT: pg_pin_mode=both
+LEC-VERDICT: compare_points=61599 equivalent=61598 inverted_equivalent=0 nonequivalent=1 abort=0 notcompared=0
+LEC-VERDICT: unmapped_extra_golden=0 unmapped_extra_revised=0
+LEC-VERDICT: unmapped_extra_tie_e_golden=0 unmapped_extra_tie_e_revised=0
+LEC-VERDICT: unreachable_golden=3 unreachable_revised=3
+LEC-VERDICT: unreachable_tristate_golden=0 unreachable_tristate_revised=0
+LEC-VERDICT: unreachable_other_golden=3 unreachable_other_revised=3
+LEC-VERDICT: unreachable_symmetric=3
+LEC-VERDICT: notmapped_golden=0 notmapped_revised=0
+LEC-VERDICT: tool_exit_code=16 flags=non-equivalent
+LEC-VERDICT: reason=1 non-equivalent point(s)
+LEC-VERDICT: RESULT=FAIL
+LEC: process_exit_status=1
+LEC: RESULT=FAIL

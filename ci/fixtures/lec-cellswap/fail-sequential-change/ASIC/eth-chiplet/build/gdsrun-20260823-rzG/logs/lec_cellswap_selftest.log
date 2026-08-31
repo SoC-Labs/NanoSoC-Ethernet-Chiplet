@@ -1,0 +1,12 @@
+SELFTEST: case 'identical' behaved correctly (PASS)
+SELFTEST: case 'resize_only' behaved correctly (PASS)
+SELFTEST: case 'buffer_added' behaved correctly (PASS)
+SELFTEST: case 'flop_deleted' behaved correctly (FAIL)
+SELFTEST: case 'flop_added' behaved correctly (FAIL)
+SELFTEST: case 'icg_defeated' behaved correctly (FAIL)
+SELFTEST: case 'flop_family_swap' behaved correctly (FAIL)
+SELFTEST: case 'unknown_cell' behaved correctly (FAIL)
+SELFTEST: case 'stubbed_pad_added' behaved correctly (PASS)
+SELFTEST: case 'empty_revised' behaved correctly (FAIL)
+
+SELFTEST: all 10 cases behaved as declared - the gate can pass AND fail

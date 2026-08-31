@@ -1413,3 +1413,378 @@ database — `read_db` **refuses a second call in the same session**
 (IMPIMEX-7031) and **exits 0 after refusing**, so a loop inside one session
 silently measures nothing. The probe asserted on the artefact and caught
 exactly that on its first attempt.
+
+---
+
+# LOGIC EQUIVALENCE — rc5, and the two links either side of it
+
+Everything below was measured on 2026-08-31 with Conformal LEC 22.10-s200 on this host,
+against `ASIC/eth-chiplet/build/rc5vt-20260829/outputs/`. Every comparison ran in its own
+scratch run tag (`build/rc5lec-*`), reading rc5's netlists and writing nothing into rc5's
+own tree — so the evidence directories below are NOT where `ci/signoff.yaml`'s `lec-pnr`
+row looks. Re-running the leg with `RUN_TAG=rc5vt-20260829 SYN_RUN_TAG=rc5vt-20260829`
+puts it there; that is one command and it is the only thing between this evidence and a
+green pipeline row.
+
+## F19 — rc5's post-P&R netlist is verified equivalent, and BOTH verdicts say so
+
+Two legs of the three-link chain ran to completion on rc5. Both pass, and both pass twice:
+once by Conformal's own `Compare Results:` line and once by the harness's independently
+computed `LEC-VERDICT: RESULT=`, which applies four rules Conformal's line does not have.
+
+| leg | golden | revised | Conformal | harness | compare points | elapsed |
+|---|---|---|---|---|---|---|
+| `gate` | `_gate.v` | `_gate_power.v` | PASS | RESULT=PASS | 61,599 / 61,599 equivalent | 271 s, 852 MB |
+| `pnr`  | `_gate_power.v` | `_pnr.v` | PASS | RESULT=PASS | 61,599 / 61,599 equivalent | 448 s, 924 MB |
+| `syn`  | RTL, via Genus's dofile | `_gate.v` | see F22 | see F22 | see F22 | still running at time of writing |
+
+`pnr` is the one that matters and the one this repo has run four times in its life. Its
+full census, from `report_statistics` rather than from the summary line:
+
+    Primary inputs            56 / 56 mapped
+    Tri-state (Z) key points  24 / 24 mapped
+    Primary outputs           34 / 34 mapped, 34 equivalent
+    Black-box key points      55 / 55 mapped, 55 equivalent
+    State key points       61,513 / 61,510 mapped, 61,510 equivalent
+                                    3 unmapped (unreachable), symmetric by name
+
+    non-equivalent 0   inverted-equivalent 0   abort 0   not-compared 0
+    not-mapped 0 golden / 0 revised   extra 0 golden / 0 revised
+    tool exit code 0, no flags set
+
+**The state-point count is independently corroborated.** A Liberty-classified census of
+the netlist itself (F20) finds 58,505 flops + 3,007 integrated clock gates + 1 latch =
+61,513 sequential cells, which is exactly what Conformal calls its state key points. The
+two numbers come from different files by different methods and they agree, so neither is
+reading a design the other is not.
+
+`make lec-selftest` was run first on this host, as the toolkit's note asks: **all 10 cases
+behaved as declared** — the equivalent pair passes, the one-gate mutation fails, the extra
+flop fails, the missing and zero-length netlists fail, the dofile's own preflight fires,
+the PG-decoration shape passes, the non-supply extra PI fails, the one-sided unreachable
+point fails. Evidence in `build/rc5lec-self/reports/lec/selftest_*/`.
+
+## F20 — WHAT THE TOOLS CHANGED: +48,299 cells, and every one of them combinational
+
+"Equivalent" is a true sentence about rc5 and it is not the whole answer. Place, CTS,
+post-route optimisation and hold repair rewrote 30% of the instance list. Classified from
+the same ten Liberty files the comparison read (`scripts/ci/lec_cellswap.py`, new, below):
+
+| class | `_gate_power.v` | `_pnr.v` | delta |
+|---|---|---|---|
+| FLOP | 58,505 | 58,505 | **0** |
+| ICG (integrated clock gate) | 3,007 | 3,007 | **0** |
+| LATCH | 1 | 1 | **0** |
+| COMB | 133,357 | 181,574 | +48,217 |
+| physical-only (bond pads) | 0 | 82 | +82 |
+| **total leaf instances** | **194,870** | **243,169** | **+48,299** |
+
+    7,859 instances deleted        56,158 added        21,579 substituted in place
+
+**Nothing sequential was added, deleted, or moved between cell families.** Not one flop,
+not one clock gate, not the single latch. That is the dangerous case and it did not happen.
+
+### The clock gating — the most consequential swap, and it is large
+
+**2,724 of rc5's 3,007 clock gates were substituted — 90.6% of them.** Every clock gate
+Genus emitted is at MINIMUM DRIVE; place-and-route spreads them across seven drive points:
+
+    838  CKLNQD1 -> CKLNQD6          194  CKLNQD1 -> CKLNQD3
+    707  CKLNQD1 -> CKLNQD2          118  CKLNQD1 -> CKLNQD4
+    431  CKLNQD1 -> CKLNQD16          33  CKLNQD1 -> CKLNQD12
+    394  CKLNQD1 -> CKLNQD8            9  CKLHQD1 -> CKLHQD{2,3,6}
+
+Read the direction: **synthesis emits 2,996 CKLNQD1 and 11 CKLHQD1 and nothing else**;
+the routed netlist has 281 and 2 left at minimum drive. 431 gates went straight to D16.
+Every substitution stays inside its family — `CKLNQD*`→`CKLNQD*`, `CKLHQD*`→`CKLHQD*` —
+so no clock gate became a buffer and none changed its latch polarity. That is the
+distinction that matters and it is why the census tests the FAMILY and not just the count:
+mutant C below is exactly the case where it does not hold.
+
+### The rest of the swaps
+
+    17,132 of the 21,579 in-place substitutions change drive strength only
+     4,447 change cell family, and NONE of them touches a sequential cell
+           (largest: NR2XD1->NR2D1 663, AN2D2->AN2XD1 446, CKAN2D4->AN2D2 175)
+
+     2,467 flops resized, family always preserved: DFCNQD2->DFCNQD1 682,
+           DFCND2->DFCND1 293, SDFCNQD1->SDFCNQD0 251, DFCNQD4->DFCNQD2 186,
+           DFCNQD1->DFCNQD4 172 -- P&R downsizes far more flops than it upsizes
+
+### What was inserted, and what vanished
+
+| | added | deleted | net |
+|---|---|---|---|
+| clock buffers (`CKB*`) | 33,378 | 319 | **+33,059** |
+| clock inverters (`CKN*`) | 7,690 | 2,604 | +5,086 |
+| data buffers (`BUFF*`) | 7,501 | 2,068 | +5,433 |
+| inverters (`INV*`) | 3,564 | 1,833 | +1,731 |
+| tie cells | 3,063 (3,038 `TIEL`, 25 `TIEH`) | 0 | +3,063 |
+| delay cells | 94 (`DEL0` 33, `DEL02` 32, `DEL01` 12, `DEL005` 12, `DEL015` 5) | 0 | +94 |
+| bond pads | 82 (`PAD70GU_SL` 42, `PAD70NU_SL` 40) | 0 | +82 |
+| other combinational | 779 | 1,031 | −252 |
+
+33,059 net clock buffers is the physical shape of F12's CTS hold repair, and it is the
+single largest thing that happened to this netlist. For scale, the same census on
+`gdsrun-20260823-rzG` — the rc4-lineage build — is **+14,021** total. rc5 inserts three
+and a half times as much cell area in P&R as the shipping lineage did.
+
+## F21 — the two links do not compare the same population, and the verdict cannot say so
+
+The `pnr` leg compares **61,599** points, of which 3,008 are latch key points — the 3,007
+clock gates and the one real latch.
+
+The `syn` leg's FIRST comparison — Genus's own `fv_map` model against `_gate.v` — compares
+**58,592**, and reports **3,010 unreachable state key points** instead of 3. Same design,
+same libraries, one link apart. The 3,007-point difference is the entire clock-gating
+population: Conformal's gated-clock remodelling (`Remodeled 50648 gated-clock DFF/DLAT(s)`)
+folds each enable into the data cone of every flop the gate feeds, after which the ICG's
+own latch provably cannot influence a compared output and is unmapped as unreachable.
+
+**That is sound, and it is invisible.** The enable is still verified, inside 50,648 flops'
+D-cones. But `LEC-VERDICT: unreachable_revised=3010` is the only trace of it, and nothing
+anywhere says those 3,010 are the clock gating. A reader handed two green LEC runs has no
+way to tell that one made the clock gates key points and one did not — and a chain
+argument (`RTL ≡ gate`, `gate ≡ gate_power`, `gate_power ≡ pnr`, therefore `RTL ≡ pnr`) is
+only as strong as its weakest link's population.
+
+`scripts/ci/lec_cellswap.py --unreachable-report` now resolves every unmapped point back
+to the cell it belongs to, so the difference is one line instead of an inference:
+
+    rc5 pnr leg      1 (G) DFF FLOP:DFNCND1   2 (G) DFF FLOP:DFNSND1  (and the same 3 in R)
+    a mutated pair   the same 3, PLUS 3,007 DLAT rows on ICG:CKLNQD*/CKLHQD*
+
+### The three points that ARE unreachable in the clean run, named
+
+    /u_..._u_tidelink/u_link_clk_div/byp_en_meta_r_reg/U$1
+    /u_..._u_tidelink/u_link_clk_div/div_en_r_reg/U$1
+    /u_..._u_tidelink/u_link_clk_div/byp_en_r_reg/U$1
+
+All three are in the **link-clock divider**, symmetric on both sides, and "unreachable"
+here means every path from them to every compared output is blocked. This is Conformal
+independently confirming, from the netlist alone, what the divider's own note has claimed
+since it was built: **the D2D rate knob exists and nothing observable depends on it.**
+Three registers that cannot change any output are three registers the design does not use.
+
+### Population is stable on an equivalent pair — measured, with a control
+
+The 58,592-point shape also appeared in the two mutant runs (F24), which raised the
+question of whether the population is content-dependent, mode-dependent or just noisy. A
+control settles it: the SAME invocation mode (`lec-pair`), a byte-identical copy of
+`_pnr.v` at a different path, run under the same machine load, gives **61,599 points, 3
+unreachable, zero `Unmap unreachable keypoints` rows** — identical to the `pnr` leg. So on
+an equivalent pair the full population is compared, and rc5's green result did verify all
+61,599 points. The reduction is something Conformal does once the netlists differ; the
+mechanism is not established here and is not needed for the conclusion.
+
+## F22 — the "96 unmapped flops" story: the record says three reasons, not one
+
+The claim in circulation is that a previous RTL→gate LEC "FAILED" only because of the
+harness's unmapped-extras rule, while Conformal itself said PASS with zero non-equivalent
+points. **Read the artefact, and that is not supportable.**
+`build/gdsrun-20260821-slpads/reports/lec/syn/verdict.txt` records:
+
+    compare_points=5433 equivalent=5433 nonequivalent=0 abort=0 notcompared=0
+    unmapped_extra_golden=96
+    unreachable_golden=446 unreachable_revised=319   unreachable_symmetric=-1
+    tool_exit_code=40 flags=unmapped-or-extra-PO,abort-any-compare
+    reason=96 extra unmapped point(s) that are not declared supply ports: ...
+    reason=unreachable key points are not symmetric: 446 only in golden, 319 only in revised
+    reason=tool abort/uncompared flag set (exit code 40)
+    RESULT=FAIL
+
+Three findings, and the third is **Conformal's own status word**: 40 = 0x28 = the
+unmapped-or-extra-PO bit plus the abort/uncompared bit. The harness did not invent that
+bit; it decoded it. "Conformal said PASS" is true only of the `Compare Results:` line,
+which by design does not fail on unmapped points, on extra points, or on inverted-
+equivalent points — which is the entire reason the harness computes a second verdict.
+
+**And 5,433 is not the design.** The syn leg's counters come from the FINAL compare state
+of Genus's composite dofile — `flow/verify/lec_syn_rewrite.tcl` says so in as many words —
+and that dofile's second comparison is not a flat `compare` at all but
+`run_hier_compare ... -dynamic_hierarchy`, dozens of sub-compares over a generated
+sub-dofile. Whatever `get_compare_points` returns after that, it is not an aggregate over
+a design with 61,513 sequential cells; 5,433 is under 9% of them. The same dofile's FIRST
+comparison (`fv_map` → `_gate.v`) is flat and reports 58,592 points and PASS — measured on
+rc5 tonight. `ci/signoff.yaml`'s `lec` row already documents the two-comparison structure
+at length and requires at least two `Compare Results:` lines for exactly this reason;
+nothing here changes it, and the population caveat in F21 applies to compare #1 as well.
+
+### What the 96 flops actually are, and whether they matter
+
+All 96 are `root_port_cursor_r_reg[0..31][0..2]` in
+`u_tidechart/u_tidechart_controller/u_enum`, and **rc5 still deletes them**: `grep -c
+root_port_cursor_r_reg` returns 0 in rc5's `_gate.v` and 0 in its `_pnr.v`, against 7
+references in the live RTL. So the syn leg on rc5 should reproduce the same 96 when it
+finishes.
+
+The safety question is already settled elsewhere and is not reopened here: the removal is
+safe at `NUM_PORTS=1`, which is what this chiplet ships, and is a real defect for anyone
+instantiating the IP with more — proven by simulation with a `NUM_PORTS=2` control on
+2026-08-24. The LEC-side correction is only this: **the FAIL was correct and it had three
+causes, one of which was the tool's own exit status.** Treating it as a harness artefact
+would have discarded the asymmetric-unreachable finding (446 vs 319) with it.
+
+## F23 — rc4, the netlist that went to the foundry, now has equivalence evidence
+
+`build/rc2-20260827`, `build/setupclose-20260829` (which holds
+`nanosoc_eth_chiplet_pads_rc3setup_pnr.v`) and `build/rc4-20260829` each hold a post-P&R
+netlist and **none of them has a `reports/lec/` directory of any kind**. The most recent
+post-P&R proof in the tree before tonight was `gdsrun-20260826-rc1`.
+
+Counted rather than estimated, rc1's proven netlist to rc4's:
+
+    201,741 -> 204,395 leaf instances
+    2,655 added   1 deleted   22 substituted in place   = 2,678 instance deltas
+    added: 2,253 clock buffers (2,103 of them CKBD0) + 402 data buffers, nothing else
+    deleted: one BUFFD16
+    no flop, no clock gate, no latch, no logic-function cell added or removed
+
+(The figure in circulation was ~1,799; the measured number is 2,678, and rc1→rc2 alone is
+312.) That shape — thousands of minimum-drive clock buffers and nothing else — is a hold
+ECO chain, and it predicts equivalence. **It was then verified rather than assumed:**
+
+    golden  gdsrun-20260826-rc1/outputs/nanosoc_eth_chiplet_pads_pnr.v
+    revised rc4-20260829/outputs/nanosoc_eth_chiplet_pads_rc4_pnr.v
+    RESULT=PASS  61,599 / 61,599 equivalent, 0 non-equivalent, 0 abort,
+                 0 not-compared, 0 not-mapped, 3 unreachable symmetric, exit code 0
+    295 s, 900 MB.  Evidence: build/rc5lecrc4/reports/lec/rc1pnr-vs-rc4pnr/
+
+rc1's own two legs are green — `gate` (`_gate.v` → `_gate_power.v`) and `pnr`
+(`_gate_power.v` → `_pnr.v`), both 61,599/61,599 — so this closes the chain by
+transitivity: **the netlist inside the rc4 stream is logically the netlist synthesis
+produced.** The joint is checkable rather than assumed: rc1's `pnr` verdict names
+`build/lecpnr-rc1-0826/outputs/..._pnr.v` as its revised side and this run read
+`build/gdsrun-20260826-rc1/outputs/..._pnr.v` as its golden, and those two files are
+md5-identical (`fd6284fcda9ac0a079a3a6d30f1142ee`). That is the first equivalence statement
+of any kind about the tapeout candidate, and it was three hundred seconds of machine time
+away the whole time.
+
+Both netlists were read from the frozen main checkout and nothing was written to it.
+
+## F24 — DISCRIMINATION: three mutants, on the real 243,169-instance netlist
+
+A gate that passes a genuinely non-equivalent netlist is worse than no gate. The toolkit's
+own self-test proves the harness can fail on nine hand-written six-gate netlists; it does
+not prove anything about this design at this scale. So three deliberately broken copies of
+rc5's actual post-P&R netlist were compared against rc5's actual synthesis netlist. Each
+attacks a different rule, and each edit is verified to be the ONLY difference from the
+original by `diff` before the run.
+
+| mutant | the edit, one instance out of 243,169 | verdict | why it failed | elapsed |
+|---|---|---|---|---|
+| **A** logic | `ND2D1 g9249__2802` → `NR2D1` in `eth_receivecontrol` (same pins A1/A2/ZN) | **FAIL** | 1 non-equivalent point; tool exit 16 | 576 s |
+| **B** deleted register | `DFCNQD1 \LatchedTimerValue_reg[7]` removed, `assign LatchedTimerValue[7] = n_255;` in its place | **FAIL** | 1 **not-mapped** golden DFF *and* 1 non-equivalent point; tool exit 24 | 750 s |
+| **C** clock gate defeated | `CKLNQD6 RC_CGIC_INST` → `CKBD6` in `cg_RC_CG_MOD_4_15762`: gated clock becomes free-running, enable ignored | **FAIL** | 23 non-equivalent points *and* an asymmetric unreachable point; tool exit 16 | 1,529 s |
+
+Every one of them names the right place. Mutant A's single non-equivalence is
+`.../u_eth_top_maccontrol1_receivecontrol1/ReceivedPauseFrm_reg` — the module that was
+edited. Mutant B's not-mapped point is `LatchedTimerValue_reg[7]` itself, the register that
+was deleted, and the harness's rule 7 (not-mapped, no exception anywhere) fires on it
+independently of the downstream non-equivalence. Mutant C's diagnosis is the clearest of
+the three, because it shows how Conformal models clock gating at all:
+
+    (G) MUX  .../u_eth_apb_to_wb_adr_r_reg[7]/U$1      <- enable folded into a recirculation mux
+    (R) BUF  .../FE_OFC4710_u_ethmac_0_apb_paddr_7/U$1 <- no enable: the flop always loads
+
+23 flops fed by that one clock gate, all 23 caught. **A defeated clock gate is caught as a
+data-path difference**, which is precisely why F20's family test on clock gates is the
+right test and a count of clock gates would not be.
+
+The control described in F21 completes the proof in the other direction: the same harness,
+the same mode, an UNMUTATED copy of the netlist → PASS over the full 61,599 points. The
+gate distinguishes.
+
+Mutants and control: `build/rc5lecmut{A,B,C}/`, `build/rc5lecctl/`. The generator is
+`scratchpad/make_mutants.py`; it asserts each pattern is unique in the source before
+substituting, so a mutant that failed to apply cannot be mistaken for one that did.
+
+## F25 — the LEC rows in `ci/signoff.yaml`: what was wrong, and what changed
+
+**1. `lec-selftest` asserted exactly 9 cases; the harness runs 10.**
+`flow/verify/run_lec.sh` makes nine `_case` invocations plus a stub-coverage assertion that
+increments the same tally. So on the day the last genuinely-red case went green, this stage
+would have gone red anyway on an off-by-one — and its message would have said "a case was
+dropped" about a harness that had gained one. Fixed to 10, the four fixtures re-cut to
+match, `prove` green in both directions. An exact count is still the right rule; it is the
+second time it has been the stale half of a correct rule.
+
+**2. `lec-selftest`'s prose predicted a red `pg_decoration` case. It is green.**
+Re-measured on a seat tonight: all ten cases behave. The toolkit fixed the cause (the
+self-test netlists declared the supplies `inout`, and Conformal derives five key points
+from a bidirectional port; `write_hdl -pg` writes them as `input`) without widening any
+tolerance. The stale paragraph is kept and dated rather than deleted.
+
+**3. Two classifications the toolkit's own comments left open are now measured**, and are
+recorded in the manifest because nothing else will hold them: `extra_state` comes back as
+**extra** (`unmapped_extra_revised=2`), not not-mapped; `asym_unreachable` comes back as
+**unreachable on one side** (`unreachable_golden=1 / revised=0`), so its reason is "not
+symmetric", not "extra unmapped point". Both cases assert an alternation pending exactly
+this measurement and can now be narrowed.
+
+**4. The `vars:` header still said `lec` stays literal.** Its exemption was withdrawn on
+2026-08-29 and the stage has read `@GRADED_BUILD@` ever since. Corrected — a pin recorded
+in prose that the manifest no longer has is the same defect the paragraph is about.
+
+**5. `lec-pnr` graded Conformal and never graded the harness.** Every clause read
+`logs/lec_pnr.log`; nothing read `reports/lec/pnr/verdict.txt`. The `lec` row beside it
+grades both. That asymmetry matters because F22 is a worked example of the two verdicts
+disagreeing: `Compare Results: PASS`, 5,433 of 5,433 equivalent, `LEC: RESULT=FAIL` on 96
+golden flops with no counterpart. A stage reading only the first line calls that verified.
+`lec-pnr` now requires both, requires them to AGREE (a contradiction is its own named
+failure), requires the verdict to name THIS leg and THIS build's `_pnr.v`, requires the
+five no-exception counters to be present and zero — "not measured" is not zero — and
+**prints the compare-point population and the unreachable split on the row**, because after
+F21 a green row that does not say how large a population it verified is not a measurement.
+Three new must-fail fixtures pin the new clauses: `fail-verdict-absent` (a perfect log with
+no verdict beside it — the shape a killed runner leaves and the shape a stale log has
+always had), `fail-harness-disagrees` (the same perfect log, and a verdict reporting 96
+not-mapped flops), `fail-wrong-leg` (a complete, healthy, PASSING verdict from the `gate`
+leg). All six cases pass `prove`, each failing for its own reason.
+
+**6. New stage `lec-cellswap`, and `scripts/ci/lec_cellswap.py`.** F20 is not a report
+anyone will re-derive by hand, and its three dangerous cases deserve a gate. The tool
+flattens both netlists, classifies every cell **from Liberty** — `clock_gating_integrated_cell`,
+`ff (...)`, `latch (...)`, and the library list comes from `lec-pnr`'s own
+`reports/lec/pnr/inputs.txt` so there is no second copy of it to drift — and fails on
+exactly three things: a sequential key point added or deleted, a sequential cell whose
+family changes rather than its drive, and a cell no library and no stub file defines.
+Everything else is reported. It is 30 s, needs no Conformal seat, and works on any pair of
+netlists — including the ECO-only trees that can host no RTL-to-gate comparison at all.
+
+It is deliberately NOT a substitute for the Conformal run and the stage says so: it
+compares instance names and cell types and cannot see a rewired net, which is the thing
+`lec-pnr` exists to catch.
+
+`--selftest` runs ten cases in a second with no libraries and no licence — identical,
+resize-only, buffer-added and stubbed-pad-added must pass; flop-deleted, flop-added,
+ICG-defeated, flop-family-swapped, unknown-cell and empty-netlist must fail — and the
+stage's `check:` asserts that tally before it reads the census, because a census produced
+by a tool that has stopped discriminating is not evidence. The check also **re-derives the
+sequential populations from the census's own class table rather than reading its `result`
+field**; `ci/fixtures/lec-cellswap/fail-result-contradicts-census` is a census whose
+`result` says PASS over a table that has lost a flop. The must-pass fixture is the REAL
+census of `gdsrun-20260823-rzG`, computed from that build's two netlists with that build's
+own libraries, paths scrubbed — not a synthetic file shaped like one.
+
+`signoff.py lint` is clean and `signoff.py prove` is 181 cases, 0 problems, with the new
+stage's 5 and `lec-pnr`'s 6 among them.
+
+## Evidence, and the one thing left to do
+
+    build/rc5lec-self/reports/lec/selftest_*/     harness self-test, 10/10
+    build/rc5lec-gate/reports/lec/gate/           _gate.v vs _gate_power.v   PASS
+    build/rc5lec-pnr/reports/lec/pnr/             _gate_power.v vs _pnr.v    PASS
+    build/rc5lec-pnr/reports/lec/pnr/cellswap.*   the cell-swap census
+    build/rc5lec-syn/reports/lec/syn/             RTL vs _gate.v             (running)
+    build/rc5lecctl/reports/lec/control-unmutated/  the population control   PASS
+    build/rc5lecmut{A,B,C}/reports/lec/mut-*/     the three mutants          FAIL x3
+    build/rc5lecrc4/reports/lec/rc1pnr-vs-rc4pnr/ rc1 -> rc4                 PASS
+
+All of it is under `build/`, which is gitignored: **this evidence is host-only and will not
+survive a clone**, which is a standing problem in this repo and not one solved here.
+
+The one command outstanding is re-running the `pnr` leg with
+`RUN_TAG=rc5vt-20260829 SYN_RUN_TAG=rc5vt-20260829` so the transcript and the verdict land
+where `ci/signoff.yaml`'s `lec-pnr` and `lec-cellswap` rows read them. Nothing about the
+result changes; only where it is filed.
