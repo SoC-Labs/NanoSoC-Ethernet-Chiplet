@@ -157,8 +157,25 @@ def flatten(mods, top):
     instance names - so the paths are directly comparable and a swap is a
     dictionary lookup rather than a matching problem.
     """
-    defined = set(mods)
-    if top not in defined:
+    # A MODULE WITH NO INSTANCES IN IT IS A LEAF, not a hierarchy node.
+    #
+    # `write_netlist -include_pg` emits an EMPTY MODULE DECLARATION for every
+    # library cell it uses - `module CKBD1 (I, Z, VSS, VDD); ... endmodule` -
+    # before the design, so that the file elaborates without a library. Treating
+    # "is a defined module" as "is hierarchy" then descends into all 3,400 of
+    # them, finds nothing, and flattens a 243,169-instance netlist to ZERO.
+    # Measured, on this design's _pnr_pg.v. The gate's zero-instance rule catches
+    # that and refuses rather than reporting a clean diff of nothing - but
+    # refusing is not the right answer when the netlist is fine and the reader
+    # is wrong.
+    #
+    # The consequence to know about: a genuinely hierarchical module that
+    # contains only `assign` statements is also treated as a leaf, and having no
+    # Liberty entry it lands in `unknown_cells`, which FAILS with the cell named.
+    # Loud and wrong beats quiet and wrong; no such module exists in the netlists
+    # this flow produces.
+    defined = {m for m, insts in mods.items() if insts}
+    if top not in mods:
         raise SystemExit(f"lec-cellswap: FAIL - no module '{top}' in the netlist; "
                          f"--top names the root and nothing else can be flattened")
     out, stack = {}, [(top, '')]

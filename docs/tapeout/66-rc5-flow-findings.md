@@ -1458,6 +1458,18 @@ the netlist itself (F20) finds 58,505 flops + 3,007 integrated clock gates + 1 l
 two numbers come from different files by different methods and they agree, so neither is
 reading a design the other is not.
 
+### The comparison covers the PG netlist too, and that is now checked rather than assumed
+
+The `pnr` leg reads `_pnr.v`. What LVS reads is `_pnr_pg.v`, written by a second
+`write_netlist -include_pg` from the same database one second later, and nothing had ever
+compared the two. Their flattened instance sets are **identical — 243,169 each, zero added,
+zero deleted, zero substituted**, so the equivalence proved on `_pnr.v` transfers to the PG
+netlist by construction rather than by assertion. (`_pnr_pg.v` also emits an empty module
+declaration for every library cell it uses, ahead of the design; a flattener that treats
+"is a defined module" as "is hierarchy" descends into all 3,400 of them and reports the
+netlist as EMPTY. `scripts/ci/lec_cellswap.py` treats a module with no instances in it as a
+leaf, which is what makes this comparison possible at all.)
+
 `make lec-selftest` was run first on this host, as the toolkit's note asks: **all 10 cases
 behaved as declared** — the equivalent pair passes, the one-gate mutation fails, the extra
 flop fails, the missing and zero-length netlists fail, the dofile's own preflight fires,
