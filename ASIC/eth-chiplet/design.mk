@@ -962,9 +962,41 @@ signoff-report:
 ## of setup and left 14 failing endpoints) was measured with NEITHER of those
 ## set; both exist now.
 ##
+## ---- UPDATED AGAIN 2026-08-31 04:51: setup_then_hold -> setup_hold ---------
+##
+## MEASURED, three configurations over ONE cts database, one variable each, all
+## three reading the identical input (post-cts setup +0.062/0 hold +0.004/0 and
+## 04_route setup -0.316/218 hold +0.003/0, reproduced to the digit):
+##
+##   ROUTE_OPT_MODE      05_route_opt setup   05_route_opt hold   max_tran
+##   hold_then_setup     +0.105 /  0         -0.099 / 66         195
+##   setup_then_hold     -0.059 / 42         +0.003 /  0         230
+##   setup_hold          +0.091 /  0         +0.003 /  0         305
+##
+## THE SEQUENTIAL ORDERS CANNOT CLOSE BOTH AND THE SIMULTANEOUS ARM CAN. Run
+## them in sequence and whichever pass goes last undoes part of the other's
+## work -- that is not a tuning problem, it is what two independent optimisers
+## over one netlist does. `opt_design -post_route -setup -hold` optimises
+## against both constraints at once and lands +0.091/0 and +0.003/0 together,
+## with `hold_05_route_opt.rep` containing zero violating paths.
+##
+## Evidence: build/rc6route-20260831 (this arm) against
+## build/rc6hold-20260831 (setup_then_hold) and rc5vt-20260829's attempt 7
+## (hold_then_setup). docs/tapeout/66-rc5-flow-findings.md F29.
+##
+## THE COST, STATED. max_transition rises 195 -> 230 -> 305 across those three
+## rows. Simultaneous optimisation buffers more because it must satisfy more,
+## and buffers on marginal nets cost transition. 96 of all three counts are the
+## IO-ring constant that inputs/pnr_io_drv.sdc exempts (F18) and that this
+## comparison's runs do not carry, so the internal figure goes ~99 -> ~134 ->
+## ~209. THAT is now the binding row, and the untried lever for it is
+## ROUTE_OPT_DRV=1 -- an extra opt_design -post_route -drv pass, off by default
+## in the toolkit, never measured on this design, and affordable at 85.7%
+## against a ~92.2% wall.
+##
 ## Override on the command line for a deliberate single-direction ECO pass:
 ##     make route ROUTE_OPT_MODE=hold IN_RUN_TAG=<the run to ECO>
-ROUTE_OPT_MODE ?= setup_then_hold
+ROUTE_OPT_MODE ?= setup_hold
 export ROUTE_OPT_MODE
 
 ## ---------------------------------------------------------------------------

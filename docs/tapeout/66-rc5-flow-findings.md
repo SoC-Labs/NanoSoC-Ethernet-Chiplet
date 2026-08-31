@@ -3583,7 +3583,7 @@ number is extraction-backed is the one open question this work did not close.
 
 | | objective | verdict |
 |---|---|---|
-| **1** | Clean setup AND hold at every corner, by default, no ECO | **HALF DONE, and the half that is done is the half that was the headline.** At CTS both directions close: setup +0.062/0, hold +0.004/0 over four hold views, with the DRV-repair pass run. At route **hold closes for the first time** (+0.003/0 over three hold views, 0 violating paths in the per-view report) and setup does not (−0.059/42). No ECO was applied anywhere. `max_transition` is answered at its root (F18/F27: −6.023 → −0.030 at place). |
+| **1** | Clean setup AND hold at every corner, by default, no ECO | **SUPERSEDED BY F29 — READ THAT FIRST: setup AND hold both close at route (+0.091/0 and +0.003/0) with `ROUTE_OPT_MODE=setup_hold`, now the default. The assessment in this row was written before that ran.** As written at the time: **HALF DONE, and the half that is done is the half that was the headline.** At CTS both directions close: setup +0.062/0, hold +0.004/0 over four hold views, with the DRV-repair pass run. At route **hold closes for the first time** (+0.003/0 over three hold views, 0 violating paths in the per-view report) and setup does not (−0.059/42). No ECO was applied anywhere. `max_transition` is answered at its root (F18/F27: −6.023 → −0.030 at place). |
 | **2** | Configurable target clock frequency | **DONE.** `CLK_FREQ_MHZ` is the knob; `CLK_PERIOD` derives from it; the setup uncertainty, the inter-clock uncertainty and the port-delay budget derive from the period. At the default the constraint stream is byte-identical (35 lines move at 8 ns where 3 moved before), and Genus confirms it end to end — `read_sdc` accepts it and `write_sdc` carries the derived values into the file P&R reads. |
 | **3** | Tunable effort level | **DONE.** `FLOW_EFFORT ∈ {express, balanced, closure}` over seven per-stage knobs in five different vocabularies; `closure` expands to exactly what rc5 ran; every tier value checked against the tool that must accept it, which found that the naive all-`express` tier is illegal. |
 | **4** | Minimise ECOs | **DONE as analysis; the hold half is now demonstrated.** Both ECO causes identified (F21): the hold ECO compensated for a CTS with no hold target — now closed at CTS AND kept through route; the setup ECO compensated for `ROUTE_OPT_MODE=hold` plus a missing design-scope `max_transition`, both already fixed. rc6hold reached its numbers with **no ECO of any kind**. |
@@ -3718,3 +3718,82 @@ input and its detail-route result exactly:
 Everything up to the post-route optimisation arm is the same database and the
 same numbers. Whatever its `05_route_opt` line says is attributable to the one
 knob and to nothing else.
+
+---
+
+## F29 — SETUP AND HOLD BOTH CLOSE AT ROUTE. THE ANSWER WAS THE ARM THAT DOES NOT SEQUENCE THEM.
+
+`rc6route-20260831`: route only, from `rc6hold-20260831`'s cts database, with
+one variable on the command line — `ROUTE_OPT_MODE=setup_hold`, i.e.
+`opt_design -post_route -setup -hold`, the arm the toolkit has always offered
+and this design had never run.
+
+**It is a true one-variable comparison and the log proves it.** Both runs read
+the same database and reported the same numbers all the way to the optimiser:
+
+    ROUTE: QOR post-cts (as read)   setup +0.062/0    hold +0.004/0   (identical)
+    ROUTE: QOR 04_route             setup -0.316/218  hold +0.003/0   (identical)
+
+### The three arms, one cts database, one variable each
+
+| `ROUTE_OPT_MODE` | setup | hold | max_transition |
+|---|---|---|---|
+| `hold_then_setup` + `true` (rc5) | +0.105 / 0 | **−0.099 / 66** | 195 |
+| `setup_then_hold` + `auto` (rc6hold) | **−0.059 / 42** | +0.003 / 0 | 230 |
+| **`setup_hold` + `auto` (rc6route)** | **+0.091 / 0** | **+0.003 / 0** | 305 |
+
+Read from `reports/timing_summary_05_route_opt.rep`, not from the log line:
+
+    # SETUP   View : ALL    0.091  0.000     0
+    # HOLD    View : ALL    0.003  0.000     0
+    # DRV     max_transition  -6.024  -172.385  305
+            max_capacitance     N/A       N/A    0
+
+and `reports/hold_05_route_opt.rep` — the per-view early-path report over the
+active hold views — contains **0 violating paths**.
+
+### Why the sequential orders could not do it, in one sentence
+
+Two independent optimisers over one netlist, run one after the other, each undo
+part of the other's work, and whichever goes last wins; that is not a tuning
+problem and no target setting fixes it. `-setup -hold` optimises against both
+constraints simultaneously and lands both.
+
+**F28's conclusion stands and is now completed rather than contradicted.** F28
+said neither sequential order closes both and named this as the experiment that
+follows. It did.
+
+### `ROUTE_OPT_MODE` default is now `setup_hold`
+
+Changed in `design.mk` on the strength of this measurement, with the table above
+written into the block. `build/rc6full-20260831` was in its CTS stage when the
+default moved and its route will therefore read the new value while its launch
+header records the old one — `AMENDMENT-02.txt` in that run directory
+reconciles the two rather than leaving them silently disagreeing.
+`ROUTE_OPT_MODE` is consumed by `4_route.tcl` and nothing earlier, so nothing
+already computed in that run is affected.
+
+### AND THE COST, WHICH IS NOW THE BINDING ROW
+
+`max_transition` rises monotonically across the three arms: **195 → 230 → 305**.
+Simultaneous optimisation buffers more because it must satisfy more, and buffers
+on marginal nets cost transition. 96 of every one of those counts is the IO-ring
+constant (F18), which none of these three runs exempts, so the internal figure
+goes roughly **99 → 134 → 209**.
+
+So the flow has traded its hardest problem for its easiest one. Hold — which
+this design has never closed at route without an ECO, and which its own notes
+call "expensive and blunt" to repair — is now zero in every active view. What is
+left is a transition count, on internal pins, at 85.7% utilisation against a
+~92.2% wall, with **two untried levers still in the box**:
+
+1. `inputs/pnr_io_drv.sdc`, which removes 96 of the 305 and is already proven
+   (F18, F27) but is not in these three runs' mmmc. `rc6full-20260831` has it.
+2. `ROUTE_OPT_DRV=1` — an extra `opt_design -post_route -drv` pass, off by
+   default in the toolkit, **never measured on this design**, and affordable at
+   this utilisation. That is the next single-variable experiment and it is a
+   route-only resume, about 70 minutes.
+
+**Neither is speculation about whether the flow can close: setup and hold are
+closed.** They are about a DRV row that the same optimiser is documented to
+repair and has never been asked to.
