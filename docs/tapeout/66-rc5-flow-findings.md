@@ -2184,15 +2184,44 @@ opposite direction from the defect the rule exists for.
 **On real Genus output, against rc5's own post-syn_opt database** (`read_db` of this run's
 `_syn_session`, the hook sourced unmodified, one input mutated per trial):
 
-    trial                what was changed                        result
-    control              nothing                                 PASS, hook rc=0
-    missing_lib          DESIGN_LIBS_MAX also names sram_16k's   FAIL R1, hook rc=1
-                         Liberty, which the run did not load
-    missing_lef          rf_32k.lef removed from lef_file_list   FAIL R4, hook rc=1
-    no_lefs              every named LEF unreadable              FAIL R4, hook rc=1
-    missing_lef_ungated  as missing_lef, SYNTH_MACRO_GATE=0      reported and DOWNGRADED,
-                                                                 rc=0, and the report says
-                                                                 "*** NOT ENFORCED ***"
+    control              nothing changed
+                         VERDICT: PASS (0 hard)                                  hook rc=0
+
+    missing_lib          DESIGN_LIBS_MAX also names sram_16k's Liberty, which
+                         this run did not load
+                         HARD R1  DESIGN_LIBS_MAX names .../sram_16k_ss_1p08v_1p08v_125c.lib
+                                  and NO library in the database was built from it
+                                                                                 hook rc=1
+
+    missing_lef          rf_32k.lef removed from lef_file_list
+                         HARD R4  cell rf_32k (1 instances) is in the netlist and is
+                                  declared by NONE of the 11 LEFs place-and-route will
+                                  read - P&R will black-box it                   hook rc=1
+
+    no_lefs              every named LEF unreadable
+                         HARD R4  LEF .../does_not_exist.lef is named by the flow and
+                                  is not readable
+                         HARD R4  NONE of the 1 LEFs the flow names is readable, so no
+                                  cell in this netlist has been shown to have a
+                                  physical view                                  hook rc=1
+
+    missing_lef_ungated  as missing_lef, with SYNTH_MACRO_GATE=0
+                         VERDICT: FAIL (1 hard)  *** NOT ENFORCED (SYNTH_MACRO_GATE=0) ***
+                                                                                 hook rc=0
+
+The no_lefs arm is the one that had to be fixed rather than merely written. Its first
+draft reported "no LEF was readable, so LEF coverage was NOT MEASURED" as an ADVISORY and
+then printed `PASS - ... every model with timing arcs, a named source and a LEF`. A LEF
+the flow NAMES and cannot open is not unmeasured coverage; it is a stop four hours away.
+It is now hard, and the pass line is assembled from what was actually measured so it
+cannot name a check that did not run.
+
+These four trials also carry three standing `SOFT R9` advisories, because the harness sets
+`DESIGN_LIBS_MAX` and `lef_file_list` and not `DESIGN_LIBS_MIN`/`_TYP`/`DESIGN_GDS_MERGE`.
+That is the intended behaviour and it is visible in every one of them: a check that did not
+run says so by name. The full run, which sets all five lists, has one advisory (R8) and no
+R9.
+
 
 `missing_lib` and `missing_lef` are the F8 and F7 defects reproduced exactly: a
 Liberty the design names and the tool never loaded, and a macro LEF that is absent in this

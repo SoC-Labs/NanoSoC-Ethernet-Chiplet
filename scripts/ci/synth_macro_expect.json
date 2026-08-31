@@ -1,0 +1,15 @@
+{
+ "_comment": "Committed expectation for the macro census. A change here is a change to what silicon gets built; update it deliberately, in the same commit as the RTL or collateral change that caused it.",
+ "design": "nanosoc_eth_chiplet_pads",
+ "macro_instances": 21,
+ "macros": {
+  "eth_rom_via": 1,
+  "flash_cache_data": 8,
+  "flash_cache_tag": 2,
+  "rf_01k": 1,
+  "rf_08k": 4,
+  "rf_16k": 3,
+  "rf_32k": 1,
+  "rom_via": 1
+ }
+}
