@@ -1072,3 +1072,344 @@ know in advance.
 | **3. Does route close with no manual ECO?** | **No, but it completes.** Routing, DRC and connectivity are clean — better than rc1 on all three. It hard-fails a 5-item signoff budget: 380 PG vias, the standing 51 opens / 727 dangling, hold 66 FEP, max_transition 195 FEP. No manual ECO was applied and none was needed to reach the gate. |
 | **utilisation** | 85.8% routed vs a ~92.2% wall. Not the constraint. |
 | **flow end to end** | **RTL → GDS, 341 MB stream, no manual intervention in any stage.** Two blocking defects fixed on the way (F7, F8), one experiment corrected (F12), no guard bypassed. |
+
+---
+
+# STAGE-BY-STAGE TIMING VISIBILITY (F15-F18, 2026-08-31)
+
+F1-F14 above answer *what happened*. F15-F18 answer *why nobody could see it
+happening*, and close the hole. The subject is the same event: rc5 attempt 6's
+post-CTS setup-recovery pass, which took hold from `+0.003 / 0 failing` to
+`-0.700 / 8,718 failing` to buy 16 ps of setup, and did it without a single
+line anywhere in the run saying a metric had regressed.
+
+Every number below was re-derived from `ASIC/eth-chiplet/build/rc5vt-20260829`
+by `scripts/ci/stage_timeline.py`, not copied from F12/F14. Where it disagrees
+with them, the disagreement is stated.
+
+## F15 — the 703 ps could not have been seen, and there are four structural reasons
+
+The flow does produce a per-pass progression view. It is `report_qor`'s
+snapshot table, written to `reports/qor_<stage>.rep`. Here it is, whole, for
+rc5 attempt 7:
+
+    snapshot                     setup WNS  sFEP   util%   insts    hold
+    place_design                 -          -      77.79   190322   NO SUCH COLUMN
+    opt_design_prects            0.002      0      79.11   204949   NO SUCH COLUMN
+    ccopt_design                 0.076      0      80.67   209104   NO SUCH COLUMN
+    opt_design_postcts           0.050      0      80.56   208654   NO SUCH COLUMN
+    opt_design_postcts_hold      0.066      0      85.28   240065   NO SUCH COLUMN
+    opt_design_postroute_hold    0.083      0      85.69   242845   NO SUCH COLUMN
+    opt_design_postroute         0.105      0      85.84   243005   NO SUCH COLUMN
+
+**1. It has no hold column.** Not a blank one — the column does not exist. Read
+this table on its own and rc5 is a run whose setup WNS climbs monotonically
+from +0.002 to +0.105 with zero failing endpoints throughout. Every hold number
+in this document came from somewhere else. A pass that destroys hold to buy
+setup appears in the flow's only progression view as an **improvement**.
+
+**2. It keys rows by snapshot NAME, so a repeated pass adds nothing.** Attempt 6
+ran a second `opt_design -post_cts` — the recovery pass. Its
+`reports/qor_03_cts_opt.rep` ends at `opt_design_postcts_hold` — the same seven
+snapshot rows with the same numbers that attempt 7 produced WITHOUT that pass
+(only the wall-clock column differs). The row named
+`opt_design_postcts` still holds the FIRST pass's +0.050. The pass that did the
+damage is absent from the table that exists to show passes.
+
+**3. `opt_design`'s own summary prints one mode, never both.** A `-hold` run
+emits a Hold mode table and no setup; a plain run emits a Setup mode table and
+no hold. Verified on all four of rc5's:
+`..._preCTS.summary.gz`, `..._cts.summary.gz`, `..._routed_hold.summary.gz`,
+`..._routed.summary.gz`. **A trade is invisible in either half by construction.**
+
+**4. The unsuffixed `<prefix>.summary.gz` is last-writer-wins across DIFFERENT
+COMMANDS.** `reports/nanosoc_eth_chiplet_pads_cts.summary.gz` contains, per its
+own `#  Command:` line:
+
+    attempt 7   opt_design -post_cts -hold      Density 85.282%
+    attempt 6   opt_design -post_cts            Density 80.575%
+
+Same filename, two different commands. F14 reads this as "the hold-repair cells
+survive into the written database — cts.summary.gz density is 85.282% in
+attempt 7 where it was 80.575% in attempt 6". The conclusion is right and the
+reasoning is not: those are not the same measurement taken twice, they are two
+different measurements sharing a name. `stage_timeline.py` files every opt
+summary by the `Command:` line inside it and never by its name.
+
+**And the evidence for the CTS hold pass does not survive the run.**
+`4_route.tcl:985` runs `foreach __f [glob $REPORT_DIR/*_hold.summary*] { file
+delete -force $__f }` before route's own hold pass, to stop
+`pnr_opt_hold_summary` picking up a stale CTS summary. Correct intent; the
+consequence is that `..._cts_hold.summary.gz` — the artefact proving hold closed
+completely at CTS — **is gone from `reports/`**, and the only surviving copy is
+the one `pnr_opt_hold_summary` made at 16:51 into `reports/hold_opt_03_cts_opt.rep`.
+That project-side copy is load-bearing evidence. Do not remove it.
+
+## F16 — the progression, every state, for rc5 as it stands
+
+`scripts/ci/stage_timeline.py <run_dir>`. Fifteen states, ordered by each
+report's own `Generated on:` clock — not by filename, not by mtime.
+
+    state                        clock   setupWNS    setupTNS  sFEP |   holdWNS     holdTNS  hFEP | tranF capF |  insts    area  util% views
+    00_pre_place                 13:29   -108.840 -1304257.875 25874 |    -0.757    -127.183  1124 |  6492   70 |       -       -      -   2/4
+    01_place                     13:43   -156.086 -1894151.750 36259 |    -0.622     -36.817   526 | 78582 2089 |  190322 1579446  77.79  >=5
+    01b_place_opt                14:07      0.002       0.000     0 |    -0.668     -39.160   710 |    96    0 |  204949 1593298  79.11   2/4
+    02_cts                       16:21      0.076       0.000     0 |    -0.701   -1172.853  9122 |   108    0 |  209104 1609875  80.67  >=4
+    cts_after_ccopt              16:23      0.076       0.000     0 |    -0.701   -1172.853  9122 |   108    0 |~ 209104 1609875  80.67  >=4  = prev
+    cts_after_post_cts           16:39      0.050       0.000     0 |    -0.703   -1177.098  8893 |   108    0 |  208654 1608695  80.56  >=4
+    cts_after_post_cts_hold      16:49      0.066       0.000     0 |     0.003       0.000     0 |   453    2 |  240065 1658540  85.28  >=4
+    03_cts_opt                   16:50      0.066       0.000     0 |     0.003       0.000     0 |   453    2 |~ 240065 1658540  85.28   2/4  = prev
+    route_post_cts_as_read       16:56      0.066       0.000     0 |     0.003       0.000     0 |   453    2 |~ 240065 1658540  85.28  >=5  = prev
+    04_route                     17:13     -0.400     -53.022   315 |     0.003       0.000     0 |  3444    6 |~ 240065 1658540  85.28  >=5
+    route_after_post_route_hold  17:37          -           -     - |         -           -     - |     -    - |  242845 1662823  85.69    -   << NOT MEASURED
+    route_after_post_route       17:58          -           -     - |         -           -     - |     -    - |  243005 1664460  85.84    -   << NOT MEASURED
+    05_route_opt                 17:58      0.105       0.000     0 |    -0.099      -2.585    66 |   195    0 |~ 243005 1664460  85.84   2/4
+    06_post_fill                 18:14      0.105       0.000     0 |    -0.100      -2.596    66 |   195    0 |~ 243005 1664460  85.84  >=4
+
+`= prev` is identical on every tracked metric — the same database measured
+twice, not a new state. `~` is a scale figure carried forward from the last
+state that measured one. `S/H` in `views` is a measured active set;
+`>=N` is only the count of view names the report happens to mention, and is a
+floor (F17).
+
+**Which stages make things worse, and by how much.** Worst first, by the tool's
+own ranking (a clean metric going dirty outranks any amount of an already-dirty
+one getting worse; TNS is excluded from the ranking because it is unbounded):
+
+| # | transition | what got worse | what got better |
+|---|---|---|---|
+| 1 | `route_post_cts_as_read` → `04_route` | setup **0 → 315 failing endpoints** (BROKE CLEAN), setup WNS **-466 ps** (+0.066 → -0.400), TNS 0 → -53.022 ns, max_tran 453 → 3444, max_cap 2 → 6 | nothing |
+| 2 | `04_route` → `05_route_opt` | hold **0 → 66 failing endpoints** (BROKE CLEAN), hold WNS **-102 ps** (+0.003 → -0.099), hold TNS 0 → -2.585 ns | setup +505 ps, setup 315 → 0 FEP, max_tran 3444 → 195 |
+| 3 | `00_pre_place` → `01_place` | setup WNS **-47,246 ps**, setup 25,874 → 36,259 FEP, max_tran 6,492 → 78,582 | hold +135 ps, hold 1,124 → 526 FEP |
+| 4 | `cts_after_post_cts` → `cts_after_post_cts_hold` | max_tran 108 → 453, max_cap **0 → 2** (BROKE CLEAN) | hold +706 ps, hold **8,893 → 0 FEP**, setup +16 ps |
+| 5 | `01b_place_opt` → `02_cts` | hold 710 → 9,122 FEP, hold TNS -39 → -1,173 ns, hold WNS -33 ps | setup +74 ps |
+| 6 | `01_place` → `01b_place_opt` | hold 526 → 710 FEP, hold WNS -46 ps | setup +156,088 ps, setup 36,259 → 0 FEP |
+| 7 | `cts_after_ccopt` → `cts_after_post_cts` | setup WNS **-26 ps**, hold -2 ps, hold TNS -4.245 ns | hold 9,122 → 8,893 FEP |
+| 8 | `05_route_opt` → `06_post_fill` | hold -1 ps, hold TNS -0.011 ns | nothing (metal fill's cost, and it is 1 ps) |
+
+Row 7 is worth a second look on its own: **`opt_design -post_cts`, the setup
+pass, made setup WORSE by 26 ps** (0.076 → 0.050) and hold worse too. It is not
+in F12 or F14 and no file in the run remarks on it.
+
+**And the run's superseded attempt, which is where the headline lives.**
+`attempt6-cts-evidence/` is a sequence in its own right and the tool reports it
+separately rather than interleaving it:
+
+    cts_after_post_cts_hold  →  cts_after_setup_recovery      opt_design -post_cts (2nd)
+      hold_fep        0 ->    8718   WORSE by 8718 endpoints   <<< BROKE CLEAN
+      hold_tns_ns 0.000 -> -1056.522 WORSE by 1056.522 ns
+      hold_wns_ns 0.003 ->  -0.700   WORSE by 703 ps
+      setup_wns_ns 0.066 ->  0.082   better by 16 ps
+      >> BAD TRADE: bought 16 ps of setup by giving up 703 ps of hold.
+         43.9 ps GIVEN per ps GAINED.
+
+**703 ps, 8,718 endpoints, 16 ps, 43.9:1 — confirmed independently of F12.**
+
+**One correction to F14.** F14 says route "repeats F12's mistake, one seventh
+the size — 78 ps of hold and 64 endpoints". That 78 ps is
+`-0.021 → -0.099`, and those two numbers come from **different instruments**:
+`-0.021 / 2 violating` is `opt_design`'s own SI hold summary over the
+optimiser's view set, `-0.099 / 66` is `report_timing_summary` under
+simultaneous mode over the active analysis views. They cannot be subtracted.
+The same-instrument measurement is `04_route → 05_route_opt`: **102 ps and 66
+endpoints**, and it spans BOTH route optimisation passes, because the flow
+emits nothing comparable between them. So route's trade is real and it is
+larger than reported — but it **cannot be attributed to the setup pass alone
+from anything this run wrote**. `ROUTE_OPT_SETUP_RECOVERY=false` remains the
+experiment that would settle it.
+
+**One stale file.** `logs/pnr_qor_after_post_hold_setup_recovery.rep` sits in
+attempt 7's log directory between attempt 7's 16:23 and 16:49 files. Its tool
+clock is **15:31:22** and it is md5-identical to
+`attempt6-cts-evidence/pnr_qor_after_post_hold_setup_recovery.rep`. Attempt 7
+overwrote its three neighbours and not it, because attempt 7 never produced
+that state. Nothing in the directory says so, and it is the file describing the
+worst state in the run. `stage_timeline.py` catches it from the clock alone,
+refuses to splice it into the chain — splicing it invents two transitions no
+tool ever performed — and names the tree it belongs to by md5.
+
+## F17 — the streamed database is analysed over a NARROWER scope than every state before it
+
+A WNS is the worst slack over the ACTIVE analysis views and no others. Nothing
+in this flow records the active set at any state except
+`reports/route_report_views.txt`, which covers two reports at the very end of
+route. So it was measured: a copy of each of rc5's five saved databases was
+loaded read-only and asked
+`get_db analysis_views .is_active/.is_setup/.is_hold`.
+
+| saved database | active setup views | active hold views |
+|---|---|---|
+| `..._fplan` | 2 — `default_analysis_view_setup`, **`typical_analysis_view`** | 4 — `default_analysis_view_hold`, `av_ml_libset_hold`, `av_ltfix_libset_hold`, **`typical_analysis_view`** |
+| `..._placed` | 2 | 4 |
+| `..._cts` | 2 | 4 |
+| `..._route_preopt` | 2 | 4 |
+| **`..._routed`** | **1** | **3** |
+
+`typical_analysis_view` is active in BOTH roles from `init_design` onward
+(`nanosoc_eth_chiplet_pads.mmmc:472`) and is dropped from both at
+`4_route.tcl:1564`, which re-issues `set_analysis_view` from
+`ROUTE_VIEWS_SETUP`/`ROUTE_VIEWS_HOLD`. That line runs **after**
+`pnr_end_reports 05_route_opt` (:1117) and after the whole `06_post_fill`
+report block (:1398-1408), and **before** `pnr_write_db routed` (:1894) and
+`write_stream` (:2022). Consequences:
+
+- `06_post_fill`'s `+0.105 / -0.100 / 66` — the numbers the route manifest
+  quotes and the budget gate judges — were measured over **2 setup / 4 hold**.
+- the same `reports/route_manifest.txt` records `views_setup
+  default_analysis_view_setup` and `views_hold default_analysis_view_hold
+  av_ltfix_libset_hold av_ml_libset_hold`, i.e. **1 setup / 3 hold**.
+- **the manifest declares a scope its own numbers were not measured over.**
+  Neither number is wrong; the pairing is.
+- `hold_06_post_fill_<view>.rep` loops over `$ROUTE_VIEWS_HOLD`, so the fourth
+  active hold view has no per-view report at all.
+
+Measured impact on this run: **none that changes the verdict.**
+`..._imp_timing_early.rep`, taken at 18:18 over the narrowed set, reports hold
+WNS `-0.100` worst in `av_ml_libset_hold` — the same worst path and the same
+number as `06_post_fill`'s. `typical_analysis_view` was not the worst view for
+either check here. That is a measurement, not a guarantee, and it will not hold
+on a run where the typical corner bites.
+
+**A note on the view counts in F16's table.** `>=N` is the number of view names
+a report mentions in its own generated-clock inference messages. It is a
+**floor**: a view that provoked no message leaves no trace. Against the probe it
+undercounts by exactly one at every state where both are available —
+`01b_place_opt` names four and has five active. Read `>=4` as *at least four*,
+never as *four*. `2/4` and `1/3` are measured.
+
+**A note on "utilisation".** Three numbers on this run answer to that word:
+
+    report_qor UTIL at opt_design_prects        79.11%   835,493 / 1,056,181
+    report_place_density on the saved _placed    79.4%   838,801 / 1,056,181
+    report_place_density on the saved _routed   100.0% 1,056,181 / 1,056,181
+
+The third is 100% because fillers occupy every remaining site — post-fill
+"utilisation" is a different quantity wearing the same name. And
+`report_place_density` **changes its own numerator between states**: at
+`_fplan` it prints `(stdcell_area + block_area) / alloc_area` = 1.561, at every
+later state `stdcell_area / alloc_area`. The denominator, 1,056,181 um², is the
+allocated row area and is not the core bbox (1,892,100 um²). Every utilisation
+figure this tooling prints is quoted with its formula for that reason.
+
+## F18 — what is emitted now, and what it would have shown before the 703 ps was buried
+
+**`scripts/ci/stage_timeline.py`** — read-only, no tool launch, nothing written
+into `reports/`. It imports `run_index.py`'s `parse_timing_summary` and
+`parse_qor_snapshots` rather than reimplementing them, and reproduces
+`gdsrun-20260826-rc1`'s eight per-stage setup WNS values exactly
+(`--expect '04_route:setup_wns_ns=-0.273'` etc., rc 0). Run over 85 build
+directories across both checkouts: no crash, no non-zero exit.
+
+    scripts/ci/stage_timeline.py ASIC/eth-chiplet/build/rc5vt-20260829
+    scripts/ci/stage_timeline.py <run> --json /tmp/timeline.json --quiet
+    scripts/ci/stage_timeline.py <run> --expect 'cts_after_post_cts_hold:hold_fep=0'
+    scripts/ci/stage_timeline.py --check-hooks
+
+Design rules it follows, each because something here has already gone wrong the
+other way:
+
+- **Instruments are never mixed.** Three tools measure "hold WNS" in one run:
+  `report_timing_summary` under simultaneous mode, `opt_design`'s own summary,
+  and `report_qor` (which cannot). A delta is computed only between two values
+  on the same channel; a cross-channel pair is printed as `NOT COMPARABLE` with
+  both numbers, never subtracted. This is what caught the F14 arithmetic.
+- **A delta that spans an unmeasured state says so.** `04_route → 05_route_opt`
+  is annotated *"this delta SPANS 2 state(s) the flow did not measure:
+  route_after_post_route_hold, route_after_post_route — so it cannot be
+  attributed to one pass."*
+- **A state the flow ran and did not measure still gets a row**, with `-` in the
+  timing columns and `<< NOT MEASURED`. A gap you can see beats a paragraph
+  saying there is one.
+- **Ordering is by the tool's own clock.** Filenames lie (F15.4) and mtimes lie
+  (`..._cts.summary.gz`'s mtime is 68 s after its own stamp).
+- **Every scope is stated**: parasitics mode, view-set change and instrument
+  change are flagged on the transition, not left for the reader to infer.
+
+**Emission at the states the flow does not report.** `hooks/post_place.tcl`
+(new) and `hooks/post_route.tcl` (extended) each write
+`reports/stage_state_<id>.{txt,json}` carrying the timing triples on the
+comparable channel via `pnr_qor_line`, the **active view set from the tool**,
+an instance census, and `report_place_density`'s own line quoted verbatim:
+
+- `01c_place_as_saved` — the database `pnr_write_db placed` writes. The last
+  thing to measure the place stage ran **before** `add_tieoffs`
+  (`steps/postplace.tcl` calls `pnr_end_reports 01b_place_opt` and then adds
+  tie cells), so nothing describes what CTS actually receives.
+- `07_streamed` — the database `write_stream` was called on, i.e. after
+  `4_route.tcl:1564` narrowed the view set. This is the state F17 says has no
+  measurement at all.
+
+Both are wrapped in `try_step` (an error in a hook aborts the stage), both
+assert on the artefact afterwards because Innovus exits 0 after fatal errors,
+and neither adds an instance — the toolkit's `pnr_assert_no_geometry_added`
+guard either side of `post_route` still passes. Cost is one timing update each;
+`POST_PLACE_STATE_TIMING=0` / `POST_ROUTE_STATE_TIMING=0` skip it.
+
+The emitter is **duplicated byte-for-byte** in the two hooks. A pinned hook
+lives in `<run>/pinned/eth-chiplet/hooks/` and has no path to a library in
+`scripts/`; a `source` would resolve in the working checkout and fail silently
+in every pinned run, which is *flows read the worktree* for the sixth time.
+`stage_timeline.py --check-hooks` diffs the two copies and exits 1 if they
+drift — proven against a one-line edit and against a removed marker.
+
+### What a reader would have seen, at 15:32 on 30 August
+
+The recovery pass finished at 15:31:22. The QOR line the flow already printed
+was:
+
+    CTS: QOR after post-hold setup recovery | setup wns 0.082 ... | hold wns -0.700 ... fep 8718
+
+— correct, complete, and one line in a 232 MB log with no verdict on it. The
+next thing written was `cts_manifest.txt` saying `setup_wns_tns_fep 0.082`, and
+`qor_03_cts_opt.rep`, which had no row for the pass at all. What the
+progression report puts at the top of the page instead:
+
+    WHAT GOT WORSE, WORST FIRST  (3 of 5 transitions regressed something)
+
+     1. cts_after_post_cts_hold -> cts_after_setup_recovery   [cts]
+        opt_design -post_cts  (2nd, recovery)
+          hold_fep         0 ->  8718   WORSE by 8718 endpoints  <<< BROKE CLEAN
+          hold_tns_ns  0.000 -> -1056.522  WORSE by 1056.522 ns
+          hold_wns_ns  0.003 -> -0.700   WORSE by 703 ps
+          setup_wns_ns 0.066 ->  0.082   better by 16 ps
+          >> BAD TRADE: bought 16 ps of setup by giving up 703 ps of hold.
+             43.9 ps GIVEN per ps GAINED.
+
+Three things make that unmissable and none of them existed before: the pass has
+a **state of its own** (`report_qor` gave it no row); setup and hold are on the
+**same line from the same timing update**; and `BROKE CLEAN` fires on the
+transition from zero failing endpoints to any, which is the one event in a P&R
+flow that is never acceptable and never noise.
+
+### Requested from the owners of files this work does not touch
+
+1. **`hooks/pre_cts.tcl` / `hooks/post_cts.tcl`** — the CTS stage is four
+   optimisation states and the two that matter most are the least reported.
+   `pnr_qor_line` is already called around them; adding the same
+   `stage_state_emit` record (active views + census, ~10 lines) would make
+   `cts_after_post_cts_hold` and any recovery pass first-class states rather
+   than log lines. The emitter block is in `hooks/post_place.tcl`, copyable.
+2. **`design.mk` / `asic-toolkit`** — a hook-visible library directory pinned
+   alongside `pinned/eth-chiplet/hooks/`, so the emitter can live in one place.
+   Until then `--check-hooks` is the only thing holding the copies together.
+3. **`asic-toolkit`** — `4_route.tcl` should emit a `pnr_qor_line` between the
+   two `opt_design -post_route` passes (:1057-1068). Two lines. Without them
+   route's hold regression can only ever be attributed to the pair, which is
+   what F16 had to say about it.
+4. **`asic-toolkit`** — `route_manifest.txt` records `views_setup`/`views_hold`
+   from the knobs while its timing triples come from `06_post_fill`, measured
+   before the narrowing. Either move the manifest's timing read after
+   :1564, or record the view set that was actually active when the numbers were
+   taken. Do not silently change the numbers; the pairing is the defect.
+
+### Where the evidence lives, and how to redo it
+
+`ASIC/eth-chiplet/build/rc5vt-20260829/index/` holds `views_<db>.txt` for all
+five saved databases plus a `README.txt` with the exact method.
+**`build/` is gitignored**, so those files are host-only — the numbers are
+copied into F17 above for that reason. To regenerate: copy the databases out of
+`work/` (copies, never the run's own), then one `innovus -stylus -no_gui` per
+database — `read_db` **refuses a second call in the same session**
+(IMPIMEX-7031) and **exits 0 after refusing**, so a loop inside one session
+silently measures nothing. The probe asserted on the artefact and caught
+exactly that on its first attempt.
