@@ -1438,8 +1438,11 @@ computed `LEC-VERDICT: RESULT=`, which applies four rules Conformal's line does 
 | `pnr`  | `_gate_power.v` | `_pnr.v` | PASS | RESULT=PASS | 61,599 / 61,599 equivalent | 448 s, 924 MB |
 | `syn`  | RTL, via Genus's dofile | `_gate.v` | see F22 | see F22 | see F22 | still running at time of writing |
 
-`pnr` is the one that matters and the one this repo has run four times in its life. Its
-full census, from `report_statistics` rather than from the summary line:
+`pnr` is the one that matters, and a whole-tree `grep -l 'LEC-VERDICT: tag=pnr'` over
+every archived `verdict.txt` in the frozen checkout returns **five** — full-20260814,
+fp1505, gdsrun-20260823-rzG, and rc1 under two run tags. That is the entire history of
+this comparison before tonight. Its full census here, from `report_statistics` rather
+than from the summary line:
 
     Primary inputs            56 / 56 mapped
     Tri-state (Z) key points  24 / 24 mapped
@@ -1536,10 +1539,15 @@ mutant C below is exactly the case where it does not hold.
 | bond pads | 82 (`PAD70GU_SL` 42, `PAD70NU_SL` 40) | 0 | +82 |
 | other combinational | 779 | 1,031 | −252 |
 
-33,059 net clock buffers is the physical shape of F12's CTS hold repair, and it is the
-single largest thing that happened to this netlist. For scale, the same census on
-`gdsrun-20260823-rzG` — the rc4-lineage build — is **+14,021** total. rc5 inserts three
-and a half times as much cell area in P&R as the shipping lineage did.
+33,059 net clock buffers is the single largest thing that happened to this netlist, and it
+is two things not one: CTS building a clock tree that synthesis had only 319 clock buffers
+of, and hold repair. The two separate cleanly by drive strength — **18,324 of the additions
+are `CKBD0`, the weakest clock buffer in the library**, which is not a tree driver but the
+delay element Innovus reaches for on a data path that needs padding. For scale, the same
+census on `gdsrun-20260823-rzG` — the rc4-lineage build — adds **+14,021** cells in total
+and only **4,456** `CKBD0`. rc5 inserts three and a half times as much cell area in P&R as
+the shipping lineage, and four times as many minimum-drive delay buffers, which is what
+F12's CTS hold target looks like from the netlist side.
 
 ## F21 — the two links do not compare the same population, and the verdict cannot say so
 
@@ -1717,8 +1725,9 @@ Both netlists were read from the frozen main checkout and nothing was written to
 ## F24 — DISCRIMINATION: three mutants, on the real 243,169-instance netlist
 
 A gate that passes a genuinely non-equivalent netlist is worse than no gate. The toolkit's
-own self-test proves the harness can fail on nine hand-written six-gate netlists; it does
-not prove anything about this design at this scale. So three deliberately broken copies of
+own self-test proves the harness can fail on a handful of hand-written toy netlists — tens
+of key points, one module — and that is worth having, but it says nothing about this design
+at this scale. So three deliberately broken copies of
 rc5's actual post-P&R netlist were compared against rc5's actual synthesis netlist. Each
 attacks a different rule, and each edit is verified to be the ONLY difference from the
 original by `diff` before the run.
@@ -1747,9 +1756,13 @@ The control described in F21 completes the proof in the other direction: the sam
 the same mode, an UNMUTATED copy of the netlist → PASS over the full 61,599 points. The
 gate distinguishes.
 
-Mutants and control: `build/rc5lecmut{A,B,C}/`, `build/rc5lecctl/`. The generator is
-`scratchpad/make_mutants.py`; it asserts each pattern is unique in the source before
-substituting, so a mutant that failed to apply cannot be mistaken for one that did.
+Mutants and control: `build/rc5lecmut{A,B,C}/`, `build/rc5lecctl/`. The three edits are
+fully specified by the table above and each was `diff`ed against the original before its
+run; the generator asserted each pattern was UNIQUE in the source before substituting, so
+a mutant that silently failed to apply could not be mistaken for one that did. The
+generator itself was a throwaway and is not committed — reproducing a mutant is three lines
+of `sed` against the quoted text, and re-deriving it is cheaper than trusting a script
+nobody has read.
 
 ## F25 — the LEC rows in `ci/signoff.yaml`: what was wrong, and what changed
 

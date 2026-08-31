@@ -2,6 +2,24 @@
 
 > **Status — the harness is current; the chain is closed only from `gate.v` downward.** §§1–5 are the run of 2026-08-06 17:45; §7's central negative finding (the two 2026-08-08 legs cited different `gate_power.v` files, so they did not compose) was resolved on 2026-08-17, when `lec-gate` passed for the first time on `full-20260814`. **The RTL→gate leg is still not proven** — see [45 §3.5](45-measured-status-2026-08-18.md) — so there is no end-to-end RTL→netlist equivalence result. Re-measurement runbook: [34](34-content-gates-gate1-runbook.md).
 
+> ### SUPERSEDED IN THREE PLACES, 2026-08-31 - see [66 F19-F25](66-rc5-flow-findings.md)
+>
+> Nothing below is deleted; three of its standing claims have since been measured false
+> and a reader should know that before using this page as status.
+>
+> 1. **"Harness: `ASIC/genus-innovus/scripts/lec/`" is no longer the harness.** Every LEC
+>    verdict the signoff pipeline reads now comes from
+>    `ASIC/asic-toolkit/flow/verify/run_lec.sh`. The `genus-innovus` copy is frozen legacy
+>    and nothing reads it; do not extend it.
+> 2. **"The RTL to gate leg is still not proven" - it has been run.**
+>    `build/gdsrun-20260821-slpads/reports/lec/syn/` records `RESULT=FAIL`, and the
+>    transcript beside it records Conformal's own hierarchical verdict for that
+>    comparison as `PASS`, `Total Equivalent modules = 49`. The FAIL has three named
+>    causes and they are not the same kind of thing as each other - 66 F22 sorts them.
+> 3. **`gate.v` = `gate_power.v` = `pnr.v` now holds on rc5**, not only on
+>    `full-20260814`, and it holds on the tapeout candidate too: `rc1_pnr` = `rc4_pnr`,
+>    61,599 of 61,599 points, 2026-08-31. 66 F19 and F23.
+
 [← 11 Known issues](11-known-issues.md) · [index](00-index.md)
 
 Conformal LEC on `nanosoc_eth_chiplet_pads`: what is compared against what, why that
