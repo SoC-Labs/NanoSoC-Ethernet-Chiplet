@@ -18,7 +18,76 @@ set_units -time ns;
 set_units -capacitance pF;
 set EXTCLK_PERIOD $::env(CLK_PERIOD);
 set SWDCLK_PERIOD [expr 4*$EXTCLK_PERIOD];
-set CLK_ERROR 0.35; #Error calculated from worst case characteristics of CDCM61001 low-jitter oscillator chip at 250MHz
+
+# ── THE TIMING BUDGET IS DERIVED FROM THE PERIOD, NOT TYPED NEXT TO IT ──────
+#
+# ADDED 2026-08-31. Everything below this comment used to be a literal. The
+# period was already a knob -- $::env(CLK_PERIOD), which ASIC/eth-chiplet/
+# design.mk now derives from CLK_FREQ_MHZ -- but the numbers that SHARE the
+# period with the logic were not, so `make syn CLK_PERIOD=8.0` retargeted the
+# clock and left the margin taken out of it at its 10 ns size. At 8 ns that is
+# not a 25% harder design, it is a 25% harder design carrying a margin sized
+# for a 25% easier one.
+#
+# THE DEFAULTS REPRODUCE THE OLD LITERALS EXACTLY, BY CONSTRUCTION AND BY
+# ARITHMETIC -- at CLK_PERIOD=10.0:
+#     CLK_ERROR                0.035 x 10.0 -> 0.35    (was 0.35)
+#     INTER_CLOCK_UNCERTAINTY  0.010 x 10.0 -> 0.1     (was 0.1)
+#     IO_PORT_DELAY            0.010 x 10.0 -> 0.1     (was 0.1)
+#     CLK_HOLD_ERROR                          0.05     (was 0.05, NOT scaled)
+# `format %.4g` is not decoration: 0.035*10.0 is 0.35000000000000003 in IEEE
+# double and Tcl prints every one of those digits. Four significant figures
+# gives back "0.35" at the default and still resolves 0.2632 at 133 MHz.
+#
+# WHICH TERMS SCALE, AND WHY EACH ONE DOES OR DOES NOT. This is a physics
+# question, not a formatting one, and the file already contains the answer for
+# the biggest term -- see the block below, which establishes that the dominant
+# component of CLK_ERROR is NOT jitter (~0.012 ns) but the source oscillator's
+# 45/55% OUTPUT DUTY CYCLE, and that duty cycle is a PERCENTAGE:
+#     at 250 MHz (4 ns)   45%/55% -> +/-0.2 ns
+#     at 100 MHz (10 ns)  45%/55% -> +/-0.5 ns
+# A term that is a percentage of the period must scale with the period. That is
+# the whole argument for CLK_UNC_SETUP_FRAC, and it is the file's own.
+#
+#   CLK_UNC_SETUP_FRAC   SCALES.   Duty-cycle distortion dominates it.
+#   CLK_UNC_HOLD_NS      ABSOLUTE. The block below argues hold uncertainty is
+#                        residual, non-common-mode jitter -- ~0.012 ns of real
+#                        random jitter with 4x headroom at 0.05. Random jitter
+#                        is an absolute time, so scaling it with the period
+#                        would make a FASTER clock ask for LESS hold margin,
+#                        which is backwards. Left absolute, deliberately.
+#   INTER_CLOCK_UNC_FRAC SCALES.   swdclk is 4 x EXTCLK by construction (line
+#                        above), so both sides of that crossing move together.
+#   IO_PORT_DELAY_FRAC   SCALES.   A port delay budget is a share of the cycle
+#                        given away to the outside world. See DELAY DEFINITION.
+#
+# EVERY ONE IS OVERRIDABLE FROM THE ENVIRONMENT with an absolute value, so a
+# margin that turns out not to scale can be pinned without editing this file
+# and without giving up the frequency knob:
+#     make syn CLK_FREQ_MHZ=125 CLK_ERROR_NS=0.35
+#
+# NOT CHANGED, AND WORTH KNOWING: ASIC/common.mk:263 exports CLK_UNCERTAINTY
+# ?= 0.35. NOTHING READS IT -- grep across every .sdc, .tcl and .mk in ASIC/
+# returns that one definition and no consumer. It is not wired up here either,
+# because a variable whose default is a 10 ns number would silently defeat the
+# scaling the moment anyone assumed it was live. Use CLK_ERROR_NS above.
+proc sdc_num_env {name default} {
+    if {[info exists ::env($name)]} {
+        set v [string trim $::env($name)]
+        if {[string is double -strict $v]} { return $v }
+        if {$v ne ""} {
+            puts "**WARN: constraints.sdc: $name='$v' is not a number - using $default"
+        }
+    }
+    return $default
+}
+set CLK_UNC_SETUP_FRAC   [sdc_num_env CLK_UNC_SETUP_FRAC   0.035]
+set INTER_CLOCK_UNC_FRAC [sdc_num_env INTER_CLOCK_UNC_FRAC 0.010]
+set IO_PORT_DELAY_FRAC   [sdc_num_env IO_PORT_DELAY_FRAC   0.010]
+
+set CLK_ERROR [sdc_num_env CLK_ERROR_NS \
+                   [format %.4g [expr {$CLK_UNC_SETUP_FRAC * $EXTCLK_PERIOD}]]]
+#Error calculated from worst case characteristics of CDCM61001 low-jitter oscillator chip at 250MHz
 # PROVENANCE CHECKED against the actual datasheet (TI SCAS869F, Feb 2009 rev
 # June 2011) while adding the drive characterisation at the bottom of this file.
 # VALUE DELIBERATELY UNCHANGED -- it is a signoff margin and it is CONSERVATIVE.
@@ -71,8 +140,17 @@ set CLK_ERROR 0.35; #Error calculated from worst case characteristics of CDCM610
 # cost. 0.05ns covers residual (non-common-mode) jitter and PLL/duty-cycle
 # effects. THIS IS A SIGNOFF MARGIN — revisit it with the clocking spec, not
 # casually.
-set CLK_HOLD_ERROR 0.05
-set INTER_CLOCK_UNCERTAINTY 0.1
+set CLK_HOLD_ERROR [sdc_num_env CLK_HOLD_ERROR_NS 0.05]
+set INTER_CLOCK_UNCERTAINTY \
+    [sdc_num_env INTER_CLOCK_UNCERTAINTY_NS \
+        [format %.4g [expr {$INTER_CLOCK_UNC_FRAC * $EXTCLK_PERIOD}]]]
+
+# One line, printed by every Genus and Innovus session that reads this file, so
+# that a run at another frequency says so in its own log instead of being
+# reconstructed from a make variable afterwards.
+puts "constraints.sdc: CLK_PERIOD=$EXTCLK_PERIOD ns\
+      (SWDCLK $SWDCLK_PERIOD) uncertainty setup=$CLK_ERROR hold=$CLK_HOLD_ERROR\
+      inter=$INTER_CLOCK_UNCERTAINTY"
 
 create_clock -name "$EXTCLK" -period "$EXTCLK_PERIOD" -waveform "0 [expr $EXTCLK_PERIOD/2]" [get_ports CLK]
 create_clock -name "$SWDCLK" -period "$SWDCLK_PERIOD" -waveform "0 [expr $SWDCLK_PERIOD/2]" [get_ports SWDCK]
@@ -429,7 +507,14 @@ set_clock_transition 0.104 [get_clocks D2D_RX_WORDN_CLK_7]  ;# [MEASURED] 16 sin
 
 #### DELAY DEFINITION
 
-set_input_delay -clock [get_clocks $EXTCLK] -add_delay 0.1 [get_ports NRST]
+# 0.1 ns AT 10 ns IS 1% OF THE CYCLE, and that is now how it is written --
+# $IO_PORT_DELAY is [format %.4g] of IO_PORT_DELAY_FRAC x the period, 0.010 x
+# 10.0 = 0.1, the same literal these three lines carried before. See the
+# derivation block at the top for why a port delay budget scales with the
+# period and what to set to pin it.
+set IO_PORT_DELAY [sdc_num_env IO_PORT_DELAY_NS \
+                       [format %.4g [expr {$IO_PORT_DELAY_FRAC * $EXTCLK_PERIOD}]]]
+set_input_delay -clock [get_clocks $EXTCLK] -add_delay $IO_PORT_DELAY [get_ports NRST]
 # REMOVED 2026-08-17: set_input_delay ... 0.1 [get_ports TEST]
 # TEST carries `set_case_analysis 0` at the bottom of this file. A port held at a
 # case-analysed constant launches no transition, so it has no arrival window and
@@ -442,8 +527,8 @@ set_input_delay -clock [get_clocks $EXTCLK] -add_delay 0.1 [get_ports NRST]
 # If the scan chain is ever bonded and TEST genuinely becomes a timed input,
 # restore this line IN THE SAME CHANGE that comments out its set_case_analysis
 # — not on its own.
-set_input_delay -clock [get_clocks $EXTCLK] -add_delay 0.1 [get_ports HOSTIO4_P1]
-set_input_delay -clock [get_clocks $SWDCLK] -add_delay 0.1 [get_ports SWDIO]
+set_input_delay -clock [get_clocks $EXTCLK] -add_delay $IO_PORT_DELAY [get_ports HOSTIO4_P1]
+set_input_delay -clock [get_clocks $SWDCLK] -add_delay $IO_PORT_DELAY [get_ports SWDIO]
 
 #### ASYNCHRONOUS CLOCK GROUPS ##############################################
 # Must come AFTER the three sources above, so every generated clock they create

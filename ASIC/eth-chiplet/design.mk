@@ -54,6 +54,140 @@ export NANOSOC_ETH_CHIPLET_HOME ?= $(abspath $(ETH_CHIPLET_ASIC_DIR)/../..)
 # The include brings targets with it - eth-bintxt, romlibs-preflight,
 # romlibs-verify, tsmc_65_romlibs, gen_memories. None collides with a toolkit
 # target, and `romlibs-check` below depends on one deliberately.
+
+# ── 0c. TARGET FREQUENCY, AS A FREQUENCY ────────────────────────────────────
+#
+# THIS BLOCK IS ABOVE THE `include` ON PURPOSE AND MOVING IT BELOW SILENTLY
+# DISABLES IT. ../common.mk:262 says `export CLK_PERIOD ?= 10.0`; `?=` only
+# fires when the variable is still undefined, so a definition placed AFTER the
+# include loses to 10.0 and a definition placed BEFORE it wins. The include is
+# the next statement after this block for exactly that reason.
+#
+# WHY A FREQUENCY AND NOT JUST THE PERIOD. CLK_PERIOD has always been a knob
+# and `make syn CLK_PERIOD=8.0` has always worked -- that is not what was
+# missing. What was missing is that the QUANTITY the design is specified in is
+# a frequency, the period is a derived number, and nothing in the flow wrote
+# the derivation down: retargeting meant a human dividing 1000 by the frequency
+# and typing the answer, with no record of the frequency anywhere in any
+# manifest. Now the frequency is the input, the period is computed from it, and
+# hooks/pre_cts.tcl records BOTH in cts_manifest.txt.
+#
+# THE DEFAULT IS BYTE-IDENTICAL TO WHAT IT REPLACES, AND THAT IS TESTABLE:
+#     $ make -f ASIC/eth-chiplet/design.mk print-CLK_PERIOD
+#     CLK_PERIOD = 10.0
+# 100.0 MHz -> 1000/100 = 10.000000 -> trailing zeros trimmed -> "10.0", the
+# same five characters common.mk hardcoded. 125 MHz gives "8.0", 133 MHz gives
+# "7.518797". The trim exists so the default does not become "10.000000" and
+# make every manifest differ from every previous run's for no reason.
+#
+# PRECEDENCE, HIGHEST FIRST:
+#     make ... CLK_PERIOD=8.0      an explicit period still wins over everything
+#                                  (a command-line variable beats every
+#                                  assignment in every makefile)
+#     make ... CLK_FREQ_MHZ=125    the frequency, converted here
+#     neither                      100.0 MHz / 10.0 ns
+#
+# WHAT ELSE MOVES WHEN THIS MOVES -- read before retargeting anything:
+#   * inputs/constraints.sdc reads $::env(CLK_PERIOD) for create_clock, and
+#     derives SWDCLK (4x), the setup uncertainty and the port delay budget from
+#     it. See its "CLOCK DEFINITION" and "DELAY DEFINITION" blocks.
+#   * inputs/tidelink_constraints.sdc does `set D2D_LINK_PERIOD $EXTCLK_PERIOD`,
+#     so THE DIE-TO-DIE LINK RETARGETS TOO. That is inherited behaviour, it is
+#     not new here, and it is the single biggest reason a frequency sweep on
+#     this chiplet is not just a synthesis question.
+#   * every number in docs/tapeout is a 10 ns number. A run at another
+#     frequency is a new lineage, not a comparison point.
+CLK_FREQ_MHZ ?= 100.0
+CLK_PERIOD   ?= $(strip $(shell awk -v f='$(CLK_FREQ_MHZ)' 'BEGIN{ \
+                    if (f+0 <= 0) { print "BAD_CLK_FREQ_MHZ"; exit 1 } \
+                    s = sprintf("%.6f", 1000.0/f); \
+                    sub(/0+$$/, "", s); sub(/\.$$/, ".0", s); print s }'))
+ifeq ($(CLK_PERIOD),BAD_CLK_FREQ_MHZ)
+$(error CLK_FREQ_MHZ='$(CLK_FREQ_MHZ)' is not a positive number)
+endif
+export CLK_FREQ_MHZ
+export CLK_PERIOD
+
+
+# ── 0d. ONE EFFORT DIAL FOR THE WHOLE FLOW ──────────────────────────────────
+#
+# THE PROBLEM. Four stages have effort knobs and they are spelled four
+# different ways -- syn_generic_effort/syn_map_effort/syn_opt_effort {low medium
+# high} in Genus, place_global_cong_effort/place_global_timing_effort {low
+# medium high auto} and design_flow_effort/opt_skew_ccopt {express standard
+# extreme} in Innovus. Turning a run down for a quick look meant knowing all
+# four spellings, and a run turned down in three of them and left at extreme in
+# the fourth is not a cheaper run, it is a different run that nothing records
+# as different.
+#
+# FLOW_EFFORT is one enum over all of them:
+#
+#   closure   (DEFAULT) exactly what rc5 ran. Every value below is the value
+#             that was already in force -- this tier is a rename, not a change,
+#             which is what makes the dial safe to introduce mid-programme.
+#   balanced  the same procedure at the tool's own standard efforts. Useful when
+#             the question is "does this configuration converge", not "how good
+#             can it get". CTS drops extreme -> standard, which is where the
+#             useful-skew pass stops running (it found 0 of 58,611 sinks at
+#             extreme, so on THIS design that costs nothing measurable).
+#   express   the cheapest run that still executes every stage and every gate.
+#             For flow plumbing, not for numbers.
+#
+# WHAT IT DOES NOT TOUCH, DELIBERATELY. No tier changes an optimisation TARGET,
+# a view set, a derate, a budget or a gate. express is not "strict off": a fast
+# run that skips the checks answers a different question from the one it was
+# started to answer. The dial moves runtime, and only runtime.
+#
+# EVERY STAGE KNOB BELOW STAYS INDIVIDUALLY OVERRIDABLE -- they are `?=` against
+# the tier value, and a command-line assignment beats both. So
+#     make cts FLOW_EFFORT=express CTS_SKEW_EFFORT=extreme
+# is a legal and recorded combination.
+FLOW_EFFORT ?= closure
+
+ifeq ($(FLOW_EFFORT),closure)
+  FE_SYN_GEN     := high
+  FE_SYN_MAP     := high
+  FE_SYN_OPT     := high
+  FE_PLACE_CONG  :=
+  FE_PLACE_TIME  :=
+  FE_CTS_FLOW    := extreme
+  FE_CTS_SKEW    := extreme
+else ifeq ($(FLOW_EFFORT),balanced)
+  FE_SYN_GEN     := high
+  FE_SYN_MAP     := high
+  FE_SYN_OPT     := high
+  FE_PLACE_CONG  :=
+  FE_PLACE_TIME  :=
+  FE_CTS_FLOW    := standard
+  FE_CTS_SKEW    := standard
+else ifeq ($(FLOW_EFFORT),express)
+  FE_SYN_GEN     := medium
+  FE_SYN_MAP     := medium
+  FE_SYN_OPT     := medium
+  FE_PLACE_CONG  := low
+  FE_PLACE_TIME  := low
+  FE_CTS_FLOW    := express
+  FE_CTS_SKEW    := standard
+else
+$(error FLOW_EFFORT='$(FLOW_EFFORT)' is not one of: express | balanced | closure)
+endif
+
+# Genus. The toolkit already defaults all three to `high`
+# (flow/genus/1_synthesis.tcl:120-122) and design.mk set none of them, so at
+# FLOW_EFFORT=closure these three lines change nothing except that the values
+# now appear in syn_manifest.txt as asked-for rather than as defaulted.
+export SYN_GEN_EFFORT ?= $(FE_SYN_GEN)
+export SYN_MAP_EFFORT ?= $(FE_SYN_MAP)
+export SYN_OPT_EFFORT ?= $(FE_SYN_OPT)
+
+# Innovus placement. BLANK AT closure AND balanced, and blank is not laziness:
+# flow/innovus/2_place.tcl:1286 only issues set_db when the knob is non-empty,
+# and flow/steps/preplace.tcl has already set both to values this design has
+# run with for every candidate. Writing a value here would silently replace a
+# step-file decision with a design.mk one.
+export PLACE_CONG_EFFORT   ?= $(FE_PLACE_CONG)
+export PLACE_TIMING_EFFORT ?= $(FE_PLACE_TIME)
+
 include $(ETH_CHIPLET_ASIC_DIR)/../common.mk
 
 # Where the production flow's collateral lives. Everything in section 4 and
@@ -786,7 +920,51 @@ signoff-report:
 ##
 ## Override on the command line for a deliberate single-direction ECO pass:
 ##     make route ROUTE_OPT_MODE=hold IN_RUN_TAG=<the run to ECO>
-ROUTE_OPT_MODE ?= hold_then_setup
+##
+## ---- UPDATED 2026-08-31: hold_then_setup -> setup_then_hold ----------------
+##
+## AND THIS TIME THE REASON IS THAT THE INPUT CHANGED, NOT THAT THE 2026-08-29
+## READING WAS WRONG. Experiment E is still the right answer to the question it
+## was asked. It was asked on a database entering post-route optimisation with
+## setup ALREADY NEARLY CLOSED (+0.010 to +0.047) and hold broken. Every arm of
+## that experiment therefore measured "which order protects a setup margin that
+## already exists".
+##
+## rc5 attempt 7 hands route the opposite database, because the CTS hold repair
+## finally survives to the end of CTS:
+##
+##     entering opt_design -post_route      setup -0.400 / 315 FEP
+##                                          hold  +0.003 /   0 FEP
+##
+## Hold is CLOSED and setup has 315 endpoints of real work. With
+## hold_then_setup on that input the hold pass has nothing to do and the setup
+## pass runs LAST and unrepaired, and rc5 measured exactly that:
+##
+##     after detail route                   hold +0.003 /  0
+##     opt_design -post_route -hold         hold -0.021 /  2   <- see the note on
+##                                                               SETUP RECOVERY
+##     opt_design -post_route  (setup)      setup +0.105 / 0
+##     05_route_opt                         hold -0.099 / 66
+##
+## 78 ps of hold and 66 endpoints, spent by the last pass with nothing after it
+## -- the same shape as the CTS defect this flow has just guarded, one seventh
+## the size because the placement is frozen and detail-routed.
+##
+## setup_then_hold puts the pass whose result must be ZERO last. It is also the
+## order the 2026-08-25 fourteen-run census measured 0 failing setup endpoints
+## on, so the setup half is not being traded away to get it: the setup pass
+## still runs, first, with the whole stage after it.
+##
+## WHAT PROTECTS SETUP FROM THE FINAL HOLD PASS is not the order, it is
+## ROUTE_OPT_SETUP_TARGET (0.110, live during the hold pass) plus
+## ROUTE_OPT_SETUP_RECOVERY -- see that block, which changes with this line and
+## for the same reason. Experiment D's warning (a hold pass run last cost 67 ps
+## of setup and left 14 failing endpoints) was measured with NEITHER of those
+## set; both exist now.
+##
+## Override on the command line for a deliberate single-direction ECO pass:
+##     make route ROUTE_OPT_MODE=hold IN_RUN_TAG=<the run to ECO>
+ROUTE_OPT_MODE ?= setup_then_hold
 export ROUTE_OPT_MODE
 
 ## ---------------------------------------------------------------------------
@@ -1016,7 +1194,43 @@ export ROUTE_OPT_HOLD_TARGET  ?= 0.080
 ## recognized object or root attribute" on 21.11-s130_1 -- without raising a Tcl
 ## error, so a script that sets it exits 0 having done nothing. Measured
 ## 2026-08-29. Do not add it.
-export ROUTE_OPT_SETUP_RECOVERY ?= true
+##
+## ---- UPDATED 2026-08-31: true -> auto, AND `auto` IS NOW THE GUARD ---------
+##
+## EVERYTHING ABOVE WAS MEASURED WITH THE HOLD PASS RUNNING FIRST, on a database
+## whose hold was broken and whose setup was nearly closed. `true` was chosen so
+## that the hold pass would hand back as much setup as it could, because the
+## setup pass that followed it was the last thing in the stage.
+##
+## WITH ROUTE_OPT_MODE=setup_then_hold THE HOLD PASS IS NOW LAST, and `true`
+## inverts from a repair into the defect. Read its own documentation again with
+## that in mind: "true: ALWAYS triggers setup recovery if timing is not met,
+## IRRESPECTIVE OF THE GAIN/DEGRADATION". Setup is never "met" on this design --
+## ROUTE_OPT_SETUP_TARGET asks for +0.110 and the best any run has reached is
+## +0.105 -- so `true` fires on every hold pass, unconditionally, and pays for
+## setup out of the hold margin the pass exists to create.
+##
+## rc5 attempt 7 caught it doing precisely that, INSIDE the -hold pass, before
+## any setup pass ran:
+##     04_route (after detail route)   hold +0.003 / 0
+##     opt_design -post_route -hold    hold -0.021 / 2      <- this line
+## A hold pass is not supposed to make hold worse. That is the setup-recovery
+## step, doing what `true` tells it to do.
+##
+## `auto` is the tool's own bounded version of the same idea -- "recovery will
+## be triggered if WNS or TNS degrade BEYOND A CERTAIN MARGIN" -- which is a
+## guard rather than a standing instruction, and it is the same shape as the
+## budget hooks/post_cts.tcl now puts around the CTS recovery pass. It is also
+## the documented default, so this line is now a declaration rather than an
+## override; it is written down because a run that inherits a default is
+## indistinguishable in the manifest from a run that chose it.
+##
+## THE ARGUMENT FOR `true` HAS NOT BEEN DISCARDED, IT HAS BEEN RELOCATED. What
+## experiment E actually proved is that an EXPLICIT setup pass on a hold-fixed
+## database is cheap and effective (12 cells, 8 min, +48 ps). Under
+## setup_then_hold that explicit pass is the FIRST pass, where it can spend as
+## long as it likes, and the hold pass no longer has to double as one.
+export ROUTE_OPT_SETUP_RECOVERY ?= auto
 
 ## ---------------------------------------------------------------------------
 ## CLOCK OPTIMISATION EFFORT, AND THE HOLD TARGET CTS HAS NEVER HAD.
@@ -1098,9 +1312,51 @@ export ROUTE_OPT_SETUP_RECOVERY ?= true
 ## produces a run that looks configured and was not. The shipped rc2/rc3fix/rc4
 ## hold closures came from the signoff optimiser; their evidence does not
 ## transfer to these four lines and these four lines will not reproduce them.
-export CTS_FLOW_EFFORT       ?= extreme
-export CTS_SKEW_EFFORT       ?= extreme
-export CTS_OPT_HOLD_TARGET   ?= 0.080
+##
+## THE TWO EFFORT LINES NOW COME FROM THE FLOW_EFFORT TIER IN SECTION 0d, and
+## at the default tier (closure) they still expand to `extreme` -- verified:
+##     $ make -f ASIC/eth-chiplet/design.mk ... FLOW_EFFORT=closure
+##       CTS_FLOW_EFFORT=extreme CTS_SKEW_EFFORT=extreme
+## Nothing about this run changed; what changed is that turning the whole flow
+## down no longer means remembering that CTS spells effort differently from
+## Genus. The TARGETS below are NOT on the dial and must not be put on it: they
+## are what the design is being asked for, not how hard the tool tries.
+export CTS_FLOW_EFFORT       ?= $(FE_CTS_FLOW)
+export CTS_SKEW_EFFORT       ?= $(FE_CTS_SKEW)
+
+## ---------------------------------------------------------------------------
+## F9 CLOSED: THE CTS HOLD TARGET AND ITS OWN RATIONALE NOW AGREE, AT 0.080.
+##
+## hooks/pre_cts.tcl argues at length for 0.100 at CTS ("the route target plus
+## the degradation the flow's own stage table shows between the end of CTS and
+## the end of fill: 03_cts_opt -0.003 to 06_post_fill -0.012 is 9 ps, rounded up
+## to the next 10 ps") and design.mk shipped 0.080. Only the log said which one
+## executed. Two numbers for one decision is the defect; either value could have
+## been the fix.
+##
+## IT IS RESOLVED AT 0.080 BECAUSE 0.080 IS THE ONE THAT HAS BEEN MEASURED, and
+## it did not merely pass:
+##     rc5 attempt 7, four active hold views, CTS_OPT_HOLD_TARGET=0.080
+##       after ccopt_design        hold -0.701 / 9122 failing endpoints
+##       after opt_design -hold    hold +0.003 /    0 failing endpoints
+## Zero, in every path group, in every hold view. A target that closes hold
+## completely is not short of margin, and the ladder the hook derives was built
+## from a stage table produced by a run (rc1) whose CTS never had a hold target
+## at all -- the 9 ps it extrapolates is degradation measured on a database that
+## carried no hold repair to degrade.
+##
+## THE LADDER IS KEPT AS A KNOB RATHER THAN DELETED, because the argument for it
+## is sound even though its input was not: hold DOES decay from CTS to fill, and
+## if a future run measures that decay on a database that actually holds, this
+## is the line that spends it. CTS target = route target + margin.
+##     CTS_HOLD_DOWNSTREAM_MARGIN=0.020  reproduces pre_cts.tcl's 0.100
+## PRICE BEFORE RAISING IT. 0.090 was priced at +6.7 utilisation points and
+## refused; rc5 finished at 85.843% against a ~92.2% wall, so there are about
+## 6.4 points in hand and 0.090 would spend essentially all of them.
+export CTS_HOLD_DOWNSTREAM_MARGIN ?= 0.000
+export CTS_OPT_HOLD_TARGET   ?= $(strip $(shell awk -v r='$(ROUTE_OPT_HOLD_TARGET)' \
+                                    -v m='$(CTS_HOLD_DOWNSTREAM_MARGIN)' \
+                                    'BEGIN{ printf "%.3f", r+m }'))
 export CTS_OPT_SETUP_TARGET  ?= 0.075
 
 ## ONE MORE PASS AT CTS, AND IT IS THE ONLY LINE HERE THAT ADDS OPTIMISATION
@@ -1124,6 +1380,101 @@ export CTS_OPT_SETUP_TARGET  ?= 0.075
 ## gdsrun-20260826-rc1 either way. The hook skips the pass entirely when no hold
 ## target is set, so a control run does not pay for it.
 export CTS_POST_HOLD_SETUP   ?= 1
+
+## ---------------------------------------------------------------------------
+## AND THE BUDGET THAT PASS RUNS UNDER. Added 2026-08-31, after rc5 measured
+## what it costs unguarded.
+##
+## WHAT HAPPENED. The block above says "NOT MEASURED AT CTS ... No run on this
+## design has ever issued a second opt_design -post_cts." rc5 issued it, twice,
+## with everything before it reproducing bit for bit:
+##
+##   CTS_POST_HOLD_SETUP=0   03_cts_opt  setup +0.066/0  hold +0.003/   0
+##   CTS_POST_HOLD_SETUP=1   03_cts_opt  setup +0.082/0  hold -0.700/8718
+##                                       density 85.282% -> 80.575%
+##
+## 16 ps of setup for 703 ps of hold and 8,718 endpoints. The utilisation drop
+## is the tell: this is not a hold repair being degraded, it is a hold repair
+## being DELETED.
+##
+## WHY THE HOLD TARGET DID NOT STOP IT, from the tool's own attribute reference:
+## opt_hold_target_slack is "a target slack value ... to use for HOLD ANALYSIS
+## ONLY. During SETUP VIOLATION REPAIR ... THE HOLD TARGET SLACK VALUE IS 0."
+## The comment above -- "the recovery pass sees opt_hold_target_slack ... and
+## cannot spend the hold margin it was run to preserve" -- was wrong, and this
+## is the sentence that refutes it.
+##
+## WHAT ACTUALLY DELETES THE BUFFERS is opt_area_recovery, default ON, which
+## "creates additional space by downsizing gates or DELETING BUFFERS, while
+## maintaining worst slack and total negative slack" -- setup's worst slack and
+## setup's TNS. Its post-route twin, opt_post_route_area_reclaim, offers
+## `setup_aware` ("may degrade hold timing significantly") and
+## `hold_and_setup_aware`; the pre-route one has no hold-aware mode at all.
+##
+## THE THREE KNOBS BELOW ARE THE GUARD, and hooks/post_cts.tcl implements it.
+##   AREA_RECOVERY  false     turns the deletion mechanism off FOR THE DURATION
+##                            OF THE PASS ONLY; the hook restores whatever it
+##                            found. The pass may still resize and buffer.
+##   HOLD_WNS_BUDGET 0.010    nanoseconds of hold WNS the pass may spend. Not
+##   HOLD_FEP_BUDGET 0        zero, because a pass that may move nothing is
+##                            worth nothing; the defect was never that it spent
+##                            hold, it was that nothing bounded the spend.
+##                            10 ps is 12.5% of the 0.080 target and roughly
+##                            1/70th of what it took unguarded.
+##   REPAIR         1         on breach, re-run opt_design -post_cts -hold --
+##                            the pass measured to take this design from
+##                            -0.703/8893 to +0.003/0 -- and re-measure.
+##   GUARD_STRICT   0         1 makes an unrepairable breach fail the stage.
+##                            Off by default: a completed clock tree is worth
+##                            more than a clean exit code, and route sees the
+##                            hold it was handed in its own input numbers.
+##   DELETE_INSTS   ""        opt_delete_insts, left alone. Deleting a buffer on
+##                            a short net is also a legitimate SETUP fix, so
+##                            forbidding it outright is a bigger hammer than
+##                            the evidence supports. Set to false if
+##                            opt_area_recovery=false turns out not to be
+##                            enough -- the ledger line the hook prints
+##                            ("recovery guard: LEDGER") is how you would know.
+##
+## THE PASS DOES NOT RUN IF THE GUARD CANNOT MEASURE. If hold WNS/FEP cannot be
+## read before the pass, the hook skips the pass rather than running it blind.
+## That is the CTS_POST_HOLD_SETUP=0 behaviour, which is a state this design has
+## closed hold in.
+export CTS_RECOVERY_AREA_RECOVERY   ?= false
+export CTS_RECOVERY_DELETE_INSTS    ?=
+export CTS_RECOVERY_HOLD_WNS_BUDGET ?= 0.010
+export CTS_RECOVERY_HOLD_FEP_BUDGET ?= 0
+export CTS_RECOVERY_REPAIR          ?= 1
+export CTS_RECOVERY_GUARD_STRICT    ?= 0
+
+## ---------------------------------------------------------------------------
+## THE IO RING'S max_transition LIMIT (P&R side only).
+##
+## Consumed by ../genus-innovus/inputs/pnr_io_drv.sdc, which the mmmc names as
+## the SECOND constraint file of default_constraint_mode. Read that file's
+## header: it carries the measured population and the full argument.
+##
+## In one paragraph. `set_max_transition 0.300 [current_design]` is right and
+## stays, but SDC's min() rule means it also lands on 96 chip-boundary pins
+## whose slew is an ASSERTION (set_input_transition) or an off-chip load
+## (set_load), where no repeater moves and no router helps. rc5's post-route
+## DRV report is 195 failing endpoints and 96 of them are those, unchanged
+## between 04_route (3,444 rows) and 06_post_fill (195) because the optimiser
+## cannot touch them. The signoff budget for max_transition is 0, so a run
+## cannot pass while a constant is counted as a defect.
+##
+## PNR_IO_MAX_TRAN IS A LIMIT, NOT AN EXEMPTION. 7.000 ns is above the worst
+## value this design has produced (6.324 ns, I2C_SDA into 100 pF) and below the
+## point where the check stops meaning anything -- close enough that a material
+## change to the I2C load would fire it. Set it lower to tighten, or set
+## PNR_IO_DRV_OVERRIDE=0 to restore the pre-2026-08-31 behaviour exactly
+## (96 unfixable rows, and a max_transition gate that can never pass).
+##
+## ONLY THE PLACE STAGE READS IT. read_mmmc is called in 2_place.tcl and
+## nowhere else; cts and route inherit the constraint mode from the database.
+## Changing either knob and resuming at cts changes NOTHING.
+export PNR_IO_DRV_OVERRIDE ?= 1
+export PNR_IO_MAX_TRAN     ?= 7.000
 
 ## ---------------------------------------------------------------------------
 ## PLACEMENT SEES THE MODEL SIGNOFF USES, OR IT OPTIMISES AGAINST A FICTION.
@@ -2014,3 +2365,48 @@ ROUTE_POST_TARGETS = evidence run-report-auto
 # window to be wrong about. Then this line can gain `sta` and every route gets
 # timed with no operator step at all. That change belongs in ASIC/sta/, not
 # here.
+
+
+## ---------------------------------------------------------------------------
+## print-timing-knobs -- what a run is about to be asked for, in one command.
+##
+## WHY IT EXISTS. design.mk is NOT a pinned input: make reads it from the
+## worktree at the moment a stage starts, so two stages of the same run can be
+## launched under two different sets of knobs if the file changes in between,
+## and nothing in the run directory would record it. Manifests catch the Tcl
+## side (every `opt` knob lands in <stage>_manifest.txt) but the make side --
+## the values design.mk RESOLVED, including the derived ones -- was written
+## nowhere. A launcher that echoes this into its own log closes that.
+##
+## It prints resolved values, not the expressions, so a derivation that quietly
+## produced the wrong number is visible here rather than five hours later.
+.PHONY: print-timing-knobs
+print-timing-knobs:
+	@printf '  %-28s %s\n' \
+	  CLK_FREQ_MHZ                "$(CLK_FREQ_MHZ)" \
+	  CLK_PERIOD                  "$(CLK_PERIOD) ns" \
+	  FLOW_EFFORT                 "$(FLOW_EFFORT)" \
+	  SYN_GEN_EFFORT              "$(SYN_GEN_EFFORT)" \
+	  SYN_MAP_EFFORT              "$(SYN_MAP_EFFORT)" \
+	  SYN_OPT_EFFORT              "$(SYN_OPT_EFFORT)" \
+	  PLACE_CONG_EFFORT           "$(PLACE_CONG_EFFORT)" \
+	  PLACE_TIMING_EFFORT         "$(PLACE_TIMING_EFFORT)" \
+	  CTS_FLOW_EFFORT             "$(CTS_FLOW_EFFORT)" \
+	  CTS_SKEW_EFFORT             "$(CTS_SKEW_EFFORT)" \
+	  CTS_OPT_HOLD_TARGET         "$(CTS_OPT_HOLD_TARGET)" \
+	  CTS_OPT_SETUP_TARGET        "$(CTS_OPT_SETUP_TARGET)" \
+	  CTS_HOLD_DOWNSTREAM_MARGIN  "$(CTS_HOLD_DOWNSTREAM_MARGIN)" \
+	  CTS_POST_HOLD_SETUP         "$(CTS_POST_HOLD_SETUP)" \
+	  CTS_RECOVERY_AREA_RECOVERY  "$(CTS_RECOVERY_AREA_RECOVERY)" \
+	  CTS_RECOVERY_DELETE_INSTS   "$(CTS_RECOVERY_DELETE_INSTS)" \
+	  CTS_RECOVERY_HOLD_WNS_BUDGET "$(CTS_RECOVERY_HOLD_WNS_BUDGET)" \
+	  CTS_RECOVERY_HOLD_FEP_BUDGET "$(CTS_RECOVERY_HOLD_FEP_BUDGET)" \
+	  CTS_RECOVERY_REPAIR         "$(CTS_RECOVERY_REPAIR)" \
+	  CTS_RECOVERY_GUARD_STRICT   "$(CTS_RECOVERY_GUARD_STRICT)" \
+	  ROUTE_OPT_MODE              "$(ROUTE_OPT_MODE)" \
+	  ROUTE_OPT_SETUP_TARGET      "$(ROUTE_OPT_SETUP_TARGET)" \
+	  ROUTE_OPT_HOLD_TARGET       "$(ROUTE_OPT_HOLD_TARGET)" \
+	  ROUTE_OPT_SETUP_RECOVERY    "$(ROUTE_OPT_SETUP_RECOVERY)" \
+	  ROUTE_OPT_DRV               "$(ROUTE_OPT_DRV)" \
+	  PNR_IO_DRV_OVERRIDE         "$(PNR_IO_DRV_OVERRIDE)" \
+	  PNR_IO_MAX_TRAN             "$(PNR_IO_MAX_TRAN)"

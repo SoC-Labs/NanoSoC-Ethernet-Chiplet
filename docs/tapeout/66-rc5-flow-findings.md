@@ -2460,3 +2460,1148 @@ Not fixed here, and each one is somebody else's file.
    baseline whose first value someone has to accept, and accepting 80 non-buffer levels as
    the standing figure is a decision, not a default. `synth_depth.json` carries everything
    such a ratchet would need.
+
+---
+
+# rc6 — closing timing BY DEFAULT
+
+    status   LIVE, 2026-08-31. Written by the session whose brief is "clean setup
+             and hold at every corner, by default, with no manual ECO".
+    runs     rc6hold-20260831   cts -> route on rc5's PLACED database, one hook
+                                changed. The controlled experiment.
+             rc6full-20260831   syn -> place -> cts -> route from RTL, four
+                                inputs changed. The "does the default flow
+                                close" run.
+    worktree /home/dam1n19/SoCLabs/rc5vt-20260829, branch flow/rc5-virtual-tapeout
+    NOT      a submission. rc4 remains the 1 September candidate.
+
+Numbering continues from F14.
+
+---
+
+## F15 — THE MECHANISM OF THE rc5 SETUP-RECOVERY DEFECT, FROM THE TOOL'S OWN DOCUMENTATION
+
+F12 and F14 established WHAT the post-CTS setup recovery pass does — 16 ps of
+setup for 703 ps of hold and 8,718 endpoints, proven by a one-variable
+experiment. Neither said WHY, and `hooks/post_cts.tcl` carried an explicit,
+load-bearing claim that it could not happen:
+
+    # THE TARGETS ARE STILL LIVE WHEN IT RUNS, and that is load-bearing rather
+    # than incidental: the restore below happens AFTER it, so the recovery pass
+    # sees opt_hold_target_slack as well as opt_setup_target_slack and cannot
+    # spend the hold margin it was run to preserve.          (post_cts.tcl:98)
+
+**That claim is false, and Innovus says so in one sentence.**
+`<INNOVUS_DOC>/TCRcom/opt_Category_Attributes.html`, `opt_hold_target_slack`,
+verbatim:
+
+    "Specifies a target slack value in nanoseconds to use for HOLD ANALYSIS
+     ONLY. During SETUP VIOLATION REPAIR, the setup target slack is defined by
+     the attribute opt_setup_target_slack AND THE HOLD TARGET SLACK VALUE IS 0."
+
+A setup pass reads the hold target as zero however it is set. `opt_hold_target_slack`
+guards a hold pass. It has never guarded this one, in any run, on any design.
+
+### A CANDIDATE MECHANISM THAT LOOKED CERTAIN AND IS NOW REFUTED — read F26 before quoting this
+
+The tell in F12 was not that hold degraded, it was that **utilisation fell**:
+85.282% → 80.575%, 4.7 points of cells leaving a design that had just had
+12,000 hold buffers put into it. Same document, `opt_area_recovery`, default
+`default` (i.e. on):
+
+    "Controls whether timing optimization creates additional space by DOWNSIZING
+     GATES OR DELETING BUFFERS, while maintaining worst slack and total negative
+     slack."
+
+**AND ON THIS DESIGN IT IS NOT EVEN AT ITS DOCUMENTED DEFAULT.** The guard
+prints the value it displaces, and rc6hold's CTS session reported:
+
+    CTS: recovery guard: opt_area_recovery = false (was true)
+
+`true`, not `default`. The documented `default` calls area reduction "after
+global optimisation and after the second TNS optimisation … during the rest of
+opt_design, depending on the density level". `true` calls it "**always** …
+before the global optimisation stage, after the global optimisation stage, and
+after the second TNS optimisation". So the pass that deleted the hold repair was
+running the most aggressive of the three settings — and **nothing in this
+project sets it**: grep `opt_area_recovery` across `ASIC/asic-toolkit/flow/` and
+`ASIC/genus-innovus/scripts/` and there are no hits. It arrives with the
+database or with a step file. Nobody chose it and nothing recorded it; the
+guard's read-back is the first time this project has known what the value was.
+
+Whose worst slack and TNS? Setup's. The post-route twin of the attribute spells
+out the consequence the pre-route one leaves implicit — `opt_post_route_area_reclaim`
+takes `setup_aware` ("**may degrade hold timing significantly** but will maintain
+the setup timing") and `hold_and_setup_aware` ("both setup and hold timing will
+be maintained"). **Pre-route area recovery has no hold-aware mode at all.** To
+it, a freshly hold-repaired database is twelve thousand buffers of free space
+sitting on paths with plenty of setup slack.
+
+It is a good story. It fits the shape of the measurement exactly — huge hold
+loss, tiny setup gain, falling utilisation — it is grounded in the vendor's own
+words, and **it is wrong.** rc6hold turned the attribute off, proved the
+read-back, and the pass destroyed the hold repair anyway. See **F26**. The
+paragraphs above are kept, not deleted, because the reasoning was sound and the
+next person will construct it again from the same document; what they need to
+know is that it has already been tested and did not survive.
+
+---
+
+## F16 — THE FIX: A BUDGET, NOT A DELETION
+
+The brief for this work was explicit that the answer is a guard rather than
+removing the pass, and that is also what the evidence supports: the recovery
+pass exists to repair the DRV a heavy hold pass leaves behind (measured
+post-route: real max_capacitance 6 → 0, real max_transition 2 → 0), and
+`CTS_POST_HOLD_SETUP=0` gives that up along with the damage.
+
+`hooks/post_cts.tcl` now does three things where it did one.
+
+**1. Prevention — WHICH DID NOT WORK, and F26 is the measurement that says so.**
+`opt_area_recovery` is set `false` for the duration of the pass and restored
+afterwards, with the read-back proven both ways. The intent was that the pass
+could still resize and buffer to recover setup but could not pay for it by
+deleting the hold repair. **It paid for it anyway.** The knob stays because it
+is proven to take and costs nothing, and because `CTS_RECOVERY_DELETE_INSTS`
+(for `opt_delete_insts`, still at the tool default) is the untested lever next
+to it — but nothing in this layer should be relied on. Layers 2 and 3 are the
+ones that carried the run.
+
+**2. A budget, in nanoseconds and endpoints.** Hold WNS and hold FEP are read
+before the pass and after it. `CTS_RECOVERY_HOLD_WNS_BUDGET` (default 0.010 ns)
+and `CTS_RECOVERY_HOLD_FEP_BUDGET` (default 0) say what it may spend. It is a
+budget and not a prohibition because a pass that may move nothing is worth
+nothing: **the defect was never that it spent hold, it was that nothing bounded
+the spend.** 10 ps is 12.5% of the 0.080 ns CTS hold target and about 1/70th of
+what the pass took unguarded.
+
+**3. Repair, not refusal.** On a breach the hook re-runs `opt_design -post_cts
+-hold` — the pass measured on this exact database to take hold from
+−0.703/8893 to +0.003/0 — and re-measures. Buying the margin back is cheaper
+than discarding a three-hour clock tree, and it is the only remedy available at
+a point where the previous state was never snapshotted.
+`CTS_RECOVERY_GUARD_STRICT=1` makes an unrepairable breach fatal; it is off by
+default.
+
+### The before-measurement is free, and the pass does not run without it
+
+`flow/innovus/3_cts.tcl:1297` calls `pnr_qor_line "after opt_design -post_cts
+-hold"` on the line before `flow_hook post_cts`, and `pnr_qor_line` leaves its
+triples in `::pnr_last`. That array **is** the pre-pass state, at zero extra
+cost. If it is missing the hook takes its own measurement; if that fails too it
+**skips the pass entirely** and says so. An unmeasurable guard is not a guard,
+and the move it guards is the one move in the stage measured able to undo the
+whole stage.
+
+### The guard was fixture-proven before it was run, and the fixtures found two defects in it
+
+A stub harness (`say`/`warn`/`opt`/`get_db`/`set_db`/`opt_design`/`pnr_qor_line`
+replaced, with a scripted sequence of hold triples) exercised eleven scenarios.
+Nine passed first time. Two did not, and both were real:
+
+| fixture | what it showed |
+|---|---|
+| **G** after-measurement unavailable | `pnr_qor_line` only refills `::pnr_last` when its `report_timing_summary` SUCCEEDS; on failure it warns and returns, leaving the PREVIOUS triples in place. The guard read them, found before == after, and printed **"WITHIN BUDGET"** having measured nothing. Fixed by `array unset ::pnr_last` before every after-measurement. This is the repo's own "a zero that measured nothing" class, caught in the diagnostic written to prevent it. |
+| **H** whitespace-only hold target | `$::CTS_OPT_HOLD_TARGET ne ""` armed the pass on a target of `" "`. Fixed with `string trim`. |
+
+The other nine: within budget; breach then successful repair; breach then failed
+repair (warn); the same under `GUARD_STRICT=1` (fail); the protection attribute
+refusing to take (warn, budget still enforced); `opt_design` itself erroring (no
+after-measurement claimed); no hold target (skip); `CTS_POST_HOLD_SETUP=0`; and
+`CTS_RECOVERY_REPAIR=0`. **The guard can report every one of its own failure
+modes, and it was made to do so before it was trusted.**
+
+### The fixtures are committed, and they discriminate
+
+`ASIC/eth-chiplet/hooks/tests/prove_post_cts_guard.sh` — tclsh only, no licence,
+about a second, 16 assertions:
+
+    == proving hooks/post_cts.tcl's recovery guard ==
+      PASS  A  small spend is inside budget
+      PASS  A2 and it turns area recovery off first
+      PASS  A3 and puts it back
+      PASS  B  the rc5 attempt-6 spend is caught
+      ...
+      PASS  L  CTS_RECOVERY_REPAIR=0 says so
+    == 16 passed, 0 failed ==
+
+**A suite that has never failed is not evidence**, so it was run against three
+mutants of the hook, each a plausible way for the guard to be wrong:
+
+| mutant | what it breaks | result |
+|---|---|---|
+| remove `array unset ::pnr_last` | the guard reads a stale measurement | **F fails** (1 of 16) |
+| `if {$__d_hold > BUDGET}` → `if {0}` | the guard can never fire | **B, B2, B3, C, D, G, L fail** (7 of 16) |
+| point `opt_area_recovery` at a nonexistent attribute | prevention silently absent | **A2, A3, G fail** (3 of 16) |
+
+Each mutant is caught by exactly the fixtures that should catch it and by no
+others. The suite takes the hook path as `$1`, which is how the mutants were run
+and how the next person can repeat it.
+
+---
+## F17 — THE ROUTE STAGE MAKES THE SAME TRADE, AND THE FIX IS AN ORDER, NOT A GUARD
+
+rc5's route repeated F12 at one seventh the scale — 78 ps of hold and 64
+endpoints. The cause is different from CTS's and so is the remedy, and the
+distinction matters because applying CTS's remedy here would be wrong.
+
+**What rc5 ran:** `ROUTE_OPT_MODE=hold_then_setup`, `ROUTE_OPT_SETUP_RECOVERY=true`.
+
+    04_route (after detail route)     setup -0.400 / 315    hold +0.003 /  0
+    opt_design -post_route -hold      (17:37)               hold -0.021 /  2
+    opt_design -post_route  (setup)   setup +0.105 /   0    (17:58)
+    05_route_opt                                            hold -0.099 / 66
+    06_post_fill                      setup +0.105 /   0    hold -0.100 / 66
+
+**Two separate things went wrong and only one of them is the order.**
+
+**(a) A hold pass made hold worse.** `+0.003 → −0.021` inside
+`opt_design -post_route -hold`, before any setup pass ran. That is
+`opt_post_route_setup_recovery`, which design.mk set to `true`, doing exactly
+what `true` is documented to do: *"ALWAYS triggers setup recovery if timing is
+not met, IRRESPECTIVE OF THE GAIN/DEGRADATION."* Setup is never "met" on this
+design — `ROUTE_OPT_SETUP_TARGET` asks +0.110 and the best any run has reached
+is +0.105 — so `true` fires on every hold pass, unconditionally, and pays for
+setup out of the margin the pass exists to create. **Changed to `auto`**, which
+is the tool's own bounded form ("triggered if WNS or TNS degrade beyond a
+certain margin") and the same shape as the CTS budget above. It is also the
+documented default; it is written down rather than left implicit because a run
+that inherits a default is indistinguishable in a manifest from one that chose
+it.
+
+**LABELLED AS ATTRIBUTION, NOT AS MEASUREMENT.** What is measured is that a
+`-hold` pass took hold from +0.003/0 to -0.021/2, which a hold pass should not
+do. The setup-recovery step is the only documented mechanism INSIDE a hold pass
+that spends hold to buy setup, and `true` is documented to fire it
+unconditionally, so it is the explanation this change acts on -- but nobody has
+run that pass twice with only this attribute changed. **The experiment that
+would settle it** is a route-only resume from one cts database with
+`ROUTE_OPT_MODE=hold` and `ROUTE_OPT_SETUP_RECOVERY` `true` against `auto`: two
+passes, one variable, and the answer is the hold WNS after each.
+`build/rc6route-20260831` is staged for exactly that shape.
+
+**(b) The last pass in the stage was setup, with nothing after it.**
+`hold_then_setup` was chosen on 2026-08-29 from experiment E, and E is not being
+retracted — it is being recognised as an answer to a different question. E ran
+on a database entering post-route optimisation with setup ALREADY NEARLY CLOSED
+(+0.010 to +0.047) and hold broken, so it measured *which order protects an
+existing setup margin*. **The CTS fix inverts that input**: route now receives
+hold +0.003/0 and setup −0.400/315. On that database `hold_then_setup` gives the
+hold pass nothing to do and lets the setup pass run last and unrepaired.
+**Changed to `setup_then_hold`** — the pass whose result must be zero goes last.
+That is also the order the 2026-08-25 fourteen-run census measured 0 failing
+setup endpoints on, so the setup half is not being traded away.
+
+**What protects setup from the final hold pass** is not the order: it is
+`ROUTE_OPT_SETUP_TARGET=0.110` being live during that pass, plus `auto`.
+Experiment D's warning — a hold pass run last cost 67 ps of setup and left 14
+failing endpoints — was measured with NEITHER of those set. Both exist now.
+
+Both changes are `design.mk` only. **No toolkit file and no hook outside this
+session's ownership was touched to make them.**
+
+---
+
+## F18 — 96 OF THE 195 max_transition ENDPOINTS ARE A CONSTANT, NOT A DEFECT
+
+rc5's route hard-failed on `max_transition FEP 195 > budget 0`. Parsing
+`reports/drv_05_route_opt.rep` splits that number exactly:
+
+| | rows | worst | fixable? |
+|---|---|---|---|
+| top-level ports and `uPAD_*/PAD` pins | **96** | −6.023 | **no** |
+| internal pins | **99** | −0.223 | yes, and most are −0.00x |
+
+All 195 are in `default_analysis_view_setup`. The 96 are the chip boundary, and
+every one of their "actual" slews is an assertion or an off-chip load:
+
+    6.324  2  I2C_SDA + PAD     100 pF set_load, 100 kHz bus
+    6.321  2  I2C_SCL + PAD
+    5.000  8  NRST SWDCK SWDIO RMII_MDIO + PADs   set_input_transition -max 5.0 / lib ceiling
+    3.000 16  QSPI_IO[3:0] RMII_REF_CLK RMII_RXD[1:0] RMII_CRS_DV + PADs   set_input_transition -max 3.0
+    2.000 18  HOSTIO4_P1[6:0] SE TEST + PADs
+    1.866  8  RMII_MDC RMII_TXD[1:0] RMII_TX_EN + PADs
+    1.200  2  CLK + PAD
+    1.087  4  QSPI_SCLK QSPI_nCS + PADs
+    0.676 18  TL_CLK_TX TL_TX[7:0] + PADs         D2D driving cell + channel cap
+    0.593 18  TL_CLK_RX TL_RX[7:0] + PADs
+
+`inputs/constraints.sdc` **predicted this population and named the remedy**, at
+the bottom of its `set_max_transition 0.300 [current_design]` block: 97
+permanently red rows, *"Innovus `-override` can exempt them on the P&R side
+where Genus is not the reader."* Measured now: 96. The prediction was made on
+rc4 and is one row out.
+
+### The remedy, applied
+
+`inputs/pnr_io_drv.sdc` (new, P&R only) is named as the SECOND file of
+`create_constraint_mode` in the mmmc — order matters, `-override` only beats
+limits set before it. It enables `timing_constraint_enable_drv_limit_override`
+(**verified on Innovus 21.11-s130_1: the attribute exists and reads back
+`true`**) and re-states `max_transition` at `PNR_IO_MAX_TRAN` (7.000 ns) on the
+top-level ports and the pads' off-chip `PAD` pins.
+
+**7.000 is a limit, not an exemption.** It is above the worst value this design
+has produced (6.324) and close enough to it that a material change in the I2C
+load would fire. `PNR_IO_DRV_OVERRIDE=0` restores the old behaviour exactly.
+
+### MEASURED, on rc5's own routed database, before it was put in any run
+
+`read_db rc5vt-20260829/work/..._routed` →
+`report_constraint -drv_violation_type max_transition -all_violators` →
+`set_interactive_constraint_modes [all_constraint_modes -active]` →
+`source pnr_io_drv.sdc` → report again. One session, one variable:
+
+    before   rows=195   io_ring=96   internal=99   worst -6.023
+    after    rows= 99   io_ring= 0   internal=99   worst -0.223
+
+    pnr_io_drv.sdc: drv_limit_override enabled (reads back true)
+    pnr_io_drv.sdc: max_transition 7.000 ns -override on 52 port(s) and 48 pad PAD pin(s)
+
+**Every one of the 96 clears and not one internal pin moves**, which is the
+whole design intent: the exemption is exactly the chip boundary and nothing
+else.
+
+### And again through the path it will actually be deployed on
+
+The measurement above sources the file interactively. The flow reads it through
+`create_constraint_mode`, which is a different code path — and one that will not
+be exercised until a place stage runs. So it was exercised directly, on rc5's
+PLACED database, with `update_constraint_mode -name default_constraint_mode
+-sdc_files {<syn sdc> <this file>}`:
+
+    before   I2C_SDA 300.0   QSPI_IO[0] 2.5   TL_RX[0] 5.0   uPAD_I2C_SDA/PAD 0.3
+    after    I2C_SDA   7.0   QSPI_IO[0] 7.0   TL_RX[0] 7.0   uPAD_I2C_SDA/PAD 7.0
+
+    pnr_io_drv.sdc: drv_limit_override enabled (reads back true)
+    pnr_io_drv.sdc: max_transition 7.000 ns -override on 52 port(s) and 48 pad PAD pin(s)
+
+Three things in one result. The mechanism works through a constraint mode.
+`-override` beats a per-port SDC value in both directions — 300 comes DOWN to 7
+and 2.5 goes UP to it — which is what "override" has to mean and what the
+min() rule could never do. And the "before" column is itself informative: the IP
+SDCs' per-port numbers are all still there in the database and are all still
+being overruled by the design-scope 0.300 that the DRV report prints as
+`Required`, which is the constraints file's own description of the trap, read
+back off silicon-grade data.
+
+### Where the internal 99 come from — and why the F16 guard is what closes them
+
+Re-parsing every DRV report rc5 wrote (the pre-route ones use an older
+column layout, which is why a first parse returned zero rows for them — a
+reminder that a parser silently returning 0 is the repo's own "a zero that
+measured nothing"):
+
+| stage | IO-ring rows | internal rows | worst internal |
+|---|---|---|---|
+| `01b_place_opt` | 98 | **2** | −0.045 |
+| `03_cts_opt` (recovery OFF) | 96 | **359** | −0.698 |
+| `05_route_opt` | 96 | **99** | −0.223 |
+
+Two things fall out, and the second one changes the argument for F16.
+
+1. **The IO-ring count is a constant across the entire flow** — 98, 96, 96,
+   before placement optimisation, after CTS and after route. It does not
+   respond to anything the flow does, because nothing the flow does can
+   reach it. That is the definition of a constant being counted as a defect.
+2. **The internal DRV is created by the CTS hold repair.** Placement leaves
+   2. CTS's hold pass — 12,000 buffers — leaves 359. Route's optimiser
+   recovers 260 of them and hands 99 to the gate.
+
+`hooks/post_cts.tcl`'s original rationale for the setup-recovery pass said
+exactly this would happen ("a heavy hold pass is measured taking setup with it
+and **leaving DRV behind**, and at CTS there is no later pass in the stage to
+pick either back up") and that repairing it was the pass's real purpose. rc5
+attempt 7 turned the pass off to save the hold repair and therefore paid the
+DRV bill: 359 internal violations went into route.
+
+**So the guarded pass is not damage limitation, it is the thing that is
+supposed to close max_transition.** `CTS_POST_HOLD_SETUP=1` under the F16
+budget is the configuration in which the pass can do its job — clean the DRV —
+without being allowed to pay for it out of the hold repair. That is the
+hypothesis rc6hold and rc6full test.
+
+**What the run no longer proves:** nothing that it previously proved. A 0.300 ns
+limit on a pin whose slew is *asserted* at 3.0 ns is not a check that was
+passing and has been switched off — it reported the same 96 rows on every run
+regardless of the design, which is a constant. The standing census of what those
+slews ARE is the table above and
+`rc5vt-20260829/reports/drv_05_route_opt.rep`; re-read it whenever a pad, a
+load or an interface rate changes. **The pads' CORE-side pins (I, OEN, REN — 139
+of them in the rc4 census) are deliberately NOT exempted**: internal logic
+drives them and they are ordinary fixable violations.
+
+### Two traps found while wiring it, both of which would have cost a run
+
+1. **`flow/innovus/2_place.tcl:275` regexes the WHOLE mmmc file — comments
+   included — for anything matching a `.sdc` token, and hard-fails if a match
+   does not exist on disk.** The first draft of the new mmmc comment referred to
+   the project constraint file by name. That would have aborted the place stage
+   before it read a library. The comment now describes the file instead of
+   naming it, and says why.
+2. **The file is read by `read_mmmc`, which is called in `2_place.tcl` and
+   nowhere else.** `3_cts.tcl` and `4_route.tcl` inherit the constraint mode
+   from the database they read. A mmmc change therefore does not reach a run
+   resumed at cts or route — it needs place re-run at minimum. That is written
+   into the mmmc next to the change.
+
+Every `set_max_transition -override` call is wrapped in `catch`. That is the
+opposite of this project's usual posture and it is deliberate: this file is read
+in the first seconds of a five-hour run, and an uncaught error there aborts the
+run to fix a reporting problem. A caught one degrades to the pre-existing
+behaviour, which the route stage's budget of 0 then reports on its own.
+
+---
+
+## F19 — THE TARGET FREQUENCY IS A KNOB, AND THE BUDGET NOW MOVES WITH IT
+
+**What was already true, and was not the problem.** `CLK_PERIOD` has been a knob
+for as long as the flow has existed (`ASIC/common.mk:262`,
+`constraints.sdc:19 = $::env(CLK_PERIOD)`), and `make syn CLK_PERIOD=8.0` has
+always worked.
+
+**What was wrong.** Retargeting moved the clocks and left every number taken out
+of the clock at its 10 ns size. Measured, by elaborating the real SDC — all five
+files, `source` chain intact — under a stub Tcl interpreter that records the
+constraint stream:
+
+    OLD constraints.sdc, CLK_PERIOD 10.0 -> 8.0    3 constraint lines change
+    NEW constraints.sdc, CLK_PERIOD 10.0 -> 8.0   35 constraint lines change
+
+The old file's three are the two `create_clock`s and the D2D link clock. **Every
+`set_clock_uncertainty` on all 26 clocks and every port delay stayed at its
+10 ns value.** An 8 ns run was not a 25% harder design; it was a 25% harder
+design still carrying a margin sized for the easier one.
+
+**The fix, and which terms scale.** This is a physics question and the file
+already contained the answer for the dominant term. Its own analysis
+establishes that `CLK_ERROR` is not jitter (~0.012 ns) but the source
+oscillator's 45/55% **output duty cycle** — and a duty cycle is a percentage of
+the period:
+
+| term | default | scales? | why |
+|---|---|---|---|
+| `CLK_UNC_SETUP_FRAC` | 0.035 → 0.35 ns | **yes** | duty-cycle distortion is a percentage of the period |
+| `CLK_UNC_HOLD_NS` | 0.05 ns | **no** | residual random jitter is an absolute time; scaling it would make a faster clock ask for LESS hold margin |
+| `INTER_CLOCK_UNC_FRAC` | 0.010 → 0.1 ns | yes | swdclk is 4×EXTCLK by construction; both sides move together |
+| `IO_PORT_DELAY_FRAC` | 0.010 → 0.1 ns | yes | a port delay budget is a share of the cycle given to the outside world |
+
+Each has an absolute-value escape hatch (`CLK_ERROR_NS`, `IO_PORT_DELAY_NS`, …)
+so a margin that turns out not to scale can be pinned without editing the file
+and without giving up the knob.
+
+`design.mk` gains `CLK_FREQ_MHZ` (default 100.0) above the `common.mk` include —
+the position is load-bearing, `?=` only fires while the variable is undefined —
+and derives `CLK_PERIOD` from it. Precedence: an explicit `CLK_PERIOD=` on the
+command line still beats everything.
+
+### Validated three ways, and the default is a fixed point
+
+1. **The constraint stream at the default is byte-identical.** `diff` of the
+   full elaborated stream, old file vs new, at `CLK_PERIOD=10.0`: **no
+   difference** except one new informational `puts`. 100.0 MHz → 1000/100 →
+   `10.0`, the same five characters `common.mk` hardcoded (the trailing-zero
+   trim exists precisely so the default does not become `10.000000` and make
+   every manifest differ for no reason).
+2. **It scales, and it can be pinned.** At 8.0 ns: uncertainty 0.35 → 0.28 on
+   all 26 clocks, inter-clock 0.1 → 0.08, port delays 0.1 → 0.08. With
+   `CLK_ERROR_NS=0.35` the uncertainty stays at 0.35 while the clocks still
+   move.
+3. **It survives the real tool, in both directions.** Genus 21.15-s080_1,
+   `read_libs tcbn65lptc.lib` → 2-flop stub → `read_sdc` a file exercising every
+   new construct (`proc`, `format`, `expr`, `string is double`, `$::env`) →
+   `write_sdc`. `read_sdc` reported *"create_clock successful 1 failed 0,
+   set_clock_uncertainty successful 1 failed 0, set_input_delay successful 1
+   failed 0"*, and the WRITTEN file — which is P&R's only SDC source — carries
+   `-period 10.0 / -setup 0.35 / -add_delay 0.1` at 10 ns and
+   `-period 8.0 / -setup 0.28 / -add_delay 0.08` at 8 ns. **The derivation
+   reaches P&R.**
+
+**What does NOT scale, correctly.** RMII's 8.0/1.4 ns input delays, QSPI's, and
+the D2D `TL_RX` delay are external interface specifications at fixed rates. They
+are independent of the core clock and must not move with it. The one that DOES
+follow `CLK_PERIOD` and is worth knowing about is the D2D link itself:
+`tidelink_constraints.sdc:38` does `set D2D_LINK_PERIOD $EXTCLK_PERIOD`, so
+retargeting the core clock retargets the die-to-die link. That is inherited
+behaviour, not new, and it is why a frequency sweep on this chiplet is not just
+a synthesis question.
+
+---
+
+## F20 — ONE EFFORT DIAL, AND `closure` IS A RENAME RATHER THAN A CHANGE
+
+Four stages had effort knobs spelled four different ways: `syn_generic_effort`
+/`syn_map_effort`/`syn_opt_effort` `{low medium high}` in Genus,
+`place_global_cong_effort`/`place_global_timing_effort` `{low medium high auto}`
+and `design_flow_effort`/`opt_skew_ccopt` `{express standard extreme}` in
+Innovus. A run turned down in three of them and left at `extreme` in the fourth
+is not a cheaper run — it is a different run that nothing records as different.
+
+`FLOW_EFFORT` is one enum over all seven:
+
+| | syn gen/map/opt | place cong/timing | cts flow/skew |
+|---|---|---|---|
+| `closure` **(default)** | high high high | (tool default) | extreme extreme |
+| `balanced` | high high high | (tool default) | standard standard |
+| `express` | medium medium medium | low low | express standard |
+
+**`closure` is exactly what rc5 ran.** Verified by expansion:
+`make print-timing-knobs` (a new target that prints every RESOLVED knob,
+including the derived ones) returns `CTS_FLOW_EFFORT extreme`,
+`CTS_SKEW_EFFORT extreme`, `SYN_GEN_EFFORT high`, `PLACE_TIMING_EFFORT` empty —
+the values already in force. Introducing the dial changes nothing about the
+default run, which is what makes it safe to introduce mid-programme.
+
+**What it deliberately does not touch.** No tier changes an optimisation TARGET,
+a view set, a derate, a budget or a gate. `express` is not "strict off": a fast
+run that skips the checks answers a different question from the one it was
+started to answer. The dial moves runtime and only runtime.
+
+### Every tier value was checked against the tool that has to accept it, and the check found the trap
+
+The obvious way to write an `express` tier is to put the word "express" in every
+slot. **That configuration is illegal and would have aborted CTS.** Measured,
+not assumed — Innovus 21.11 documentation for the two Innovus attributes, and a
+one-minute Genus session that set each attribute to each candidate value and
+read it back:
+
+| attribute | legal values | note |
+|---|---|---|
+| `design_flow_effort` | express, standard, extreme | |
+| `opt_skew_ccopt` | none, standard, **extreme** | **`express` is NOT a value here** |
+| `syn_generic_effort` | none, low, medium, high, express | **`extreme` REJECTED** |
+| `syn_map_effort` | none, low, medium, high, express | **`extreme` REJECTED** |
+| `syn_opt_effort` | none, low, medium, high, express, extreme | |
+
+Three of the five reject at least one of the two words that appear in the other
+attributes' enums, and no two of the five share the same set. `syn_opt_effort`
+takes `extreme` while its two siblings do not. **That is the whole argument for
+one dial in five lines**: the per-stage knobs are not a vocabulary, they are
+five vocabularies, and a human turning a run down by hand has five chances to
+pick a word the tool will reject — or, worse, to pick one that four accept and
+the fifth silently leaves alone.
+
+The tiers use `extreme`/`standard`/`express` where they are legal and
+`high`/`medium` where they are not, which is why `express` maps
+`opt_skew_ccopt` to `standard` and not to `express`.
+
+**Every stage knob stays individually overridable** — they are `?=` against the
+tier value, and a command-line assignment beats both, so
+`make cts FLOW_EFFORT=express CTS_SKEW_EFFORT=extreme` is legal and recorded.
+An unknown tier is a make-time `$(error)`, verified: `FLOW_EFFORT=bogus` stops
+with *"is not one of: express | balanced | closure"* before any tool starts.
+`CLK_FREQ_MHZ=abc` and `CLK_FREQ_MHZ=-5` stop the same way.
+
+`hooks/pre_cts.tcl` is where `FLOW_EFFORT` and `CLK_FREQ_MHZ` reach a manifest;
+`print-timing-knobs` is where the whole resolved set reaches a run log, and both
+launchers call it before their first stage. That closes a real gap:
+**`design.mk` is not a pinned input** — make reads it from the worktree when a
+stage starts — so two stages of one run can execute under two different sets of
+knobs, and until now nothing in the run directory would have recorded it.
+
+---
+## F21 — EVERY ECO THE LAST FOUR CANDIDATES NEEDED, AND WHAT IT WAS COMPENSATING FOR
+
+Read out of the candidates' own evidence records (`base_run`, `eco_tree`,
+`supersedes`), not reconstructed:
+
+| candidate | base | ECO tree | what the ECO did |
+|---|---|---|---|
+| **rc1** `gdsrun-20260826-rc1` | RTL | none | the unaided run. Signoff STA over its own routed database: **setup −0.049 / TNS −0.137 / FEP 4**, **hold −0.053 / TNS −2.309 / FEP 394** |
+| **rc2** `rc2-20260827` | rc1 | `build/rc2-20260827` | **hold ECO.** Supersedes rc1 "on TIMING, and on nothing else" |
+| **rc3fix** `rc3fix-20260828` | `holdfix-20260828` | `holdfix-20260828` | **hold ECO again**, redone after the RC-corner temperature fix. Left **setup at −0.001, FEP 1** |
+| **rc4** `rc4-20260829` | `setupclose-20260829` | `setupclose-20260829` | **setup ECO.** Three cell resizes, no new instances. "Supersedes rc3fix on SETUP ONLY … +0.015 / 0.000 / 0 with hold unmoved" |
+
+**Two distinct ECOs, three applications, and both causes are now flow defaults.**
+
+### The hold ECO was compensating for a CTS that had no hold target
+
+design.mk's own words: *"Nothing in this flow ever set an optimisation target,
+in place, CTS or route — grep `opt_setup_target_slack` and
+`opt_hold_target_slack` across `ASIC/asic-toolkit/flow/` and
+`ASIC/genus-innovus/scripts/` before 2026-08-29 and there are no hits."* Every
+stage of rc1 was driven to exactly zero hold slack, so hold arrived at signoff
+at −0.053 with 394 endpoints and had to be bought back by the signoff optimiser
+after the fact.
+
+rc5 set `CTS_OPT_HOLD_TARGET=0.080` and post-CTS hold went **−0.703/8893 →
++0.003/0**, in every path group, against four hold views. **The cause is fixed
+and the fix is enormous.** What was missing was not the repair — it was that the
+flow then deleted it (F12), which is what F15/F16 close.
+
+### The setup ECO was compensating for two things, both already fixed and neither by an ECO
+
+1. **`ROUTE_OPT_MODE` defaulted to `hold`**, so post-route setup optimisation
+   never ran. Measured across all 14 runs that left a route manifest:
+   `opt_mode=hold` → setup FEP 1166…1791; `setup_then_hold` → 0,0,0,0,0,3,101.
+   Written into design.mk on 2026-08-25.
+2. **`set_max_transition 0.300 [current_design]` did not exist.** Its own block:
+   *"Capping A[11] at 0.300 drops its setup requirement 0.7487 → 0.7233, worth
+   25 ps, which takes that path from −0.001 to +0.024 and **removes the
+   post-route setup ECO entirely**."* Added 2026-08-29. −0.001/FEP 1 is exactly
+   the endpoint rc4's ECO resized.
+
+rc5's route reached **setup +0.105 / 0 failing endpoints with no ECO of any
+kind**, which is better than rc4 achieved WITH one (+0.015). The cause is fixed.
+
+### Exactly what rc4's three resizes were — and a claim withdrawn before it was made
+
+Read out of `setupclose-20260829/eco1/setupfix1_innovus.eco` rather than out of
+the apply script's prose, because the two are about different things:
+
+    eco_update_cell -insts {..._u_soc_u_tidelink/g57706} -cells FA1D1
+    eco_update_cell -insts {..._u_soc/g127940}           -cells CKND2D3
+    eco_update_cell -insts {..._u_soc_u_tidelink/g33463} -cells OAI21D2
+
+Two in `u_tidelink`, one in `u_soc`. **They are NOT in `u_link_clk_div`** —
+that module appears in `eco/a1_apply_eco.tcl` as the `dont_touch` FENCE the ECO
+had to honour, and a first reading of this record here took the fence for the
+location and was about to write down that the link-clock divider was the
+critical path in both directions. It is not. `u_link_clk_div` is where rc5
+attempt 7's worst EARLY path ends; rc4's setup ECO touched three cells
+elsewhere. Recorded because the wrong version of this sentence is a plausible
+thing for the next reader to reconstruct from the same two files.
+
+The generated instance names (`g57706`, `g127940`, `g33463`) are also not stable
+across a re-synthesis, which is a second reason an ECO expressed this way cannot
+be carried forward and a flow default can.
+
+### ECOs NOT in scope here, listed so the census is complete
+
+`eco-20260826-via3r4` (marker-driven VIA3.R.4 post-route geometry edit) and
+`eco-20260826-fallback-risertrim` are physical-verification ECOs, not timing.
+rc4's evidence still carries VIA3.R.4 as requiring the post-route arm on every
+stream. That is somebody else's workstream and nothing here changes it.
+
+---
+
+## F22 — THE RESIDUAL HOLD ENDPOINTS ARE NOT MEMORY D PINS, AND THAT CHANGES THE REMEDY
+
+A standing characterisation of this design's un-closable hold says the residue
+is *"D pins of compiled memories — unresizable, with buffering exhausted (12,831
+buffers bought 14 endpoints and zero worst-case movement)"*, and it is the
+premise for "more buffering is not the answer, clock-side work is".
+
+**On rc5 attempt 7 it is not true.** Parsing all three per-view post-fill hold
+reports (`hold_06_post_fill_{default_analysis_view_hold,av_ml_libset_hold,av_ltfix_libset_hold}.rep`):
+
+    default_analysis_view_hold   59 paths   av_ltfix 59   av_ml 55
+    path group                   clk 57 / D2D_RX_CLK_0 1 / clock_gating_default 1
+
+    CAPTURE CELL AT EVERY ENDPOINT, from the D-pin row of each path table:
+       50  DFCNQD1        ordinary standard-cell flop
+        7  DFCND1         ordinary standard-cell flop
+        1  DFCNQD2        ordinary standard-cell flop
+        1  <unparsed>
+        0  compiled memories.  NOT ONE.
+       (0 endpoint names even contain "sram")
+
+    THREE STARTPOINTS ACCOUNT FOR 57 OF THE 59:
+       33  u_soc/u_dap_ss_0_u_dap_ss_u_arb_current_reg/CP
+       14  ..._multicore_target_output_ctrl_dbg_group_11_u_output_arb_no_port_reg/CP
+       10  ..._multicore_target_output_chip_core_dbg_window_15_u_output_arb_no_port_reg/CP
+
+The worst path is an ordinary `SDFCNQD4` launching into an ordinary `DFCNQD1` in
+the AHB interconnect through six buffers — a resizable cell at each end and six
+resizable cells between them — and its problem is visible in one line of the
+report:
+
+    Capture   Net Latency  1.264 (P)
+    Launch    Net Latency  0.792 (P)      <- capture arrives 472 ps LATER than launch
+
+That is clock skew on a reg-to-reg path, not an immovable macro setup window.
+**This is a fan-out-of-three problem**, not a distributed one, and it is
+downstream of route's setup pass: hold entering `05_route_opt` was +0.003/0.
+
+Two consequences. First, the old characterisation should not be used to argue
+against buffering on THIS residue. Second, and more usefully: **57 of 59 hold
+violations sharing three launch flops is a shape that a targeted fix can
+address**, where 8,893 distributed ones was not. If Run A's `setup_then_hold`
+does not close them, they are three clock endpoints to look at, not a
+population.
+
+**Where the old characterisation may still be right**: it was made about the
+shipping candidate's signoff hold reports
+(`build/setupclose-20260829/sta_rc3setup/reports/`) — a different database, at
+Tempus, after a hold ECO. Both can be true. What is not safe is carrying the
+conclusion across.
+
+---
+## F23 — WHAT A CLEAN ROUTE-STAGE EXIT NEEDS THAT IS NOT TIMING
+
+Stated before the results so that no number below is read as more than it is.
+`4_route.tcl:170-182` defaults **every** signoff budget to 0 and this project
+runs `ROUTE_STRICT=1`, so the route stage stops on the first non-zero row of:
+
+    check_drc            hold FEP        PG opens
+    setup FEP            max_transition  PG dangling wires
+    max_capacitance                      missing power vias
+
+rc5's five failing rows were: 380 PG vias, 51 PG opens, 727 dangling PG wires,
+hold FEP 66, max_transition FEP 195. **The last two are this workstream. The
+first three are the standing PG known-bad that rc4's own evidence record names
+by exactly those numbers, and nothing here touches them.** A run in which every
+timing row reaches zero still hard-fails the route stage on the PG rows. That
+is the correct behaviour of a gate with a budget of zero, and it is why the
+verdict below is reported per row rather than as pass/fail.
+
+---
+## F24 — THERE IS A FIFTH SETUP CORNER IN THE MMMC, IT IS NEVER ACTIVATED, AND rc5 FAILS IT BY 980 ENDPOINTS
+
+The brief for this work asks for "clean setup AND hold at **every corner**". That
+turns out to require first establishing what the corners are, because the answer
+is not the same at CTS, at route, and in the mmmc.
+
+    the mmmc DEFINES 7 analysis views
+    CTS activates            2 setup + 4 hold   (pre_cts prints this)
+    route activates          1 setup + 3 hold   (ROUTE_VIEWS_SETUP / _HOLD)
+    the signoff policy REQUIRES 1 setup + 3 hold
+    so 3 defined views are active in NO stage of a route:
+        typical_analysis_view        (TT, active at CTS only)
+        typical_analysis_view_setup  <- never
+        typical_analysis_view_hold   <- never
+
+Measured on rc5's routed database by activating every defined view and running
+`report_timing_summary -expand_views` (nothing written back; the session only
+reads):
+
+    View : default_analysis_view_setup    +0.105     0.000     0    <- the run's own number
+    View : typical_analysis_view          +2.004     0.000     0    <- TT, easy
+    View : typical_analysis_view_setup    -0.569  -183.968   980    <- ***
+    View : ALL                            -0.569  -183.968   980
+
+### What that view is, and why it can be worse than the "worst" one
+
+From the mmmc:
+
+    typical_analysis_view_setup -> default_delay_corner_ocv
+        early_timing_condition  tc_min   (default_libset_min)
+        late_timing_condition   tc_max   (default_libset_max)
+        rc_corner               default_rc_corner_typical
+
+    default_analysis_view_setup -> default_delay_corner_max
+        early/late              tc_max
+        rc_corner               default_rc_corner_worst
+
+So it is **slow cells with TYPICAL interconnect** against the signed-off **slow
+cells with WORST interconnect**. That it is harsher is counter-intuitive for
+about ten seconds and then obvious: worst-case RC slows the data path AND the
+capture clock, and a slower capture clock HELPS setup. Take the RC back to
+typical and the clock network speeds up while the cells stay slow. The mixed
+corner is exactly the case that a two-corner sign-off cannot see, which is why
+it is a standard 65 nm corner and not an exotic one.
+
+### STATED AS AN OBSERVATION, WITH THE THING THAT WOULD MAKE IT A RESULT
+
+**What is measured:** activating that view on rc5's routed database reports
+−0.569 ns and 980 failing endpoints.
+
+**What is NOT established, and must be before anyone acts on the number:**
+whether `default_rc_corner_typical` is extraction-backed on that database. The
+flow extracts for the corners it activates; this one it never activates. The
+circumstantial evidence is good — `typical_analysis_view` uses the SAME rc
+corner and returns a sane +2.004, and `default_analysis_view_setup` reproduces
+the flow's own +0.105 to the digit, so the session is not reading nonsense — but
+"the neighbouring view looks sane" is not the same as `report_annotated_parasitics`
+saying so for this one. **That is one command on the next routed database.**
+
+**Whichever way that lands, the design was never optimised against this view**,
+so a bad number here is not a regression; it is a corner that has never been
+asked for. Three ways to close the question, cheapest first:
+
+1. Confirm or refute the extraction, as above.
+2. If real: add `typical_analysis_view_setup` to `ROUTE_VIEWS_SETUP` and let the
+   post-route setup pass see it. Note the coupling — `sta_policy.json`'s
+   `expected_clock_count` is `26 x (setup views + hold views)` and would move
+   from 104 to 130; that policy file is not this session's to change, so this
+   is a REQUEST, not a change.
+3. If it is decided the corner does not apply to this product, delete the view
+   from the mmmc. A view that is defined and never activated is the worst of
+   both worlds: it looks like coverage and provides none.
+
+**Nothing here was changed on account of it.** Activating a fifth setup view on
+the strength of an unconfirmed extraction, in the same run that changes the
+optimisation order, would make the run unattributable.
+
+---
+## F25 — `pkill -f` HAS THE SAME SELF-MATCH TRAP AS `pgrep -f`, AND IT KILLED SIX OF MY OWN WATCHERS
+
+Recorded because this project already carries the `pgrep -f <run tag>` finding
+("never use it to test liveness — it matches your own command line") and this is
+the same defect wearing different clothes, found the hard way at 01:31 today.
+
+To free CPU for the two real runs I stopped an optional reporting job with
+
+    pkill -f 'pc_rc5b'
+
+`pc_rc5b` was the Innovus `-log` name. It was ALSO a substring of
+`$SP/percorner/pc_rc5b.stdout`, which appeared in the command line of every
+shell that was waiting on that job's output — and of several that were waiting
+on the two P&R runs and merely mentioned the same path. Six watchers died with
+signal 16 (`exit 144`) alongside the one intended target.
+
+**Nothing that mattered was lost, and the reason is worth more than the
+incident.** Liveness was re-established the way the project's own note says to,
+by two independent artefacts rather than by a process pattern:
+
+    $ kill -0 $(cat .run_a.pid)   -> RUN_A pid=57991 ALIVE
+    $ kill -0 $(cat .run_b.pid)   -> RUN_B pid=83412 ALIVE
+    $ stat -c '%y' logs/run_a.log -> 01:31:22   (40 s old)
+    $ stat -c '%y' logs/run_b.log -> 01:32:02   (1 s old)
+
+**The generalisation.** `pgrep -f` is not the defect; `-f` is. Any tool that
+matches against a full command line will match the command lines of the things
+watching it, because a watcher's arguments necessarily contain the watched
+thing's name. `pkill -f`, `pgrep -f`, `ps | grep`, and a `killall` pattern all
+share it. Kill by pid from a file the job wrote, or not at all.
+
+### And the run harness's own preflight has the false-positive half of it
+
+`preflight.sh` check 6 is
+
+    if pgrep -f "RUN_TAG=$(basename "$RUN")" > /dev/null 2>&1; then
+        fail "a make for RUN_TAG=$(basename "$RUN") is already running"
+
+Staging a fourth run directory in a shell whose command line contained
+`RUN_TAG=rc6route-20260831` (it was writing that string into `pins.mk`) made
+preflight refuse to launch, naming a make that did not exist:
+
+    REFUSE: a make for RUN_TAG=rc6route-20260831 is already running
+    == preflight FAILED -- not starting ==
+
+Harmless here — every other check had already passed and the launcher was run
+separately — but it is a **gate that fires on the operator rather than on the
+condition**, and the failure mode is a refusal, so it reads as a real conflict.
+The condition it is trying to test is better answered by the `.launch.pid` /
+`.run_*.pid` files the launchers already write plus `kill -0`, which is the same
+remedy as above. `preflight.sh` is copied per run directory rather than owned by
+this session's file set, so this is **reported, not changed**.
+
+---
+## F26 — THE GUARD WORKED, AND THE FIRST THING IT PROVED IS THAT THE PREVENTION IN FRONT OF IT DOES NOT
+
+This is the result of `rc6hold-20260831`, the controlled experiment: rc5's
+placed database, rc5's pinned tree with exactly ONE file changed
+(`hooks/post_cts.tcl`), read via `IN_RUN_TAG=rc5vt-20260829`.
+
+### Five measurements reproduced before the guard did anything
+
+    stage                                attempt 6/7            rc6hold
+    02_cts                     setup 0.076/0  hold -0.701/9122  IDENTICAL
+    after ccopt_design         setup 0.076/0  hold -0.701/9122  IDENTICAL
+    after opt_design -post_cts setup 0.050/0  hold -0.703/8893  IDENTICAL
+    after ...-post_cts -hold   setup 0.066/0  hold +0.003/   0  IDENTICAL
+                               tran -6.022    cap  -0.031       IDENTICAL
+
+Four QOR triples and two DRV numbers, to the digit, across three runs on two
+days. **This stage of this flow is deterministic**, which is what makes
+everything below a measurement rather than an anecdote.
+
+### The guard's own trace
+
+    CTS: recovery guard: before   hold wns 0.003 fep 0 | setup wns 0.066 fep 0
+    CTS: recovery guard: budget   hold wns may fall by 0.010 ns and hold fep may rise by 0
+    CTS: recovery guard: opt_area_recovery = false (was true)
+    CTS: recovery guard: CTS_RECOVERY_DELETE_INSTS is blank - leaving opt_delete_insts at the tool default
+    ... opt_design -post_cts, 12 min 38 s ...
+    CTS: recovery guard: opt_area_recovery restored to true
+    CTS: QOR after post-hold setup recovery | setup 0.078/0 | hold -0.746 / 7728
+    CTS: recovery guard: LEDGER  setup gained 0.0120 ns | hold spent 0.7490 ns and 7728 endpoint(s)
+    CTS-WARN: CTS-GUARD: THE SETUP RECOVERY PASS OVERSPENT ITS BUDGET.
+
+The before-measurement cost nothing (it read `::pnr_last`, which the stage had
+just filled). The attribute was set, proven, used and put back. The budget was
+declared before the pass ran, in the units it would be judged in. The verdict
+came out of a comparison, not out of a threshold someone tuned afterwards.
+
+### AND `opt_area_recovery` IS NOT THE MECHANISM
+
+    attempt 6   opt_area_recovery at its inherited value   hold +0.003/0 -> -0.700/8718   density 85.28 -> 80.58
+    rc6hold     opt_area_recovery PROVEN false             hold +0.003/0 -> -0.746/7728   density 85.49 -> 81.31
+
+**Same disaster, one variable, attribute off.** 12 ps of setup for 749 ps of
+hold instead of 16 ps for 703. Utilisation still collapsed by 4.2 points, which
+means **cells were still deleted** while the attribute documented as controlling
+buffer deletion was demonstrably false.
+
+The vendor-documentation argument in F15 was a good argument. It was specific,
+it was quoted, it matched the shape of the evidence, and it is refuted. Two
+things survive it and one does not:
+
+* **SURVIVES:** `opt_hold_target_slack` really is inert during setup repair
+  ("hold analysis only … during setup violation repair … the hold target slack
+  value is 0"). Nothing in `opt_design -post_cts` is protecting hold. That is
+  still why a budget outside the tool is needed.
+* **SURVIVES, and is new:** the attribute was found at `true` — the most
+  aggressive of its three settings — and **nothing in this project sets it**.
+  It arrives with the database or a step file. The guard's read-back is the
+  first time anyone here has known its value.
+* **DOES NOT SURVIVE:** that area recovery is what deletes the buffers.
+
+**Where to look next, in order.** `opt_delete_insts` (default `true`, exposed as
+`CTS_RECOVERY_DELETE_INSTS`, deliberately not set in this run so that the area
+attribute could be tested alone) is the obvious next single variable — the same
+experiment, one knob, ~2 h on the same placed database. Below that, GigaOpt's
+`WnsOpt`/`AreaOpt` phases perform their own footprint management, and the
+density fell across exactly those phases in this run's log (85.49% at the start
+of `AreaOpt #6`, 81.31% by `WnsOpt #8`).
+
+### WHAT THIS SAYS ABOUT THE DESIGN OF THE GUARD
+
+The three layers were not redundancy for its own sake, and this run is why:
+
+| layer | verdict |
+|---|---|
+| **1 prevention** (`opt_area_recovery false`) | **failed.** Took, proven, restored — and did not prevent |
+| **2 budget** (measure before, measure after, compare) | **worked.** Caught 749 ps and 7,728 endpoints against a declared 10 ps / 0 |
+| **3 repair** (re-run the hold pass) | see below |
+
+A design that had relied on layer 1 — which is what "set the attribute the
+vendor documentation names and move on" would have produced — would have
+shipped a CTS database with hold at −0.746 and 7,728 failing endpoints, and
+nothing in the log would have said so. **The layer that mattered is the one that
+measures, and the reason it mattered is that the layer above it was wrong.**
+
+### Layer 3: the repair, and the number the whole night was for
+
+    CTS: QOR after recovery-guard hold repair | setup 0.062/0 | hold +0.004 / 0
+    CTS: recovery guard: after repair  hold wns 0.004 fep 0 (net vs before: -0.0010 ns, 0 endpoints)
+    CTS: recovery guard: REPAIRED - hold is back
+
+The repair pass rebuilt what the recovery pass removed — 81.31% → 85.46%
+density, WNS −0.746 → +0.004 over 12 iterations — and finished with **more**
+hold margin than the database had before the recovery pass touched it, and one
+endpoint group short of nothing.
+
+### Three configurations, one placement, one variable each time
+
+| 03_cts_opt | setup | hold | density | pass ran? |
+|---|---|---|---|---|
+| attempt 6 — recovery unguarded | +0.082 / 0 | **−0.700 / 8718** | 80.575% | yes |
+| attempt 7 — `CTS_POST_HOLD_SETUP=0` | +0.066 / 0 | +0.003 / 0 | 85.282% | no |
+| **rc6hold — recovery GUARDED** | **+0.062 / 0** | **+0.004 / 0** | **85.46%** | **yes** |
+
+**The guarded configuration is the only one that gets both.** It ends with the
+best hold of the three and 0 failing endpoints in either direction, it keeps
+more cells than either, and unlike attempt 7 **the DRV-repair pass actually
+ran** — which is the thing the recovery pass exists for and the thing attempt 7
+gave up to save the hold repair.
+
+The price is 4 ps of setup against attempt 7 (+0.066 → +0.062) and about 25
+minutes of extra CTS runtime for the wasted pass plus its repair. Against
+attempt 6 it is 20 ps of setup for 704 ps of hold and 8,718 endpoints, in the
+direction that matters.
+
+### AND IT IS AN HONEST WIN ONLY BECAUSE THE MEASUREMENT WAS FORCED
+
+Nothing in this outcome came from the fix being right. The prevention was wrong.
+What produced a good database is that the hook was required to state a budget
+before the pass ran, to measure on both sides of it, and to act on the
+comparison — and every one of those three was made non-optional by the fixture
+suite before the tool ever saw them. **A guard whose diagnosis is wrong still
+works if it is a guard and not an assertion.**
+
+### And the DRV benefit — the reason to keep the pass at all — is real and measurable
+
+`03_cts_opt` DRV, the two configurations over the same placement:
+
+| | max_transition total | IO ring | internal | worst internal | max_capacitance |
+|---|---|---|---|---|---|
+| attempt 7 — pass OFF | 455 | 96 | **359** | **−0.698** | present, −0.031 |
+| **rc6hold — pass GUARDED** | 338 | 96 | **242** | **−0.324** | **0 / N/A** |
+
+**117 internal max_transition endpoints repaired, the worst internal violation
+more than halved, and max_capacitance taken to zero** — on a database whose hold
+is +0.004 / 0. Attempt 7 bought its hold by handing route 359 internal
+transition violations, a −0.698 worst case and a live capacitance violation;
+rc6hold hands route 242, −0.324 and none. **The IO-ring count is 96 in both**,
+which is F18's constant behaving like one.
+
+That is the trade the original `post_cts.tcl` rationale was reaching for, and it
+is the first time this design has actually got it: the pass repairs the DRV a
+heavy hold pass leaves behind, and does not get to pay for it with the hold
+repair. Not because the pass was made safe — it was not — but because what it
+spent was measured and taken back.
+
+
+### Runtime
+
+    == STAGE cts starting 2026-08-31T00:47:39 ==
+    == STAGE cts done     2026-08-31T02:35:56 ==   1 h 48 min
+
+against attempt 7's 68 minutes for the same stage. Roughly 25 min of that is the
+guard's wasted recovery pass plus its repair; the rest is contention — a full
+RTL synthesis and a second P&R were running on the same 16-core host throughout.
+The guard's own overhead is two `report_timing_summary` calls, one of which is
+free (it reads the triples the stage had already produced).
+## F27 — rc6full-20260831: BOTH CONSTRAINT CHANGES CONFIRMED IN THE REAL FLOW
+
+`rc6full-20260831` is the RTL→GDS run: rc5's pinned tree with four files
+changed. Its synthesis ran 01:02:10 → 02:55:39 (1 h 53 min) and place started
+immediately. Two lines out of its own log settle two things that had until then
+only been proven in probes.
+
+**The frequency derivation, in Genus, on the real 3,231-line constraint set:**
+
+    constraints.sdc: CLK_PERIOD=10.0 ns (SWDCLK 40.0) uncertainty setup=0.35 hold=0.05 inter=0.1
+
+Every derived value is the literal it replaced. `read_sdc` accepted the `proc`,
+the `format`/`expr` arithmetic and the `$::env` reads, and the run went on to
+elaborate 26 clocks and write a gate netlist. **The default is a fixed point in
+the tool, not just in a stub interpreter.**
+
+**The IO-ring DRV override, in Innovus, through `read_mmmc` at `init_design`:**
+
+    mmmc: IO-ring DRV override file included (../inputs/pnr_io_drv.sdc)
+    pnr_io_drv.sdc: drv_limit_override enabled (reads back true)
+    pnr_io_drv.sdc: max_transition 7.000 ns -override on 52 port(s) and 48 pad PAD pin(s)
+
+Exactly the two counts the `update_constraint_mode` probe predicted, from the
+constraint-mode path, in the stage that actually reads the mmmc. The relative
+path resolved, the `.sdc`-token trap in `2_place.tcl:275` did not fire, and
+`timing_constraint_enable_drv_limit_override` read back `true` in a session
+nobody had set it in by hand.
+
+**One amendment is on the record.** `AMENDMENT-01.txt` in that run directory
+records that `pinned/genus-innovus/inputs/pnr_io_drv.sdc` was replaced at
+01:10:34, while synthesis was running and before any stage had read it — the
+`get_pins`-returns-a-collection fix. `PRE_RUN_MANIFEST.txt` is deliberately left
+un-restaged so a `pin_audit` diff still shows it.
+
+### And the IO-ring exemption shows up in the first timing number of the run
+
+`rc6full`'s place stage, against rc5's same stage:
+
+    stage            rc5vt-20260829        rc6full-20260831
+    01b_place_opt    tran WNS -6.023       tran WNS -0.030
+                     (98 IO + 2 internal)  cap N/A
+
+−6.023 is `uPAD_I2C_SDA/PAD` — the 100 pF open-drain bus pin that no optimiser
+can reach. With the override in force the worst max_transition in the whole
+design at that stage is **−0.030 ns on an internal pin**, which is a number the
+flow can act on. The DRV column stops being dominated by a constant and starts
+reporting the design.
+
+**That is objective 1's max_transition row answered at its root**: not by
+relaxing a gate, but by taking a design-scope rule off 96 pins it was never
+written for, on the side of the flow that has the mechanism to do it.
+
+---
+
+## F28 — ROUTE: THE ORDER FIX CLOSES HOLD AND TRADES SETUP FOR IT. NEITHER ORDER CLOSES BOTH.
+
+`rc6hold`'s route ran `ROUTE_OPT_MODE=setup_then_hold` with
+`ROUTE_OPT_SETUP_RECOVERY=auto`, against rc5's `hold_then_setup` + `true`. Same
+design, same placement, same CTS database lineage.
+
+    stage                       rc5 attempt 7            rc6hold
+    post-cts (as read)   setup +0.066/0  hold +0.003/0   setup +0.062/0  hold +0.004/0
+    04_route             setup -0.400/315 hold +0.003/0  setup -0.316/218 hold +0.003/0
+    05_route_opt         setup +0.105/0  hold -0.099/66  setup -0.059/42 hold +0.003/  0
+
+**Three things are settled by this and one is not.**
+
+### 1. The order change did exactly what it was predicted to do
+
+rc5's last pass was setup and it left **66 failing hold endpoints with nothing
+after them**. rc6hold's last pass is hold and it leaves **0**. Hold at route is
+closed — `+0.003 / 0 failing endpoints across all three active hold views` — for
+the first time on a routed database of this design without an ECO.
+
+### 2. The CTS fix improved what route was handed, measurably
+
+`04_route` setup went **−0.400/315 → −0.316/218**: 84 ps and 97 endpoints better
+before the optimiser did anything, because the guarded CTS recovery pass had
+already repaired DRV and recovered setup. That is the pass paying for itself
+downstream.
+
+### 3. AND THE SEQUENTIAL TWO-PASS STRUCTURE CANNOT CLOSE BOTH DIRECTIONS
+
+This is the honest headline and it must not be dressed up. Whichever pass runs
+last wins:
+
+    rc5   ...-hold then -setup   setup +0.105 / 0     hold -0.099 / 66
+    rc6   ...-setup then -hold   setup -0.059 / 42    hold +0.003 /  0
+
+The final hold pass cost ~124 ps of setup and created 42 failing setup
+endpoints, and **`ROUTE_OPT_SETUP_TARGET=0.110` being live during it did not
+prevent that** — which is a real result about that knob, not a configuration
+mistake. It is experiment D's warning reproduced with the targets in place.
+
+rc6 is nonetheless the better database of the two — 42 failing endpoints against
+66, and its failures are in setup, which this project's own measurements call
+"cheap and sharp" to repair, rather than in hold, which they call "expensive and
+blunt". But **"better" is not "closed", and the objective was closed.**
+
+### THE EXPERIMENT THAT FOLLOWS FROM IT, AND IT IS RUNNING
+
+If the problem is that two sequential passes each undo the other, the remedy is
+the arm that does not sequence them: `opt_design -post_route -setup -hold`,
+i.e. `ROUTE_OPT_MODE=setup_hold`, which the toolkit already supports and this
+design has never run. **`build/rc6route-20260831` is that run** — route only,
+from rc6hold's own cts database (`IN_RUN_TAG=rc6hold-20260831`), one variable
+changed on the command line, launched at 03:46. Its `05_route_opt` line against
+rc6hold's is a one-variable comparison on one CTS database, which is the same
+standard the CTS result above was held to.
+
+**Its result is not in this document.** If it is not appended below, it had not
+finished when this was written, and the route half of objective 1 stands at
+"hold closed, setup 42 endpoints short, and the decisive experiment in flight".
+
+---
+
+## SETUP AND HOLD AT EVERY CORNER — rc6hold-20260831, `05_route_opt`
+
+The active view set a routed database carries is what `ROUTE_VIEWS_SETUP` /
+`ROUTE_VIEWS_HOLD` last issued: **1 setup + 3 hold**. Those are the corners the
+signoff policy requires (`sta_policy.json`: `required_setup_views`,
+`required_hold_views`) and the ones every number below is over.
+
+| corner | libset / RC | check | rc5 attempt 7 | **rc6hold** |
+|---|---|---|---|---|
+| `default_analysis_view_setup` | tc_max / rc_worst | setup | **+0.105 / 0** | −0.059 / 42 |
+| `default_analysis_view_hold` | tc_min / rc_best | hold | −0.099 / (of 66) | **+0.003 / 0** |
+| `av_ml_libset_hold` | FF 1.32 V 125 C | hold | −0.099 / (of 66) | **+0.003 / 0** |
+| `av_ltfix_libset_hold` | PVT-corrected −40 C IO | hold | −0.099 / (of 66) | **+0.003 / 0** |
+| aggregate (`View : ALL`) | | setup | +0.105 / 0 | −0.059 / 42 |
+| | | hold | −0.099 / **66** | **+0.003 / 0** |
+
+`reports/hold_05_route_opt.rep` — `report_timing -early -max_paths 20000
+-max_slack 0` over the active hold views — contains **zero violating paths**.
+That is the per-view artefact, not the aggregate, and it is the first time this
+design has produced it from the default flow.
+
+**Two corners are defined and NOT in this table**, and the omission is the
+flow's, not this measurement's: `typical_analysis_view` (active at CTS, not at
+route) and `typical_analysis_view_setup` (active nowhere). See F24 — rc5 fails
+the latter by 980 endpoints when it is activated by hand, and whether that
+number is extraction-backed is the one open question this work did not close.
+
+---
+
+## SCORECARD AGAINST THE FOUR OBJECTIVES
+
+| | objective | verdict |
+|---|---|---|
+| **1** | Clean setup AND hold at every corner, by default, no ECO | **HALF DONE, and the half that is done is the half that was the headline.** At CTS both directions close: setup +0.062/0, hold +0.004/0 over four hold views, with the DRV-repair pass run. At route **hold closes for the first time** (+0.003/0 over three hold views, 0 violating paths in the per-view report) and setup does not (−0.059/42). No ECO was applied anywhere. `max_transition` is answered at its root (F18/F27: −6.023 → −0.030 at place). |
+| **2** | Configurable target clock frequency | **DONE.** `CLK_FREQ_MHZ` is the knob; `CLK_PERIOD` derives from it; the setup uncertainty, the inter-clock uncertainty and the port-delay budget derive from the period. At the default the constraint stream is byte-identical (35 lines move at 8 ns where 3 moved before), and Genus confirms it end to end — `read_sdc` accepts it and `write_sdc` carries the derived values into the file P&R reads. |
+| **3** | Tunable effort level | **DONE.** `FLOW_EFFORT ∈ {express, balanced, closure}` over seven per-stage knobs in five different vocabularies; `closure` expands to exactly what rc5 ran; every tier value checked against the tool that must accept it, which found that the naive all-`express` tier is illegal. |
+| **4** | Minimise ECOs | **DONE as analysis; the hold half is now demonstrated.** Both ECO causes identified (F21): the hold ECO compensated for a CTS with no hold target — now closed at CTS AND kept through route; the setup ECO compensated for `ROUTE_OPT_MODE=hold` plus a missing design-scope `max_transition`, both already fixed. rc6hold reached its numbers with **no ECO of any kind**. |
+
+### WHICH CORNERS STILL DO NOT CLOSE, AND WHY
+
+1. **`default_analysis_view_setup` at route: −0.059 ns, 42 endpoints.** Because
+   the last post-route pass is the hold pass and it spends setup, and
+   `ROUTE_OPT_SETUP_TARGET=0.110` live during that pass did not stop it. Neither
+   sequential order closes both (F28). The remedy under test is
+   `ROUTE_OPT_MODE=setup_hold`; `build/rc6route-20260831` is running it.
+2. **`typical_analysis_view_setup`: −0.569 ns, 980 endpoints — but no stage of
+   any run has ever activated or optimised against it** (F24), and whether its
+   RC corner is extraction-backed is unconfirmed. One command settles it.
+3. **The route stage will still hard-fail** even with every timing row at zero,
+   on 380 missing PG vias, 51 PG opens and 727 dangling PG wires (F23). Those
+   are the standing PG known-bad and are not this workstream's.
+4. **Nothing here is signoff.** Every number is Innovus's own. rc4's numbers
+   that these are compared against are Tempus. `ASIC/sta/run_sta.sh` exists,
+   works, takes ~15-30 min and needs a database 20 minutes cold; it was not run
+   on rc6hold because route had not finished writing one.

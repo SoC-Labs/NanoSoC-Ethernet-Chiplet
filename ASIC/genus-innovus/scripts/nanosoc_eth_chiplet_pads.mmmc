@@ -332,9 +332,52 @@ create_delay_corner -name typical_delay_corner\
    -late_timing_condition {tc_typ}\
    -rc_corner default_rc_corner_typical
 
+# ── THE IO RING'S SLEW LIMIT, ADDED AS A SECOND CONSTRAINT FILE ────────────
+#
+# The list below gained a second entry on 2026-08-31. The first is still the
+# Genus-written consolidated constraint file and still carries everything the
+# design is timed against. The second is P&R-only and does exactly one thing:
+# it re-states the maximum transition limit on the chip boundary using Innovus's
+# `-override`, which is the only mechanism that can beat the min() rule that
+# `set_max_transition 0.300 [current_design]` imposes on every pin in the
+# design including 96 pad-ring pins whose slew is an ASSERTION and cannot be
+# routed away. The project constraint file (inputs/, the one Genus reads) names
+# that remedy and cannot apply it, because Genus does not document -override.
+# Read the header of the second file for the measured population and for what
+# the exemption costs.
+#
+# ORDER MATTERS AND IS NOT ALPHABETICAL: -override only beats limits set BEFORE
+# it, so the boundary file must come second.
+#
+# THIS IS READ ONCE, AT init_design, IN THE PLACE STAGE ONLY. Neither 3_cts.tcl
+# nor 4_route.tcl calls read_mmmc -- they inherit the constraint mode from the
+# database they read. A change here therefore does NOT reach a run resumed at
+# cts or route; it needs place re-run. That is not a defect of this change, but
+# it has caught people, so it is written down next to the change.
+#
+# THE FILENAME IS DELIBERATELY NOT SPELLED IN THIS COMMENT.
+# flow/innovus/2_place.tcl:275 finds the constraint files by regexing this
+# WHOLE FILE for anything matching a dot-s-d-c token -- comments included -- and
+# then hard-fails if a match does not exist on disk. A worked example or a
+# "renamed from" note mentioning another one of those filenames would abort the
+# place stage before it read a single library.
+set __mmmc_sdcs [list ../outputs/nanosoc_eth_chiplet_pads_syn.sdc]
+set __io_drv     ../inputs/pnr_io_drv.sdc
+if {[file exists $__io_drv] && [file size $__io_drv]} {
+    lappend __mmmc_sdcs $__io_drv
+    puts "mmmc: IO-ring DRV override file included ($__io_drv)"
+} else {
+    puts "**WARN: mmmc: $__io_drv is missing or empty."
+    puts "**WARN:   The design-scope max_transition 0.300 will apply to the pad"
+    puts "**WARN:   ring as well, and this run will report ~96 max_transition"
+    puts "**WARN:   endpoints on ports and uPAD_*/PAD pins that nothing in the"
+    puts "**WARN:   design can fix. That is the pre-2026-08-31 behaviour, not a"
+    puts "**WARN:   new failure - but the signoff budget for max_transition is 0."
+}
+
 create_constraint_mode -name default_constraint_mode\
-   -sdc_files\
-    [list ../outputs/nanosoc_eth_chiplet_pads_syn.sdc]
+   -sdc_files $__mmmc_sdcs
+unset -nocomplain __mmmc_sdcs __io_drv
 
 create_analysis_view -name default_analysis_view_setup -constraint_mode default_constraint_mode -delay_corner default_delay_corner_max
 create_analysis_view -name default_analysis_view_hold -constraint_mode default_constraint_mode -delay_corner default_delay_corner_min

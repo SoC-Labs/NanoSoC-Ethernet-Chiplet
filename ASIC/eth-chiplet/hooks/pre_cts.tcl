@@ -89,8 +89,12 @@
 # ------------------------------------------------------------------------------
 # THE TWO VALUES, AND WHY THE LADDER RUNS DOWNHILL
 # ------------------------------------------------------------------------------
-#   CTS hold target   0.100     route hold target 0.080 (design.mk)
+#   CTS hold target   0.080     route hold target 0.080 (design.mk)
 #   CTS setup target  0.075     route setup target 0.110 (design.mk)
+#
+#   *** CORRECTED 2026-08-31. THE FIRST LINE SAID 0.100 AND design.mk SHIPPED
+#   *** 0.080, AND ONLY THE LOG SAID WHICH ONE RAN. See "WHY 0.100 AT CTS"
+#   *** below, which is now "WHY 0.080".
 #
 # HOLD DECREASES DOWNSTREAM, SETUP INCREASES. That asymmetry is measured, not
 # aesthetic. On this design:
@@ -108,10 +112,36 @@
 # LESS setup than route because a pre-route setup number is estimated-parasitic
 # and over-constraining it buys area rather than silicon.
 #
-# WHY 0.100 AT CTS. It is the route target plus the degradation the flow's own
-# stage table above shows between the end of CTS and the end of fill: 03_cts_opt
-# -0.003 to 06_post_fill -0.012 is 9 ps, rounded up to the next 10 ps. Nothing
-# more sophisticated is available, because no run has ever set this attribute.
+# WHY 0.080 AT CTS, AND WHAT THE 0.100 IN THIS PARAGRAPH USED TO BE.
+#
+# The original argument, kept because it is still the right SHAPE: the CTS
+# target should be the route target plus the degradation between the end of CTS
+# and the end of fill, which the stage table above puts at 9 ps (03_cts_opt
+# -0.003 to 06_post_fill -0.012), rounded up to the next 10 ps. That gives
+# 0.100. It ended with "Nothing more sophisticated is available, because no run
+# has ever set this attribute" -- and that sentence is the whole problem with
+# it: the 9 ps was measured on rc1, a run whose CTS had NO HOLD TARGET, so it is
+# the decay of a database that carried no hold repair to decay.
+#
+# THIS FILE NOW SAYS 0.080 BECAUSE 0.080 IS WHAT WAS MEASURED, AND IT DID NOT
+# MERELY PASS. rc5 attempt 7, four active hold views:
+#     after ccopt_design              hold -0.701 / 9122 failing endpoints
+#     after opt_design -post_cts -hold      +0.003 /    0 failing endpoints
+# Zero, in every path group, in every hold view. A target that closes hold
+# completely is not short of margin.
+#
+# AND THE NUMBER IS NO LONGER TYPED IN TWO PLACES. design.mk derives it:
+#     CTS_OPT_HOLD_TARGET = ROUTE_OPT_HOLD_TARGET + CTS_HOLD_DOWNSTREAM_MARGIN
+# with the margin defaulting to 0.000. Setting CTS_HOLD_DOWNSTREAM_MARGIN=0.020
+# reproduces the 0.100 this paragraph used to assert, in one place, recorded in
+# the manifest. Price it before raising it: 0.090 was costed at +6.7 utilisation
+# points and refused, and rc5 finished at 85.843% against a ~92.2% wall.
+#
+# WHAT IS STILL UNMEASURED, AND WHERE THE LADDER WOULD COME BACK. Nobody has yet
+# measured CTS-to-fill hold decay on a database that ENTERS route with hold
+# closed. rc5 could not: its own recovery pass deleted the repair before route
+# saw it (see hooks/post_cts.tcl's header). The first run that keeps the repair
+# through route is the first run that can put a real number on this margin.
 #
 # WHY 0.075 AT CTS, AND WHY THE SETUP TARGET IS SET AT ALL. It is set because
 # leaving it out would be an active choice for zero:
@@ -225,6 +255,21 @@ unset -nocomplain __setup_v __hold_v __av __n __e __v
 # say what it was asked for is a run whose numbers cannot be attributed. Blank
 # means LEAVE THE TOOL'S DEFAULT ALONE, for every one of them, so the whole hook
 # can be reduced to a no-op from design.mk without editing this file.
+# TWO KNOBS THIS HOOK DOES NOT USE AND DECLARES ANYWAY, so that the two things
+# that shape a whole run land in cts_manifest.txt beside the things that shape
+# one stage. Neither is read below; `opt` registers them and nothing else
+# happens. Added 2026-08-31 -- rc6hold-20260831 and rc6full-20260831 started
+# before it, so THEIR manifests do not carry these two lines; the resolved knob
+# set is in their run logs instead, from `make print-timing-knobs`.
+#   FLOW_EFFORT   the one dial over all seven per-stage effort knobs (design.mk
+#                 section 0d). Without it, a manifest records CTS_FLOW_EFFORT
+#                 and cannot say whether the whole run was turned down or only
+#                 this stage.
+#   CLK_FREQ_MHZ  the frequency the period was derived from. CLK_PERIOD alone
+#                 does not say whether it was asked for or defaulted.
+opt FLOW_EFFORT           ""    ;# recorded only
+opt CLK_FREQ_MHZ          ""    ;# recorded only
+
 opt CTS_FLOW_EFFORT       ""    ;# design_flow_effort      {express|standard|extreme}
 opt CTS_SKEW_EFFORT       ""    ;# opt_skew_ccopt          {none|standard|extreme}
 opt CTS_OPT_HOLD_TARGET   ""    ;# opt_hold_target_slack   ns
