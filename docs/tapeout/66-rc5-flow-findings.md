@@ -4200,3 +4200,86 @@ anyway:
   current base license 'tpsxl'` while deleting relative floorplan constraints,
   and then loads the design correctly — 371,349 instances. It is not a failure
   and it appears in every such run.
+
+---
+
+## F31 — THE THREE PG ROWS ARE ONE DEFECT, 355/25/551 OF IT IS GONE, AND THE REST HAS A FORMULA
+
+Full evidence, object by object, in **`docs/tapeout/67-pg-rows-diagnosed.md`**.
+It is a separate file and not another section here for a measured reason: this
+file is 239,759 bytes at HEAD against `check-vendor-collateral.sh`'s 262,144
+byte `file.size` threshold, so a 25 KB section would have made the publish gate
+fail on a size heuristic. **Whoever appends next has about 17 KB of headroom.**
+
+**The three rows.** `380` missing power vias, `51` PG opens (IMPVFC-200), `727`
+dangling PG wires (IMPVFC-94), all against a budget of 0, on every candidate.
+
+**They are one population and `power_plan.tcl` makes all of it.** The `Net ...`
+lines of both reports, sorted, are byte-identical across rc5vt, rc6hold,
+rc6route and rc6full — including a whole RTL→GDS rebuild — and the counts are
+the same on the `_fplan`, `_placed` and `_cts` databases as on `_routed`.
+Placement, CTS and routing contribute nothing. The mechanism is `route_special`
+drawing each core-pin and block-pin tap as a chain of collinear segments on
+different layers and not always via-ing them together; one such defect is
+counted once in the opens row, twice in the dangling row and twice more in the
+missing-via row.
+
+**What the objects are:**
+
+| row | decomposition |
+|---|---|
+| 51 opens | **the marker counts PIECES, not breaks** — proven four ways. 24 are VDDIO/VSSIO pad-pin taps, one per IO supply pad, on nets whose bus is carried by pad abutment; **2 are the bounding boxes of the whole VDD and VSS grids**; 23 are dead M3 corewires; 2 are short isolated rail clusters |
+| 727 dangling | every marker is a **zero-area point** — a wire END, not a wire. 678 sit on a wire that is live elsewhere and are electrically inert; 46 are the two ends of those same 23 M3 islands; 3 are via landings |
+| 380 vias | same-net cross-layer overlaps with no via. 71% are one of two shapes (0.35×0.33 and 0.35×0.35 µm) and the parties are two `route_special` risers crossing, not a stripe missing the grid |
+
+**The fix — `power_plan.tcl:1189`,** a marker-driven `update_power_vias
+-add_vias 1 -area {...}` pass ahead of the `fix_via` block that already sits
+below it. Proven by slicing the committed bytes out of the file and running them
+against a copy of rc5vt's own `_fplan`:
+
+| | before | after |
+|---|---:|---:|
+| missing power vias | 367 | **12** |
+| PG opens | 51 | **26** |
+| dangling PG wires | 727 | **176** |
+| `check_drc` | 3 | 9 |
+| PG special vias | 169,736 | 171,135 (+0.8%) |
+
+Discrimination: deleting **one** PG via from the baseline moves the missing-via
+row 367→368 and the dangling row 727→728, so the falls are real. All three
+guards were tested, including an unwritable `REPORT_DIR`, where the pass refuses
+rather than reading an unparseable report as "no sites".
+
+**The budget, for `design.mk`'s owner** — two formulas and one declared ratchet,
+none of them a run's count:
+
+| knob | value | reason | withdraw when |
+|---|---:|---|---|
+| `ROUTE_BUDGET_OPENS` | **24** | one marker per IO supply pad: `prov.pads.VDDIO 12` + `prov.pads.VSSIO 12`. A function of the pad census. VDD and VSS contribute 0 when each is one piece, and after the fix VDD is | VDDIO/VSSIO get a real ring, or their taps are removed |
+| `ROUTE_BUDGET_PG_VIAS` | **25** | 4 non-orthogonal (the checker demands a via `update_power_vias -orthogonal_only` is forbidden to place), 4 M9/AP corner stack, 13 M4-under-M9-ring, 4 triaged singletons. Assert `pg_via_by_pair` too | F31.6 resolves; drops to 12 |
+| `ROUTE_BUDGET_DANGLING` | **176, as a RATCHET** | no structural formula exists and the row carries nothing the opens row does not. Fail on an increase, not on the value | the flow can count islands instead of ends — the property test already exists |
+
+**This budget still fails today, by 2 opens, and that is deliberate.** The two
+are the VSS grid body and one 17 µm VSS island at (1038.535, 278.245). Asked
+which instances sit on it, the routed database answers four `DCAP4` endcaps and
+eight `FILL*` cells and **no functional cell** — a decap that decouples nothing,
+which agrees with the 08-24 correction to doc 42.
+
+**Should imec's clean DRC on these bytes reassure us? Neither — it is silent.**
+No foundry deck contains a rule of the form "there shall be a via where two
+same-net shapes overlap" or "a wire shall not end unconnected". Both are legal
+geometry, so imec could not have reported any of these 1,158 objects however
+real they were. The only path by which DRC sees PG debris is a fragment small
+enough to trip minimum area or width; the 23 M3 islands are 0.16–1.34 µm² and
+clear M3 minimum area comfortably, so no deck anywhere would have found them.
+Reading that silence as reassurance is the "a zero that measured nothing"
+failure again. What should worry us is narrower: this lineage has no independent
+instrument confirming grid continuity, the three rows *were* that instrument,
+and they have read red-with-no-action for a month.
+
+**And one thing left open (F31.6):** `rc6route-20260831` reports 380 missing
+vias and 0 `check_drc`; the identical commands in a fresh session on that run's
+own saved `_routed` database report **367** and **3**. Connectivity agrees both
+ways, nothing between the census and the save mutates geometry, so it is session
+state — but it means the gate's numbers are not reproducible from the artefact
+the run ships. The two-minute probe that would settle it is named in 67.

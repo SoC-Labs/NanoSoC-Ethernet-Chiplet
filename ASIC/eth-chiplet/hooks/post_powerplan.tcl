@@ -86,6 +86,18 @@ unset -nocomplain _fpg_hook_dir _fpg_gi _fpg_check
 # in the flow.  So an edit made here is an edit made once, for every stage that
 # follows, instead of an ECO re-derived against fresh geometry every spin.
 #
+# 2026-09-01, STILL TRUE BUT NOW WITH A THIRD COMMAND IN IT.  When that
+# paragraph was written power_plan.tcl contained route_special and add_stripes
+# and NOT update_power_vias -- the claim was about the flow, and it held, but
+# the file did not have the command.  It does now: power_plan.tcl:1189 adds a
+# marker-driven `update_power_vias -add_vias 1 -area ...` pass immediately
+# before the fix_via block, and pg_pre_fixvia.rep is therefore taken AFTER it.
+# The invariant this hook depends on is unchanged -- every PG-geometry command
+# in the flow still lives in power_plan.tcl, upstream of here -- but the three
+# coordinates quoted above were measured before that pass existed and should be
+# re-read from a current run rather than assumed.  See
+# docs/tapeout/66-rc5-flow-findings.md, F31.
+#
 # WHY THE FLOW CANNOT PREVENT THEM INSTEAD.  Both classes come from
 # route_special (power_plan.tcl:1161) stacking macro block-pin risers M4->M9
 # through the 12um-wide M9 core ring:

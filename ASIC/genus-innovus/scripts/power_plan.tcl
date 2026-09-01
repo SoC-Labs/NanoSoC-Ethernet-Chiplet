@@ -1187,6 +1187,276 @@ if {$_rzko_on} {
 unset _rzko_on
 
 ## ---------------------------------------------------------------------------
+## UNFILLED PG VIAS AT route_special CROSSINGS  (added 2026-09-01)
+##
+## WHAT THIS IS FOR. Three rows of the route stage's own signoff gate have
+## failed on every candidate this design has produced, with the same numbers
+## every time:
+##
+##     380 missing power vias   check_power_vias -layer_range {M1 AP}
+##      51 PG opens             check_connectivity -type special, IMPVFC-200
+##     727 dangling PG wires    check_connectivity -type special, IMPVFC-94
+##
+## THEY ARE ONE POPULATION AND IT IS MADE HERE. Measured 2026-09-01: the
+## `Net ...` lines of both reports, sorted, are byte-identical across
+## rc5vt-20260829, rc6hold-20260831, rc6route-20260831 and rc6full-20260831 --
+## four runs, one of them a whole RTL->GDS rebuild with a different synthesis,
+## placement, CTS and route (connectivity md5 0a857957822e0aa8fa32ba901721e9ec,
+## power vias 67731cf0a8becbc166937938e31fd6f3, zero diff lines). And the counts
+## on the SAVED DATABASES walk like this:
+##
+##     work/..._fplan   (this file's own output)      51 / 727 / 367
+##     work/..._placed                                51 / 727 / 367
+##     work/..._cts                                   51 / 727 / 367
+##     work/..._routed                                51 / 727 / 380
+##
+## Placement, CTS and routing contribute NOTHING to the opens and the dangling
+## wires and none of the first 367 missing vias. The 13 that appear at route
+## are M4 macro risers passing under the M9 core ring (12 in the top band at
+## y 1796.403..1802.403, one in the bottom at 197.002..203.002); this pass does
+## not see them, because at this point in the flow they are not yet reported.
+##
+## WHAT THE OBJECTS ARE. Every one of the 727 dangling markers is a ZERO-AREA
+## POINT -- start and end coordinates identical on all 727 -- so it is the
+## unterminated END of a wire, not a wire. 678 sit on a wire that is connected
+## somewhere else (a via, same-layer same-net metal or a PG pin within 1 nm),
+## 46 are the two ends of 23 dead M3 corewires, and 3 sit on a via with no wire
+## of that net on that layer. The 51 opens count PIECES, not breaks: two of the
+## 51 are the bounding boxes of the WHOLE VDD and VSS grids -- 8,280 and 6,566
+## special wires with 4,469 and 4,467 PG pins inside them -- which is the
+## healthy power grid being enumerated as a problem.
+##
+## WHY THE VIAS ARE MISSING. route_special above draws each core-pin and
+## block-pin tap as a chain of collinear segments on different layers, and does
+## not always via them together. Worked example, one of 23 identical sites:
+##     VDD M1 corewire  698.635 -> 699.085   (off the followpin, which ends 698.8)
+##     VDD M3 corewire  699.085 -> 702.010   ISLAND: no via, no neighbour, no pin
+##     VDD M7 corewire  702.010 -> 728.100   (reaches the grid at its far end)
+## Three segments, two layer changes, zero vias, and the segments ABUT rather
+## than overlap. That one defect is counted once in the opens row, twice in the
+## dangling row and twice more in the missing-via row.
+##
+## WHAT THIS PASS DOES. It asks the two checks where they are unhappy, hands
+## exactly those boxes to Innovus's own via generator, and lets the fix_via
+## pass immediately below clean up after it. Nothing is coordinate-driven and
+## nothing is global: every site comes from the tool, so a floorplan change
+## moves the sites and this pass follows them.
+##
+## THE ONE BOX IT MUST NEVER PASS ON is a whole-net piece bbox. Because the
+## marker is per PIECE, a net's main body is reported with the core as its
+## bounding box, and handing that to update_power_vias would silently turn a
+## targeted pass into a global one. Boxes wider or taller than
+## EVP_PG_ADD_VIAS_MAX_SPAN (50 um) are dropped and the number dropped is
+## printed -- it should be one per multi-piece PG net and nothing else.
+##
+## MEASURED 2026-09-01 on a COPY of rc5vt-20260829's own _fplan database
+## (read-only source, nothing written back), one pass of this block followed by
+## the fix_via pass below:
+##
+##                             before      after     delta
+##     missing power vias         367         12      -355   (-96.7%)
+##     PG opens                    51         26       -25   (-49.0%)
+##     dangling PG wires          727        176      -551   (-75.8%)
+##     check_drc markers            3          9        +6
+##     PG special vias        169,736    171,135    +1,399   (+0.82%)
+##
+## A SECOND PASS CHANGES NOTHING -- it added zero vias and left the missing-via
+## count at 12 -- so one pass converges and this block runs one.
+##
+## THE OPENS RESIDUE IS THE STRUCTURAL FLOOR AND IT IS RECOGNISABLE. Of the 26,
+## 24 are the VDDIO/VSSIO pad-pin taps this file creates at :179 and :188 -- one
+## per IO supply pad, five coincident 4.0 x 22.0 padring plates on M3..M7 lying
+## on the pad's own PG pin. Those two nets have no ring, because add_rings at
+## :115 names only {VDD VSS} and the IO supply is distributed by ABUTMENT
+## through the pad ring, which check_connectivity cannot trace. The other two
+## are VSS: its main body, plus one genuinely stranded 17 um rail segment at
+## (1038.535, 278.245). VDD after this pass reports NOTHING AT ALL -- which is
+## also the proof that the marker is per piece and not per break: a net that
+## becomes one piece stops being reported, and VDD went 9 -> 0, not 8 -> 0.
+##
+## COST, AND WHY +6 IS AN UPPER BOUND. Those markers were measured against a
+## database that had ALREADY been through this file's fix_via pass, its
+## PG-residue cleanup and the post_powerplan hook's DRC edits. In the flow all
+## three of those run AFTER this block, so they get a chance at the residue
+## that the measurement did not give them. The pre-fix_via figure was 120, of
+## which 111 were MINSTEP -- exactly what fix_via -min_step exists to repair,
+## and it took 120 -> 9.
+##
+## WHY NOT GLOBAL. update_power_vias -add_vias 1 with no -area was measured on
+## the same database: better on two rows (32 / 28 / 202) and much more
+## expensive -- check_drc 18 and +91,560 PG vias (+54%), of which about 34,000
+## land on VIA12/VIA23/VIA34. That is a routing-resource change on the three
+## densest signal layers of a die at 85.7% utilisation and NOTHING SHORT OF A
+## FULL ROUTE CAN SAY WHETHER IT IS AFFORDABLE. It is reachable as
+## EVP_PG_ADD_VIAS=global and should not be turned on without one.
+##
+## HOW TO PROVE THESE CHECKS STILL MEASURE SOMETHING. Delete one PG via and
+## re-run them: on 2026-09-01, removing a single VIAGEN78 from VDD
+## (93,128 -> 93,127) moved the missing-via row 367 -> 368 and the dangling row
+## 727 -> 728. Both are sensitive to one object, so a fall in either is a real
+## fall and not a checker that stopped looking.
+##
+## GUARDS. EVP_PG_ADD_VIAS = markers (default) | global | off. The pass refuses
+## to run when it cannot parse its own BEFORE reports -- an unreadable report
+## must never read as "no sites", which is the best possible result from no
+## data at all. It refuses to hand on a database whose AFTER report is
+## unparseable, or whose missing-via count went UP, which for an add-only pass
+## means it created crossings it did not fill. And in markers mode it refuses
+## to add more than EVP_PG_ADD_VIAS_CAP (20,000) vias: the measured figure for
+## this floorplan is about 1,400, and a targeted pass that adds an order of
+## magnitude more is not targeted any more. All three refusals abort the stage
+## before anything is saved.
+##
+## RUNTIME: two check_power_vias, one check_connectivity and one
+## update_power_vias, about four minutes on a stage that already spends minutes
+## building the grid and hours after it.
+## ---------------------------------------------------------------------------
+
+set _pgav_mode "markers"
+if {[info exists ::env(EVP_PG_ADD_VIAS)] && $::env(EVP_PG_ADD_VIAS) ne ""} {
+    set _pgav_mode $::env(EVP_PG_ADD_VIAS)
+}
+if {[lsearch -exact {off markers global} $_pgav_mode] < 0} {
+    error "power_plan: EVP_PG_ADD_VIAS='$_pgav_mode' is not one of off|markers|global"
+}
+set _pgav_cap 20000
+if {[info exists ::env(EVP_PG_ADD_VIAS_CAP)] && $::env(EVP_PG_ADD_VIAS_CAP) ne ""} {
+    set _pgav_cap [expr {int($::env(EVP_PG_ADD_VIAS_CAP))}]
+}
+set _pgav_span 50.0
+if {[info exists ::env(EVP_PG_ADD_VIAS_MAX_SPAN)] && $::env(EVP_PG_ADD_VIAS_MAX_SPAN) ne ""} {
+    set _pgav_span [expr {double($::env(EVP_PG_ADD_VIAS_MAX_SPAN))}]
+}
+## The site boxes are grown by this before being handed over, because a marker
+## box is the OVERLAP, and a via needs its enclosure to sit somewhere.
+set _pgav_grow 0.300
+if {[info exists ::env(EVP_PG_ADD_VIAS_GROW)] && $::env(EVP_PG_ADD_VIAS_GROW) ne ""} {
+    set _pgav_grow [expr {double($::env(EVP_PG_ADD_VIAS_GROW))}]
+}
+
+## "N total info(s) created" off a check report, or -1 when the file cannot be
+## read or carries no such line. -1 IS NOT ZERO: zero is the best possible
+## result and an unreadable report must not be able to produce it.
+proc _pgav_total {f} {
+    set n -1
+    if {![file readable $f]} { return $n }
+    set fh [open $f r]
+    while {[gets $fh l] >= 0} {
+        if {[regexp {([0-9]+) total info\(s\) created} $l -> v]} { set n $v }
+    }
+    close $fh
+    return $n
+}
+## Every PG via in the database, counted as OBJECTS from the database, never as
+## calls -- the accounting mistake this file has already made once.
+proc _pgav_vias {} {
+    set n 0
+    foreach _n [get_db pg_nets .name] {
+        set _net [get_db current_design .nets $_n]
+        if {$_net eq ""} { continue }
+        incr n [llength [get_db $_net .special_vias]]
+    }
+    return $n
+}
+## The sites the two checks name, as -area rectangles. Whole-net piece boxes
+## are dropped -- see the header.
+proc _pgav_areas {pgvf connf grow maxspan} {
+    set out {} ; set drop 0
+    if {[file readable $pgvf]} {
+        set fh [open $pgvf r]
+        while {[gets $fh l] >= 0} {
+            if {[regexp {at \(([-0-9.]+), ([-0-9.]+)\) \(([-0-9.]+), ([-0-9.]+)\) between layers} \
+                        $l -> a b c d]} {
+                lappend out [list [expr {$a-$grow}] [expr {$b-$grow}] \
+                                  [expr {$c+$grow}] [expr {$d+$grow}]]
+            }
+        }
+        close $fh
+    }
+    if {[file readable $connf]} {
+        set fh [open $connf r]
+        while {[gets $fh l] >= 0} {
+            if {[regexp {opens at \(([-0-9.]+), ([-0-9.]+)\) \(([-0-9.]+), ([-0-9.]+)\)} \
+                        $l -> a b c d]} {
+                if {($c-$a) > $maxspan || ($d-$b) > $maxspan} { incr drop ; continue }
+                lappend out [list [expr {$a-$grow}] [expr {$b-$grow}] \
+                                  [expr {$c+$grow}] [expr {$d+$grow}]]
+            } elseif {[regexp {dangling Wire at \(([-0-9.]+), ([-0-9.]+)\)} $l -> a b]} {
+                lappend out [list [expr {$a-$grow}] [expr {$b-$grow}] \
+                                  [expr {$a+$grow}] [expr {$b+$grow}]]
+            }
+        }
+        close $fh
+    }
+    puts "POWERPLAN: PG add-vias -- [llength $out] site box(es); $drop whole-net\
+          piece box(es) dropped as wider or taller than ${maxspan} um"
+    return $out
+}
+
+if {$_pgav_mode eq "off"} {
+    puts "POWERPLAN: EVP_PG_ADD_VIAS=off -- skipping the unfilled-PG-via pass.\
+          This run carries the route stage's full missing-via, PG-open and\
+          dangling-wire counts."
+} else {
+    set _pgav_v0 [_pgav_vias]
+    catch { check_power_vias -layer_range {M1 AP} \
+                -report $REPORT_DIR/pg_pre_addvias.rep }
+    catch { check_connectivity -type special -error 200000 -warning 200000 \
+                -out_file $REPORT_DIR/pg_pre_addvias_conn.rep }
+    set _pgav_p0 [_pgav_total $REPORT_DIR/pg_pre_addvias.rep]
+    set _pgav_c0 [_pgav_total $REPORT_DIR/pg_pre_addvias_conn.rep]
+    if {$_pgav_p0 < 0 || $_pgav_c0 < 0} {
+        error "power_plan: PG add-vias: no summary line in\
+               $REPORT_DIR/pg_pre_addvias.rep (got $_pgav_p0) or in\
+               $REPORT_DIR/pg_pre_addvias_conn.rep (got $_pgav_c0). Refusing to\
+               run a repair whose BEFORE state is unknown -- an unparsed report\
+               is not a clean one."
+    }
+    puts "POWERPLAN: PG add-vias -- mode $_pgav_mode; before: $_pgav_p0 missing-via\
+          marker(s), $_pgav_c0 connectivity marker(s), $_pgav_v0 PG via(s)"
+    if {$_pgav_mode eq "global"} {
+        update_power_vias -add_vias 1 -nets {VDD VSS}
+    } else {
+        set _pgav_ar [_pgav_areas $REPORT_DIR/pg_pre_addvias.rep \
+                                  $REPORT_DIR/pg_pre_addvias_conn.rep \
+                                  $_pgav_grow $_pgav_span]
+        if {![llength $_pgav_ar]} {
+            puts "POWERPLAN: PG add-vias -- nothing to do: neither check named a\
+                  site. Not an error; it means the grid is already fully vias'd."
+        } else {
+            update_power_vias -add_vias 1 -nets {VDD VSS} -area $_pgav_ar
+        }
+        unset -nocomplain _pgav_ar
+    }
+    set _pgav_v1 [_pgav_vias]
+    catch { check_power_vias -layer_range {M1 AP} \
+                -report $REPORT_DIR/pg_post_addvias.rep }
+    set _pgav_p1 [_pgav_total $REPORT_DIR/pg_post_addvias.rep]
+    puts "POWERPLAN: PG add-vias -- after: $_pgav_p1 missing-via marker(s),\
+          $_pgav_v1 PG via(s), [expr {$_pgav_v1 - $_pgav_v0}] added"
+    if {$_pgav_p1 < 0} {
+        error "power_plan: PG add-vias: $REPORT_DIR/pg_post_addvias.rep has no\
+               summary line, so whether this pass helped or hurt is UNKNOWN. It\
+               has already edited the grid; it may not hand it on unmeasured."
+    }
+    if {$_pgav_p1 > $_pgav_p0} {
+        error "power_plan: PG add-vias: missing power vias went UP, $_pgav_p0 ->\
+               $_pgav_p1. This pass only ADDS vias, so a rise means it created\
+               crossings it did not fill. Refusing to hand that on."
+    }
+    if {$_pgav_mode eq "markers" && ($_pgav_v1 - $_pgav_v0) > $_pgav_cap} {
+        error "power_plan: PG add-vias: markers mode added\
+               [expr {$_pgav_v1 - $_pgav_v0}] vias, over EVP_PG_ADD_VIAS_CAP\
+               ($_pgav_cap). The measured figure for this floorplan is about\
+               1,400; a targeted pass that adds an order of magnitude more is\
+               not targeted any more. Look before the run spends six more hours."
+    }
+    unset -nocomplain _pgav_v0 _pgav_v1 _pgav_p0 _pgav_p1 _pgav_c0
+}
+unset -nocomplain _pgav_mode _pgav_cap _pgav_span _pgav_grow
+
+
+## ---------------------------------------------------------------------------
 ## G.4 / MINSTEP residue on generated special vias  (added 2026-08-22)
 ##
 ## The two attributes above (extend_out_wire_end false, :977) collected the
