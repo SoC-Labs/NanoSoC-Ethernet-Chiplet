@@ -357,3 +357,352 @@ if {![llength $::CTS_OPT_ATTR_SAVED]} {
     say "pre_cts set [expr {[llength $::CTS_OPT_ATTR_SAVED] / 2}] attribute(s);\
          hooks/post_cts.tcl restores them before the database is written"
 }
+
+
+################################################################################
+# THE GENERATOR SKEW-GROUP ISLANDS, AND WHY QSPI_SCLK ARRIVES 1.25 ns EARLY
+# ------------------------------------------------------------------------------
+# ADDED 2026-09-01. Everything below is measured on rc6full-20260831 unless it
+# is quoted from the tool's own documentation.
+#
+# THE DEFECT, IN ONE LINE. create_clock_tree_spec takes the QSPI clock-divider
+# flop OUT of clk's balancing group and balances it against ten local
+# neighbours instead, so the whole QSPI_SCLK tree lands at the very bottom of
+# clk's insertion-delay range - and every QSPI_SCLK -> clk path is then a hold
+# path with the launch clock arriving before the capture clock.
+#
+# THE EVIDENCE, FOUR ARTEFACTS.
+#
+# 1. THE FAILING PATH. rc6full-20260831 finished RTL->GDS with exactly one hold
+#    violation, reports/hold_06_post_fill_av_ml_libset_hold.rep:
+#
+#        Startpoint ..._u_qspi_controller_mux_AHB_QSPI_BUSY_del_reg/CP  clock QSPI_SCLK
+#        Endpoint   ..._u_ahb_qspi_interface_ahb_qspi_busy_meta_reg/D   clock clk
+#                           Capture   Launch
+#            Src Latency:    -1.413   -1.413      <- IDENTICAL. not a source problem
+#            Net Latency:     1.513    1.190      <- 0.323 ns, and the wrong way round
+#            Data Path:                0.216      (already carrying two CKBD0 hold buffers)
+#            Slack:                   -0.056
+#
+#    The launch flop is downstream of a divide-by-2 flop that is itself a clk
+#    sink, so its clock CANNOT physically be earlier than the divider's own CP
+#    plus one CP->Q. It is earlier than the capture flop's clock by 323 ps
+#    because the divider's CP is early, not because the leaf tree is short.
+#
+# 2. THE SKEW-GROUP CENSUS. reports/cts_skew_groups.rep, delay corner
+#    default_delay_corner_max:setup.late, insertion delay min/max/avg:
+#
+#        clk/default_constraint_mode                  1.610  3.319  2.934   37514 sinks
+#        _clock_gen_clk_QSPI_SCLK_reg_reg/...         1.664  1.725  1.687      11 sinks
+#        _clock_gen_clk_..._regs_reg13_reg[0]/...     1.702  3.311  1.983    1941 sinks
+#        _clock_gen_clk_..._regs_reg13_reg[1..4]/...  1.702  3.29x  1.932    1797 sinks each
+#        _clock_gen_clk_..._QSPI_SCLK_e_reg/...       2.693  2.831  2.804      11 sinks
+#
+#    The divider's island sits 1.25 ns below clk's average and 61 ps wide. It is
+#    not badly balanced; it is balanced beautifully, against the wrong thing.
+#
+# 3. THE SPEC SAYS SO IN ITS OWN COMMENTS. reports/cts_clock_tree.spec:5876-5940.
+#    The group that WOULD have balanced QSPI_SCLK's sinks against clk exists and
+#    is switched off, with the reason written next to it:
+#
+#        # This is a -constrains "none" skew group (reporting only) for
+#        # generated clock:QSPI_SCLK ... because it corresponds to a generated
+#        # clock that is synchronous to its master clock and will balanced as
+#        # part of the skew group corresponding to one of its master clocks.
+#        create_skew_group -name QSPI_SCLK/default_constraint_mode -sources .../g457/ZN -auto_sinks
+#        set_db skew_group:QSPI_SCLK/default_constraint_mode .cts_skew_group_constrains none
+#
+#    and then, sixteen lines later, the promise is broken:
+#
+#        create_skew_group -name _clock_gen_clk_QSPI_SCLK_reg_reg/default_constraint_mode \
+#            -sources CLK -sinks { ...reg13_reg[0..4]/CP
+#                                  ...QSPI_CLK_DIV_COUNTER_reg[0..4]/CP
+#                                  ...QSPI_SCLK_reg_reg/CP } -rank 1
+#
+#    RANK 1. Per <INNOVUS_DOC>/TCRcom/create_skew_group.html an exclusive group
+#    is ranked above every existing group and its sinks "are only active sinks
+#    in [it], which is the highest ranked parent skew group" - i.e. rank 1
+#    REMOVES those eleven pins from clk's rank-0 group. The reporting-only group
+#    says the QSPI sinks will be balanced by their master's group; the rank-1
+#    group is what stops that being true.
+#
+# 4. IT IS A FEATURE, IT IS ON BY DEFAULT, AND IT IS NAMED.
+#    <INNOVUS_DOC>/TCRcom/cts_Category_Attributes.html,
+#    cts_spec_config_create_generator_skew_groups, default TRUE:
+#        "This attribute will cause the create_clock_tree_spec command to create
+#         skew groups for sequential generators and their adjacent registers.
+#         Such skew groups will be specified with the same highest rank so that
+#         they can be balanced from the other normal skew groups that share some
+#         sinks of them."
+#    Nothing in this project ever set it. It is the tool's default behaviour and
+#    it is wrong for THIS divider because the divider's consumers are timed
+#    against clk, not against the divider's neighbours.
+#
+# WHY THE ATTRIBUTE IS NOT THE LEVER USED HERE, AND WHAT IS.
+# cts_spec_config_create_generator_skew_groups is consumed by
+# create_clock_tree_spec, which flow/innovus/3_cts.tcl runs in section 8 at
+# :848/:876 - 118 lines BEFORE this hook is called at :994. Setting it here
+# would read back correctly and change nothing, which is the exact failure mode
+# this file's own header warns about for opt_signoff_hold_target_slack. The
+# lever that IS available after the spec exists is delete_skew_groups, which
+# <INNOVUS_DOC>/TCRcom/delete_skew_groups.html documents as deleting the groups
+# and "mak[ing] no changes to the design": with the rank-1 island gone, its
+# pins are active sinks of the highest-ranked group that still contains them,
+# which is clk/default_constraint_mode - created -auto_sinks at rank 0 and
+# therefore already holding every CLK-reachable sink as a member.
+#
+# WHY THE DEFAULT PATTERN IS THE QSPI FAMILY AND NOT EVERY GENERATOR.
+# The same feature builds eight more islands for the TideLink D2D word-clock
+# dividers (_clock_gen_D2D_RX_CLK_0_count_reg[3]_1..8) and one for the TX side
+# (_clock_gen_clk_count_reg[3]). Those have not been measured and are not this
+# change's business - the D2D word clocks have their own history. The default
+# glob matches the QSPI family only. Widen it with CTS_GEN_SKEW_PATTERN if a
+# later measurement earns it; the knob exists so that widening it is a recorded
+# decision rather than an edit to this file.
+#
+# WHAT THIS DOES NOT CLAIM.
+# * It does not claim the hold path is fixed by CTS alone. rc6full's hold was
+#   +0.005/0 at 03_cts_opt AND +0.005/0 at 04_route; the violation is created by
+#   05_route_opt, the post-route optimiser, which perturbs a path that had 5 ps
+#   of margin. The claim is that the 5 ps is 5 ps BECAUSE of the imbalance, and
+#   that a path entering route with the launch and capture clocks balanced has
+#   margin a post-route pass cannot spend by accident.
+# * It does not claim to make CCOpt hit a skew target. clk's own group carries
+#   1.7 ns of scheduled useful skew and is meant to. The claim is only that the
+#   divider should be scheduled INSIDE that pool rather than beside it.
+################################################################################
+
+step "generator skew-group islands"
+
+opt CTS_GEN_SKEW_REBALANCE 0                       ;# 1 = delete the matching generator islands
+opt CTS_GEN_SKEW_PATTERN   {_clock_gen_clk_*qspi*} ;# glob (-nocase) over skew group names
+opt CTS_GEN_SKEW_STRICT    0                       ;# 1 = flow_fail when the pattern matches nothing
+
+# THE SINK-LIST ATTRIBUTE, DISCOVERED ONCE AND MEASURED-NAME-FIRST.
+#
+# READ THIS BEFORE ADDING A CANDIDATE. A Tcl `catch` DOES NOT STOP INNOVUS
+# RECORDING THE ERROR. Measured on rc7gskew-20260901: an earlier revision of
+# this block probed four candidate names per island, `cts_skew_group_sinks`
+# first, and every miss raised
+#
+#     **ERROR: (IMPDBTCL-248): 'cts_skew_group_sinks' is not a recognized
+#     object or attribute for object type 'skew_group'.
+#
+# Seven islands x two misses = 14 errors, all of them caught in Tcl and none of
+# them visible to this hook - and flow/innovus/3_cts.tcl's own message census
+# reads them out of the tool with `report_messages -errors`, found an ID that is
+# not on CTS_ERROR_ALLOWLIST, and FAILED THE WHOLE STAGE under CTS_STRICT=1
+# after the clock tree was already built. The database was fine; the run's exit
+# code was not.
+#
+# So: the MEASURED name goes first (`sinks` answers on Innovus 21.11-s130_1,
+# 2026-09-01), the discovery runs ONCE for the whole set rather than per
+# island, and the fallbacks exist only for a tool that has renamed it - in which
+# case one or two IMPDBTCL-248s and a loud warning are the correct outcome,
+# because the hook is then on ground nobody has measured.
+#
+# The error message names the non-erroring route - "Run 'help skew_group' to get
+# a list of attributes" - which a future revision should use instead.
+#
+# Returns the attribute name that answered, or "" if none did.
+proc cts_sg_sink_attr {sg} {
+    foreach a {sinks cts_skew_group_sinks active_sinks} {
+        set v {}
+        if {![catch { set v [get_db skew_group:$sg .$a] }] && [llength $v]} { return $a }
+    }
+    return ""
+}
+
+# The master skew group an island's sinks fall back to, DERIVED FROM THE NAME
+# and not from a query - which is what keeps this check free of the trap above.
+# create_clock_tree_spec names generator islands
+#     _clock_gen_<master_clock_name>_<generator_local_name>[_<n>]/<constraint_mode>
+# (<INNOVUS_DOC>/TCRcom/cts_Category_Attributes.html,
+# cts_spec_config_create_generator_skew_groups) and names a master's own group
+#     <clock_name>/<constraint_mode>
+# so the master of an island is the surviving group whose clock name is a
+# prefix of the island's middle section and whose constraint mode is the same.
+# LONGEST match wins, because a design with clocks 'clk' and 'clk_ref' would
+# otherwise resolve every clk_ref island to clk.
+#   -> the master's name, or "" if no survivor qualifies.
+proc cts_gen_master_of {island survivors} {
+    if {![regexp {^_clock_gen_(.+)/([^/]+)$} $island -> rest mode]} { return "" }
+    set best ""
+    foreach s $survivors {
+        if {![regexp {^([^/]+)/([^/]+)$} $s -> clkname smode]} { continue }
+        if {$smode ne $mode} { continue }
+        if {![string match "${clkname}_*" $rest]} { continue }
+        if {$best eq "" || [string length $clkname] > $best_len} {
+            set best $s ; set best_len [string length $clkname]
+        }
+    }
+    return $best
+}
+
+# delete_skew_groups takes a PATTERN, not a name, and five of this design's
+# seven islands have '[0]'..'[4]' in their names. Innovus 21.11 deletes them
+# when handed the literal name (measured on rc6full's placed database,
+# 2026-09-01: 40 skew groups -> 33, twice), so the literal form is tried first
+# and is the only one this design has ever needed. The escaped form is the retry
+# for a tool whose matcher reads '[0]' as a character class, in which case the
+# literal call removes nothing and says nothing - which is the failure this hook
+# must not report as success.
+proc cts_glob_escape {s} {
+    return [string map [list "\\" "\\\\" "*" "\\*" "?" "\\?" "\[" "\\\[" "\]" "\\\]"] $s]
+}
+
+if {!$CTS_GEN_SKEW_REBALANCE} {
+    say "CTS_GEN_SKEW_REBALANCE=0 - the generator skew-group islands are left"
+    say "  exactly as create_clock_tree_spec built them, which is the"
+    say "  gdsrun-20260826-rc1 .. rc6full-20260831 behaviour. On this design"
+    say "  that leaves the QSPI clock divider balanced against ten local"
+    say "  neighbours instead of against clk; see this file's header."
+} elseif {[string trim $CTS_GEN_SKEW_PATTERN] eq ""} {
+    # Reachable only by editing the default above: `opt` treats a whitespace
+    # environment value as unset, so no design.mk setting can produce it. Kept
+    # because an empty pattern with the knob on is a configuration that reports
+    # a rebalance in the manifest and cannot perform one.
+    flow_fail "CTS_GEN_SKEW_REBALANCE=1 but CTS_GEN_SKEW_PATTERN is empty, so" \
+              "  no skew group can match and this stage runs with the islands" \
+              "  intact while the manifest records the rebalance as enabled." \
+              "  Set CTS_GEN_SKEW_REBALANCE=0 to run the stock configuration."
+} else {
+    say "rebalancing generator islands matching: $CTS_GEN_SKEW_PATTERN"
+    set __sg_all {}
+    if {[catch { set __sg_all [get_db skew_groups .name] } __e]} {
+        flow_fail "CTS_GEN_SKEW_REBALANCE=1 but the skew groups cannot be read" \
+                  "  ($__e). Nothing was changed."
+        set __sg_all {}
+    }
+    say "[llength $__sg_all] skew group(s) exist before the rebalance"
+
+    # --- select, and NEVER touch a rank-0 group ---------------------------------
+    # rank 0 is a shared group; on this design clk/default_constraint_mode is one
+    # and deleting it would delete the balancing constraint for 37,514 sinks. The
+    # guard is here because a careless pattern is a one-character mistake.
+    set __victims {} ; set __refused {}
+    foreach __sg $__sg_all {
+        if {![string match -nocase $CTS_GEN_SKEW_PATTERN $__sg]} { continue }
+        set __rank "?"
+        catch { set __rank [get_db skew_group:$__sg .cts_skew_group_exclusive_sinks_rank] }
+        if {![string is integer -strict $__rank] || $__rank <= 0} {
+            lappend __refused [list $__sg $__rank]
+        } else {
+            lappend __victims $__sg
+        }
+    }
+    foreach __r $__refused {
+        warn "REFUSING to delete [lindex $__r 0]: exclusive_sinks_rank is\
+              '[lindex $__r 1]', not a positive rank. Only the exclusive\
+              generator islands are in scope; a rank-0 group is a master."
+    }
+
+    if {![llength $__victims]} {
+        set __m [list \
+            "CTS_GEN_SKEW_REBALANCE=1 matched NO exclusive skew group." \
+            "  pattern: $CTS_GEN_SKEW_PATTERN" \
+            "  This stage therefore runs exactly as if the knob were 0, while" \
+            "  the manifest records it as 1. Either the spec did not create the" \
+            "  generator islands this run, or the instance names moved." \
+            "  Existing skew groups: [join $__sg_all { }]"]
+        if {$CTS_GEN_SKEW_STRICT} { flow_fail {*}$__m } else { foreach __l $__m { warn $__l } }
+    } else {
+        # --- record what is about to be handed back -----------------------------
+        set __sinkattr [cts_sg_sink_attr [lindex $__victims 0]]
+        set __handed 0 ; set __pins {}
+        if {$__sinkattr eq ""} {
+            warn "  no sink list could be read from [lindex $__victims 0] through"
+            warn "  any known attribute, so the count of pins handed back to the"
+            warn "  master group is NOT known this run. The deletion below is"
+            warn "  still asserted on the group census."
+        } else {
+            foreach __sg $__victims {
+                set __s {}
+                catch { set __s [get_db skew_group:$__sg .$__sinkattr] }
+                incr __handed [llength $__s]
+                foreach __p $__s { lappend __pins $__p }
+                say "  island $__sg : [llength $__s] sink(s)"
+            }
+            say "  sink lists read through '$__sinkattr':\
+                 [llength [lsort -unique $__pins]] distinct pin(s) over\
+                 [llength $__victims] island(s) ($__handed with duplicates)"
+        }
+
+        # --- the lever, literal first then glob-escaped for the survivors -------
+        foreach __sg $__victims {
+            if {[catch { delete_skew_groups $__sg } __e]} {
+                warn "delete_skew_groups '$__sg' raised: $__e"
+            }
+        }
+        set __sg_left {}
+        catch { set __sg_left [get_db skew_groups .name] }
+        set __stuck {}
+        foreach __sg $__victims {
+            if {[lsearch -exact $__sg_left $__sg] >= 0} { lappend __stuck $__sg }
+        }
+        if {[llength $__stuck]} {
+            warn "[llength $__stuck] island(s) survived the literal delete -\
+                  retrying with the glob metacharacters escaped, which is the\
+                  '\[0\] read as a character class' case."
+            foreach __sg $__stuck {
+                if {[catch { delete_skew_groups [cts_glob_escape $__sg] } __e]} {
+                    warn "escaped delete_skew_groups '$__sg' raised: $__e"
+                }
+            }
+            set __sg_left {}
+            catch { set __sg_left [get_db skew_groups .name] }
+            set __stuck {}
+            foreach __sg $__victims {
+                if {[lsearch -exact $__sg_left $__sg] >= 0} { lappend __stuck $__sg }
+            }
+        }
+
+        # --- ASSERT ON THE ARTEFACT ---------------------------------------------
+        # delete_skew_groups returns nothing useful and Innovus is happy to do
+        # nothing quietly. The census afterwards is the only proof.
+        if {[llength $__stuck]} {
+            flow_fail "delete_skew_groups did NOT remove [llength $__stuck] of\
+                       [llength $__victims] island(s), literally or escaped:" \
+                      "  [join $__stuck {, }]" \
+                      "  ccopt_design has not run yet, so nothing has been spent." \
+                      "  Set CTS_GEN_SKEW_REBALANCE=0 to run the stock configuration."
+        } else {
+            say "rebalanced: deleted [llength $__victims] generator island(s);\
+                 [llength $__sg_all] -> [llength $__sg_left] skew groups"
+        }
+
+        # --- AND THE PINS MUST HAVE SOMEWHERE TO GO -----------------------------
+        # Handing sinks back to a group that does not constrain is worse than
+        # leaving them in the island they came from, so each island's master is
+        # resolved by name against the survivors and checked. rank and constrains
+        # are the two attributes already used above and both are known to answer,
+        # so this costs no new IMPDBTCL-248.
+        set __survivors {}
+        foreach __sg $__sg_left {
+            set __rank "?" ; set __con "?"
+            catch { set __rank [get_db skew_group:$__sg .cts_skew_group_exclusive_sinks_rank] }
+            catch { set __con  [get_db skew_group:$__sg .cts_skew_group_constrains] }
+            if {$__rank eq "0" && $__con ne "none"} { lappend __survivors $__sg }
+        }
+        set __orphan {} ; set __found {}
+        foreach __sg $__victims {
+            set __mst [cts_gen_master_of $__sg $__survivors]
+            if {$__mst eq ""} { lappend __orphan $__sg } else { lappend __found $__mst }
+        }
+        if {[llength $__orphan]} {
+            flow_fail "after the rebalance [llength $__orphan] island(s) have NO" \
+                      "  surviving rank-0 constraining skew group to fall back to:" \
+                      "  [join $__orphan {, }]" \
+                      "  Their pins are now balanced by nothing at all, which is" \
+                      "  worse than the island they came from. Surviving rank-0" \
+                      "  constraining groups: [join $__survivors {, }]" \
+                      "  Set CTS_GEN_SKEW_REBALANCE=0."
+        } else {
+            say "every deleted island falls back to a rank-0 constraining group:\
+                 [join [lsort -unique $__found] { }]"
+        }
+    }
+    unset -nocomplain __sg_all __sg_left __victims __refused __sg __rank __r \
+                      __m __l __s __p __pins __sinkattr __handed __stuck \
+                      __survivors __orphan __found __mst __con __e
+}

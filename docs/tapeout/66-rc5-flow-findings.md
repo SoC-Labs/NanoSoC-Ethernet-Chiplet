@@ -4376,3 +4376,27 @@ the pad ring, the 124 density entries are an artefact of asking after the fill.
 `ROUTE_OPT_DRV=1` becomes right the moment a setup-recovery pass exists between
 `4_route.tcl:1082` and `pnr_end_reports 05_route_opt` at 1117; that slot is empty
 and is not mine to fill.
+
+---
+
+## F33-F35 — CONTINUED IN `67-rc5-clock-tree-findings.md`
+
+This file reached 249,982 bytes, which is 12 KB under the pre-commit guard's
+262,144-byte refusal, so the next three sections are in
+[`67-rc5-clock-tree-findings.md`](67-rc5-clock-tree-findings.md). Their
+headlines, so a reader of this file is not left guessing:
+
+* **F33 — the last hold violation is a skew-group MEMBERSHIP defect.**
+  `create_clock_tree_spec` builds seven rank-1 exclusive islands around the QSPI
+  clock divider (`cts_spec_config_create_generator_skew_groups`, default true),
+  which takes the divider OUT of `clk`'s balancing group and leaves it 1.19-1.25
+  ns early in every run of this design. `hooks/pre_cts.tcl` deletes the islands
+  before `ccopt_design`; `rc7gskew-20260901` then closes hold at **every** corner
+  — `06_post_fill` hold **−0.056/1 → +0.002/0**, and 0 violating paths in all
+  three per-view reports — for one −0.024 ns setup endpoint on the CPU→fabric
+  critical path and 41 fewer `max_transition` endpoints.
+* **F34 — `opt_delete_insts` is refuted, like `opt_area_recovery` before it.**
+  Set false, proven false, and 31,363 of 31,367 cells are deleted anyway. Both
+  documented preventions in front of the F16 guard are now measured not to work;
+  the budget-and-repair layer is the only one that does.
+* **F35 — what to set**, and the five things still open.
