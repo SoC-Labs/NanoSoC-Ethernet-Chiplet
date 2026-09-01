@@ -495,7 +495,12 @@ if {![llength $::CTS_OPT_ATTR_SAVED]} {
 
 step "generator skew-group islands"
 
-opt CTS_GEN_SKEW_REBALANCE 0                       ;# 1 = delete the matching generator islands
+# ON BY DEFAULT, and the default IS the measured configuration - the same
+# discipline hooks/post_cts.tcl applies to CTS_RECOVERY_AREA_RECOVERY. Setting
+# CTS_GEN_SKEW_REBALANCE=0 reproduces gdsrun-20260826-rc1 .. rc6full-20260831
+# exactly and is the control arm of every number in this header. The value
+# lands in cts_manifest.txt either way, so a run can always say which it was.
+opt CTS_GEN_SKEW_REBALANCE 1                       ;# 1 = delete the matching generator islands
 opt CTS_GEN_SKEW_PATTERN   {_clock_gen_clk_QSPI_SCLK_reg_reg*} ;# glob (-nocase) over skew group names
 opt CTS_GEN_SKEW_STRICT    0                       ;# 1 = flow_fail when the pattern matches nothing
 

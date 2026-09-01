@@ -206,13 +206,16 @@ run_case() {
     else printf '  FAIL  %s\n' "$name"; FAIL=$((FAIL+1)); sed 's/^/        /' <<<"$out" | tail -30; fi
 }
 ON=CTS_GEN_SKEW_REBALANCE=1
+OFF=CTS_GEN_SKEW_REBALANCE=0
 
 WIDE="CTS_GEN_SKEW_PATTERN=_clock_gen_clk_*qspi*"
 
 echo "== proving hooks/pre_cts.tcl's generator skew-group rebalance =="
-run_case "A  off by default: nothing is deleted"       'CTS_GEN_SKEW_REBALANCE=0 - the generator' 'TOOL: delete_skew_groups' CTS_GEN_SKEW_REBALANCE=0
-run_case "A2 and the census is 21 groups untouched"    'HARNESS-REMAINING=21'         ''  CTS_GEN_SKEW_REBALANCE=0
-run_case "N  THE DEFAULT deletes the divider island"   'deleted 1 generator island'   'CTS-FAIL' $ON
+run_case "A  REBALANCE=0 deletes nothing (the control)" 'CTS_GEN_SKEW_REBALANCE=0 - the generator' 'TOOL: delete_skew_groups' $OFF
+run_case "A2 and the census is 21 groups untouched"    'HARNESS-REMAINING=21'         ''  $OFF
+run_case "N  THE DEFAULTS delete the divider island"   'deleted 1 generator island'   'CTS-FAIL'
+run_case "N0 with NO environment at all"               'matching: _clock_gen_clk_QSPI_SCLK_reg_reg\*' 'CTS-FAIL'
+run_case "N1 and the same with REBALANCE=1 explicit"   'deleted 1 generator island'   'CTS-FAIL' $ON
 run_case "N2 and only that one: census 21 -> 20"       'HARNESS-REMAINING=20'         ''  $ON
 run_case "N3 and the five reg13 islands SURVIVE"       'HARNESS-LEFT _clock_gen_clk_u_qspi_flash_0_u_top_ahb_qspi_u_apb_qspi_regs_reg13_reg\[4\]/' '' $ON
 run_case "N4 and it hands back exactly 11 pins"        '11 distinct pin\(s\) over 1 island' '' $ON

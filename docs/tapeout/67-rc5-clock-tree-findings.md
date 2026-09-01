@@ -641,8 +641,10 @@ rather than expectation.
 ### The three knobs, and where they belong
 
 `hooks/pre_cts.tcl` declares them with `opt`, so they land in
-`cts_manifest.txt` whether or not `design.mk` names them, and the hook's own
-defaults are the measured configuration. `design.mk` should still carry them —
+`cts_manifest.txt` whether or not `design.mk` names them, and **the hook's own
+defaults ARE the measured configuration** — the same discipline `post_cts.tcl`
+applies to `CTS_RECOVERY_AREA_RECOVERY`, so a run that never touches
+`design.mk` still closes hold. `design.mk` should carry them anyway:
 `print-timing-knobs` is what a launcher echoes into its log, and a knob that is
 only in a hook cannot be read there:
 
@@ -681,7 +683,7 @@ line reads 39,469.)
 ### The fixtures
 
     hooks/tests/prove_post_cts_guard.sh      16 assertions   ~1 s   no licence
-    hooks/tests/prove_pre_cts_gen_skew.sh    26 assertions   ~1 s   no licence
+    hooks/tests/prove_pre_cts_gen_skew.sh    33 assertions   ~1 s   no licence
 
 Both green. The post-CTS guard suite is unchanged and `post_cts.tcl` was not
 touched by this work; the guard did its job in both new runs, catching 9,120
