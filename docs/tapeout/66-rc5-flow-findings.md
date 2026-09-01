@@ -4283,3 +4283,96 @@ own saved `_routed` database report **367** and **3**. Connectivity agrees both
 ways, nothing between the census and the save mutates geometry, so it is session
 state — but it means the gate's numbers are not reproducible from the artefact
 the run ships. The two-minute probe that would settle it is named in 67.
+
+---
+
+## F32 — max_transition: 96 OF THE COUNT IS 48 PINS TWICE, AND THE DRV BLOCK'S ZERO IS NOT THE DATABASE'S
+
+Full evidence in **`docs/tapeout/68-max-transition-diagnosed.md`** — separate for
+the reason F31 records, this file having ~16 KB of headroom and the analysis
+being 23 KB. **Whoever appends next has about 12 KB.**
+
+### What the number is
+
+| run | route_opt | IO | internal rows | internal NETS | post_fill (GATE) |
+|---|---|---|---|---|---|
+| rc5vt | 195 | 96 | 99 | 27 | 195 |
+| rc6hold | 230 | 96 | 134 | 53 | 227 |
+| rc6route | 305 | 96 | 209 | 77 | **325** |
+| rc6full | 156 | **0** | 156 | 61 | 155 |
+
+**The 96 is 48 chip pins counted twice** — 48 nets with exactly two violating
+pins, the top-level port and the pad's `PAD` pin, the same node under both
+names. The slew census reproduces `inputs/pnr_io_drv.sdc`'s header table
+exactly. **The internal 209 is only 77 nets**: `report_constraint` lists the
+driver and every violating load separately.
+
+### What the internal ones are
+
+74 of 77 are driven by **minimum-drive D0/D1 cells** loaded by **CKBD0/1/2
+hold-repair delay buffers** (48 of the 76 nets rc6route has and rc5 does not
+carry one). They do not cluster, they are inside the library's own 0.7657 ns
+limit (worst 0.543), and they are churn — rc5's 27 and rc6route's 77 share
+**one net**. rc6full leaves *placement* with **four**, worst −0.030; the
+population is manufactured by CTS and post-route optimisation, 4 → 50 → 156.
+
+The cause is ordering: `opt_design -post_route` runs DRV blocks that work
+(rc6full's first clears **492 nets to 1** in ten seconds at 86% density), then
+runs `WNS recovery`, `harden opt` and `post-eco TNS` with **no DRV pass after
+them**.
+
+### Corrections to F29
+
+**The IO override is not available to a route-only resume.** `read_mmmc` appears
+six times in `2_place.tcl` and zero times in `3_cts.tcl` and `4_route.tcl`.
+`rc6route` printed `PNR_IO_DRV_OVERRIDE 1` in its launch header while its pinned
+mmmc did not name the file at all and its log has no `pnr_io_drv.sdc:` line — a
+knob in the environment is not a knob that ran.
+
+**And `ROUTE_OPT_DRV` is not the free lever it looked like.** Measured twice on a
+read-only copy of rc6route's routed database:
+
+| state | rows | worst | setup | hold | Δinsts | Δarea |
+|---|---|---|---|---|---|---|
+| baseline (post-fill, = the gate's 325) | 325 | −6.024 | +0.091 | +0.003 | — | — |
+| + `pnr_io_drv.sdc` | **229** | −0.243 | +0.091 | +0.003 | 0 | **0** |
+| fillers deleted (= pre-fill, real figure 209) | 211 | −0.243 | +0.091 | +0.003 | 0 | 0 |
+| + 1 × `opt_design -post_route -drv` | 99 | −0.192 | **−0.042** | +0.003 | +92 | +313 um2 |
+| + 2 × | **47** | −0.105 | −0.043 | +0.003 | +122 | +379 um2 |
+
+Inside that command the GigaOpt DRV block takes **197 nets to zero** and prints
+no remaining-violation block at all. The same command then runs `refinePlace`,
+`EcoRoute` over 4.7% of the area and a fresh extraction, and the database
+re-measures at 99. **A log-only reading of this experiment says solved.**
+
+It converges (×0.47/pass, ~190 um2/pass, so ~8 passes to zero for ~1,500 um2)
+and the setup toll is one-time, not cumulative — but it is a toll on the row F29
+just closed, and the flow's own `opt_setup_target_slack 0.110` recovers only
+12 ps of the 133.
+
+**A DRV pass after the fill is impossible**, so this is the only slot: at
+100.01% local density against the engine's `-maxLocalDensity 0.96` it inserts
+zero buffers and reports 124 of 155 residual nets as "exceeding max local
+density".
+
+### What to set
+
+    PNR_IO_DRV_OVERRIDE = 1  and PNR_IO_MAX_TRAN = 7.000   <- already the defaults
+    ROUTE_OPT_DRV       = 0                                 <- leave off for now
+    set_max_transition 0.300 [current_design]               <- do not touch
+
+**325 → 229 for nothing, provided the run executes the place stage.** Verify on
+the artefact, not the header: the log must carry `pnr_io_drv.sdc: max_transition
+7.000 ns -override on 52 port(s) and 48 pad PAD pin(s)`.
+
+Raising the design-scope limit to 0.400 would clear 201 of the 209 for no area,
+and is the same trade paid up front: `constraints.sdc:1097` measures that limit
+as worth 25 ps on the critical path and as what removed the last post-route
+setup ECO.
+
+**The floor.** Zero is not reachable today and the obstacle is setup, not slew.
+No irreducible core survived inspection — the 29 "multi driver net" entries are
+the pad ring, the 124 density entries are an artefact of asking after the fill.
+`ROUTE_OPT_DRV=1` becomes right the moment a setup-recovery pass exists between
+`4_route.tcl:1082` and `pnr_end_reports 05_route_opt` at 1117; that slot is empty
+and is not mine to fill.
