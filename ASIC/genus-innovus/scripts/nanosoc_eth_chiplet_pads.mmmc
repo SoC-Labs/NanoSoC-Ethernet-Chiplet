@@ -174,6 +174,39 @@ create_library_set -name typical_libset\
 # they must be unpacked into the project tree and wired per corner before this
 # is signoff-grade. VERIFY on the next run: IMPEXT-3518 must be absent and the
 # timing report header must name a real RC corner.
+#
+# AND THE CAVEAT IS NOW MEASURED, 2026-09-01, because "not corner-correct" was
+# being read as "approximately corner-correct" and it is neither. It is ONE
+# CORNER wearing four names, and the number that follows from that is 0.
+#
+#   The ICT the deck was built from declares exactly one process block,
+#   crn65lp_1p09m+alrdl_6x1z1u_typical, so there is no other interconnect model
+#   inside it to select.
+#   The routed database agrees: every one of the four rc_corners it saves
+#   resolves -qrc_tech to the SAME PATH, libs/mmmc/rc_best_125C/qrcTechFile,
+#   one symlink to the deck above. Innovus wrote a single per-corner directory
+#   because there is a single file.
+#   And the extraction agrees. On setupclose-20260829/sta_rc3setup, which wrote
+#   three SPEFs from one run:
+#       default_rc_corner_worst   125 C  rcworst captable
+#       rc_best_125C              125 C  rcbest  captable
+#       default_rc_corner_best    -40 C  rcbest  captable
+#   the first two have BYTE-IDENTICAL bodies - same md5 over the capacitance
+#   section AND the resistance section - so under post-route QRC the cap table
+#   below is not consulted at all and choosing rcworst over rcbest changes
+#   nothing. Across all three: 210,067 D_NETs and 4,528,778 capacitance entries,
+#   967.7348 pF, identical to the last digit. The ONLY quantity that moves is
+#   resistance, with -temperature: 8,684,727 ohm at 125 C against 6,162,102 ohm
+#   at -40 C (a ratio of 1.409, i.e. an effective TCR near 0.0021/C), and the
+#   only per-net difference in the capacitance section is the numbering of
+#   internal nodes, which shifts because the resistive reduction did.
+#
+# WHAT FOLLOWS FOR CORNER COVERAGE. No additional analysis view can widen the
+# RC axis of this signoff, whatever it is called, because there is one set of
+# parasitics. A view whose claim to coverage is its rc_corner is measuring the
+# same metal as the view next to it at a different temperature. Unpacking the
+# corner packs above is the only thing that changes that, and until it is done
+# "clean across all corners" means clean across one extraction.
 set qrc_tech_file "/tsmc65pdk/65/CMOS/LP/pdk/Assura/online/1p9m_6X1Z1U/qrcTechFile"
 
 create_rc_corner -name default_rc_corner_worst\
@@ -317,11 +350,20 @@ create_delay_corner -name default_delay_corner_max\
    -late_timing_condition {tc_max}\
    -rc_corner default_rc_corner_worst
 
-create_delay_corner -name default_delay_corner_ocv\
-   -early_timing_condition {tc_min}\
-   -late_timing_condition {tc_max}\
-   -rc_corner default_rc_corner_typical
-
+# default_delay_corner_ocv WAS DEFINED HERE AND IS DELETED WITH ITS VIEWS
+# (2026-09-01). It bound tc_min early to tc_max late over
+# default_rc_corner_typical, and the ONLY things that ever named it were
+# typical_analysis_view_setup and typical_analysis_view_hold, retired below.
+# Leaving the corner behind would leave the trap intact: the next reader finds
+# a "corner" with no view and adds one.
+#
+# It also carried a defect of its own, and 3b_pnr_cts_eval.tcl:780-783 already
+# names it: "for delay corners having different late and early library sets,
+# only those set_timing_derate constraints are honored that are specified with
+# late library set". It was the one two-sided corner in this file, so the
+# early-side derate this flow depends on may never have applied to it - which
+# is a second reason not to have signed anything off in a view built on it.
+#
 create_delay_corner -name default_delay_corner_min\
    -early_timing_condition {tc_min}\
    -late_timing_condition {tc_min}\
@@ -382,8 +424,74 @@ unset -nocomplain __mmmc_sdcs __io_drv
 create_analysis_view -name default_analysis_view_setup -constraint_mode default_constraint_mode -delay_corner default_delay_corner_max
 create_analysis_view -name default_analysis_view_hold -constraint_mode default_constraint_mode -delay_corner default_delay_corner_min
 
-create_analysis_view -name typical_analysis_view_setup -constraint_mode default_constraint_mode -delay_corner default_delay_corner_ocv
-create_analysis_view -name typical_analysis_view_hold -constraint_mode default_constraint_mode -delay_corner default_delay_corner_ocv
+# ── THE TWO OCV VIEWS THAT USED TO BE HERE ARE RETIRED. 2026-09-01. ────────
+#
+# Deleted: typical_analysis_view_setup and typical_analysis_view_hold, both on
+# default_delay_corner_ocv, both created here and named in NO set_analysis_view
+# in this file, in flow/innovus/*, or in any hook. They were two of the seven
+# views this file defined and two of the two that no stage of any run ever
+# activated. They are inherited boilerplate: the same pair appears in seven
+# sibling nanosoc MMMCs under nanosoc-multicore-system (28nm/38pin, 65nm
+# 28/44/60pin, and their duplicates) and is activated in none of them either.
+#
+# REMOVING THEM IS NOT A BEHAVIOUR CHANGE. Nothing analysed them. eth-chiplet/
+# hooks/pre_route.tcl finds the corners it derates by testing .is_active rather
+# than by name, so it never saw them; the only trace they ever left in a log was
+# IMPCTE-104, "the constraint mode of this inactive view has been modified and
+# may need to be reanalyzed" - a warning that exists to tell you a view is not
+# being analysed, and which this design has emitted on every run for months.
+#
+# THEY ARE NOT DELETED FOR BEING UNUSED - they are deleted because ACTIVATING
+# them would have been worse than leaving them off, and "defined but inactive"
+# is the state in which that is hardest to see. Activated by hand on rc5 the
+# setup one read WNS -0.569 ns over 980 endpoints, and that number was carried
+# for three days as the largest open timing item on the project. It is not one:
+#
+# 1. IT IS NOT AN RC CORNER, though the name and every previous write-up of it
+#    said "typical interconnect versus worst interconnect". There is ONE
+#    extraction in this design. All four rc_corners pass the same $qrc_tech_file
+#    (see the note above them, extended 2026-09-01 with the measurement), and
+#    the routed database records it as a single symlink that all four point at.
+#    Measured on the three SPEFs of setupclose-20260829/sta_rc3setup: 4,528,778
+#    capacitance entries totalling 967.7348 pF in EVERY corner, identical to the
+#    last digit; the cap-table choice changes nothing under QRC (the worst/125C
+#    and best/125C bodies are byte-identical); only resistance moves with
+#    temperature, 8,684,727 ohm at 125 C against 6,162,102 ohm at -40 C.
+#    So this view differed from default_analysis_view_setup in metal by 25 C of
+#    resistance and in nothing else.
+#
+# 2. WHAT IT ACTUALLY DID was take EARLY delays from default_libset_min
+#    (FF / 1.32 V / -40 C) and LATE delays from default_libset_max
+#    (SS / 1.08 V / 125 C). For a setup check that puts the capture clock tree
+#    at one global wafer-voltage-temperature corner and the data path, on the
+#    same die at the same instant, at the opposite one. Process, supply and
+#    temperature are die-global; no silicon is ever in both states. What such a
+#    view is FOR is bounding on-chip variation - and this flow already models
+#    that twice, with `timing_analysis_type ocv` plus CPPR plus the
+#    0.95/1.05/0.97/1.03 derate that scripts/route_setup.tcl and
+#    ASIC/sta/run_signoff_sta.tcl both re-issue. Activating it would have
+#    replaced a 3% clock-variation model with a 150% one and sent
+#    opt_design -post_route after 980 endpoints of it, at 85.7% utilisation
+#    against a ~92.2% density wall. This design has done that once before: the
+#    2026-08-06 phantom-hold episode above added 37,407 instances chasing skew
+#    that was not there and blocked DRV repair for the rest of the run.
+#
+# 3. AND IT WAS NOT DE-EMBEDDED LIKE THE VIEWS IT WAS COMPARED WITH. ccopt
+#    writes a per-view source-latency correction back at CTS for the views that
+#    are ACTIVE then; these two never were, so the routed database binds a
+#    latency file to the other five and none to these. Reg-to-reg paths are
+#    unaffected (a uniform source latency cancels) but I/O paths are not, so
+#    even the -0.569 was not like-for-like.
+#
+# IF YOU WANT THE NUMBER BACK, it is a scratchpad away and needs nothing from
+# this file: generate a Tempus MMMC from a routed database with
+# ASIC/sta/make_sta_mmmc.py, append the two create_analysis_view lines to the
+# COPY, and activate them read-only. That is how the 2026-09-01 measurement was
+# made. Recipe and results: docs/tapeout/66-rc5-flow-findings.md, F30.
+#
+# DO NOT PUT EITHER NAME IN ROUTE_VIEWS_SETUP OR ROUTE_VIEWS_HOLD in
+# ASIC/eth-chiplet/design.mk. The views no longer exist, and 4_route.tcl:1564
+# issues set_analysis_view after place and CTS have already been paid for.
 
 create_analysis_view -name typical_analysis_view -constraint_mode default_constraint_mode -delay_corner typical_delay_corner
 
@@ -512,4 +620,14 @@ create_analysis_view -name av_ml_libset_hold    -constraint_mode default_constra
 # eth-chiplet/hooks/pre_route.tcl derates the ACTIVE corners by name and its
 # header documents three of them; dropping one is a behaviour change with no
 # measurement behind it. Adding the two hold views is additive.
+#
+# COUNTING THE VIEWS ON THIS LINE - the trap, measured 2026-09-01. It names
+# SIX list entries but activates FIVE views, because typical_analysis_view is
+# in both roles and a view named twice is still one view. That distinction is
+# load-bearing downstream: `get_db clocks` returns one object per SDC clock per
+# DISTINCT ACTIVE VIEW, and ASIC/sta/sta_policy.json grades the result. On a
+# read-only copy of rc6full-20260831 with 26 SDC clocks: setup{1} hold{3} = 4
+# views = 104 clocks; setup{2} hold{4} with one shared = 5 views = 130; the
+# same five with no overlap = 130 again; all seven = 182. Six entries and five
+# entries give the same number, so count views, not entries.
 set_analysis_view -setup [list default_analysis_view_setup typical_analysis_view] -hold [list default_analysis_view_hold av_ltfix_libset_hold av_ml_libset_hold typical_analysis_view]

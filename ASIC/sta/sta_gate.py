@@ -56,9 +56,38 @@ import tempfile
 DEFAULT_POLICY = {
     "setup_fep_budget": 0,
     "hold_fep_budget": 0,
-    # 26 SDC clocks x one object PER ACTIVE VIEW. With 1 setup + 3 hold views
-    # active that is 104. RECOMPUTE THIS IF required_*_views CHANGES:
-    # 26 * (len(required_setup_views) + len(required_hold_views)).
+    # CLOCK COVERAGE. Two numbers, and they do not measure the same thing.
+    #
+    # expected_sdc_clock_count is the PINNED quantity and the only one a run is
+    # graded against: how many clocks the SDC defines. 26 since commit 153025c
+    # deleted seven D2D_TX_WORD_CLK declarations that never resolved a master.
+    # `get_db clocks` returns one object per SDC clock PER DISTINCT ACTIVE
+    # ANALYSIS VIEW, so the gate cross-foots
+    #     clock_count == expected_sdc_clock_count * |active setup U active hold|
+    # using the view lists the same manifest records.
+    #
+    # DISTINCT, NOT "setup entries + hold entries". A view named in BOTH roles
+    # is ONE view and contributes ONE set of clock objects. This matters here:
+    # the project mmmc's own set_analysis_view line names typical_analysis_view
+    # in both lists. MEASURED 2026-09-01, Tempus 21.11, read-only copy of
+    # rc6full-20260831's routed database:
+    #     setup{A}      hold{B,C,D}        4 distinct -> 104
+    #     setup{A,E}    hold{B,C,D,E}      5 distinct -> 130   <- 6 list entries
+    #     setup{A,E}    hold{B,C,D}        5 distinct -> 130   <- 5 list entries
+    #     setup{A,E,F}  hold{B,C,D,G}      7 distinct -> 182
+    # The middle pair is the falsifying one: six list entries and five list
+    # entries give the SAME count, so the count follows distinct views.
+    "expected_sdc_clock_count": 26,
+    #
+    # expected_clock_count grades THIS POLICY, not a run. It must equal
+    # expected_sdc_clock_count * the number of distinct views the two
+    # required_*_views lists name, and the gate says POLICY_INCONSISTENT if it
+    # does not -- so an editor who lengthens required_hold_views and forgets
+    # this number gets told the rule instead of a mystery CLOCK_COUNT on every
+    # subsequent run. It is NOT compared against a run's clock_count: doing
+    # that made the required-view lists a CEILING as well as a floor, which
+    # contradicts their own documentation, because a run that activates a
+    # sixth view reports 156 and would have failed.
     "expected_clock_count": 104,
     # The untested population is gated on `unknown`, NEVER on the total: see
     # parse_untested_reasons(). None disables the arm; 0 is the requirement.
@@ -424,9 +453,51 @@ def check(reports_dir, policy, r):
             if n < min_bytes:
                 r.fail("SPEF_TOO_SMALL", f"{k} = {n} bytes, require >= {min_bytes}. A truncated SPEF times as an optimistic design.")
 
+    # --- view set has not silently shrunk ---------------------------------
+    # RUNS BEFORE THE CLOCK CHECK, because the clock check cross-foots against
+    # the number of DISTINCT views collected here. Union, not sum: a view named
+    # in both roles is one view.
+    active_views = set()
+    views_recorded = False
+    for role, key in (("setup", "required_setup_views"), ("hold", "required_hold_views")):
+        want = policy.get(key) or []
+        raw = man.get(f"analysis_views_{role}")
+        if raw is None:
+            if want:
+                r.fail("VIEWS_MISSING", f"manifest has no analysis_views_{role}")
+            continue
+        got = [x for x in raw.split(",") if x]
+        if got:
+            active_views.update(got)
+            views_recorded = True
+        r.fact(f"views_{role}", got)
+        for v in want:
+            if v not in got:
+                r.fail("VIEW_ABSENT", f"required {role} view {v!r} not active (active: {got})")
+
     # --- clock coverage ---------------------------------------------------
-    want_clocks = policy.get("expected_clock_count")
-    if want_clocks:
+    # What this arm detects is a CLOCK that vanished between P&R and STA. What
+    # it must NOT detect is a deliberate change to the view set -- that is what
+    # the required-view lists above are for, and pinning an absolute product of
+    # the two made every extra corner look like a missing clock. So the
+    # expectation is derived per run from the active view count, and the pinned
+    # per-view number is the thing held constant.
+    n_sdc    = policy.get("expected_sdc_clock_count")
+    want_abs = policy.get("expected_clock_count")
+
+    # (a) POLICY SELF-CHECK. Not about the run at all: the two pinned numbers
+    #     must agree with the required view lists they are derived from.
+    if n_sdc and want_abs:
+        req = set(policy.get("required_setup_views") or []) | \
+              set(policy.get("required_hold_views") or [])
+        if req and want_abs != n_sdc * len(req):
+            r.fail("POLICY_INCONSISTENT",
+                   f"expected_clock_count = {want_abs} but the policy requires "
+                   f"{len(req)} distinct view(s) at {n_sdc} clocks each = "
+                   f"{n_sdc * len(req)}. Change both or neither.")
+
+    # (b) THE RUN CHECK.
+    if n_sdc or want_abs:
         raw = man.get("clock_count")
         if raw is None:
             r.fail("CLOCKS_MISSING", "manifest has no clock_count")
@@ -438,23 +509,22 @@ def check(reports_dir, policy, r):
                 got = None
             if got is not None:
                 r.fact("clock_count", got)
-                if got != want_clocks:
-                    r.fail("CLOCK_COUNT", f"clock_count = {got}, expected {want_clocks}. A clock that vanished between P&R and STA is a whole timing domain nobody is checking.")
-
-    # --- view set has not silently shrunk ---------------------------------
-    for role, key in (("setup", "required_setup_views"), ("hold", "required_hold_views")):
-        want = policy.get(key) or []
-        if not want:
-            continue
-        raw = man.get(f"analysis_views_{role}")
-        if raw is None:
-            r.fail("VIEWS_MISSING", f"manifest has no analysis_views_{role}")
-            continue
-        got = [x for x in raw.split(",") if x]
-        r.fact(f"views_{role}", got)
-        for v in want:
-            if v not in got:
-                r.fail("VIEW_ABSENT", f"required {role} view {v!r} not active (active: {got})")
+                if n_sdc and views_recorded:
+                    r.fact("active_view_count", len(active_views))
+                    expect = n_sdc * len(active_views)
+                    if got != expect:
+                        r.fail("CLOCK_COUNT",
+                               f"clock_count = {got}, expected {expect} "
+                               f"({n_sdc} SDC clocks x {len(active_views)} distinct "
+                               f"active view(s)). A clock that vanished between P&R "
+                               f"and STA is a whole timing domain nobody is checking.")
+                elif want_abs and got != want_abs:
+                    # No per-view pin, or the manifest recorded no view lists:
+                    # fall back to the absolute number rather than skip the arm.
+                    r.fail("CLOCK_COUNT",
+                           f"clock_count = {got}, expected {want_abs}. A clock that "
+                           f"vanished between P&R and STA is a whole timing domain "
+                           f"nobody is checking.")
 
     # --- coverage ---------------------------------------------------------
     untested = parse_analysis_coverage(os.path.join(reports_dir, "analysis_coverage.rpt"), r)
@@ -736,6 +806,26 @@ def selftest():
             print(f"BROKEN an accounted-for untested population FAILS: {r.failures}")
             failed += 1
 
+        # THIRD POSITIVE CONTROL, and it is the one the 2026-09-01 clock-count
+        # rewrite exists for. sta_policy.json's own text says the required-view
+        # lists are "a floor and never a ceiling" -- a run that activates MORE
+        # views must still pass. Under the old absolute `expected_clock_count`
+        # pin it did not: five active views report 130 and the gate demanded
+        # 104, so the cheapest way to make a five-corner run green was to drop
+        # a corner. This case fails if that regresses.
+        r = check(_mk(tmp, manifest=GOOD_MANIFEST
+                      .replace("clock_count = 104", "clock_count = 130")
+                      .replace("analysis_views_setup = default_analysis_view_setup",
+                               "analysis_views_setup = default_analysis_view_setup,"
+                               "typical_analysis_view")),
+                  dict(DEFAULT_POLICY), Result())
+        if r.ok:
+            print("ok    baseline PASSES with a FIFTH view active (130 = 26 x 5)")
+            passed += 1
+        else:
+            print(f"BROKEN a run with more views than required FAILS: {r.failures}")
+            failed += 1
+
         cases = [
             ("missing manifest", dict(manifest=None), "MANIFEST_MISSING"),
             ("empty manifest", dict(manifest="\n\n"), "MANIFEST_EMPTY"),
@@ -770,6 +860,18 @@ def selftest():
             ("clocks vanished between P&R and STA",
              dict(manifest=GOOD_MANIFEST.replace("clock_count = 104", "clock_count = 17")),
              "CLOCK_COUNT"),
+            # The derived form has to be able to fail UPWARDS too, or it is
+            # just "any multiple of 26 is fine". Four active views and a count
+            # that belongs to five is a clock population that changed.
+            ("clock count stops tracking the active view set",
+             dict(manifest=GOOD_MANIFEST.replace("clock_count = 104", "clock_count = 130")),
+             "CLOCK_COUNT"),
+            # The policy grading ITSELF. An editor who lengthens
+            # required_hold_views and leaves expected_clock_count alone gets
+            # told the rule here, instead of a CLOCK_COUNT on every run after.
+            ("the policy's clock arithmetic contradicts its own view lists",
+             dict(policy={"expected_clock_count": 130}),
+             "POLICY_INCONSISTENT"),
             ("setup view silently dropped",
              dict(manifest=GOOD_MANIFEST.replace(
                  "analysis_views_setup = default_analysis_view_setup",
@@ -844,6 +946,8 @@ def selftest():
 
         for name, kw, want_code in cases:
             kw2 = dict(kw)
+            pol = dict(DEFAULT_POLICY)
+            pol.update(kw2.pop("policy", {}))
             if kw2.get("manifest") is None and "manifest" in kw2:
                 d = tempfile.mkdtemp(dir=tmp)  # no manifest at all
                 if kw2.get("summary", GOOD_SUMMARY) is not None:
@@ -852,7 +956,7 @@ def selftest():
                     open(os.path.join(d, "analysis_coverage.rpt"), "w").write(GOOD_COVERAGE)
             else:
                 d = _mk(tmp, **kw2)
-            rr = check(d, dict(DEFAULT_POLICY), Result())
+            rr = check(d, pol, Result())
             codes = [c for c, _ in rr.failures]
             if rr.ok:
                 print(f"BROKEN {name!r}: gate PASSED a mutant it must reject")
