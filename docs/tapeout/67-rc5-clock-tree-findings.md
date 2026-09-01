@@ -461,9 +461,83 @@ CPU/interconnect/tidechart flops back to `clk`, not from the divider — and the
 narrow arm keeps rc6full's setup (+0.084) exactly where the wide arm lost 7 ps
 of it. **If the narrow arm also closes the QSPI hold path at route, it is
 strictly the better configuration and the pattern default should be narrowed to
-it.** Its route result is appended below; if there is nothing below this
-paragraph, it had not finished when this was written and the recommendation
-above stands on rc7gskew.
+it.** Its route result is the addendum below.
+
+---
+
+## ADDENDUM TO F33 — THE DIVIDER'S ISLAND ALONE IS THE ANSWER, AND IT IS BETTER THAN THE CONTROL IN EVERY DIRECTION
+
+`rc7gskew1-20260901` finished. **Eleven pins.** Three arms, one placed database
+(rc6full-20260831's), one pinned tree changed in one file each time,
+`ROUTE_OPT_MODE=setup_hold` in all three, `06_post_fill`:
+
+| `CTS_GEN_SKEW_PATTERN` | islands | pins moved | setup | hold | max_transition |
+|---|---|---|---|---|---|
+| *(rebalance off — `rc6full-20260831`)* | 0 | 0 | +0.082 / 0 | **−0.056 / 1** | −0.132 / 155 |
+| `_clock_gen_clk_*qspi*` (`rc7gskew`) | 7 | 1,955 | **−0.024 / 1** | +0.002 / 0 | −0.103 / 114 |
+| **`_clock_gen_clk_QSPI_SCLK_reg_reg*`** (`rc7gskew1`) | **1** | **11** | **+0.103 / 0** | **+0.000 / 0** | −0.110 / 155 |
+
+**Both directions close, and setup closes with 21 ps MORE margin than the run
+that had no rebalance at all** (+0.103 against +0.082). The per-view artefact
+again, on the post-fill database:
+
+    hold_06_post_fill_default_analysis_view_hold.rep    0 violating paths
+    hold_06_post_fill_av_ml_libset_hold.rep             0 violating paths
+    hold_06_post_fill_av_ltfix_libset_hold.rep          0 violating paths
+
+### AND THE ROUTE GATE HAS NO TIMING ROW ON IT AT ALL
+
+    rc6full-20260831              rc7gskew-20260901            rc7gskew1-20260901
+    380 missing power vias        380 missing power vias       380 missing power vias
+    PG opens 51                   PG opens 51                  PG opens 51
+    dangling PG wires 727         dangling PG wires 727        dangling PG wires 727
+    hold FEP 1  (-0.056)          setup FEP 1 (-0.024)         -- NOTHING --
+    max_transition FEP 155        max_transition FEP 114       max_transition FEP 155
+
+`HARD FAILURES: none` in all three. **For the first time in this design's
+history a routed database reaches the route stage's own signoff gate with
+nothing to say about setup OR hold.** What is left on it is the three PG rows
+that are F23's standing known-bad and byte-identical across all three runs, and
+`max_transition`, which F32 has taken apart separately.
+
+### WHY THE NARROW PATTERN BEATS THE WIDE ONE, AND WHERE THE 81% WENT
+
+The wide pattern is not wrong about the mechanism — it is right about a bigger
+piece of it than the design can currently afford:
+
+    after ccopt_design, hold WNS / failing endpoints, and setup
+      rc6full     0 islands,     0 pins   -0.722 / 10,055   setup +0.083
+      rc7gskew    7 islands, 1,955 pins   -0.733 /  1,951   setup +0.076
+      rc7gskew1   1 island,     11 pins   -0.709 /  9,624   setup +0.084
+
+**81% of the hold population ccopt hands the optimiser comes from the five
+`reg13` islands, not from the divider.** Those islands hold 1,941 + 4×1,797
+sinks of CPU, interconnect and tidechart flops that are "adjacent" to the QSPI
+divide-ratio config register only in the sense that a datapath reaches them, and
+taking them out of `clk`'s balancing pool is a real defect affecting ~2,000
+flops. Returning them fixes that population — and, on THIS placement, makes the
+`clk` tree 0.4 ns shallower (avg insertion delay 2.934 → 2.529), which
+reschedules the useful skew that the CPU → TideLink APB path at 9.664 ns was
+living on, and that path then misses by 23 ps.
+
+**The divider's island is the one that has to go and the only one that has to
+go.** Eleven pins — the generator flop, its five-bit counter and the five
+`reg13` config bits — put back into `clk`'s pool, and every QSPI_SCLK → clk hold
+path is fixed without touching the balance of the other 39,458 sinks.
+
+That the 81% is real and currently unaffordable is the honest state of it: the
+`reg13` islands are a known defect, left in place, with the knob to remove them
+and the number that says what removing them costs on this placement.
+
+### RUNTIME, AND THE STAGE EXIT
+
+    == STAGE cts   starting 2026-09-01T14:46:15  done 16:24:58   1 h 39 min
+    == STAGE route starting 2026-09-01T16:24:58  done 17:58:41   1 h 34 min
+
+and the cts stage exited **clean** — no `FAILED (rc)` line, `0` real
+`IMPDBTCL-248`. That is the committed revision of the hook running end to end
+in a production stage, and it is the proof that the attribute-probe defect
+`AMENDMENT-01` describes is actually fixed rather than merely fixed in fixtures.
 
 ---
 
@@ -573,8 +647,14 @@ defaults are the measured configuration. `design.mk` should still carry them —
 only in a hook cannot be read there:
 
     export CTS_GEN_SKEW_REBALANCE ?= 1
-    export CTS_GEN_SKEW_PATTERN   ?= _clock_gen_clk_*qspi*
+    export CTS_GEN_SKEW_PATTERN   ?= _clock_gen_clk_QSPI_SCLK_reg_reg*
     export CTS_GEN_SKEW_STRICT    ?= 0
+
+**The pattern is the DIVIDER'S ISLAND ALONE — eleven pins — and that is a
+measurement, not a preference.** The wider `_clock_gen_clk_*qspi*` also closes
+hold and then costs a −0.024 ns setup endpoint; the narrow one closes hold AND
+leaves setup better than the run with no rebalance at all. The three-arm table
+is in the addendum at the end of F33.
 
 and three lines in the `print-timing-knobs` recipe beside the other `CTS_*`
 rows. Setting `CTS_GEN_SKEW_REBALANCE=0` reproduces `rc6full-20260831` exactly;
@@ -586,15 +666,17 @@ the manifest that reads as protection and provides none.
 
 ### Verifying it took, in the log of any run
 
-    CTS: rebalancing generator islands matching: _clock_gen_clk_*qspi*
+    CTS: rebalancing generator islands matching: _clock_gen_clk_QSPI_SCLK_reg_reg*
     CTS: 40 skew group(s) exist before the rebalance
-    CTS:   sink lists read through 'sinks': 1962 distinct pin(s) over 7 island(s)
-    CTS: rebalanced: deleted 7 generator island(s); 40 -> 33 skew groups
+    CTS:   island _clock_gen_clk_QSPI_SCLK_reg_reg/default_constraint_mode : 11 sink(s)
+    CTS:   sink lists read through 'sinks': 11 distinct pin(s) over 1 island(s)
+    CTS: rebalanced: deleted 1 generator island(s); 40 -> 39 skew groups
     CTS: every deleted island falls back to a rank-0 constraining group: clk/default_constraint_mode
 
-and in `reports/cts_skew_groups.rep`, `clk/default_constraint_mode` at **39,469**
-constrained sinks rather than 37,514. If the count is 37,514 the knob did not
-take, whatever the manifest says.
+and in `reports/cts_skew_groups.rep`, `clk/default_constraint_mode` at **37,525**
+constrained sinks rather than 37,514 — eleven more. If the count is 37,514 the
+knob did not take, whatever the manifest says. (On the wide pattern the same
+line reads 39,469.)
 
 ### The fixtures
 
@@ -607,11 +689,12 @@ endpoints in rc6full and 1,746 in rc7gskew and repairing both.
 
 ### WHAT IS STILL OPEN, IN ORDER
 
-1. **The one setup endpoint at −0.024 ns**, on the CPU → TideLink APB critical
-   path. Not a QSPI path, not a clock-tree defect — 9.664 ns of logic in a 10 ns
-   period that lost 181 ps of useful skew when the tree got shallower. The
-   experiment that asks whether it had to be paid is `rc7gskew1-20260901`
-   (below); after that the levers are `CTS_OPT_SETUP_TARGET` and the design.
+1. **The five `reg13` "adjacent register" islands are still in place, and they
+   are 81% of the problem by population.** Deleting them takes ccopt's hold
+   output from 10,055 failing endpoints to 1,951; keeping them costs nothing at
+   route on this placement and deleting them costs a −0.024 setup endpoint. That
+   trade is placement-specific and worth re-testing on any new placement:
+   `CTS_GEN_SKEW_PATTERN=_clock_gen_clk_*qspi*` is the one-word change.
 2. **The nine D2D generator islands are untouched and unmeasured.** The same
    mechanism builds `_clock_gen_D2D_RX_CLK_0_count_reg[3]_1..8` (4 sinks each)
    and `_clock_gen_clk_count_reg[3]` (the D2D TX word-clock generator). Nobody

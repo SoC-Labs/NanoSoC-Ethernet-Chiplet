@@ -207,32 +207,39 @@ run_case() {
 }
 ON=CTS_GEN_SKEW_REBALANCE=1
 
+WIDE="CTS_GEN_SKEW_PATTERN=_clock_gen_clk_*qspi*"
+
 echo "== proving hooks/pre_cts.tcl's generator skew-group rebalance =="
 run_case "A  off by default: nothing is deleted"       'CTS_GEN_SKEW_REBALANCE=0 - the generator' 'TOOL: delete_skew_groups' CTS_GEN_SKEW_REBALANCE=0
 run_case "A2 and the census is 21 groups untouched"    'HARNESS-REMAINING=21'         ''  CTS_GEN_SKEW_REBALANCE=0
-run_case "B  on: the seven QSPI islands go"            'deleted 7 generator island'   'CTS-FAIL' $ON
-run_case "B2 and the census drops to 14"               'HARNESS-REMAINING=14'         ''  $ON
-run_case "B3 and the divider island is one of them"    'removed _clock_gen_clk_QSPI_SCLK_reg_reg/' '' $ON
-run_case "B4 and the D2D islands are NOT touched"      'HARNESS-LEFT _clock_gen_D2D_RX_CLK_0_count_reg\[3\]_8/' '' $ON
-run_case "B5 and the TX word-clock island is NOT"      'HARNESS-LEFT _clock_gen_clk_count_reg\[3\]/' '' $ON
-run_case "B6 and every island resolves to clk's group" 'falls back to a rank-0 constraining group: clk/default_constraint_mode' '' $ON
-run_case "B7 and it counts the pins handed back"       '1963 distinct pin' ''          $ON
-run_case "B8 and it names the pattern it used"         'matching: _clock_gen_clk_\*qspi\*' '' $ON
-run_case "B9 AND IT RAISES NO ATTRIBUTE MISS AT ALL"   'HARNESS-MISSES=0'             '' $ON
+run_case "N  THE DEFAULT deletes the divider island"   'deleted 1 generator island'   'CTS-FAIL' $ON
+run_case "N2 and only that one: census 21 -> 20"       'HARNESS-REMAINING=20'         ''  $ON
+run_case "N3 and the five reg13 islands SURVIVE"       'HARNESS-LEFT _clock_gen_clk_u_qspi_flash_0_u_top_ahb_qspi_u_apb_qspi_regs_reg13_reg\[4\]/' '' $ON
+run_case "N4 and it hands back exactly 11 pins"        '11 distinct pin\(s\) over 1 island' '' $ON
+run_case "N5 and it names the default pattern"         'matching: _clock_gen_clk_QSPI_SCLK_reg_reg\*' '' $ON
+run_case "N6 and raises no attribute miss"             'HARNESS-MISSES=0'             '' $ON
+run_case "B  the wide pattern takes all seven"         'deleted 7 generator island'   'CTS-FAIL' $ON "$WIDE"
+run_case "B2 and the census drops to 14"               'HARNESS-REMAINING=14'         ''  $ON "$WIDE"
+run_case "B3 and the divider island is one of them"    'removed _clock_gen_clk_QSPI_SCLK_reg_reg/' '' $ON "$WIDE"
+run_case "B4 and the D2D islands are NOT touched"      'HARNESS-LEFT _clock_gen_D2D_RX_CLK_0_count_reg\[3\]_8/' '' $ON "$WIDE"
+run_case "B5 and the TX word-clock island is NOT"      'HARNESS-LEFT _clock_gen_clk_count_reg\[3\]/' '' $ON "$WIDE"
+run_case "B6 and every island resolves to clk's group" 'falls back to a rank-0 constraining group: clk/default_constraint_mode' '' $ON "$WIDE"
+run_case "B7 and it counts the pins handed back"       '1963 distinct pin' ''          $ON "$WIDE"
+run_case "B9 AND IT RAISES NO ATTRIBUTE MISS AT ALL"   'HARNESS-MISSES=0'             '' $ON "$WIDE"
 run_case "C  a pattern hitting a rank-0 group REFUSES" 'REFUSING to delete clk/default_constraint_mode' 'TOOL: delete_skew_groups removed clk/' $ON CTS_GEN_SKEW_PATTERN='clk/*'
 run_case "C2 and clk is still there afterwards"        'HARNESS-LEFT clk/default_constraint_mode' '' $ON CTS_GEN_SKEW_PATTERN='clk/*'
 run_case "D  a pattern that matches nothing warns"     'matched NO exclusive skew group' 'deleted' $ON CTS_GEN_SKEW_PATTERN='_clock_gen_*nosuchthing*'
 run_case "D2 and is fatal under GEN_SKEW_STRICT"       'CTS-FAIL|HARNESS-FAILED=1'    ''  $ON CTS_GEN_SKEW_PATTERN='_clock_gen_*nosuchthing*' CTS_GEN_SKEW_STRICT=1
-run_case "E  a glob-only matcher: literal call misses" 'survived the literal delete'  '' $ON DELETE_GLOB_ONLY=1
-run_case "E2 and the escaped retry rescues all seven"  'deleted 7 generator island'   'CTS-FAIL' $ON DELETE_GLOB_ONLY=1
-run_case "F  a delete that silently does nothing"      'did NOT remove 7 of 7'        'deleted 7 generator' $ON DELETE_INERT='*qspi*'
-run_case "F2 a delete that half works is still caught" 'did NOT remove 1 of 7'        'deleted 7 generator' $ON DELETE_INERT='*QSPI_SCLK_reg_reg*'
+run_case "E  a glob-only matcher: literal call misses" 'survived the literal delete'  '' $ON "$WIDE" DELETE_GLOB_ONLY=1
+run_case "E2 and the escaped retry rescues all seven"  'deleted 7 generator island'   'CTS-FAIL' $ON "$WIDE" DELETE_GLOB_ONLY=1
+run_case "F  a delete that silently does nothing"      'did NOT remove 7 of 7'        'deleted 7 generator' $ON "$WIDE" DELETE_INERT='*qspi*'
+run_case "F2 a delete that half works is still caught" 'did NOT remove 1 of 7'        'deleted 7 generator' $ON "$WIDE" DELETE_INERT='*QSPI_SCLK_reg_reg*'
 run_case "G  a master that does not constrain FAILS"   'have NO' ''                    $ON MASTER_CONSTRAINS=none CTS_GEN_SKEW_PATTERN='_clock_gen_clk_*'
 run_case "G2 and it is a flow_fail, not a note"        'HARNESS-FAILED=1'             '' $ON MASTER_CONSTRAINS=none CTS_GEN_SKEW_PATTERN='_clock_gen_clk_*'
 run_case "G3 and the D2D islands still find theirs"    'HARNESS-FAILED=0'             '' $ON CTS_GEN_SKEW_PATTERN='_clock_gen_D2D*'
-run_case "H  an unreadable sink list is reported"      'NOT known this run'           '' $ON NO_SINK_ATTR=1
-run_case "H2 and the deletion still happens"           'deleted 7 generator island'   'CTS-FAIL' $ON NO_SINK_ATTR=1
-run_case "H3 and the fallback costs at most 3 misses"  'HARNESS-MISSES=3'             '' $ON NO_SINK_ATTR=1
+run_case "H  an unreadable sink list is reported"      'NOT known this run'           '' $ON "$WIDE" NO_SINK_ATTR=1
+run_case "H2 and the deletion still happens"           'deleted 7 generator island'   'CTS-FAIL' $ON "$WIDE" NO_SINK_ATTR=1
+run_case "H3 and the fallback costs at most 3 misses"  'HARNESS-MISSES=3'             '' $ON "$WIDE" NO_SINK_ATTR=1
 run_case "I  delete_skew_groups raising is not fatal"  'raised:'                      '' $ON DELETE_RAISES=1
 
 echo "== $PASS passed, $FAIL failed =="

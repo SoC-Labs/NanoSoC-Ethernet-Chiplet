@@ -4390,11 +4390,12 @@ headlines, so a reader of this file is not left guessing:
   `create_clock_tree_spec` builds seven rank-1 exclusive islands around the QSPI
   clock divider (`cts_spec_config_create_generator_skew_groups`, default true),
   which takes the divider OUT of `clk`'s balancing group and leaves it 1.19-1.25
-  ns early in every run of this design. `hooks/pre_cts.tcl` deletes the islands
-  before `ccopt_design`; `rc7gskew-20260901` then closes hold at **every** corner
-  — `06_post_fill` hold **−0.056/1 → +0.002/0**, and 0 violating paths in all
-  three per-view reports — for one −0.024 ns setup endpoint on the CPU→fabric
-  critical path and 41 fewer `max_transition` endpoints.
+  ns early in every run of this design. `hooks/pre_cts.tcl` deletes that island
+  before `ccopt_design` — eleven pins — and `rc7gskew1-20260901` then closes
+  **both** directions: `06_post_fill` hold **−0.056/1 → +0.000/0** with 0
+  violating paths in all three per-view reports, and setup **+0.082 → +0.103**,
+  which is 21 ps BETTER than the run with no rebalance. **The route gate carries
+  no timing row at all for the first time in this design's history.**
 * **F34 — `opt_delete_insts` is refuted, like `opt_area_recovery` before it.**
   Set false, proven false, and 31,363 of 31,367 cells are deleted anyway. Both
   documented preventions in front of the F16 guard are now measured not to work;

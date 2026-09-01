@@ -451,14 +451,35 @@ if {![llength $::CTS_OPT_ATTR_SAVED]} {
 # which is clk/default_constraint_mode - created -auto_sinks at rank 0 and
 # therefore already holding every CLK-reachable sink as a member.
 #
-# WHY THE DEFAULT PATTERN IS THE QSPI FAMILY AND NOT EVERY GENERATOR.
-# The same feature builds eight more islands for the TideLink D2D word-clock
-# dividers (_clock_gen_D2D_RX_CLK_0_count_reg[3]_1..8) and one for the TX side
-# (_clock_gen_clk_count_reg[3]). Those have not been measured and are not this
-# change's business - the D2D word clocks have their own history. The default
-# glob matches the QSPI family only. Widen it with CTS_GEN_SKEW_PATTERN if a
-# later measurement earns it; the knob exists so that widening it is a recorded
-# decision rather than an edit to this file.
+# WHY THE DEFAULT PATTERN IS THE DIVIDER'S ISLAND ALONE, AND NOT THE QSPI
+# FAMILY. Because that was measured, on this design, end to end, and the wider
+# pattern is measurably worse. Three arms, one placed database
+# (rc6full-20260831's), ROUTE_OPT_MODE=setup_hold in all three, 06_post_fill:
+#
+#   pattern                              setup       hold        max_tran
+#   (none - rc6full-20260831)            +0.082/0    -0.056/1    -0.132/155
+#   _clock_gen_clk_*qspi*   7 islands    -0.024/1    +0.002/0    -0.103/114
+#   _clock_gen_clk_QSPI_SCLK_reg_reg*    +0.103/0    +0.000/0    -0.110/155
+#     1 island, 11 pins  <- THE DEFAULT
+#
+# Deleting the whole family hands 1,955 pins back to clk, which closes hold and
+# then costs a -0.024 setup endpoint on the CPU->TideLink APB critical path,
+# because the clk tree gets 0.4 ns shallower and CCOpt reschedules the useful
+# skew that path was living on. Deleting the DIVIDER'S island alone - eleven
+# pins, the generator flop, its five-bit counter and the five reg13 config bits
+# - closes hold in every view AND leaves setup better than the run with no
+# rebalance at all.
+#
+# WHAT IS DELIBERATELY OUT OF SCOPE. The five _clock_gen_clk_..._regs_reg13_reg
+# [0..4] islands (1,941 + 4x1,797 sinks of CPU, interconnect and tidechart
+# flops) stay. They are the same defect in kind and they are 81% of the hold
+# population ccopt hands the optimiser - 10,055 endpoints against 1,951 when
+# they are deleted - but on this placement removing them costs more setup than
+# it is worth. So does every D2D generator island
+# (_clock_gen_D2D_RX_CLK_0_count_reg[3]_1..8, _clock_gen_clk_count_reg[3]),
+# which nobody has measured at all. CTS_GEN_SKEW_PATTERN is the knob for
+# revisiting either, so that widening it is a recorded decision rather than an
+# edit to this file.
 #
 # WHAT THIS DOES NOT CLAIM.
 # * It does not claim the hold path is fixed by CTS alone. rc6full's hold was
@@ -475,7 +496,7 @@ if {![llength $::CTS_OPT_ATTR_SAVED]} {
 step "generator skew-group islands"
 
 opt CTS_GEN_SKEW_REBALANCE 0                       ;# 1 = delete the matching generator islands
-opt CTS_GEN_SKEW_PATTERN   {_clock_gen_clk_*qspi*} ;# glob (-nocase) over skew group names
+opt CTS_GEN_SKEW_PATTERN   {_clock_gen_clk_QSPI_SCLK_reg_reg*} ;# glob (-nocase) over skew group names
 opt CTS_GEN_SKEW_STRICT    0                       ;# 1 = flow_fail when the pattern matches nothing
 
 # THE SINK-LIST ATTRIBUTE, DISCOVERED ONCE AND MEASURED-NAME-FIRST.
