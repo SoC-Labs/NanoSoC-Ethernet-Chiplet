@@ -999,6 +999,58 @@ signoff-report:
 ROUTE_OPT_MODE ?= setup_hold
 export ROUTE_OPT_MODE
 
+#--- rc6 integration, 2026-09-01 -------------------------------------------
+# Four workstreams, four separate controlled experiments, combined here for the
+# first time. Each default is the arm its experiment measured, not a guess.
+
+# CTS generator-skew rebalance. ROOT CAUSE, and it is MEMBERSHIP not balancing:
+# create_clock_tree_spec's cts_spec_config_create_generator_skew_groups defaults
+# TRUE and this project never set it, so seven rank-1 EXCLUSIVE skew groups form
+# around the QSPI divider. An exclusive group's sinks are the only active sinks
+# in it, so the divider flop leaves clk's rank-0 group and is balanced against
+# ten local neighbours -- its island sits 1.19-1.25 ns below clk's average
+# insertion delay in EVERY run, so QSPI_SCLK->clk launches before it captures.
+# The narrow pattern (1 island, 11 pins) closed both directions and left the
+# route gate with NO TIMING ROW AT ALL. The broad *qspi* arm (7 islands, 1,955
+# pins) closed hold but cost setup (-0.024/1) -- do not widen without measuring.
+export CTS_GEN_SKEW_REBALANCE ?= 1
+export CTS_GEN_SKEW_PATTERN   ?= _clock_gen_clk_QSPI_SCLK_reg_reg*
+export CTS_GEN_SKEW_STRICT    ?= 0
+
+# IO-ring slew is an ASSERTION, not a computed value: 48 chip pins counted twice
+# (top-level port + the pad's PAD pin, one node under two names) = the constant
+# 96 rows. The override removes them for ZERO area and ZERO timing change --
+# but ONLY via read_mmmc, which runs 5x in place and NEVER in cts or route, so
+# this reaches the design only on a run that executes the place stage.
+# PNR_IO_DRV_OVERRIDE is already set above.
+
+# ROUTE_OPT_DRV stays OFF. Measured: it halves the row per pass (229->99->47)
+# but costs setup closure (+0.091 -> -0.042) and the flow's own recovery target
+# claws back only 12 ps of 133. It becomes correct once a setup-recovery pass
+# exists after route's last optimisation -- that slot is currently empty.
+export ROUTE_OPT_DRV ?= 0
+
+# Marker-driven PG via repair. The three PG rows are ONE defect and it is made
+# by power_plan.tcl, not by route: the counts are byte-identical at _fplan,
+# _placed, _cts and _routed across four runs including a full RTL->GDS rebuild.
+# Measured on real bytes: missing vias 367->12, opens 51->26, dangling 727->176,
+# for +0.8% PG vias and +6 check_drc. The `global` arm was measured and REJECTED
+# (+91,560 vias, ~34k on VIA12/23/34 at 85.7% utilisation).
+export EVP_PG_ADD_VIAS ?= markers
+
+# Route-gate budgets. Each is a reason, not a round number.
+#   opens 24    = VDDIO pad count + VSSIO pad count; the marker counts PIECES,
+#                 not breaks (12 VDDIO pads -> 12 markers where breaks give 11).
+#   pg vias 25  = 4 non-orthogonal the fixer may not place + 4 M9/AP corner
+#                 + 13 M4-under-M9-ring + 4 triaged.
+#   dangling 176 = a RATCHET, not a target. Every marker is a zero-area POINT,
+#                 i.e. a wire END; 678 of the original 727 sat on wires live
+#                 elsewhere. Replacement metric: count islands, not ends.
+export ROUTE_BUDGET_OPENS    ?= 24
+export ROUTE_BUDGET_PG_VIAS  ?= 25
+export ROUTE_BUDGET_DANGLING ?= 176
+#---------------------------------------------------------------------------
+
 ## ---------------------------------------------------------------------------
 ## THE POST-ROUTE PASSES ARE ASKED FOR POSITIVE MARGIN, NOT FOR ZERO.
 ##
