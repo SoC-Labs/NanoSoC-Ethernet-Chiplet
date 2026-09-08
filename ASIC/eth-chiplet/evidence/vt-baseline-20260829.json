@@ -1,0 +1,116 @@
+{
+ "base_run": "ASIC/eth-chiplet/build/rc5vt-20260829",
+ "connectivity_reps": [
+  "ASIC/eth-chiplet/build/rc5vt-20260829/reports/nanosoc_eth_chiplet_pads_imp_connectivity_prestream.rep"
+ ],
+ "design": "nanosoc_eth_chiplet_pads",
+ "known_bad": [
+  {
+   "date": "2026-08-29",
+   "decision": "THE GATE MOVED FROM `untested > 0` TO `unknown > 0`, which is a strengthening and not a relaxation, and the reason is that the old arm could not fail usefully. 169,356 of this design's checks are PulseWidth, so the total can never be zero; the arm was therefore either overridden or the whole stage demoted to gate: report. It was demoted. What is gated now is ATTRIBUTION -- every untested check must carry one of Tempus's closed reason set -- and any reason string the parser does not recognise counts as `unknown`, so a format drift fires the gate instead of shrinking the histogram. sta_gate.py --selftest carries five arms for this, including a POSITIVE control (58 untested checks, all attributed, must PASS) so the gate cannot quietly revert to failing on the total under a new name.",
+   "id": "sta-untested-checks-ENUMERATED",
+   "person": "flow owner -- rc5 virtual tapeout",
+   "what": "CLOSED ON rc5vt, and closed by measurement rather than by widening the gate. rc2, rc3fix and rc4 each carry 57,955 UNTESTED timing checks with zero violated -- the same number on all three -- and every one of those specs filed it as NOT-MEASURED with the words 'nobody has enumerated these endpoints'. They are enumerated now. Run on rc4's OWN database on 2026-08-29 via scripts/ci/sta_untested_reasons.tcl (57 s, no extraction: why a check is untested is a property of the netlist and the SDC, not of an RC corner): SETUP mode 43,200 no_endpoint_clock + 9,642 const + 5,113 false_path = 57,955, exactly the coverage table's total; HOLD mode 2,119 false_path + 258 const = 2,377, likewise exact. ZERO unknown on either side. rc4's spec guessed that the identical Setup/Hold and Recovery/Removal counts were 'the signature of one set of endpoints excluded from timing altogether'; the enumeration confirms it and names them.",
+   "withdraw_when": "the 43,200 no_endpoint_clock PulseWidth checks are dispositioned. THEY ARE THE REAL FINDING AND THEY ARE NOT A DECISION: three quarters of the untested population is a pulse-width check on a CDN async-reset pin where no clock is defined at the endpoint. false_path and const are somebody's SDC; no_endpoint_clock is a constraint hole nobody wrote. Withdraw when either a clock is defined at those pins or a written argument says a CDN pulse-width check is meaningless here -- and note that the count is currently a WARN with the count itself as the tripwire, so it moving is visible."
+  },
+  {
+   "date": "2026-08-29",
+   "decision": "THIS RUN IS THE WITHDRAWAL. It is recorded rather than assumed so that a green rc5vt is read as closing something specific, and so that if rc5vt does NOT complete, the failure is a known risk materialising rather than a surprise.",
+   "id": "flow-not-exercised-end-to-end-since-0826",
+   "person": "flow owner -- rc5 virtual tapeout",
+   "what": "The premise of this run, recorded as a defect because that is what it is. rc2, rc3fix and rc4 are ECO trees. None carries reports/route_manifest.txt, so build_freshness's 'newest finished route' has been gdsrun-20260826-rc1 for three candidates -- and in the meantime the constraints (b7aec51, dbb6b15), the mmmc (ec7948c) and the LVS deck (.GLOBAL VSS) all changed. Nothing has demonstrated that a full flow still completes under them.",
+   "withdraw_when": "ASIC/eth-chiplet/build/rc5vt-20260829/reports/route_manifest.txt exists with a parseable date line, and `SIGNOFF_BUILD_ROOT=... python3 scripts/ci/build_freshness.py` names rc5vt-20260829 as the newest finished route."
+  },
+  {
+   "date": "2026-08-29",
+   "decision": "BLOCKING, NOT WAIVED. scripts/ci/rc5_grade.py's pre-flight includes pins-reachable and exits 3 on it, so no rc5 iteration can be graded while this stands. That is deliberate: this is the same class as the reference project's GDS whose synthesis and place-and-route ran at different toolkit commits, and it is not a thing to grade around.",
+   "id": "toolkit-pin-not-on-any-remote",
+   "person": "flow owner -- ESCALATED, needs whoever owns the toolkit remote",
+   "what": "ASIC/asic-toolkit is pinned at c6ce42d and that commit is on NO remote-tracking ref of its own remote. MEASURED 2026-08-29 by ASIC/asic-toolkit/ci/check-pins.sh, online (not --offline: an offline run can only render this UNVERIFIED, and an unanswerable question is not a pass). A fresh clone of this superproject cannot check the toolkit out, so rc5vt as it stands is reproducible on exactly one disk -- and the toolkit is the engine that builds the GDS.",
+   "withdraw_when": "`ASIC/asic-toolkit/ci/check-pins.sh` (online) reports `ok pins.reachable`. That means pushing the toolkit commit before the pin that names it, which is the ordering the gate's own message asks for."
+  }
+ ],
+ "lef_root": "ASIC/eth-chiplet/build/rc5vt-20260829/work/nanosoc_eth_chiplet_pads_routed/libs/lef",
+ "macro_scope": [
+  "flash_cache_data",
+  "flash_cache_tag"
+ ],
+ "not_measured": [
+  {
+   "asserts": "zero PO.R.8 floating gates after the foundry's library merge",
+   "id": "po-r8-post-merge",
+   "why": "CARRIED FROM rc4 UNCHANGED IN KIND, and it cannot be otherwise on this site: PO.R.8 counts on every stream in this lineage are produced against a front-end kit with no standard-cell, IO or bond-pad LAYOUT, so a poly-over-diffusion check cannot fire against geometry that is not in the stream. The number this site measures is a floor. Only the foundry's merged view can answer it, and rc5vt is a validation run that will not be submitted, so nothing will ever measure it for THIS stream. Recorded so the report does not imply otherwise."
+  },
+  {
+   "asserts": "ERC and pad-short results for this stream",
+   "id": "erc-padshorts",
+   "why": "CARRIED. Both arrive from IMEC's PadShorts report rather than from the Archive_*/erc report, which has been null on every submission. rc5vt will not be submitted, so no IMEC round trip will happen for it. The local ERC deck runs and is collected, and it is not the same check."
+  },
+  {
+   "asserts": "bond-pad / seal-ring BEOL rules on this stream",
+   "id": "bnd-sealring",
+   "why": "CARRIED. 187 of the local BND deck's 205 rulechecks run over EMPTY layers, so a local zero measures the layer map and not the seal ring. Unchanged by anything in rc5vt."
+  },
+  {
+   "asserts": "the stream meets the foundry density rules",
+   "id": "metal-density",
+   "why": "CARRIED, and rc5vt will make it WORSE-LOOKING rather than better: drc_census counts 6,117 failing density windows on rc4 and metal fill is the fix, which this flow does not yet configure. A validation run is the right place for that number to be visible and the wrong place to act on it."
+  },
+  {
+   "asserts": "IR drop and electromigration on the stream this run produces",
+   "id": "rail-ir-drop-em",
+   "why": "CARRIED FROM rc4's `rail-not-rerun-on-rc4`. The rail flow is pinned to a build tag of its own and rerunning it is hours of Voltus; rc5vt validates the RTL-to-GDS flow, not the power-integrity flow. Read rc2's numbers, and read them as being about rc2."
+  },
+  {
+   "asserts": "that the netlist this run produces still executes firmware",
+   "id": "gate-level-simulation",
+   "why": "NOT RUN. gls-netlist grades PUBLISHED simulation evidence under reports/gls/<item>/verdict.txt, and publishing it is a multi-hour VCS/Xcelium run over a 42 MB netlist whose supplies must be completed first, done by hand. rc5vt publishes none, so that stage will render its own EXPECTED RED -- an absent file, not a netlist finding. It is exempted in scripts/ci/build_freshness.py for exactly this reason and the exemption is self-expiring: the day any GLS evidence appears under the newest build, it lapses."
+  },
+  {
+   "asserts": "that every layer differing from rc4 is a layer a place-and-route delta explains",
+   "id": "xor-per-layer-review",
+   "why": "The arbiter produces the per-layer difference list; NOBODY HAS READ ONE FOR THIS PAIR YET, because rc5vt has not been streamed at the time this spec is written. The known_bad row `xor-vs-rc4-expected-nonzero` is where that review lands, and until it happens the accepted-in-advance FAIL is bounded by an intention and not by a number. Filed separately from the waiver so the waiver cannot be read as though the review had been done."
+  },
+  {
+   "asserts": "the stream passes the foundry DRC deck",
+   "id": "drc-calibre",
+   "why": "NOT RUN FOR THIS STREAM. Calibre DRC was never executed against it -- there is no rundir under the build. This is a FLOW-VALIDATION run whose subject is whether the flow completes and what its gates can see, not a stream anyone proposed to send to a foundry, and a signoff DRC on a 341 MB stream costs hours of licence time that would buy no decision. Recorded as unmeasured rather than omitted so the report cannot be read as a clean DRC."
+  },
+  {
+   "asserts": "layout matches schematic",
+   "id": "lvs",
+   "why": "NOT RUN FOR THIS STREAM -- no lvs_run under the build. Same reasoning as drc-calibre. Note this lineage also postdates the .GLOBAL VSS root fix, so an LVS here would be measuring the fix, not the layout; that is a separate experiment and is not claimed by this record."
+  },
+  {
+   "asserts": "setup and hold close at signoff, on this build's own parasitics",
+   "id": "sta-signoff",
+   "why": "NO TEMPUS RUN EXISTS FOR THIS BUILD. What IS known about this run's timing comes from the in-flow Innovus QoR tables and the route gate, which are recorded in the findings docs, not from a signoff STA. Those are different instruments and the difference has mattered on this project before: post-route WNS moves under OCV+CPPR. Do not read the in-flow numbers as signoff numbers."
+  },
+  {
+   "asserts": "the foundry antenna deck is clean over this stream",
+   "id": "antenna",
+   "why": "NOT RUN -- no Calibre antenna rundir for this build. The router's own check_process_antenna is a different check over a different database and is not a substitute."
+  },
+  {
+   "asserts": "the stream is geometrically the layout it is claimed to be",
+   "id": "gds-layout-identity",
+   "why": "NO HONEST REFERENCE IS REACHABLE FROM THIS WORKTREE. The rc5vt spec named rc4's shipped stream as the XOR reference, but rc4 was built in the frozen checkout and its GDS is not present here, so the comparison cannot be run where this record is produced. Rather than substitute a reference that would make the gate pass on a comparison nobody chose, the gate is declared unmeasured. A re-stream of this run's own database would only prove the writer is deterministic. Do not invent one."
+  }
+ ],
+ "publish": {
+  "block": "nanosoc_eth_chiplet_pads",
+  "klass": "candidate",
+  "project": "ethchip"
+ },
+ "require_measurable": [
+  "innovus.log2"
+ ],
+ "run_tag": "vt-baseline-20260829",
+ "session_logs": [
+  "ASIC/eth-chiplet/build/rc5vt-20260829/work/innovus.log",
+  "ASIC/eth-chiplet/build/rc5vt-20260829/work/innovus.log1",
+  "ASIC/eth-chiplet/build/rc5vt-20260829/work/innovus.log2"
+ ],
+ "stream": "ASIC/eth-chiplet/build/rc5vt-20260829/outputs/nanosoc_eth_chiplet_pads.gds",
+ "supersedes": "NOTHING. This is a FLOW-VALIDATION run and it supersedes no candidate. rc4-20260829 is the stream that was submitted to imec and graded clean on 1 September 2026; nothing in this record displaces it. This run is the FIRST unaided RTL-to-GDS pass this project ever completed -- synthesis, placement, CTS, route and stream with no hand ECO in the middle -- and its value is that it proves the flow runs end to end, not that the die is good. Its subject is the flow.\n  THE NAME. This run was made on disk as rc5vt-20260829. It is filed in the artifact store as vt-baseline-20260829 because David asked on 2026-09-02 that the post-rc4 runs stay on artifactory but NOT under `rc` names: `rc` is the submission-candidate series and rc4-20260829 is the one that shipped. NOTHING WAS RENAMED ON DISK. The build directory, its pins.mk, its launch script and its PRE_RUN_MANIFEST all still say rc5vt-20260829 and all bake absolute paths, so renaming the directory would break the provenance that makes the run worth keeping. The store name is the identity that travels; the on-disk tag is the identity that reproduces, and `run.tag` in the published properties records the store name while this field records the correspondence.\n"
+}
