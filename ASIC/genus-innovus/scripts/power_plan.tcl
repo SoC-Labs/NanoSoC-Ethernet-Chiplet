@@ -1432,21 +1432,26 @@ if {$_pgav_mode eq "off"} {
     # THE KEY FORMAT IS A CONTRACT with _pg_v4_key in pg_drc_post_route_edits.tcl.
     # Both sides format the via's own insertion point to 4 dp and prefix the net,
     # and the prune refuses to run if the two disagree (see PG_V4R4_PRUNE_ADDED).
-    proc _pgav_v4_key {v} {
+    # THE CUT LAYER IS PART OF THE KEY. A stacked via column puts VIA4 and VIA5
+    # at the same net and the same insertion point, so net@x,y alone is
+    # ambiguous and would let a VIA5 answer for a VIA4.
+    proc _pgav_via_key {v} {
         regexp {([-+0-9.eE]+)\s+([-+0-9.eE]+)} [get_db $v .point] -> x y
-        return [format "%s@%.4f,%.4f" [get_db $v .net.name] $x $y]
+        return [format "%s@%.4f,%.4f#%s" [get_db $v .net.name] $x $y \
+                       [get_db $v .via_def.cut_layer.name]]
     }
-    proc _pgav_v4_keys {} {
+    # EVERY special via, not only VIA4. The VIA4.R.4 prune needs both halves of
+    # the defect: the offending via itself (a VIA4), AND the via whose M5 face
+    # made a neighbouring plate WIDE enough to arm the rule against a via that
+    # was already there and already legal. That second one is usually a VIA5.
+    proc _pgav_via_keys {} {
         set d [dict create]
         foreach _n [get_db nets -if ".is_power || .is_ground"] {
-            foreach v [get_db $_n .special_vias] {
-                if {[get_db $v .via_def.cut_layer.name] ne "VIA4"} { continue }
-                dict set d [_pgav_v4_key $v] 1
-            }
+            foreach v [get_db $_n .special_vias] { dict set d [_pgav_via_key $v] 1 }
         }
         return $d
     }
-    set _pgav_v4_before [_pgav_v4_keys]
+    set _pgav_v4_before [_pgav_via_keys]
 
     if {$_pgav_mode eq "global"} {
         update_power_vias -add_vias 1 -nets {VDD VSS}
@@ -1464,16 +1469,19 @@ if {$_pgav_mode eq "off"} {
     }
     # The VIA4 THIS pass created. Published as a global because the consumer is
     # a different script, sourced later by the post_powerplan hook.
-    set ::EVP_PGAV_ADDED_V4 [dict create]
-    foreach _k [dict keys [_pgav_v4_keys]] {
+    set ::EVP_PGAV_ADDED [dict create]
+    set _pgav_n_v4 0
+    foreach _k [dict keys [_pgav_via_keys]] {
         if {![dict exists $_pgav_v4_before $_k]} {
-            dict set ::EVP_PGAV_ADDED_V4 $_k 1
+            dict set ::EVP_PGAV_ADDED $_k 1
+            if {[string match "*#VIA4" $_k]} { incr _pgav_n_v4 }
         }
     }
     set ::EVP_PGAV_RAN 1
-    puts "POWERPLAN: PG add-vias -- [dict size $::EVP_PGAV_ADDED_V4] new VIA4\
-          (of [dict size $_pgav_v4_before] before); recorded for the VIA4.R.4 prune"
-    unset -nocomplain _pgav_v4_before
+    puts "POWERPLAN: PG add-vias -- [dict size $::EVP_PGAV_ADDED] new via(s)\
+          recorded for the VIA4.R.4 prune, $_pgav_n_v4 of them VIA4\
+          (of [dict size $_pgav_v4_before] via(s) before)"
+    unset -nocomplain _pgav_v4_before _pgav_n_v4
 
     set _pgav_v1 [_pgav_vias]
     catch { check_power_vias -layer_range {M1 AP} \

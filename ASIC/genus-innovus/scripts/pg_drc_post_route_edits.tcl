@@ -96,7 +96,7 @@ if {![info exists PG_V4R4_EXPECT]} { set PG_V4R4_EXPECT {1 2} }
 # 1 = delete the unfixable VIA4.R.4 sites that the PG add-vias pass CREATED.
 # Off by default: standalone, on a database this script did not watch being
 # built, there is no added-set and nothing to prune.  power_plan.tcl sets
-# ::EVP_PGAV_ADDED_V4 when it runs add-vias, and the hook turns this on.
+# ::EVP_PGAV_ADDED when it runs add-vias, and the hook turns this on.
 if {![info exists PG_V4R4_PRUNE_ADDED]} { set PG_V4R4_PRUNE_ADDED 0 }
 if {![info exists PG_M8S3_EXPECT]} { set PG_M8S3_EXPECT {1 3} }
 if {![info exists PG_DRC_VERIFY]}  { set PG_DRC_VERIFY  1 }
@@ -162,13 +162,58 @@ proc _pg_lineage {box lst {tol 0.002}} {
 # have moved the failure three lines later into the apply, not removed it.  A
 # guard that misdiagnoses is worse than one that only counts, so it now says
 # which sites are beyond this edit's reach and that widening will not help.
-# THE KEY FORMAT IS A CONTRACT with _pgav_v4_key in power_plan.tcl.  If the two
+# THE KEY FORMAT IS A CONTRACT with _pgav_via_key in power_plan.tcl.  If the two
 # ever drift apart the prune silently matches nothing, so the driver refuses
 # when it is asked to prune and the added-set is present but matches none of
 # the located sites -- see PG_V4R4_PRUNE_ADDED below.
 proc _pg_v4_key {v} {
     regexp {([-+0-9.eE]+)\s+([-+0-9.eE]+)} [get_db $v .point] -> x y
-    return [format "%s@%.4f,%.4f" [get_db $v .net.name] $x $y]
+    return [format "%s@%.4f,%.4f#%s" [get_db $v .net.name] $x $y \
+                   [get_db $v .via_def.cut_layer.name]]
+}
+
+# Every M5 face belonging to a via the add-vias pass created, as {via rect}.
+# Built ONCE: the alternative is a chip-wide walk per unfixable site.
+proc _pg_added_m5_faces {} {
+    set out {}
+    foreach n [get_db nets -if ".is_power || .is_ground"] {
+        foreach v [get_db $n .special_vias] {
+            if {![dict exists $::EVP_PGAV_ADDED [_pg_v4_key $v]]} { continue }
+            if {[get_db $v .via_def.top_layer.name] eq "M5"} {
+                foreach r [pgg_rects [get_db $v .top_rects]] { lappend out [list $v $r] }
+            }
+            if {[get_db $v .via_def.bottom_layer.name] eq "M5"} {
+                foreach r [pgg_rects [get_db $v .bottom_rects]] { lappend out [list $v $r] }
+            }
+        }
+    }
+    return $out
+}
+
+# THE SECOND MECHANISM, and the one that cost vt2-20260908 a run.
+#
+# add-vias does not only create offending VIAs -- it creates offending
+# NEIGHBOURS. A VIA45 it drops puts an M5 landing pad down; that pad merges
+# into the surrounding M5 and can push a shape over VIA4_R_4_W, arming
+# VIA4.R.4 against a single-cut VIA4 that was already there and already legal.
+# Measured on vt2-20260908: the plate arming site1 was 0.310 x 0.330 um against
+# a 0.300 um arming width -- 10 nm over, and the size and shape of a landing
+# pad. The 24-Aug lineage site's plate, by contrast, is 3.600 x 0.330, a real
+# stripe. The control vt2ctl-20260908, identical in every pinned byte with
+# EVP_PG_ADD_VIAS=off, found 91 candidates and ONE site instead of 100 and
+# four, which is what proved it.
+#
+# So: given the wide plate that armed a site, return the added via whose M5
+# face IS part of that plate. Centre-inside rather than mere overlap -- the
+# plate is a merged shape and a touching neighbour is not a member of it.
+proc _pg_v4r4_added_neighbour {wide faces} {
+    foreach fr $faces {
+        lassign $fr v r
+        set cx [expr {([lindex $r 0]+[lindex $r 2])/2.0}]
+        set cy [expr {([lindex $r 1]+[lindex $r 3])/2.0}]
+        if {[pgg_pt_in [list $wide] $cx $cy]} { return $v }
+    }
+    return ""
 }
 
 proc _pg_v4r4_fits2 {L C} {
@@ -753,50 +798,75 @@ if {$PG_DRC_V4R4} {
     # --- PRUNE ---------------------------------------------------------------
     # A single-cut VIA4 in the wide-M5 shadow whose landing cannot hold two cuts
     # is a DRC violation with NO legal repair in this edit's vocabulary: the
-    # re-cut works inside the existing landing and must not move metal.  If the
-    # PG add-vias pass created it, the correct remedy is to take it back out --
-    # that returns the grid to a state that already routed, and costs one via
-    # out of the ~1,400 that pass adds.  If something ELSE created it, this
-    # script must not touch it: that is unmeasured geometry and the range check
-    # below is right to refuse.
+    # re-cut works inside the existing landing and must not move metal. If the
+    # PG add-vias pass is responsible, the remedy is to take its work back out.
+    # That returns the grid to a state that already routed, and costs a couple
+    # of vias out of the ~1,400 that pass adds.
+    #
+    # RESPONSIBLE HAS TWO SHAPES, and vt2-20260908 found the second one the hard
+    # way after the first was fixed:
+    #   (a) the offending VIA4 is one the pass added   -> delete it
+    #   (b) the offending VIA4 was already there and already legal, and the pass
+    #       added a via whose M5 landing pad made a neighbouring plate WIDE
+    #       enough to arm the rule                     -> delete THAT via
+    # If neither holds, this script must not touch it: that is unmeasured
+    # geometry and the range check below is right to refuse.
+    #
+    # WHY A LOOP. Deleting metal changes the shapes the seek measured, so the
+    # result is re-measured rather than reasoned about. Two passes is the cap:
+    # one to act, one to confirm the action landed. A third would mean deleting
+    # vias to fix damage done by deleting vias, which is not a repair.
     set _pruned 0
     if {$PG_V4R4_PRUNE_ADDED} {
-        if {![info exists ::EVP_PGAV_ADDED_V4]} {
-            error "VIA4.R.4 prune: PG_V4R4_PRUNE_ADDED is on but\
-                   ::EVP_PGAV_ADDED_V4 does not exist. power_plan.tcl publishes\
-                   it when the add-vias pass runs, so either that pass was\
-                   skipped (EVP_PG_ADD_VIAS=off -- then turn this off too) or\
-                   the two scripts have drifted. Refusing to prune blind."
+        if {![info exists ::EVP_PGAV_ADDED]} {
+            error "VIA4.R.4 prune: PG_V4R4_PRUNE_ADDED is on but ::EVP_PGAV_ADDED\
+                   does not exist. power_plan.tcl publishes it when the add-vias\
+                   pass runs, so either that pass was skipped\
+                   (EVP_PG_ADD_VIAS=off -- then turn this off too) or the two\
+                   scripts have drifted. Refusing to prune blind."
         }
-        set _keep {} ; set _matched 0
-        foreach h $_v4 {
-            lassign $h v L C wide dist nb
-            set _added [dict exists $::EVP_PGAV_ADDED_V4 [_pg_v4_key $v]]
-            if {$_added} { incr _matched }
-            if {!$_added || [_pg_v4r4_fits2 $L $C]} { lappend _keep $h ; continue }
-            _pg_say [format "  VIA4.R.4 PRUNE: deleting %s at %s net %s --\
-                             landing %.3fx%.3f cannot hold two cuts, and the PG\
-                             add-vias pass created it" \
-                [get_db $v .via_def.name] [_pg_f4 $C] [get_db $v .net.name] \
-                [expr {[lindex [pgg_nums $L] 2]-[lindex [pgg_nums $L] 0]}] \
-                [expr {[lindex [pgg_nums $L] 3]-[lindex [pgg_nums $L] 1]}]]
-            delete_obj $v
-            incr _pruned
-        }
-        # DRIFT GUARD. The add-vias pass added VIA4, and at least one located
-        # site is normally one of them. If NONE match, the key formats have
-        # diverged and every prune decision above was made on a false negative.
-        if {[llength $_v4] && !$_matched && [dict size $::EVP_PGAV_ADDED_V4]} {
-            error "VIA4.R.4 prune: [dict size $::EVP_PGAV_ADDED_V4] VIA4 were\
-                   recorded as added, [llength $_v4] site(s) were located, and\
-                   NOT ONE site matched the added-set by key. _pg_v4_key here\
-                   and _pgav_v4_key in power_plan.tcl have drifted apart, so\
-                   this prune measured nothing. Refusing."
-        }
-        set _v4 $_keep
-        if {$_pruned} {
-            _pg_say "VIA4.R.4 PRUNE: $_pruned add-vias via(s) deleted;\
-                     [llength $_v4] site(s) remain for the re-cut"
+        set _faces [_pg_added_m5_faces]
+        # SAMPLED BEFORE ANY DELETION, and that is the whole point. The drift
+        # guard below asks "did the recorded keys match anything at all?", and
+        # a successful prune DELETES the very vias that answer it -- so testing
+        # the live count afterwards makes every successful prune look like key
+        # drift. The fixtures caught exactly that.
+        set _faces0 [llength $_faces]
+        _pg_say "VIA4.R.4 prune: [dict size $::EVP_PGAV_ADDED] added via(s),\
+                 $_faces0 of their M5 face(s) in reach of the rule"
+        for {set _pass 1} {$_pass <= 2} {incr _pass} {
+            set _del {} ; set _seen {}
+            foreach h $_v4 {
+                lassign $h v L C wide dist nb
+                if {[_pg_v4r4_fits2 $L $C]} { continue }
+                set _why "" ; set _victim ""
+                if {[dict exists $::EVP_PGAV_ADDED [_pg_v4_key $v]]} {
+                    set _victim $v ; set _why "the pass created this via"
+                } else {
+                    set _victim [_pg_v4r4_added_neighbour $wide $_faces]
+                    if {$_victim ne ""} {
+                        set _why "the pass created the M5 plate that arms the rule"
+                    }
+                }
+                if {$_victim eq ""} { continue }
+                if {[lsearch -exact $_seen $_victim] >= 0} { continue }
+                lappend _seen $_victim
+                lappend _del [list $_victim $_why $C $L]
+            }
+            if {![llength $_del]} { break }
+            foreach d $_del {
+                lassign $d v why C L
+                _pg_say [format "  VIA4.R.4 PRUNE pass%d: deleting %s at %s net %s -- %s" \
+                    $_pass [get_db $v .via_def.name] [_pg_f4 [get_db $v .point]] \
+                    [get_db $v .net.name] $why]
+                delete_obj $v
+                incr _pruned
+            }
+            # The geometry moved. Do not reason about the new state -- measure it.
+            set _faces [_pg_added_m5_faces]
+            set _v4 [_pg_v4r4_seek]
+            _pg_say "VIA4.R.4 PRUNE pass$_pass: [llength $_del] via(s) deleted;\
+                     re-seek finds [llength $_v4] site(s)"
         }
     }
 
@@ -812,6 +882,16 @@ if {$PG_DRC_V4R4} {
             [_pg_f4 $wide] $dist [_pg_lineage $C $PG_LINEAGE_V4R4] \
             [expr {$_fit ? {REPAIRABLE} : {UNFIXABLE-landing-too-small}}]]
     }
+    # DRIFT GUARD. If the pass added vias and NOT ONE of them can be found by
+    # key, the two key formats have diverged and every prune decision above was
+    # a false negative -- the prune measured nothing.
+    if {$PG_V4R4_PRUNE_ADDED && [info exists ::EVP_PGAV_ADDED]
+        && [dict size $::EVP_PGAV_ADDED] && [info exists _faces0] && !$_faces0} {
+        error "VIA4.R.4 prune: [dict size $::EVP_PGAV_ADDED] via(s) were recorded\
+               as added, and NOT ONE of them was found in the database by key.\
+               _pg_v4_key here and _pgav_via_key in power_plan.tcl have drifted\
+               apart, so this prune measured nothing. Refusing."
+    }
     set _note ""
     if {$_unfix} {
         set _note "\n   \
@@ -824,6 +904,24 @@ if {$PG_DRC_V4R4} {
            not know this rule."
     }
     _pg_range_check "VIA4.R.4:M5" [llength $_v4] $PG_V4R4_EXPECT $_note
+    # AN UNFIXABLE SITE IS FATAL WHATEVER THE COUNT SAYS. vt2-20260908 pruned
+    # its way down to 2 sites, passed a {0 2} range check, and then died inside
+    # _pg_v4r4_apply on a landing-geometry message that read like a tool problem
+    # rather than a design one. The count was never the question.
+    if {!$PG_DRC_DRY_RUN && $_unfix} {
+        error "VIA4.R.4:M5: $_unfix of $_n located site(s) cannot be repaired by\
+               this edit -- the landing is too small to hold two cuts and the\
+               re-cut must not move metal. They are marked\
+               UNFIXABLE-landing-too-small above.\n   \
+               THIS IS NOT A COUNT PROBLEM and widening PG_V4R4_EXPECT will not\
+               help; the apply would refuse them a few lines below.\n   \
+               The prune already removed every unfixable site it could attribute\
+               to the PG add-vias pass, by its own via or by the M5 plate that\
+               arms the rule, so what is left was not created by this flow's\
+               add-vias. Either find what did create it, or set\
+               EVP_PG_ADD_VIAS=off to establish whether add-vias is involved at\
+               all -- that control takes about six minutes to the seek."
+    }
     if {$PG_DRC_DRY_RUN} {
         _pg_say "VIA4.R.4:M5 DRY RUN -- [llength $_v4] site(s) located, nothing changed"
     } else {

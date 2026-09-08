@@ -178,7 +178,7 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     # deleting one restores a grid state that already routed. A pre-existing
     # unfixable site is NOT pruned -- it is unmeasured geometry and the range
     # check is right to stop the run and ask for a human.
-    if {[info exists ::EVP_PGAV_ADDED_V4]} {
+    if {[info exists ::EVP_PGAV_ADDED]} {
         set PG_V4R4_PRUNE_ADDED 1
     } else {
         # add-vias is off, or power_plan.tcl predates the contract. Either way

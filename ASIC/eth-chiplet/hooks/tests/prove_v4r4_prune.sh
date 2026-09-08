@@ -59,8 +59,10 @@ for a in ("# --- EDIT 1 ---", "# --- EDIT 2 ---"):
     if a not in src: sys.exit("prove_v4r4_prune: anchor %r not found" % a)
 drv = src[src.index("# --- EDIT 1 ---"):src.index("# --- EDIT 2 ---")]
 drv = drv.split("    if {$PG_DRC_DRY_RUN} {")[0] + "\n}\n"
-if "PRUNE" not in drv: sys.exit("prove_v4r4_prune: driver carries no prune -- nothing to test")
-open(W + "/unit.tcl", "w").write(grab("_pg_v4_key") + "\n\n" + grab("_pg_v4r4_fits2") + "\n\n" + drv)
+for tok in ("PRUNE", "_pg_v4r4_added_neighbour", "UNFIXABLE"):
+    if tok not in drv: sys.exit("prove_v4r4_prune: driver carries no %s -- nothing to test" % tok)
+procs = ["_pg_v4_key", "_pg_v4r4_fits2", "_pg_added_m5_faces", "_pg_v4r4_added_neighbour"]
+open(W + "/unit.tcl", "w").write("\n\n".join(grab(n) for n in procs) + "\n\n" + drv)
 PY
 [ $? -eq 0 ] || exit 2
 
