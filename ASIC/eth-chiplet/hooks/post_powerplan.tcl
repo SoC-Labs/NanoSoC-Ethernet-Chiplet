@@ -156,6 +156,35 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     set PG_DRC_M8S3    1
     set PG_V4R4_EXPECT {0 2}
     set PG_M8S3_EXPECT {0 3}
+    # PRUNE WHAT THE ADD-VIAS PASS CREATED, and only that.
+    #
+    # vt1-20260902 is why this exists. EVP_PG_ADD_VIAS=markers took the
+    # missing-power-via markers from 382 to 28 by adding 1,401 vias -- a real
+    # win on one of the two standing route-gate failures -- and three of those
+    # vias were single-cut VIA4 sitting on narrow branches inside the 0.800 um
+    # shadow of a wide M5 plate. The seek found 4 sites where every earlier run
+    # found 1, PG_V4R4_EXPECT {0 2} refused, and placement stopped 1h52 into the
+    # run. The refusal was correct.
+    #
+    # WHAT WOULD HAVE HAPPENED IF THE BOUND WERE SIMPLY WIDENED, which is what
+    # the range check's own message advises: nothing good. The three new
+    # landings are 0.220x0.190, 0.180x0.110 and 0.220x0.210 um, and two cuts at
+    # VIA4_S_1 need 0.300 um along one axis. _pg_v4r4_apply would have refused
+    # each of them three lines later. The bound was not the problem; the vias
+    # were, and they had to stop being created or start being removed.
+    #
+    # ONLY VIAS THIS FLOW ADDED ARE ELIGIBLE. power_plan.tcl records the VIA4
+    # set either side of update_power_vias and publishes the difference, so
+    # deleting one restores a grid state that already routed. A pre-existing
+    # unfixable site is NOT pruned -- it is unmeasured geometry and the range
+    # check is right to stop the run and ask for a human.
+    if {[info exists ::EVP_PGAV_ADDED_V4]} {
+        set PG_V4R4_PRUNE_ADDED 1
+    } else {
+        # add-vias is off, or power_plan.tcl predates the contract. Either way
+        # there is no added-set, and the prune must not pretend there is one.
+        set PG_V4R4_PRUNE_ADDED 0
+    }
     set PG_DRC_VERIFY  1
     if {[info commands say] ne ""} {
         say "post_powerplan: PG DRC geometry edits -> $_pgd_eco"

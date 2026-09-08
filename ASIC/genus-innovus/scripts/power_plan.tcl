@@ -1414,6 +1414,40 @@ if {$_pgav_mode eq "off"} {
     }
     puts "POWERPLAN: PG add-vias -- mode $_pgav_mode; before: $_pgav_p0 missing-via\
           marker(s), $_pgav_c0 connectivity marker(s), $_pgav_v0 PG via(s)"
+    # WHICH VIA4 EXIST BEFORE THIS PASS.  Recorded so that the VIA4.R.4 prune in
+    # pg_drc_post_route_edits.tcl can tell a via THIS pass created from one that
+    # was always there.  The distinction is not pedantry: deleting a via we just
+    # added restores the grid to a state that already worked, while deleting a
+    # pre-existing one is an unmeasured change to a grid that routed.  Only the
+    # first is safe to do automatically, so only the first is offered.
+    #
+    # WHY THIS EXISTS AT ALL.  vt1-20260902: this pass took the missing-via
+    # markers from 382 to 28 by adding 1,401 vias, and three of them were
+    # single-cut VIA4 on narrow branches inside the 0.800 um shadow of a wide M5
+    # plate -- VIA4.R.4 violations with landings of 0.220, 0.180 and 0.220 um.
+    # The post-route re-cut cannot repair those: it re-cuts 1 -> 2 INSIDE the
+    # existing landing and two cuts need 0.300 um.  So the pass has to clean up
+    # after itself, and to do that it has to know what it did.
+    #
+    # THE KEY FORMAT IS A CONTRACT with _pg_v4_key in pg_drc_post_route_edits.tcl.
+    # Both sides format the via's own insertion point to 4 dp and prefix the net,
+    # and the prune refuses to run if the two disagree (see PG_V4R4_PRUNE_ADDED).
+    proc _pgav_v4_key {v} {
+        regexp {([-+0-9.eE]+)\s+([-+0-9.eE]+)} [get_db $v .point] -> x y
+        return [format "%s@%.4f,%.4f" [get_db $v .net.name] $x $y]
+    }
+    proc _pgav_v4_keys {} {
+        set d [dict create]
+        foreach _n [get_db nets -if ".is_power || .is_ground"] {
+            foreach v [get_db $_n .special_vias] {
+                if {[get_db $v .via_def.cut_layer.name] ne "VIA4"} { continue }
+                dict set d [_pgav_v4_key $v] 1
+            }
+        }
+        return $d
+    }
+    set _pgav_v4_before [_pgav_v4_keys]
+
     if {$_pgav_mode eq "global"} {
         update_power_vias -add_vias 1 -nets {VDD VSS}
     } else {
@@ -1428,6 +1462,19 @@ if {$_pgav_mode eq "off"} {
         }
         unset -nocomplain _pgav_ar
     }
+    # The VIA4 THIS pass created. Published as a global because the consumer is
+    # a different script, sourced later by the post_powerplan hook.
+    set ::EVP_PGAV_ADDED_V4 [dict create]
+    foreach _k [dict keys [_pgav_v4_keys]] {
+        if {![dict exists $_pgav_v4_before $_k]} {
+            dict set ::EVP_PGAV_ADDED_V4 $_k 1
+        }
+    }
+    set ::EVP_PGAV_RAN 1
+    puts "POWERPLAN: PG add-vias -- [dict size $::EVP_PGAV_ADDED_V4] new VIA4\
+          (of [dict size $_pgav_v4_before] before); recorded for the VIA4.R.4 prune"
+    unset -nocomplain _pgav_v4_before
+
     set _pgav_v1 [_pgav_vias]
     catch { check_power_vias -layer_range {M1 AP} \
                 -report $REPORT_DIR/pg_post_addvias.rep }
