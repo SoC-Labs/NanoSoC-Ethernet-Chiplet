@@ -197,8 +197,58 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     # inference, not a measurement.
     if {[info exists REPORT_DIR]} {
         check_drc -limit 200000 -out_file $REPORT_DIR/pg_post_drc_edits.rep
+
+        # THE PRUNE DELETES PG VIAS, AND UNTIL NOW NOTHING LOOKED AT THE GRID IT
+        # LEFT. Both check_power_vias calls live inside power_plan.tcl's add-vias
+        # block (:1402 and :1487) and both run BEFORE this hook, so the three
+        # numbers the prune can move -- missing vias, PG opens, dangling ends --
+        # were not re-measured until the route gate, about four hours later. On a
+        # 53-minute place stage that is the difference between a verdict at
+        # minute seven and a verdict after lunch.
+        #
+        # WHAT EACH ONE ANSWERS. check_power_vias says how many marker sites the
+        # prune re-opened: every via it deletes was placed at a site the marker
+        # report named, so each deletion is expected to give one back, and a
+        # count far above the deletion count means it cut something else.
+        # check_connectivity -type special says whether a deletion severed a
+        # grid fragment -- the one failure mode that turns a trimmed overhang
+        # into a real open. A negative control on 2026-09-01 measured the
+        # sensitivity: deleting ONE via moved missing-vias 367->368 and dangling
+        # 727->728 and left opens unchanged, so any rise in OPENS is signal, not
+        # noise.
+        #
+        # catch, deliberately: these are evidence, not gates. The gate that
+        # judges them is the route gate, which owns the budgets. A check that
+        # cannot run must not abort a stage whose real work already succeeded --
+        # but it must also not read as clean, which is why the failure is
+        # announced rather than swallowed.
+        if {[catch {
+            check_power_vias -layer_range {M1 AP} \
+                -report $REPORT_DIR/pg_post_prune_vias.rep
+        } _e]} {
+            if {[info commands warn] ne ""} {
+                warn "post_powerplan: check_power_vias after the PG edits FAILED\
+                      ($_e). The prune's effect on the via count is UNMEASURED\
+                      for this run -- do not read the route gate's number as\
+                      confirmation that it was harmless."
+            }
+        }
+        if {[catch {
+            check_connectivity -type special -error 200000 -warning 200000 \
+                -out_file $REPORT_DIR/pg_post_prune_conn.rep
+        } _e]} {
+            if {[info commands warn] ne ""} {
+                warn "post_powerplan: check_connectivity after the PG edits\
+                      FAILED ($_e). Whether a deleted via severed a grid\
+                      fragment is UNMEASURED for this run."
+            }
+        }
+        unset -nocomplain _e
+
         if {[info commands say] ne ""} {
             say "post_powerplan: PG DRC edit artefact -> $REPORT_DIR/pg_post_drc_edits.rep"
+            say "post_powerplan: post-prune PG census -> pg_post_prune_vias.rep,\
+                 pg_post_prune_conn.rep"
         }
     } elseif {[info commands warn] ne ""} {
         warn "post_powerplan: REPORT_DIR is not set, so the PG DRC edits applied\
