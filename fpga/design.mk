@@ -869,6 +869,46 @@ export IMPL_ROUTE_TNS_CLEANUP ?= 0
 export BITSTREAM_CFGBVS         ?= GND
 export BITSTREAM_CONFIG_VOLTAGE ?= 1.8
 
+# ===========================================================================
+# UNUSED PINS: Pulldown, MATCHING THE SHIPPING BITSTREAM. Decided 2026-09-09.
+#
+# The toolkit defaults to `Pullnone` and that is the right default THERE: it
+# applies to boards nobody has measured, and it is the only setting that cannot
+# create contention on a PCB the build knows nothing about. This board is not
+# that board.
+#
+# MEASURED from the shipping routed checkpoint, four bitstream writes in one
+# Vivado session, diffing the payloads:
+#
+#   nothing set (what the shipping build did)  0 bytes differ
+#   Pulldown, explicit                         0 bytes differ   <- so this is it
+#   Pullup                                   598 bytes differ
+#   Pullnone                                 307 bytes differ
+#
+# So the shipping KR260 bitstream pulls every unused PL pin DOWN - by inheriting
+# Vivado's default, not by anyone choosing it. Two reasons to keep it rather
+# than take the toolkit's default:
+#
+#   1. It is the field-proven state. These boards have been running with unused
+#      pins pulled down. Changing a working board's pin termination as a SIDE
+#      EFFECT of adopting a build tool is an unforced change with no upside
+#      anyone has identified.
+#   2. The KR260 exposes unused PL pins on the PMOD and RPi headers. On an
+#      exposed header a defined level beats a floating one, and `Pullnone`
+#      leaves them floating.
+#
+# This is stated EXPLICITLY rather than left to the tool's default, so that the
+# value appears in the bitstream manifest and a future reader can see it was
+# chosen. If a future board wants the toolkit default, set it there and say why.
+#
+# NOTE the earlier record was wrong: this was first put to the project owner as
+# "Pullnone instead of the shipping build's Pullup". The Pullup figure came from
+# a parity harness that had FORCED that value to chase a byte count, and the
+# forced value was mistaken for the shipped one. The comparison that matters is
+# Pullnone against PULLDOWN.
+# ===========================================================================
+export BITSTREAM_UNUSEDPIN      ?= Pulldown
+
 
 # ===========================================================================
 # ONE ID, DIAGNOSED 2026-09-08 ON A REAL RUN OF THIS FLOW (run tag bd-fix).

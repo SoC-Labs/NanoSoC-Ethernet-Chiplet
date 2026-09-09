@@ -639,3 +639,204 @@ the files this work was allowed to touch:
    run produced. No gate was demoted to do it.
 
 *Copyright (C) 2026, SoC Labs (www.soclabs.org)*
+
+---
+
+# ADDENDUM, 2026-09-09 — the 598 bytes, explained
+
+**Run dir:** `fpga/build/_bitdiff/` (diagnostic only, gitignored). Same host
+(srv03335), same Vivado 2024.1 build 5076996 as the shipping build.
+
+## Verdict
+
+**`BITSTREAM.CONFIG.UNUSEDPIN`. The shipping build set no bitstream properties at
+all and got Vivado's default, `Pulldown`; the parity comparison forced `Pullup`.
+The 598 bytes are the unused-I/O pull configuration and the CRC word that
+follows from it. Nothing else differs: the new flow's routed checkpoint, written
+at tool defaults, reproduces `tidelink.bit` byte for byte apart from the header
+date/time.**
+
+```
+$ open_checkpoint fpga/build/bd-fix/outputs/nanosoc_eth_chiplet_routed.dcp
+$ write_bitstream -force NEW_DEFAULT.bit          # nothing set, as the shipping build did
+$ cmp -l NEW_DEFAULT.bit tidelink.bit | wc -l
+8                                                 # 0x69 0x6b 0x6c 0x71 0x72 0x75 0x77 0x78
+$ tail -c +128 NEW_DEFAULT.bit | sha256sum        # configuration payload
+cc9092fc791fa4d552554e14adf0feaee2cfe9830c96c476a5d364c639103624
+$ tail -c +128 tidelink.bit     | sha256sum
+cc9092fc791fa4d552554e14adf0feaee2cfe9830c96c476a5d364c639103624
+```
+
+Those 8 bytes are the build date and time. **Parity is total — netlist,
+placement, routing and configuration bitstream.**
+
+## The proof
+
+From the **shipping** routed checkpoint, one Vivado session, four writes:
+
+| `BITSTREAM.CONFIG.UNUSEDPIN` | bytes differing from shipping payload |
+|---|---|
+| *(nothing set — as the shipping build)* | **0** |
+| `Pulldown` (explicit) | **0** |
+| `Pullup` | **598** |
+| `Pullnone` | 307 |
+
+Setting `Pulldown` explicitly is byte-identical to setting nothing, which is what
+"the tool default on this part is Pulldown" means operationally. `Pullup` — the
+value the parity comparison used — reproduces the 598-byte residue exactly.
+
+The residue is a property of the *setting*, not of the design. An independent
+legacy build of a **different** design (`kr260-eth-chiplet.tl033`, 2026-08-11)
+regenerated from its own checkpoint gives a byte-for-byte identical difference
+profile: same 24 frames, same per-frame byte counts, same 598 total.
+
+## Byte accounting — all 606
+
+| bytes | what | where |
+|---:|---|---|
+| 8 | `.bit` header build date/time | `0x69`–`0x78` |
+| 594 | unused-I/O pull configuration | 24 configuration frames (below) |
+| 4 | the bitstream CRC register value | `.bit` `0x76f54b`, `0xb960b033` → `0xca19ec8d` |
+
+The CRC is a **consequence**: a `T1 w CRC` packet at `0x76f547` checksums the
+FDRI stream, so it must move if any frame byte moves. Outside those three
+groups the two command streams are **identical packet for packet** — same
+`IDCODE`, `COR0`, `COR1`, `CTL0`, `CTL1`, `MASK`, `TIMER`, `WBSTAR`, same
+`CMD` sequence, same single FDRI write.
+
+## Where the frames sit
+
+`.bit` layout: 127-byte header; sync `0xAA995566` at `0xCF`; **one** type-2 FDRI
+write of 1 948 908 words = **20 956 frames × 93 words**, data starting at `.bit`
+byte 407 (`.bin` byte 280). Frame *f* occupies `.bit` bytes `407 + 372f`.
+
+Configuration rows are **4469 frames**. Frames 0–17 875 are four block-type-0
+rows; frames 17 876–20 955 are 3 080 frames of block type 1 (BRAM **content**),
+of which only 209 are non-zero and **none differ** — an independent
+corroboration of the memory-INIT result above.
+
+FAR fields, verified against a `write_bitstream -logic_location_file` `.ll`
+(2 050 anchor frames; each of the 243 distinct (column, minor) anchors
+resolves to the same row-relative frame offset in every row it appears in):
+block type
+`[26:24]`, row `[23:18]`, column `[17:8]`, minor `[7:0]`.
+
+| cluster | block type | rows | frames (row-relative) | FAR | frames | bytes |
+|---|---|---|---|---|---|---|
+| **A** | 0 | 0,1,2,3 | 1666–1669 | **col 49, minors 0–3** — `0x00003100`–`03`, `0x00043100`–`03`, `0x00083100`–`03`, `0x000C3100`–`03` | 16 | 448 |
+| **B** | 0 | 0,1,2,3 | 828–829 | col unresolved (lies in the column block 22–26); minors 0–1 of that column | 8 | 146 |
+
+Absolute frame indices: A = 1666, 6135, 10604, 15073 (+0…3); B = 828, 5297,
+9766, 14235 (+0…1). Column 49 is the first column after the CLB column holding
+`SLICE_X22` (FAR col 48). Column B's number is not resolvable from the `.ll`
+because the design instantiates no logic in FAR columns 22–26, so no anchor
+lands there; the row-relative frame offset is the exact address.
+
+**Why the "12-byte pitch, single set bit" shape.** A 93-word frame is
+45 words | 3 clock-row words | 45 words = 60 tile rows at 1.5 words each. The
+extra bits are one bit per *two* tile rows — hence every third word — running
+the full height of the column, 27 of the 31 possible positions plus the clock
+row, with a symmetric 4-position exception pattern (words 1, 22, 49, 70). That
+is a per-I/O-site field replicated up an I/O column, in all four rows, which is
+exactly what an unused-pin pull setting is.
+
+The three settings separate cleanly, and show the field is two bits per site:
+
+* `Pulldown` — the default — encodes as **all-zero**. All 16 cluster-A frames
+  are entirely zero in the shipping bitstream.
+* `Pullnone` sets **one** bit per site: it moves only the odd minors
+  (829; 1667, 1669) — 303 frame bytes.
+* `Pullup` sets **both** bits per site: it moves both minors of each pair
+  (828 *and* 829; 1666–1669) — 594 frame bytes.
+* `Pullnone` additionally touches one frame that `Pullup` leaves alone:
+  row-relative offset 3632, **row 3 only** (absolute frame 17039, 6 bytes).
+
+Under `Pullup` each cluster-A frame carries 28 words of `0x00100000`, identical
+in all four rows. Cluster B is non-zero under every setting and differs per row
+(24/6/17/26 bytes in rows 0–3) — consistent with it being the column that also
+carries this design's 34 placed ports, whose own configuration bits share those
+frames and are untouched by the pull setting.
+
+## USR_ACCESS — explains none of it, and the provenance defect is confirmed
+
+**There is no `AXSS` (register 13) write anywhere in either bitstream.** Decoded
+from the command packet stream directly, not inferred from the log:
+`BITSTREAM.CONFIG.USR_ACCESS` is unset in both routed checkpoints, and neither
+`.bit` contains a USR_ACCESS register write. USR_ACCESS accounts for **0 of the
+598 bytes**.
+
+The defect recorded in §1 stands and is now confirmed at the bitstream level
+rather than from `build_design.log`: `tidelink_manifest.json` asserts
+`"usr_access": "0xdf2b43ed"` for a bitstream that carries no such register.
+
+## Refuted along the way
+
+Each of these was tested and is **not** the cause:
+
+1. **Post-route `phys_opt_design`.** The legacy flow copies
+   `tidelink_design_wrapper_routed.dcp` to `output/`, which is the checkpoint
+   from *before* the post-route pass; the bitstream is written after it. That
+   asymmetry is real, but not the cause: writing from
+   `_postroute_physopt.dcp` gives the identical payload to writing from
+   `_routed.dcp`.
+2. **In-session state lost by a checkpoint round trip.** Opening `_routed.dcp`,
+   running `phys_opt_design -directive AggressiveExplore`, then writing in the
+   same session gives the same payload again.
+3. **`-bin_file`.** `write_bitstream -force` and `write_bitstream -force
+   -bin_file` produce identical `.bit` payloads.
+4. **Tool or host drift.** Both builds: srv03335, Vivado 2024.1 SW Build 5076996.
+5. **Any other `BITSTREAM.*` property.** All are unset in both checkpoints, and
+   the pre-FDRI register stream is identical packet for packet.
+
+Five independent paths — shipping `_routed.dcp`, shipping
+`_postroute_physopt.dcp`, in-session re-`phys_opt`, a full in-session
+`route_design` + `phys_opt_design` re-run from the pre-route
+`_physopt.dcp`, and the new flow's own checkpoint — all produce the same
+payload under the same settings. The re-route is the strongest of these: routing
+this design again from scratch reproduces the shipped routing bit for bit. There
+was never any non-determinism to find.
+
+## Corrections to the section above
+
+1. **"the shipping build's inherited `Pullup`" is wrong.** The shipping build
+   inherited **`Pulldown`**. It set no bitstream properties at all — its `.bit`
+   header carries no `;COMPRESS=` tag, which Vivado adds whenever the property
+   is explicitly set. The parity build's `BITSTREAM_UNUSEDPIN=Pullup` was
+   therefore not "the shipping build's settings"; it was the one deviation.
+2. **"598 bytes, NOT explained"** — now fully explained, and "unused-pin policy"
+   should be removed from the ruled-out list: it was ruled out against the wrong
+   baseline (`Pullup` vs `Pullnone`, neither of which is the default).
+3. **The delivered bitstream's board-visible difference is real but mis-stated.**
+   `Pullnone` differs from the shipping silicon by *Pullnone vs Pulldown* — 303
+   frame bytes plus the CRC, 307 in all — not by Pullnone vs Pullup.
+   **The shipping KR260 bitstream pulls every unused PL pin DOWN.** To match it,
+   `design.mk` should say `BITSTREAM_UNUSEDPIN ?= Pulldown`, or the project
+   should make the choice deliberately and write down why.
+4. **`BITSTREAM_CFGBVS=GND` / `BITSTREAM_CONFIG_VOLTAGE=1.8` were never applied.**
+   `bd-fix-bit6.console:3031,3033` records both `set_property` calls *failing*:
+   `WARNING: [Vivado 12-5460] The attribute CFGBVS is not supported in the
+   xck26-sfvc784-2LV-c device`. They are inert because they do not exist on this
+   part, which is a stronger statement than the one made above, and it makes the
+   toolkit's family guard the whole of the fix.
+5. **Latent provenance gap (legacy flow, not the toolkit).** `output/` ships the
+   pre-post-route-phys_opt checkpoint next to a bitstream written from the
+   post-pass design. They agreed on this build; nothing guarantees they will.
+
+## Are the two bitstreams "functionally equivalent"?
+
+The **fabric** configuration is identical — every LUT, flop, BRAM content,
+route and I/O standard, bit for bit. The bitstreams are **not** interchangeable:
+they terminate unused PL pins differently, which is an electrical property of
+the loaded device, visible on the carrier's headers. "Functionally equivalent"
+would be doing the work of hiding a deliberate board-level choice that this
+project has still not made.
+
+## Evidence
+
+All under `fpga/build/_bitdiff/`, reproducible from the `.tcl` files there:
+`rewrite.tcl` (both checkpoints, one session), `prpo.tcl` (post-route physopt
+checkpoint), `live.tcl` (in-session phys_opt), `ll.tcl` (`.ll` + `-bin_file`
+control), `ctl.tcl` (the tl033 control), `pins.tcl` (the four UNUSEDPIN writes),
+`final.tcl` (the headline check).
+
+*Copyright (C) 2026, SoC Labs (www.soclabs.org)*
