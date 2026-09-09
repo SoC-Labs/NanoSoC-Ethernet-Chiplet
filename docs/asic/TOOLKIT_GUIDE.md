@@ -5,6 +5,13 @@ which makefile owns which decision, and the order to run things in. It assumes y
 have never run any of it. Every command below was checked against the tree on
 2026-08-20.
 
+> **Freshness, 2026-09-09.** The LVS section and trap 10 were re-checked against the
+> tree today and carry what changed since: LVS now runs, `make lvs` works, and the PG
+> knobs are set in `design.mk`. **The rest of this page has not been re-verified since
+> 2026-08-20** — stage timings, run tags and the pipeline ladder in particular predate
+> three weeks of work. Treat an unverified line as a starting point and confirm it with
+> `make -C ASIC/eth-chiplet help` / `status` / `env`, which report the tree as it is.
+
 Read [`docs/tapeout/00-index.md`](../tapeout/00-index.md) after this for the
 tool-level detail — floorplan, power plan, how to read a report. This page is the
 map; that one is the terrain.
@@ -232,14 +239,51 @@ never chain into them; the ladders do. Each takes its own licence.
 ```sh
 make -C ASIC/eth-chiplet drc          # signoff DRC (Calibre) on the built GDS
 make -C ASIC/eth-chiplet drc-census   # THE VERDICT — no tool, seconds
-make -C ASIC/eth-chiplet lvs-preflight  # LVS input check, no licence, no long run
 make -C ASIC/eth-chiplet lvs-help     # the full nmLVS flow and every resolved value
+make -C ASIC/eth-chiplet lvs-preflight  # LVS input check, no licence, no long run
+make -C ASIC/eth-chiplet lvs-pg-gds   # re-stream a PG/pin-LABELLED GDS. REQUIRED FIRST.
+make -C ASIC/eth-chiplet lvs-batch    # the run itself (alias: make lvs)
 make -C ASIC/eth-chiplet lec-selftest # mutation-test the LEC harness (~1 min)
 make -C ASIC/eth-chiplet lec-pnr      # synthesis netlist vs the routed one
 make -C ASIC/eth-chiplet conn-check   # check_connectivity with its 1000 cap lifted
 make -C ASIC/eth-chiplet fp-pg-check  # FP-SHORT/ISLAND/CORRIDOR on the post-PG DB
 make asic-padring-gds GDS=<path>      # padframe name/count/order (legacy dir)
 ```
+
+### LVS: it runs, it is cheap, and the verdict is not the result
+
+Older notes in this tree say full-chip LVS "cannot be run here". That is wrong and has
+been since 2026-08-23. Black-box LVS on the current design costs **~4 minutes** —
+101 s of Innovus, ~2.5 GB — so it is affordable per design iteration, not a
+once-a-tapeout event.
+
+Two things make it work, and both are now defaults rather than things you must know:
+
+- **LVS reads a different stream from the one you tape out.** A signoff GDS carries no
+  supply text and no pin names, so Calibre finds no POWER net and boxed cells extract
+  with zero pins. `lvs-pg-gds` re-streams the *same routed database*, read-only, with
+  SPNET and LEFPIN text added. `flow/verify/restream.tcl` is the **wrong** tool — it
+  only swaps a map and cannot synthesise those rows.
+- **`LVS_PG` and `LVS_PG_PIN_TEXT` are set in `design.mk`** (§8), along with
+  `LVS_PG_MAP_IN`, `LVS_PG_MERGE_GDS` and `LVS_PG_DB`. Before that they defaulted off,
+  and `make lvs` dispatched to a runner whose argument contract it did not match — so
+  it exited 2 without running. Both fixed in `14fd96c`.
+
+**Read the reconciliation, never the verdict.** `INCORRECT` is the expected end state:
+the 82 bond pads have no CDL anywhere and never will. What tells you the run was good
+is the matched counts. Measured on `gdsrun-20260823-rzG`:
+
+| | |
+|---|---|
+| ports | 52 / 52 matched |
+| nets | 269,824 matched |
+| instances | 325,099 matched |
+| std-cell types | ~700, zero unmatched |
+
+For scale: with pin text off, the same design reconciles ~62,000 nets. Coverage
+arriving makes the verdict *worse* and the reconciliation *better*; a rise in
+`INCORRECT` counts here is the gate starting to see, not a regression. Do not read the
+`INCORRECT NETS` list itself — it truncates at exactly DISC# 1000.
 
 The critical distinction: **`drc` produces the evidence, `drc-census` reaches the
 verdict.** Calibre exits 0 on a clean *run*, not a clean *result*, and a count read
@@ -392,6 +436,37 @@ These are the ones that have actually cost time here.
    These are lab-wide shared vendor IP trees.
    If a fix appears to need one, copy the file into the project tree, point the flist
    at the local copy, and document the deviation.
+
+10. **A fix can land on one ASIC path and not the other, and the live path is the one
+    that loses.** `ASIC/genus-innovus/lvs_project.mk` is included *only* by the legacy
+    Makefile; `ASIC/eth-chiplet/design.mk` is what the toolkit flow reads. A value set
+    in the first reaches nothing in the second. This has now happened seven times in
+    the LVS configuration alone — `BONDPAD_CELLS`, the supply names, and the five PG
+    knobs were each right and unreachable before being carried across.
+
+    **Live example, as of 2026-09-09.** The `.GLOBAL VSS` root fix of 2026-08-27 landed
+    on the legacy path and not on the toolkit one:
+
+    ```
+    lvs_project.mk:261   LVS_GLOBAL_NETS ?= VDD VDDIO VSS VSSIO   ← VSS present
+    design.mk:383        LVS_GLOBAL_NETS ?= VDD VDDIO VSSIO       ← VSS absent
+    ```
+
+    That matters more than a missing name. With `VSS` out of `.GLOBAL`, ~18,000 phantom
+    one-pin `/VSS` source nets appear, and **the check's sign inverts**: a *stranded*
+    ground pin exactly matches a phantom net while a *correctly connected* one
+    mismatches. Measured — a deliberately stranded database returned PASS and the
+    affected cell vanished from the report. Breaking a power pin made LVS cleaner.
+
+    Do not "fix" this by adding `VSS` alone. The reason it was excluded is sound: both
+    boot ROMs use `VSS` internally as a power-gated virtual ground (their real supplies
+    are `VDDE`/`VSSE`), so `.GLOBAL VSS` fabricates a short across the power gate,
+    source-side only. The enabling half is project-local ROM CDLs with the internal net
+    renamed — `LVS_ROM_CDL_DIR` on the legacy path. Both halves together, or neither.
+
+    **The general check**, before trusting any LVS or DRC number from `ASIC/eth-chiplet`:
+    diff the two files for the setting you care about. `make lvs-help` prints every
+    resolved value, and the resolved value is the only thing that settles it.
 
 ---
 
