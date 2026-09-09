@@ -1,0 +1,61 @@
+==============================================================================
+FIXTURE -- not a build product. See ci/fixtures/dft-scan/README.md.
+
+A trimmed excerpt of the real Genus transcript
+  ASIC/eth-chiplet/build/vt1-20260902/logs/syn.log
+keeping exactly the lines this gate reads and the lines that would
+fool a gate that read the wrong thing. Absolute paths elided.
+
+MUTATION APPLIED HERE: the executed banner's dft= field set to 1.
+==============================================================================
+
+@file(design_config.tcl) 189: set DESIGN_LEC_NOTRANSLATE {rf_32k rf_16k rf_08k rf_01k
+                            flash_cache_data flash_cache_tag
+                            rom_via eth_rom_via}
+@file(design_config.tcl) 197: set DESIGN_LEC_STUB_CELLS {}
+@file(design_config.tcl) 208: set power_nets  {VDD VDDIO}
+@file(design_config.tcl) 209: set ground_nets {VSS VSSIO}
+@file(design_config.tcl) 237: set DFT 1
+@file(design_config.tcl) 259: if {[llength [info commands set_message]]} {
+
+@file(1_synthesis.tcl) 121: opt SYN_MAP_EFFORT   high
+@file(1_synthesis.tcl) 122: opt SYN_OPT_EFFORT   high
+@file(1_synthesis.tcl) 128: opt SYN_ERROR_ALLOWLIST {}
+@file(1_synthesis.tcl) 130: flow_config strict $SYN_STRICT
+@file(1_synthesis.tcl) 133: set TOP_HDL       [flow_env ASIC_TOP_HDL]        ;# extra top-level wrapper HDL
+@file(1_synthesis.tcl) 134: set TOP_HDL_DEF   [flow_env ASIC_TOP_HDL_DEFINES];# defines used only for it
+@file(1_synthesis.tcl) 135: set POWER_INTENT  [flow_env ASIC_POWER_INTENT]   ;# .upf or .cpf, optional
+@file(1_synthesis.tcl) 136: set DFT           [expr {[info exists ::DFT] ? $::DFT : 0}]
+@file(1_synthesis.tcl) 137: set DFT_SETUP_TCL [flow_env ASIC_DFT_SETUP_TCL]
+@file(1_synthesis.tcl) 139: say "checks=$SYN_CHECKS strict=$SYN_STRICT ple=$SYN_PLE drv=$SYN_DRV_FIX\
+     recovery=$SYN_RECOVERY groups=$SYN_COST_GROUPS cg=$SYN_CLOCK_GATING"
+SYN: checks=1 strict=1 ple=1 drv=0 recovery=1 groups=1 cg=1
+@file(1_synthesis.tcl) 141: say "mmmc=$SYN_MMMC ispatial=$SYN_ISPATIAL unc_fix=$SYN_UNC_FIX dft=$DFT"
+SYN: mmmc=0 ispatial=0 unc_fix=0 dft=1
+@file(1_synthesis.tcl) 142: if {$SYN_DRV_FIX} {
+    say "DRV override: tran=$SYN_MAX_TRAN ns cap=$SYN_MAX_CAP pF"
+
+SYN-WARN:   and look for registers with no clock reaching them.
+@file(1_synthesis.tcl) 910: if {$DFT} {
+    if {$DFT_SETUP_TCL eq "" || ![file exists $DFT_SETUP_TCL]} {
+        die "DFT is enabled but DFT_SETUP_TCL is unset or missing." \
+            "  Scan insertion needs a project file declaring the scan mode," \
+            "  chain count and test ports. Set DFT_SETUP_TCL in design.mk."
+    }
+    step "DFT setup"
+    source $DFT_SETUP_TCL
+}
+@file(1_synthesis.tcl) 933: flow_hook pre_synth
+SYN: hook: pre_synth -> <REPO>/ASIC/eth-chiplet/build/vt1-20260902/pinned/eth-chiplet/hooks/pre_synth.tcl
+
+}
+@file(1_synthesis.tcl) 987: if {$DFT} {
+    step "scan chains"
+    convert_to_scan
+    connect_scan_chains
+    try_step "scan chains rep" { report_scan_chains > $REPORT_DIR/syn_scan_chains.rep }
+}
+@file(1_synthesis.tcl) 1003: step "incremental optimisation"
+
+==== SYN: incremental optimisation ====
+

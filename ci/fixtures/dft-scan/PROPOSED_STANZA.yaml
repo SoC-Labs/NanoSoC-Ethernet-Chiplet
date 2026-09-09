@@ -1,0 +1,506 @@
+# =============================================================================
+# PROPOSED ci/signoff.yaml STANZA — clock-gate test-enable census (DFT/scan)
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+# =============================================================================
+# THIS FILE IS A PATCH, NOT A STAGE. ci/signoff.yaml is being edited by other
+# sessions; splice this in rather than letting two writers collide. Same reason,
+# same convention, as ci/fixtures/boundary-scan/PROPOSED_STANZA.yaml.
+#
+# WHY THIS LADDER AND NOT ci-pipeline.conf
+#   Both ladders were read before choosing. ci-pipeline.conf's `run` field takes
+#   a shell command — in practice `make -C @ROOT@ <target>` — and its stages have
+#   no `check:`, no fixtures and no `prove` verb: a stage there is graded by the
+#   exit status of the command it names. That is precisely the shape this
+#   detector must NOT be wired in as, because
+#     (a) it would require two new Makefile targets, and this project has a
+#         documented failure where a shared makefile fragment silently replaced
+#         a project recipe and the include guard could not see it; and
+#     (b) an exit status is not evidence that a gate can fail, and the whole
+#         point of `--selftest` is that this one demonstrably can.
+#   ci/signoff.yaml is the driver that has `check:`, `check_proof:` and
+#   `signoff.py prove`. 16 of its 32 stages — ir-drop-selftest, vacuous-gates,
+#   pins-reachable, route-message-census among them — are already declared here
+#   and NOT in ci-pipeline.conf; that is the established home for a pure-Python,
+#   fixture-proved detector. ci-pipeline.conf is left untouched.
+#
+#   ONE KNOWN CONSEQUENCE, stated rather than discovered later: the toolkit
+#   collator (ASIC/asic-toolkit/ci/collect-results.py) raises a `ladder.undeclared`
+#   meta row for any stage a runner reports that ci-pipeline.conf does not
+#   declare. That row is ALREADY UNVERIFIED for the sixteen stages above; these
+#   two make it eighteen. Closing it means declaring all eighteen in
+#   ci-pipeline.conf with `status`/`because` rows, which is one change, owned by
+#   whoever owns that ladder, and not this one.
+#
+# WHERE IT GOES
+#   ci/signoff.yaml, in the `stages:` list, IMMEDIATELY BEFORE `  - id: rom-gds`.
+#   In the working tree this was written against (flow/rc5-virtual-tapeout,
+#   2026-09-09) that is line 1119 — the stanza goes into the blank line 1118,
+#   after rom-content's `artifacts:` block:
+#
+#       1114      artifacts:
+#       1115        - build/rom_verify/*.json
+#       1116        - build/rom_verify/*.log
+#       1117        - build/rom_verify/graded_tree.txt
+#       1118                       <-- INSERT BOTH STAGES BELOW HERE
+#       1119    - id: rom-gds
+#
+#   NOT the same insertion point as ci/fixtures/boundary-scan/PROPOSED_STANZA.yaml,
+#   which targets the blank line before `  - id: lec`. The two patches are
+#   independent and can be spliced in either order.
+#
+#   Placement is by dependency, not alphabet. The census reads the SYNTHESISED
+#   netlist, so it can run the moment `syn` has produced one — before lec, drc
+#   and erc, all of which cost a seat or an hour. It sits beside rom-content and
+#   rom-gds because it asks their question in a different register: rom-content
+#   asks whether something that must be in the die reached it, and this asks
+#   whether something that must NOT be in the die (an unshiftable clock tree,
+#   once there is a chain) is on its way in.
+#
+#   dft-icg-selftest goes FIRST, exactly as rom-selftest precedes rom-content and
+#   lec-selftest precedes lec.
+#
+#   Two spaces of indent on `- id:`, four on the keys. Every key used here is in
+#   scripts/ci/signoff.py's STAGE_KEYS; `signoff.py lint` rejects anything else.
+#
+# TWO MORE FILES MOVE IN THE SAME COMMIT
+#   ci/MUTATION_COVERAGE is asserted against this manifest, red in BOTH
+#   directions, by scripts/ci/check_mutation_coverage.py. Splicing these stages
+#   without moving the ledger turns that checker red. The exact edits:
+#
+#     * add two rows to the PROVEN GATES table (alphabetical position is not
+#       enforced; put them after `drc`):
+#           # NEW. Wires scripts/ci/dft_icg_census.py, which this repository has
+#           # had since 2026-08-31 and which no Makefile, .mk or CI stage called.
+#           dft-icg-selftest        4
+#           dft-icg-census          5
+#     * the two totals move by a FIXED DELTA, not to a fixed value:
+#           must-fail-cases-total  +9   (4 from dft-icg-selftest, 5 from dft-icg-census)
+#           stages-with-check      +2
+#       DO NOT copy an absolute number out of this file. ci/MUTATION_COVERAGE is
+#       edited by other sessions and moved twice while this patch was being
+#       written (135/27 -> 142/28 in eighteen minutes). Splice, then run
+#           scripts/ci/check_mutation_coverage.py
+#       which PRINTS the two numbers the ledger must carry — "ledger says N,
+#       manifest has M" — and set them to M. Measured 2026-09-09: the spliced
+#       manifest wanted 151 and 30.
+#     * report-unproven stays as it is. dft-icg-census is `gate: report` but it
+#       is NOT RC-ONLY — it has a check: and five must_fail fixtures — so it
+#       belongs in the proven table, not in that list.
+#
+# AFTER SPLICING, RUN
+#   scripts/ci/signoff.py lint
+#   scripts/ci/signoff.py prove dft-icg-selftest dft-icg-census
+#   scripts/ci/check_mutation_coverage.py
+#   SIGNOFF_GRADED_BUILD=<tag> scripts/ci/signoff.py run dft-icg-selftest dft-icg-census
+#
+# ALL OF THE ABOVE WAS RUN BEFORE THIS FILE WAS WRITTEN, against a copy of
+# ci/signoff.yaml with these two stanzas spliced in at line 1118. See
+# ci/fixtures/dft-scan/README.md for the transcript summary.
+# =============================================================================
+
+  - id: dft-icg-selftest
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "Mutation-test the clock-gate census itself — 5 cases, 2 of which must go red, plus the exit-status-versus-text disagreement that this project's tools keep producing"
+    # NO TOOL, NO LICENCE, UNDER A SECOND. It runs one Python script over five
+    # synthetic netlists held inside that script.
+    #
+    # WHY A SELFTEST STAGE AT ALL. dft-icg-census below is `gate: report`. A
+    # report-gated stage that has quietly stopped discriminating produces exactly
+    # the same output as one that is working, forever, and nobody is paged. The
+    # selftest is what makes the census's silence mean something.
+    run: python3 scripts/ci/dft_icg_census.py --selftest
+    # FOUR CLAUSES, IN THIS ORDER, because each fixture is cut to trip the first
+    # one it reaches and no earlier one.
+    check: |
+      set -uo pipefail
+      OUT=$(python3 scripts/ci/dft_icg_census.py --selftest 2>&1); RC=$?
+      echo "$OUT" | tail -4
+      echo
+
+      # ── 1. THE EXIT STATUS AND THE TEXT MUST AGREE ──────────────────────────
+      # Not "trust the text instead of $?" — assert BOTH and treat a
+      # disagreement as the finding. Several tools in this flow exit 0 while
+      # printing a failure, and at least one exits nonzero on a clean run; a
+      # stage that reads only one of the two is wrong about a different half of
+      # the population each way.
+      SAYS_OK=$(echo "$OUT"  | grep -c '^SELFTEST OK: '     || true)
+      SAYS_BAD=$(echo "$OUT" | grep -c '^SELFTEST FAILED: ' || true)
+      if [ "$RC" != 0 ] || [ "$SAYS_BAD" != 0 ] || [ "$SAYS_OK" != 1 ]; then
+        echo "FAIL: the census selftest did not both pass and say so."
+        echo "        exit status      : $RC        (want 0)"
+        echo "        'SELFTEST OK'    : $SAYS_OK   (want 1)"
+        echo "        'SELFTEST FAILED': $SAYS_BAD  (want 0)"
+        echo "      A disagreement between the two is itself the defect: it means"
+        echo "      the detector's verdict and its transcript are produced by"
+        echo "      different code, and whichever one CI reads will sometimes be"
+        echo "      the wrong one."
+        exit 1
+      fi
+
+      # ── 2. THE EXACT TALLY, BOTH NUMBERS ────────────────────────────────────
+      # Pinned in both directions, per ci/MUTATION_COVERAGE's own doctrine:
+      # fewer means a proof was dropped, more means one was added and nobody
+      # reviewed it. If you deliberately change the case list, this line, the
+      # `must go red` count below and the stage description move together.
+      SUMMARY='^SELFTEST OK: \([0-9]\+\) cases, including \([0-9]\+\) that must go red\.$'
+      N=$(echo "$OUT" | sed -n "s/$SUMMARY/\1/p")
+      M=$(echo "$OUT" | sed -n "s/$SUMMARY/\2/p")
+      test -n "$N" || { echo "FAIL: the summary line did not parse. The battery"
+                        echo "      printed no tally in the expected form, so nothing"
+                        echo "      here has been counted."; exit 1; }
+      test "$N" = 5 || { echo "FAIL: the battery ran and declared $N cases, not 5."
+                         echo "      A selftest that quietly stops running cases still"
+                         echo "      exits 0 and still prints a green summary."; exit 1; }
+      # A battery whose every case expects a PASS proves only that the detector
+      # says yes to everything, which is not a detector.
+      test "$M" = 2 || { echo "FAIL: $M case(s) are declared must-go-red, not 2."
+                         echo "      Both of the negative controls have to be there or"
+                         echo "      this stage is asserting that a gate which never"
+                         echo "      says no is in working order."; exit 1; }
+
+      # ── 3. THE TRANSCRIPT MUST SHOW THE WORK ────────────────────────────────
+      # The clause that catches the harness whose case loop has stopped
+      # executing while its final print has not. lec-selftest was caught in
+      # that exact shape and this is its fail-harness-blind, ported.
+      H=$(echo "$OUT" | grep -c '^--- selftest: ' || true)
+      K=$(echo "$OUT" | grep -c '^  ok$'          || true)
+      test "$H" = 5 -a "$K" = 5 || {
+        echo "FAIL: the summary claims 5 cases but the transcript carries $H case"
+        echo "      header(s) and $K 'ok' verdict(s). A tally is not a result."; exit 1; }
+
+      # ── 4. AND THE RED CASES REALLY WENT RED, FOR THE RIGHT REASON ──────────
+      # Matched on the verdict banners themselves. An expectation table can
+      # drift with the code it grades and still report every case 'ok'; these
+      # three strings are what the detector prints when it has actually noticed
+      # a tied-off gate, a wrong shift-enable net, and a netlist with no clock
+      # gates in it at all.
+      for want in \
+        "FAIL: 1 of 3 clock gates have their test-enable tied low." \
+        "FAIL: 1 clock gates are driven by a net that is not 'scan_en'." \
+        "UNVERIFIED: no clock gates in this netlist."
+      do
+        echo "$OUT" | grep -qF "$want" || {
+          echo "FAIL: the transcript never printed:"
+          echo "        $want"
+          echo "      so the case that must produce it either did not run or no"
+          echo "      longer produces it. The tally would not have noticed."; exit 1; }
+      done
+
+      echo "VERDICT: PASS — 5 cases, 2 of them negative controls, all four"
+      echo "         clauses satisfied and the exit status agrees with the text."
+    # Each must_fail shadows scripts/ci/dft_icg_census.py with a stub printing
+    # the REAL transcript with ONE mutation, so the four clauses are proved
+    # separately rather than all at once. The must_pass fixture supplies no
+    # script at all: the positive control has to be the real detector, or it
+    # proves only that the check can read a stub.
+    check_proof:
+      must_pass: ci/fixtures/dft-scan/pass-selftest
+      must_fail:
+        # Reports two failed cases AND EXITS 0. Clause 1. This project's
+        # single most common tool shape, and the one a `$?`-only stage cannot see.
+        - ci/fixtures/dft-scan/fail-selftest-exit0-liar
+        # 3 of 5 cases. Internally consistent, green, and two proofs short.
+        - ci/fixtures/dft-scan/fail-selftest-shrunk
+        # 5 cases, none of them negative controls. Clause 2's second half.
+        - ci/fixtures/dft-scan/fail-selftest-no-red
+        # The summary line and nothing else — the case loop stopped, the final
+        # print did not. Clause 3.
+        - ci/fixtures/dft-scan/fail-selftest-hollow
+    timeout_s: 120
+
+  - id: dft-icg-census
+    phase: physical
+    gate: report
+    label: soclabs-sim
+    description: "Census the test-enable pin of all 3007 Genus-inserted clock gates in the graded netlist, against the DFT mode synthesis actually ran in — REPORT today because with no scan chain a tied-off clock gate is correct"
+    # ── WHY THIS IS `report` AND NOT `block` ────────────────────────────────
+    # Measured on rc5vt-20260829, rc6full-20260831, vt1-20260902, vt2ctl-20260908
+    # and rc7gskew1-20260901: 3007 clock gates, every one of them tied off,
+    # every time. There is NO SCAN CHAIN in this design, and for a design with
+    # no scan chain that is the correct netlist. Blocking on it would be
+    # blocking on a design that is right.
+    #
+    # It is worth a stage anyway because the day the tie-off stops being correct
+    # is a day nothing else in this flow can see. Genus does not warn — tying a
+    # clock-gate test pin low is a legal netlist. Innovus does not warn.
+    # `report_scan_chains` reports the chains it was ASKED to build, not the
+    # chains that can shift. Tempus grades the same netlist as
+    # `6014 checks, 3007 Met, 0 Violated, 3007 Untested` — 6014 is 2 x 3007,
+    # the E pin checked and the TE pin not — and the word for the half it did
+    # not check is "Untested", not "Violated", so it never reddens anything.
+    #
+    # ── THE RATCHET, WHICH IS THE POINT OF THE STAGE ────────────────────────
+    # The check below is NOT a fixed census. It reads the DFT mode synthesis
+    # actually ran in and grades against THAT:
+    #
+    #   dft=0   census only. Report the buckets, assert they are non-vacuous and
+    #           complete, pass.
+    #   dft=1   RUN THE DETECTOR WITH --require-scan AND MAKE ITS VERDICT THE
+    #           STAGE'S. A tied-off clock gate in a scan design is a chain that
+    #           will not shift, and this goes red for it.
+    #
+    # So the stage arms itself the moment DFT is switched on: nobody has to
+    # remember. What the MANIFEST still has to be edited for is the GATE.
+    #
+    #   PROMOTE `gate: report` -> `gate: block` WHEN, AND ONLY WHEN:
+    #     the graded build's logs/syn.log carries the executed banner
+    #         SYN: mmmc=... dft=1
+    #     i.e. ASIC/eth-chiplet/design.mk sets DFT=1 and DFT_SETUP_TCL names a
+    #     real scan-setup file. One word in this manifest. Nothing else changes:
+    #     the check already switches to --require-scan on its own, and
+    #     ci/fixtures/dft-scan/fail-scan-on-tied-low and
+    #     fail-scan-on-no-test-pin already prove it goes red in that mode, in
+    #     both the post-synthesis and the post-route netlist form.
+    #
+    #   THE SECOND RATCHET STEP, deliberately NOT armed now:
+    #     add `--shift-enable <port>` to the require-scan invocation once the
+    #     scan-setup file declares the shift-enable port name. Until such a file
+    #     exists there is no name to check against, and a name invented here
+    #     would be a literal that is right for one die and silently wrong for
+    #     the next — the defect ci/fixtures/boundary-scan's pad table exists to
+    #     avoid. The detector already supports the flag; only the value is
+    #     missing.
+    #
+    #   A KNOWN RESIDUAL, so that it is not discovered at the ratchet:
+    #     the census reads the test pin AT THE WRAPPER INSTANCE. Post-route,
+    #     Innovus additionally physicalises the constant INSIDE the wrapper as a
+    #     TIEL cell driving the library cell's TE. A future netlist could
+    #     therefore connect .test(scan_en) at the wrapper and still hold TE low
+    #     inside it, and this census would read `net` and call it healthy. That
+    #     is a change to scripts/ci/dft_icg_census.py, not to this manifest, and
+    #     it belongs in the same commit as the --shift-enable step.
+    #
+    # ── run: PRODUCES THE EVIDENCE, check: IS THE GATE ──────────────────────
+    # check: re-derives its verdict from the netlists and the log directly and
+    # does not read run:'s output at all, so a stale or absent census.txt cannot
+    # make this stage green.
+    run: |
+      set -uo pipefail
+      mkdir -p build/dft
+      { echo "# clock-gate test-enable census, graded build @GRADED_BUILD@"
+        echo "# $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        for n in gate pnr; do
+          f="ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_${n}.v"
+          echo; echo "=== $f ==="
+          if [ -f "$f" ]; then python3 scripts/ci/dft_icg_census.py --netlist "$f" 2>&1
+          else echo "(absent)"; fi
+        done
+      } | tee build/dft/icg_census.txt
+    check: |
+      python3 - <<'EOF'
+      import os, re, subprocess, sys
+
+      # ── ONE TAG, THREE PLACES ───────────────────────────────────────────────
+      # BUILD here, the `run:` block above and needs_implementation: below all
+      # name @GRADED_BUILD@ on purpose, so this stage cannot declare one build
+      # and grade another. When the graded tag moves, `proof_vars` below does NOT
+      # move with it: that value names the tag the FIXTURES are cut around and is
+      # deliberately a synthetic one that no build tree will ever use.
+      BUILD  = "ASIC/eth-chiplet/build/@GRADED_BUILD@"
+      SYNLOG = BUILD + "/logs/syn.log"
+      CENSUS = "scripts/ci/dft_icg_census.py"
+      NETLISTS = [("post-synthesis", BUILD + "/outputs/nanosoc_eth_chiplet_pads_gate.v"),
+                  ("post-route",     BUILD + "/outputs/nanosoc_eth_chiplet_pads_pnr.v")]
+
+      # THE ONLY TRUSTWORTHY DISCRIMINATOR IN THE LOG. Genus echoes its own Tcl
+      # source into the transcript, so a DFT=0 run's syn.log contains
+      # `convert_to_scan`, `connect_scan_chains`, `report_scan_chains` and
+      # `step "DFT setup"` VERBATIM, inside an `if {$DFT} {` that never ran.
+      # Measured on vt1-20260902: 3 such strings, dft=0, and no
+      # `==== SYN: scan chains ====` step banner anywhere. Any gate that greps
+      # this log for scan commands is vacuous by construction. What was actually
+      # EXECUTED is the `say` output, which is anchored and unambiguous.
+      BANNER = re.compile(r"^SYN: mmmc=\d+ ispatial=\d+ unc_fix=\d+ dft=(\d+)\s*$", re.M)
+      ECHOED = re.compile(r"convert_to_scan|connect_scan_chains|report_scan_chains"
+                          r'|step "DFT setup"|step "scan chains"')
+
+      def unverified(msg, *more):
+          # 2, not 1. FAIL indicts the design; UNVERIFIED indicts the run.
+          print("UNVERIFIED (not measured) - %s" % msg)
+          for m in more:
+              print("  %s" % m)
+          print("  This says nothing about the clock gates. It is NOT a pass.")
+          sys.exit(2)
+
+      if not os.path.isfile(CENSUS):
+          unverified("the detector is not at %s" % CENSUS,
+                     "This stage is a wrapper around that script and has no census of its own.")
+      if not os.path.isdir(BUILD):
+          unverified("no build tree at %s" % BUILD,
+                     "SIGNOFF_GRADED_BUILD names a tag that is not on this disk.")
+
+      # ── 1. WHICH MODE DID SYNTHESIS ACTUALLY RUN IN ─────────────────────────
+      if not os.path.isfile(SYNLOG):
+          unverified("no synthesis log at %s" % SYNLOG,
+                     "An ECO tree that re-streams an existing database has no syn.log of",
+                     "its own, and a netlist cannot be asked which mode it was built in.",
+                     "Point SIGNOFF_GRADED_BUILD at the run that actually synthesised.")
+      log = open(SYNLOG, errors="replace").read()
+      echoes = len(ECHOED.findall(log))
+      modes  = BANNER.findall(log)
+      print("syn log  : %s" % SYNLOG)
+      print("           %d echoed-but-unexecuted scan command(s) in it - IGNORED BY"
+            " CONSTRUCTION" % echoes)
+      if not modes:
+          unverified("%s carries no executed `SYN: ... dft=N` banner" % SYNLOG,
+                     "The %d echoed scan command(s) in it are Genus reprinting its own"
+                     % echoes,
+                     "Tcl source and prove nothing either way. Without the banner the",
+                     "DFT mode is UNKNOWN, and unknown must not quietly mean 'no scan'.")
+      if len(set(modes)) != 1:
+          unverified("%s carries %d banners naming different DFT modes: %s"
+                     % (SYNLOG, len(modes), ", ".join("dft=" + m for m in modes)),
+                     "A resumed or re-run synthesis has left two answers in one log and",
+                     "the netlist beside it belongs to only one of them.")
+      dft = int(modes[0])
+      print("           executed banner: dft=%d %s"
+            % (dft, "(scan insertion ON)" if dft else "(no scan insertion)"))
+      print()
+
+      # ── 2. THE CENSUS, OVER EVERY NETLIST THE BUILD HAS ─────────────────────
+      # Both forms are read where both exist, because the SAME tie-off wears
+      # different clothes in each: Genus writes `.test (1'b0)`, and Innovus drops
+      # the connection entirely once the constant is propagated, so the routed
+      # netlist shows no `.test()` at all. A checker that greps for 1'b0 reads
+      # the routed netlist as clean - measured: 0 hits in a 51 MB netlist whose
+      # every one of 3007 clock gates is held low.
+      TOTAL  = re.compile(r"^clock-gate instances found: (\d+)$", re.M)
+      BUCKET = re.compile(r"^\s+(\d+)\s+([a-z_]+)$", re.M)
+      seen, fails = {}, []
+      for label, path in NETLISTS:
+          if not os.path.exists(path):
+              print("%-15s %s\n%-15s (absent)" % (label + ":", path, ""))
+              continue
+          argv = [sys.executable, CENSUS, "--netlist", path]
+          if dft:
+              argv += ["--require-scan"]
+          p = subprocess.run(argv, capture_output=True, text=True)
+          out = p.stdout + p.stderr
+          print("%s: %s" % (label, path))
+          for line in out.splitlines():
+              print("    " + line)
+          m = TOTAL.search(out)
+          if p.returncode == 2 or not m or int(m.group(1)) == 0:
+              # The detector's own UNVERIFIED arm. `0 clock gates tied low` out
+              # of 0 clock gates is a measurement of nothing reported in green,
+              # which is this project's documented characteristic failure.
+              unverified("the census could not measure %s (rc=%d)" % (path, p.returncode),
+                         "Either this is not a gate netlist, or the clock-gate naming has",
+                         "changed from cg_*/CKLN* and the detector is now blind to it.")
+          buckets = {b: int(n) for n, b in BUCKET.findall(out)}
+          seen[label] = (int(m.group(1)), buckets, p.returncode)
+
+      if not seen:
+          unverified("neither netlist exists under %s/outputs/" % BUILD,
+                     "Synthesis did not get far enough for there to be anything to census.")
+
+      # ── 3. THE ANTI-DISGUISE INVARIANT ──────────────────────────────────────
+      # The BUCKET is allowed to change between the two netlists - that is what
+      # Innovus does. The COUNT is not. A routed netlist that reports FEWER clock
+      # gates than the synthesised one means either that gates were deleted or,
+      # far more likely and far worse, that the parser has gone blind on a
+      # netlist-writer format change and every number above it is fiction.
+      # Measured equal (3007/3007) on five netlists across four runs.
+      print()
+      if "post-synthesis" in seen and "post-route" in seen:
+          g, r = seen["post-synthesis"][0], seen["post-route"][0]
+          if r < g:
+              fails.append("the routed netlist carries %d clock gates and the synthesised "
+                           "one %d. Gates cannot be lost between the two without somebody "
+                           "asking for it, so the likelier reading is that this detector "
+                           "no longer recognises the routed form and its census of it is "
+                           "worthless" % (r, g))
+          else:
+              print("cross-netlist: %d gates post-synthesis, %d post-route - "
+                    "the count survives the writer change" % (g, r))
+      else:
+          print("cross-netlist: NOT MEASURED - only one netlist form is present, so the "
+                "count could not be carried across the post-route disguise")
+
+      # ── 4. THE VERDICT, WHICH DEPENDS ON THE MODE ───────────────────────────
+      print()
+      for label, (total, buckets, rc) in sorted(seen.items()):
+          off = buckets.get("tied_low", 0) + buckets.get("no_test_pin", 0)
+          live = total - off
+          print("%-15s %d clock gates: %d cannot shift (%d tied low + %d with no test "
+                "connection), %d take their test-enable from a net"
+                % (label + ":", total, off, buckets.get("tied_low", 0),
+                   buckets.get("no_test_pin", 0), live))
+          if dft:
+              # The detector's own --require-scan verdict IS the verdict. Not
+              # re-derived here: re-deriving it would be a second detector, and
+              # then this stage would be gating on the copy rather than on the
+              # thing it was written to wire in.
+              if rc != 0:
+                  fails.append("scan insertion is ON (dft=1) and %d of %d clock gates in "
+                               "the %s netlist cannot shift. The chains through them will "
+                               "not work and no tool in this flow will say so"
+                               % (off, total, label))
+          else:
+              if live:
+                  fails.append("dft=0, so every clock gate should be held off, and %d of "
+                               "%d in the %s netlist are driven from a net instead. "
+                               "Nothing in this design declares a test-enable source, so "
+                               "somebody has wired one in without saying so - this is the "
+                               "census moving, which is the event this stage exists to "
+                               "notice" % (live, total, label))
+
+      print()
+      if fails:
+          print("VERDICT: FAIL")
+          for f in fails:
+              print("  - %s" % f)
+          sys.exit(1)
+      if dft:
+          print("VERDICT: PASS - scan insertion is on and every clock gate takes its "
+                "test-enable from a net.")
+      else:
+          print("VERDICT: PASS - no scan insertion (dft=0) and every clock gate is held "
+                "off, which is the correct netlist for a design with no scan chain.")
+          print("         This is a CENSUS, not a clean bill of testability. Promote this")
+          print("         stage to `gate: block` when the banner reads dft=1; see the")
+          print("         ratchet note above this check in ci/signoff.yaml.")
+      sys.exit(0)
+      EOF
+    # ABSENT EVIDENCE => UNVERIFIED, NOT FAIL, and the driver renders that before
+    # check: is ever reached. Both netlist forms are listed even though the check
+    # needs only one, so that a build missing either is visibly a partial one.
+    needs_implementation:
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/logs/syn.log
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_gate.v
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/outputs/nanosoc_eth_chiplet_pads_pnr.v
+    # The tag @GRADED_BUILD@ takes when `prove` runs this stage's fixtures. It is
+    # SYNTHETIC on purpose: no build tree is or will be called this, so if the
+    # fixture trees and this value ever drift apart the must_pass case goes red
+    # rather than every case going green over a fixture-shaped hole.
+    proof_vars: {GRADED_BUILD: dftcen-fixture}
+    # Six cases; ci/fixtures/dft-scan/README.md says what each proves and which
+    # single change to the evidence it simulates. All six are built from the real
+    # rc5vt-20260829 netlists and the real vt1-20260902 Genus transcript.
+    check_proof:
+      must_pass: ci/fixtures/dft-scan/pass
+      must_fail:
+        # THE POST-ROUTE DISGUISE, and the reason this stage is not a grep.
+        # 290 clock gates, scan insertion ON, and not one `1'b0` in the file:
+        # Innovus dropped the .test() connection when the constant propagated.
+        # `grep -c "1'b0"` returns 0 on this fixture.
+        - ci/fixtures/dft-scan/fail-scan-on-no-test-pin
+        # The same defect in its post-synthesis clothes: .test (1'b0), scan on.
+        - ci/fixtures/dft-scan/fail-scan-on-tied-low
+        # THE LOG-ECHO ARM'S NEGATIVE HALF. The banner line is gone and the
+        # echoed `convert_to_scan` / `step "DFT setup"` block is still there. The
+        # mode is unknown; unknown must not read as "no scan". UNVERIFIED, not FAIL.
+        - ci/fixtures/dft-scan/fail-no-banner
+        # THE VACUITY ARM. A 103 kB netlist of real cells with every clock gate
+        # removed. "0 tied low" is true of it and means nothing.
+        - ci/fixtures/dft-scan/fail-vacuous-netlist
+        # The routed netlist reports 200 clock gates where the synthesised one
+        # reports 290. The detector has gone blind on one of the two forms.
+        - ci/fixtures/dft-scan/fail-netlists-disagree
+    artifacts:
+      - build/dft/icg_census.txt
+    timeout_s: 900
