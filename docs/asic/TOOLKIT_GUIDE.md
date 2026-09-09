@@ -269,20 +269,39 @@ Two things make it work, and both are now defaults rather than things you must k
   and `make lvs` dispatched to a runner whose argument contract it did not match — so
   it exited 2 without running. Both fixed in `14fd96c`.
 
+- **`VSS` is in `.GLOBAL`, and the ROM CDLs are derived copies.** `design.mk` renames the
+  boot ROMs' internal virtual ground to `VSS_ROMVIRT` before LVS reads them, which is what
+  makes `.GLOBAL VSS` safe. The two are inseparable — `VSS` without the rename fabricates
+  a short across both ROMs' power gates. Landed in `5c04870`; see trap 10 for why it
+  matters more than a missing name.
+
 **Read the reconciliation, never the verdict.** `INCORRECT` is the expected end state:
 the 82 bond pads have no CDL anywhere and never will. What tells you the run was good
-is the matched counts. Measured on `gdsrun-20260823-rzG`:
+is the reconciliation. Measured on `rc4-20260829`, the submitted design, 2026-09-09:
 
-| | |
-|---|---|
-| ports | 52 / 52 matched |
-| nets | 269,824 matched |
-| instances | 325,099 matched |
-| std-cell types | ~700, zero unmatched |
+| | pre-fix | rc4, post-fix |
+|---|---|---|
+| distinct orphan `/VSS` source nets | 18,031 | **0** |
+| report size | 24 MB | 580 KB |
+| `lvs-missing-connection` | — | **PASS** |
+| ports | — | 52 / 52 |
 
-For scale: with pin text off, the same design reconciles ~62,000 nets. Coverage
-arriving makes the verdict *worse* and the reconciliation *better*; a rise in
-`INCORRECT` counts here is the gate starting to see, not a regression. Do not read the
+**Orphan `/VSS` is the primary discriminator, not the matched counts.** Before `5c04870`
+the gate's sign was inverted — a *stranded* ground pin matched a phantom one-pin net
+while a *correctly connected* one mismatched — so the older reference figures from
+`gdsrun-20260823-rzG` (269,824 nets, 325,099 instances, 52/52 ports) were measured by a
+gate that could not see the thing they were being used to reassure about. Quote rc4's
+numbers, not those.
+
+**And validate the counting method before quoting the zero.** Run your exact counting
+command against a *pre-fix* report first: it should return the large number there
+(36,062 lines / 18,031 distinct) and zero on the new run. Without that control, a zero is
+indistinguishable from a pattern that silently stopped matching — the same failure as a
+`grep -c` that counts a summary token once and reports 0 for 26. State the number the
+check cannot produce, then demonstrate it can.
+
+Coverage arriving makes the verdict *worse* and the reconciliation *better*; a rise in
+`INCORRECT` counts is the gate starting to see, not a regression. Do not read the
 `INCORRECT NETS` list itself — it truncates at exactly DISC# 1000.
 
 The critical distinction: **`drc` produces the evidence, `drc-census` reaches the
