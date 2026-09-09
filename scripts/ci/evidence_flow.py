@@ -46,6 +46,7 @@ Copyright (C) 2026, SoC Labs (www.soclabs.org)
 """
 
 import argparse
+import dataclasses
 import glob
 import json
 import os
@@ -96,6 +97,13 @@ SPEC_FIELDS = {
                       "reference IS the claim, so it is named and justified, "
                       "never inferred",
     "publish":        "{project, block, klass} for the artifact store",
+    "submission":     "{to, date, why} -- THIS STREAM WAS ACTUALLY HANDED TO A "
+                      "FOUNDRY. Its presence is the ONLY thing that puts the "
+                      "`submitted.*` properties on the published artefact; its "
+                      "absence means the run was never submitted and the store "
+                      "must not say it was. `to` and `date` (YYYY-MM-DD) are "
+                      "required, because a submission with no recipient and no "
+                      "date is a claim nobody can check",
     "known_bad":      "list of deliberately-accepted defects",
     "not_measured":   "list of {id, asserts, why} for things nothing on this site can measure",
 }
@@ -643,17 +651,85 @@ def gate_stream_published(spec, bundle, identity):
     md5 of the `.zst`. The foundry cites the md5 of the uncompressed stream.
     Those never match, so `actual_md5` can never bind a foundry return -- which
     is how asic-record/_unbound/ came to hold 396 files whose verdicts are real
-    and which nothing can tie to a run."""
+    and which nothing can tie to a run.
+
+    THE ORDERING THIS ROW USED TO DEPEND ON, AND NO LONGER DOES. This gate asks
+    the store a question that only a publish can answer, and until 2026-09-09
+    `publish` ran AFTER `collect`. A first-ever publish of a run tag therefore
+    rendered this row FAIL BY CONSTRUCTION -- the question was asked before
+    anything could have answered it, and the publish that followed silently
+    fixed the very thing the bundle had just recorded as broken. Both bundles in
+    the store carry `evidence.fail 1` for it, and their `store_query.json` reads
+    `[]` while the same AQL by hand returns the stream. `publish` is now two
+    phases and the stream's identity is deployed BEFORE collect; see
+    publish_identity(). This row is unchanged -- it was never the defect.
+
+    NOT-MEASURED IS NOT A SOFTER FAIL. `signed_off()` requires zero NOT-MEASURED
+    as well as zero FAIL, so nothing below can launder a real failure into a
+    green. What a downgrade CAN lose is the reason, and that is why the
+    StoreUnavailable arm probes the store rather than narrating every failure as
+    an outage: `artifactory.StoreUnavailable` is raised both for "could not
+    reach" and for "reached, and the call failed" -- deploy() raises it, same
+    type, when the bytes land and the properties do not."""
     md5 = identity.stream_md5
     try:
         hits = artifactory.find_by_md5(md5)
     except artifactory.StoreUnavailable as e:
+        try:
+            artifactory.ping()
+            reach = ("The store ANSWERS ITS PING, so this is not an outage -- "
+                     "the identity query itself failed, and a query that fails "
+                     "against a live store is a fault to chase, not weather. ")
+        except artifactory.StoreUnavailable as p:
+            reach = "The store does not answer its ping either (%s). " % p
         return Gate(id="stream-identity-published", verdict=NOT_MEASURED,
                     asserts="the raw md5 of this stream is retrievable from the "
                             "artifact store as a property",
                     why="the store could not be established, so this is UNKNOWN "
-                        "rather than absent: %s" % e,
-                    cites=[bundle.write("store_unavailable.txt", str(e) + "\n")])
+                        "rather than absent: %s. %s" % (e, reach),
+                    cites=[bundle.write("store_unavailable.txt",
+                                        "%s\n%s\n" % (e, reach))])
+
+    # THE NEGATIVE CONTROL, RUN RATHER THAN ASSERTED. This row's scope sentence
+    # has always claimed "a query for an all-zero md5 returns nothing, so the
+    # search discriminates". Claiming it is not measuring it. An AQL whose
+    # predicate had degenerated -- a property rename, a server-side change to
+    # `$or`, a wildcard left in -- would return this stream for ANY md5, and the
+    # row would read PASS on a search that cannot fail. So the control is
+    # executed, and a control that does not come back clean makes this row
+    # NOT-MEASURED rather than a pass.
+    control_note = ""
+    try:
+        control = artifactory.find_by_md5("0" * 32)
+    except artifactory.StoreUnavailable as e:
+        return Gate(id="stream-identity-published", verdict=NOT_MEASURED,
+                    asserts="the raw md5 of this stream is retrievable from the "
+                            "artifact store as a property",
+                    why="the identity query answered but the NEGATIVE CONTROL "
+                        "(the same query for an all-zero md5) could not be run: "
+                        "%s. Without it nothing shows the search discriminates, "
+                        "and an answer from a search that cannot say no is not "
+                        "a measurement." % e,
+                    cites=[bundle.write("store_control.txt", str(e) + "\n")])
+    if control:
+        return Gate(id="stream-identity-published", verdict=NOT_MEASURED,
+                    asserts="the raw md5 of this stream is retrievable from the "
+                            "artifact store as a property",
+                    why="THE SEARCH DOES NOT DISCRIMINATE: a query for the "
+                        "all-zero md5 returned %d artefact(s) (%s). Whatever "
+                        "this row would have said about %s, it would have said "
+                        "about any md5 at all."
+                        % (len(control),
+                           ", ".join("%s/%s/%s" % (h["repo"], h["path"], h["name"])
+                                     for h in control[:3]),
+                           md5[:12]),
+                    cites=[bundle.write(
+                        "store_control.txt",
+                        '// NEGATIVE CONTROL items.find(... "00000000...")\n%s\n'
+                        % json.dumps(control, indent=2))])
+    control_note = ("; the same query for an all-zero md5 was RUN and returned "
+                    "nothing, so the search discriminates")
+
     body = json.dumps(hits, indent=2)
     c = bundle.write("store_query.json",
                      '// items.find({"$or":[{"@pnr.raw_md5":"%s"},'
@@ -711,9 +787,7 @@ def gate_stream_published(spec, bundle, identity):
                         "be bound to it without local disk",
                 got="%d artefact(s)" % len(hits), required="at least 1",
                 measured_over="AQL over the whole store on @pnr.raw_md5 / "
-                              "@submitted.raw_md5 = %s; a query for an all-zero "
-                              "md5 returns nothing, so the search discriminates"
-                              % md5,
+                              "@submitted.raw_md5 = %s%s" % (md5, control_note),
                 cites=[c], detail=where)
 
 
@@ -2081,29 +2155,189 @@ def store_build_id(spec, idy):
             idy["run_tag"])
 
 
-def publish(spec, out, force=False):
-    """Publish the stream WITH its raw md5 as a property, plus the report and
-    the whole evidence bundle.
+# ---------------------------------------------------------------------------
+# PUBLISHING, IN TWO PHASES, AND WHY IT CANNOT BE ONE
+#
+# THE DEFECT. `collect()` runs a gate -- `stream-identity-published` -- that
+# asks the store whether THIS stream's raw md5 is retrievable as a property.
+# `publish()` is what CREATES that property. A single-phase publish can only
+# run after collect, so THE FIRST PUBLISH OF ANY RUN TAG RENDERED THAT ROW FAIL
+# BY CONSTRUCTION: the question was asked before anything could have answered
+# it, and the publish that followed silently fixed the very thing the bundle had
+# just recorded as broken. Measured 2026-09-09: both bundles in the store carry
+# `evidence.fail 1` for exactly this row, their `store_query.json` reads `[]`,
+# and the same AQL run by hand today returns both streams for both md5s.
+#
+# A FALSE FAIL IS NOT A SAFE FAILURE. It teaches a reader to discount the one
+# row whose whole job is to make a foundry return bindable without local disk,
+# and it inflates `evidence.fail`, which is itself published as a property.
+#
+# WHAT WAS REJECTED. Downgrading the row to NOT-MEASURED while a publish is
+# pending. `signed_off()` requires zero NOT-MEASURED as well as zero FAIL, so
+# that buys no green whatever -- it converts a false negative into an unmeasured
+# claim, which is strictly worse: the reader loses the fact that the question
+# was asked at all, and "not measured" is the state this whole program exists to
+# stop things quietly reaching.
+#
+# THE FIX IS AN ORDERING, ALONG A SEAM THAT WAS ALREADY THERE.
+#
+#   PHASE 1  publish_identity() -- the STREAM, carrying only what IDENTIFIES it:
+#            pnr.*, layout.*, run.tag, build.*, and `submitted.*` if and only if
+#            the spec declares a submission. Every one of those is a fact about
+#            the bytes; not one of them needs a gate to have run. Deployed
+#            BEFORE collect.
+#   collect  now asks a question the store can answer.
+#   PHASE 2  publish_bundle() -- the report, the evidence, the recipe, the
+#            digests and the build record, carrying the VERDICT properties,
+#            evidence.*. Those describe THE BUNDLE. Putting them on the stream
+#            was a category error to begin with: the layout's bytes do not
+#            change when a gate is added, and `evidence.fail` on a GDS reads as
+#            a property of the die.
+#
+# The phases hand off through a small JSON file in the output directory rather
+# than through globals, so `publish --bundle-only` can be run later, in another
+# process, and still refuse to attach a report to bytes phase 1 did not send.
+# ---------------------------------------------------------------------------
 
-    NON-FATAL TO THE BUILD, FATAL TO THE CLAIM. A publish failure must not
-    destroy four hours of routing, but it leaves a NOT-PUBLISHED marker and the
-    build is not a signed-off build."""
-    jp = os.path.join(out, "evidence_report.json")
-    d = json.load(open(jp))
-    idy = d["identity"]
+# The properties that mean THIS STREAM WAS HANDED TO A FOUNDRY.
+#
+# THE DEFECT THIS CLOSES, measured in the live store on 2026-09-09.
+# `submitted.raw_md5` was set UNCONDITIONALLY on every stream this program
+# deployed, with the same value as `pnr.raw_md5`. All fourteen streams in the
+# store therefore carry it, flow-validation runs included:
+# `vt-baseline-20260829` claims `submitted.raw_md5 f0ea3106...` and that run was
+# never submitted to anyone -- its own spec says so, in the `supersedes` field,
+# in words.
+#
+# It is not decoration. It is one of the two properties
+# `stream-identity-published` joins on, and it is the exact key
+# `artifactory_publish_submission.py` sets when it publishes a stream A FOUNDRY
+# ACTUALLY GRADED -- that program refuses to file anything as a submission
+# unless a foundry return in the store cites its md5. A store in which every
+# candidate claims to have been submitted cannot answer "which bytes went to the
+# foundry", which is the single question the whole binding chain exists to
+# answer, and it is the question that matters most here: rc4-20260829 is the
+# stream that shipped, and every `vt*` run is flow validation that must never be
+# mistakable for it.
+#
+# So the label is now a DECLARATION, made in the spec, naming a recipient and a
+# date. No default, no inference from a run tag, no "candidate that looks final".
+SUBMISSION_PROPS = ("submitted.raw_md5", "submitted.to", "submitted.date")
+
+# Phase 1 -> phase 2. Not a temp file: `publish --bundle-only` may run minutes
+# or days later, and this is what lets it check that the report it is about to
+# attach describes the bytes that were actually deployed.
+HANDOFF = "publish_identity.json"
+
+
+class PublishRefused(Exception):
+    """A publish this program will not make, for a stated reason.
+
+    Distinct from artifactory.StoreUnavailable, which means the store could not
+    be established. Collapsing the two would put "the server did not answer"
+    and "the server answered and the answer was wrong" behind one word, which is
+    the confusion artifactory.py's whole header is about."""
+
+
+def submission_of(spec):
+    """The spec's `submission` declaration, validated. {} when this run was not
+    submitted -- which is the honest answer for every run in this repository
+    except the one that shipped.
+
+    REFUSED IN BOTH DIRECTIONS. A half-written block (a recipient with no date,
+    a date that is not a date) is an error rather than a partial label, because
+    a `submitted.*` property set is read as a claim and a claim missing its
+    subject is worse than silence. And `publish.klass: release` -- the repo for
+    streams that have left this site -- with no submission block at all is
+    refused for the same reason from the other side."""
     pub = spec.get("publish") or {}
-    project = pub.get("project", "ethchip")
-    block = pub.get("block", idy["design"])
-    repo = {"candidate": "asic-candidate", "release": "asic-release"}[
-        pub.get("klass", "candidate")]
-    key = "%s/%s/%s" % (project, block, idy["run_tag"])
-    marker = os.path.join(out, "NOT-PUBLISHED.txt")
+    klass = pub.get("klass", "candidate")
+    sub = spec.get("submission")
+    if sub is None:
+        if klass == "release":
+            die("publish.klass is 'release' -- the repo for streams that have "
+                "left this site -- and the spec declares no `submission`. A "
+                "release with no recipient and no date is a claim nobody can "
+                "check. Add \"submission\": {\"to\": ..., \"date\": "
+                "\"YYYY-MM-DD\", \"why\": ...}, or publish it as a candidate.")
+        return {}
+    if not isinstance(sub, dict):
+        die("spec field `submission` must be an object with `to` and `date`, "
+            "not %r. It is the ONLY thing that puts submitted.* on the "
+            "artefact, so it is never a bare flag." % type(sub).__name__)
+    missing = [k for k in ("to", "date") if not str(sub.get(k, "")).strip()]
+    if missing:
+        die("spec field `submission` is missing %s. A stream labelled as "
+            "submitted must say to whom and on what date, or the label cannot "
+            "be checked against a foundry return."
+            % " and ".join("`%s`" % k for k in missing))
+    date = str(sub["date"]).strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        die("spec field `submission.date` is %r; it must be YYYY-MM-DD. A date "
+            "that does not parse sorts wrongly against a foundry return's own "
+            "timestamp, which is the comparison this property exists for."
+            % date)
+    return {"to": str(sub["to"]).strip(), "date": date}
 
+
+def publish_target(spec, idy):
+    """(repo, key, klass) for a run. One place, so the two phases cannot drift.
+
+    `key` is the store path prefix a run tag owns -- project/block/tag. Both
+    phases build every destination from it."""
+    pub = spec.get("publish") or {}
+    klass = pub.get("klass", "candidate")
+    repo = {"candidate": "asic-candidate", "release": "asic-release"}.get(klass)
+    if repo is None:
+        die("publish.klass is %r; the known values are 'candidate' and "
+            "'release'. An unknown class used to raise KeyError from a dict "
+            "lookup, which reads as a crash rather than as a spec error."
+            % klass)
+    return (repo,
+            "%s/%s/%s" % (pub.get("project", "ethchip"),
+                          pub.get("block", idy["design"]), idy["run_tag"]),
+            klass)
+
+
+def publish_identity(spec, out, force=False, drop_submitted=False):
+    """PHASE 1. Deploy the STREAM with the properties that identify it, and
+    nothing that grades it. -> the handoff dict.
+
+    Raises PublishRefused / StoreUnavailable / OSError; the caller writes the
+    NOT-PUBLISHED marker."""
+    os.makedirs(out, exist_ok=True)
+    idy = dataclasses.asdict(build_identity(spec))
+    repo, key, _klass = publish_target(spec, idy)
+    sub = submission_of(spec)
     bname, bnum = store_build_id(spec, idy)
-    # build.* are the JOIN, not decoration: Artifactory finds a build's real
-    # artefacts by looking for items carrying these, and a promotion of a build
-    # whose artefacts lack them fails with "Unable to find artifacts of build".
     bprops = artifactory.build_props(bname, bnum)
+
+    stream_dest = "%s/stream/%s.zst" % (key, os.path.basename(idy["stream_path"]))
+    existing = {}
+    try:
+        existing = artifactory.get_properties(repo, stream_dest)
+    except artifactory.StoreUnavailable:
+        existing = {}
+    if existing and not force:
+        die("REFUSED - %s/%s/stream already carries properties. A run tag names "
+            "ONE build. Use --force only if you mean to replace it."
+            % (repo, key))
+
+    # STRIPPING A TRUE LABEL IS AS BAD AS INVENTING A FALSE ONE, AND THE FIX FOR
+    # ONE MAKES THE OTHER EASY. rc4-20260829's stored `submitted.raw_md5` is
+    # correct; a --force re-publish of it from a spec that has not yet grown a
+    # `submission` block would delete that fact and nothing would notice. So
+    # removing a submitted.* label is its own deliberate act, with its own flag,
+    # and never a side effect of re-publishing.
+    if not sub and any(k in existing for k in SUBMISSION_PROPS) and not drop_submitted:
+        die("REFUSED - %s/%s/stream currently carries %s and this spec declares "
+            "no `submission`, so this re-deploy would REMOVE a submitted label. "
+            "That is the correct action for a run that was never submitted "
+            "(every vt* flow-validation run) and the wrong one for a run that "
+            "was. Say which: pass --drop-submitted to remove it, or add the "
+            "`submission` block to the spec to keep it."
+            % (repo, key,
+               ", ".join(sorted(k for k in SUBMISSION_PROPS if k in existing))))
 
     # The canonical hash: the layout's identity, as opposed to the write
     # event's. ~80 s on a 302 MB stream (measured), which is noise beside the
@@ -2114,9 +2348,9 @@ def publish(spec, out, force=False):
           flush=True)
     canon = gds_canonical_hash.canonical(stream)
     if canon["raw_md5"] != idy["stream_md5"]:
-        die("the stream this program just hashed (%s) is not the one the report "
-            "describes (%s). Publishing would attach a report to bytes it never "
-            "measured -- the exact defect this flow exists to prevent."
+        die("the stream this program just hashed (%s) is not the one just "
+            "measured (%s). Publishing would attach an identity to bytes it "
+            "never read -- the exact defect this flow exists to prevent."
             % (canon["raw_md5"], idy["stream_md5"]))
     print("evidence_flow: canonical %s  (%d records, %d timestamp records zeroed)"
           % (canon["canonical_sha256"][:16], canon["records"],
@@ -2126,165 +2360,273 @@ def publish(spec, out, force=False):
         "pnr.raw_md5": idy["stream_md5"],
         "pnr.raw_sha256": idy["stream_sha256"],
         "pnr.bytes": idy["stream_bytes"],
-        "submitted.raw_md5": idy["stream_md5"],
         "layout.canonical_hash": canon["canonical_sha256"],
         "layout.canonical_method": "gdsii-record-walk-bgnlib-bgnstr-zeroed",
         "run.tag": idy["run_tag"],
+    }
+    if sub:
+        props["submitted.raw_md5"] = idy["stream_md5"]
+        props["submitted.to"] = sub["to"]
+        props["submitted.date"] = sub["date"]
+    # build.* are the JOIN, not decoration: Artifactory finds a build's real
+    # artefacts by looking for items carrying these, and a promotion of a build
+    # whose artefacts lack them fails with "Unable to find artifacts of build".
+    props.update(bprops)
+
+    comp = os.path.join(out, os.path.basename(stream) + ".zst")
+    if shutil.which("zstd") is None:
+        die("zstd is not on PATH; the stream is published compressed")
+    print("evidence_flow: compressing %s ..." % os.path.basename(stream), flush=True)
+    subprocess.run(["zstd", "-q", "-f", "-19", "-T4", stream, "-o", comp],
+                   check=True, stdin=subprocess.DEVNULL)
+
+    print("evidence_flow: deploying stream with %d identity propert(y/ies)%s ..."
+          % (len(props), "" if sub else " and NO submitted.* label"), flush=True)
+    back = artifactory.deploy(comp, repo, stream_dest, props)
+    print("evidence_flow: VERIFIED raw md5 property readable from the store: %s"
+          % back["pnr.raw_md5"][0])
+
+    # deploy() verifies that what we SET landed. This is the other half, and it
+    # is the half a correction depends on: on this OSS tier properties can only
+    # be written at deploy time, so the only way to remove one is to send the
+    # bytes again WITHOUT it -- and whether an overwrite actually clears the old
+    # property is a fact about the server, not something to assume. If it did
+    # not clear, the artefact still carries the false claim and the publish must
+    # say so rather than print a success line over it.
+    if not sub:
+        stale = sorted(k for k in SUBMISSION_PROPS if k in back)
+        if stale:
+            raise PublishRefused(
+                "the bytes landed but %s/%s STILL carries %s after a re-deploy "
+                "that did not set %s. On this instance a PUT does not clear the "
+                "old property, so the false 'this was submitted' label is still "
+                "on the artefact. Delete the artefact and deploy again:\n"
+                "    curl -sS -n -X DELETE \"$ASIC_ARTIFACT_BASE/%s/%s\"\n"
+                % (repo, stream_dest, ", ".join(stale),
+                   " / ".join(stale), repo, stream_dest))
+    if sub:
+        print("evidence_flow: submitted  %s on %s -- declared in %s"
+              % (sub["to"], sub["date"], rel(spec.get("__path__", "the spec"))))
+
+    hand = {
+        "phase": 1,
+        "published_at": now(),
+        "repo": repo,
+        "key": key,
+        "stream_dest": stream_dest,
+        "build": {"name": bname, "number": bnum},
+        "build_props": bprops,
+        "stream_props": props,
+        "submission": sub,
+        "canonical": canon,
+        "archive": artifactory.artifact_entry(comp, atype="gds.zst"),
+        "archive_sha256": sha256_of(comp),
+        "bundle_published": False,
+    }
+    with open(os.path.join(out, HANDOFF), "w") as fh:
+        json.dump(hand, fh, indent=2)
+    os.unlink(comp)
+    return hand
+
+
+def publish_bundle(spec, out, force=False):
+    """PHASE 2. Deploy the evidence bundle, the recipe, the digests and the
+    build record, carrying the VERDICT properties.
+
+    Refuses when the report describes bytes phase 1 did not send: two processes,
+    one output directory and a re-run of `collect` over a different stream is
+    exactly how a report comes to be attached to the wrong layout."""
+    jp = os.path.join(out, "evidence_report.json")
+    if not os.path.isfile(jp):
+        die("no %s -- `collect` has not run, so there is no bundle to publish."
+            % rel(jp))
+    d = json.load(open(jp))
+    idy = d["identity"]
+    hp = os.path.join(out, HANDOFF)
+    if not os.path.isfile(hp):
+        die("no %s -- phase 1 has not deployed this run's stream, so its "
+            "identity is not in the store and `stream-identity-published` in "
+            "the bundle you are about to publish is a FAIL that publishing "
+            "would then fix. Run `publish` without --bundle-only." % rel(hp))
+    hand = json.load(open(hp))
+    if hand["stream_props"]["pnr.raw_md5"] != idy["stream_md5"]:
+        die("the report describes stream %s and phase 1 published %s. A bundle "
+            "attached to bytes nobody deployed is the failure this program was "
+            "written to prevent; re-run `collect` or re-run phase 1."
+            % (idy["stream_md5"][:12], hand["stream_props"]["pnr.raw_md5"][:12]))
+
+    repo, key = hand["repo"], hand["key"]
+    bname, bnum = hand["build"]["name"], hand["build"]["number"]
+    bprops = hand["build_props"]
+    marker = os.path.join(out, "NOT-PUBLISHED.txt")
+
+    # THE VERDICT PROPERTIES ARE THE BUNDLE'S, NOT THE LAYOUT'S. They travel
+    # with every file in asic-record under this key, which is where a reader
+    # looking for "what did the gates say about this run" already goes. The
+    # stream keeps its identity and nothing else, so a GDS in the store no
+    # longer carries a row that changes when a gate is added.
+    evprops = {
         "evidence.verdict": "SIGNED-OFF" if d["verdict"]["signed_off"] else "NOT-SIGNED-OFF",
         "evidence.not_measured": d["verdict"]["counts"]["NOT-MEASURED"],
         "evidence.fail": d["verdict"]["counts"]["FAIL"],
     }
-    props.update(bprops)
+    recprops = dict(bprops, **{"pnr.raw_md5": idy["stream_md5"]})
+    recprops.update(evprops)
+
+    artifacts = [dict(hand["archive"])]
+
+    # The recipe freeze. See freeze_recipe(): this is the only copy of the
+    # scripts that built the stream which is not a symlink into a tree
+    # somebody else is editing.
+    tgz, members = freeze_recipe(spec, out)
+    deps = []
+    if tgz:
+        artifactory.deploy(tgz, "asic-record", "%s/recipe/recipe.tar.gz" % key,
+                           dict(bprops, **{"pnr.raw_md5": idy["stream_md5"]}))
+        artifacts.append(artifactory.artifact_entry(tgz, atype="tar.gz"))
+        # The freeze's CONTENTS become the build's dependencies -- the
+        # input closure at recipe level, which is SLSA's
+        # resolvedDependencies[] in all but name. 83 small files, measured.
+        for arc, fp in members:
+            deps.append(dict(artifactory.artifact_entry(fp, name=arc), id=arc,
+                             scope="recipe"))
+        print("evidence_flow: recipe  %s (%d file(s) frozen, symlinks dereferenced)"
+              % (rel(tgz), len(members)))
+    else:
+        print("evidence_flow: recipe  NOT-MEASURED - the spec names no base_run or "
+              "eco_tree with scripts/ or inputs/, so the recipe that built this "
+              "stream is NOT in the store. That is a gap, not a pass.",
+              file=sys.stderr)
+
+    # digests.txt, NOT *.md5/*.sha256: those are Artifactory's
+    # checksum-deploy convention and a PUT of one sets a SIBLING's checksum
+    # rather than storing a file.
+    canon = hand["canonical"]
+    dg = os.path.join(out, "digests.txt")
+    with open(dg, "w") as fh:
+        fh.write("pnr.name              %s\n" % os.path.basename(idy["stream_path"]))
+        fh.write("pnr.raw_md5           %s\n" % idy["stream_md5"])
+        fh.write("pnr.raw_sha256        %s\n" % idy["stream_sha256"])
+        fh.write("pnr.bytes             %d\n" % idy["stream_bytes"])
+        fh.write("pnr.canonical_sha256  %s\n" % canon["canonical_sha256"])
+        fh.write("pnr.canonical_method  %s\n" % canon["method"])
+        fh.write("pnr.gds_records       %d\n" % canon["records"])
+        fh.write("archive.name          %s\n" % os.path.basename(hand["stream_dest"]))
+        fh.write("archive.sha256        %s\n" % hand["archive_sha256"])
+        fh.write("submitted             %s\n"
+                 % ("%s on %s" % (hand["submission"]["to"], hand["submission"]["date"])
+                    if hand.get("submission") else
+                    "NO. This run was not submitted to anyone; the spec declares "
+                    "no `submission` block and the stream carries no submitted.* "
+                    "property."))
+
+    sent = 0
+    for local, dest in [(dg, "manifest/digests.txt"),
+                        (jp, "evidence_report.json"),
+                        (os.path.join(out, "evidence_report.html"),
+                         "evidence_report.html")]:
+        if os.path.isfile(local):
+            artifactory.deploy(local, "asic-record", "%s/%s" % (key, dest), recprops)
+            artifacts.append(artifactory.artifact_entry(local, name=dest))
+            sent += 1
+    ev = os.path.join(out, "evidence")
+    for dirpath, _, files in os.walk(ev):
+        for f in files:
+            p = os.path.join(dirpath, f)
+            r = os.path.relpath(p, out)
+            artifactory.deploy(p, "asic-record", "%s/%s" % (key, r), recprops)
+            sent += 1
+    print("evidence_flow: record  %d file(s) sent to asic-record/%s (%s, "
+          "evidence.fail %s, evidence.not_measured %s)"
+          % (sent, key, evprops["evidence.verdict"],
+             evprops["evidence.fail"], evprops["evidence.not_measured"]))
+
+    # --- the build record ------------------------------------------------
+    # Until 2026-08-25 this store had never held one, so it could say what
+    # bytes it had and never which run produced them. Two of these subtract:
+    # that difference is the delta explanation which bit-reproducibility
+    # cannot give us, because no seed exists anywhere in the P&R flow.
+    vcs = []
+    # NOTE the contract of the module's _git(): it returns "" on failure,
+    # never None. A second _git() defined here returning None instead would
+    # SHADOW it -- Python keeps the later definition -- and crash
+    # build_provenance()'s `sha[:12]` outside a git repo. That shadow was
+    # written and caught; see store_build_id() for the same trap.
+    rev = _git(["rev-parse", "HEAD"])
+    if rev:
+        vcs = [{"revision": rev,
+                "url": _git(["config", "--get", "remote.origin.url"]) or "UNVERIFIED",
+                "branch": _git(["rev-parse", "--abbrev-ref", "HEAD"]) or "UNVERIFIED"}]
+    dirty = _git(["status", "--porcelain"])
+    bmeta = dict(hand["stream_props"])
+    bmeta.pop("build.timestamp", None)
+    bmeta.update(evprops)
+    bmeta.update({
+        "spec": rel(spec.get("__path__", "")) or "UNVERIFIED",
+        "stream.name": os.path.basename(idy["stream_path"]),
+        "store.stream_path": "%s/%s" % (repo, hand["stream_dest"]),
+        "recipe.frozen_files": len(deps),
+        # A build whose tree was dirty is reproducible only up to that
+        # delta, and saying so is cheaper than discovering it later.
+        "vcs.worktree_dirty": "yes" if dirty else "no",
+        "vcs.dirty_paths": str(len(dirty.splitlines())) if dirty else "0",
+    })
     try:
-        if not force:
-            try:
-                ex = artifactory.get_properties(repo, "%s/stream/%s.zst"
-                                                % (key, os.path.basename(idy["stream_path"])))
-                if ex:
-                    die("REFUSED - %s/%s/stream already carries properties. A run "
-                        "tag names ONE build. Use --force only if you mean to "
-                        "replace it." % (repo, key))
-            except artifactory.StoreUnavailable:
-                pass
+        artifactory.build_publish(
+            bname, bnum,
+            [{"id": idy["run_tag"], "artifacts": artifacts, "dependencies": deps}],
+            properties=bmeta, vcs=vcs,
+            principal=os.environ.get("USER", "unknown"),
+            url=os.environ.get("BUILD_URL"))
+        print("evidence_flow: build   %s/%s published: %d artefact(s), %d input(s)"
+              % (bname, bnum, len(artifacts), len(deps)))
+        print("evidence_flow:         inspect: python3 scripts/ci/artifactory.py "
+              "build %s %s" % (bname, bnum))
+    except artifactory.StoreUnavailable as e:
+        # The bytes are up and verified. A missing build record loses the
+        # index, not the evidence -- so it is reported loudly and does not
+        # discard a publish that otherwise succeeded.
+        print("evidence_flow: build   NOT PUBLISHED: %s" % e, file=sys.stderr)
+        print("evidence_flow:         the artefacts and their properties ARE in the "
+              "store; what is missing is the record binding them to this run.",
+              file=sys.stderr)
 
-        comp = os.path.join(out, os.path.basename(stream) + ".zst")
-        if shutil.which("zstd") is None:
-            die("zstd is not on PATH; the stream is published compressed")
-        print("evidence_flow: compressing %s ..." % os.path.basename(stream), flush=True)
-        subprocess.run(["zstd", "-q", "-f", "-19", "-T4", stream, "-o", comp],
-                       check=True, stdin=subprocess.DEVNULL)
+    hand["bundle_published"] = True
+    hand["phase"] = 2
+    hand["evidence_props"] = evprops
+    with open(hp, "w") as fh:
+        json.dump(hand, fh, indent=2)
+    if os.path.exists(marker):
+        os.unlink(marker)
+    if tgz and os.path.exists(tgz):
+        os.unlink(tgz)
+    return 0
 
-        print("evidence_flow: deploying stream with %d propert(y/ies) ..." % len(props),
-              flush=True)
-        stream_dest = "%s/stream/%s" % (key, os.path.basename(comp))
-        back = artifactory.deploy(comp, repo, stream_dest, props)
-        print("evidence_flow: VERIFIED raw md5 property readable from the store: %s"
-              % back["pnr.raw_md5"][0])
 
-        # Every artefact this run produced, for the build record. The digests
-        # are taken from the bytes actually sent, never copied from the report:
-        # a build record that repeats a number rather than measuring it cannot
-        # detect the one failure it exists to detect.
-        artifacts = [artifactory.artifact_entry(comp, atype="gds.zst")]
+def publish(spec, out, force=False, phase="both", drop_submitted=False):
+    """Publish a run. `phase` is "identity", "bundle" or "both".
 
-        # The recipe freeze. See freeze_recipe(): this is the only copy of the
-        # scripts that built the stream which is not a symlink into a tree
-        # somebody else is editing.
-        tgz, members = freeze_recipe(spec, out)
-        deps = []
-        if tgz:
-            artifactory.deploy(tgz, "asic-record", "%s/recipe/recipe.tar.gz" % key,
-                               dict(bprops, **{"pnr.raw_md5": idy["stream_md5"]}))
-            artifacts.append(artifactory.artifact_entry(tgz, atype="tar.gz"))
-            # The freeze's CONTENTS become the build's dependencies -- the
-            # input closure at recipe level, which is SLSA's
-            # resolvedDependencies[] in all but name. 83 small files, measured.
-            for arc, fp in members:
-                deps.append(dict(artifactory.artifact_entry(fp, name=arc), id=arc,
-                                 scope="recipe"))
-            print("evidence_flow: recipe  %s (%d file(s) frozen, symlinks dereferenced)"
-                  % (rel(tgz), len(members)))
-        else:
-            print("evidence_flow: recipe  NOT-MEASURED - the spec names no base_run or "
-                  "eco_tree with scripts/ or inputs/, so the recipe that built this "
-                  "stream is NOT in the store. That is a gap, not a pass.",
-                  file=sys.stderr)
-
-        # digests.txt, NOT *.md5/*.sha256: those are Artifactory's
-        # checksum-deploy convention and a PUT of one sets a SIBLING's checksum
-        # rather than storing a file.
-        dg = os.path.join(out, "digests.txt")
-        with open(dg, "w") as fh:
-            fh.write("pnr.name              %s\n" % os.path.basename(stream))
-            fh.write("pnr.raw_md5           %s\n" % idy["stream_md5"])
-            fh.write("pnr.raw_sha256        %s\n" % idy["stream_sha256"])
-            fh.write("pnr.bytes             %d\n" % idy["stream_bytes"])
-            fh.write("pnr.canonical_sha256  %s\n" % canon["canonical_sha256"])
-            fh.write("pnr.canonical_method  %s\n" % canon["method"])
-            fh.write("pnr.gds_records       %d\n" % canon["records"])
-            fh.write("archive.name          %s\n" % os.path.basename(comp))
-            fh.write("archive.sha256        %s\n" % sha256_of(comp))
-
-        recprops = dict(bprops, **{"pnr.raw_md5": idy["stream_md5"]})
-        sent = 0
-        for local, dest in [(dg, "manifest/digests.txt"),
-                            (jp, "evidence_report.json"),
-                            (os.path.join(out, "evidence_report.html"),
-                             "evidence_report.html")]:
-            if os.path.isfile(local):
-                artifactory.deploy(local, "asic-record", "%s/%s" % (key, dest), recprops)
-                artifacts.append(artifactory.artifact_entry(local, name=dest))
-                sent += 1
-        ev = os.path.join(out, "evidence")
-        for dirpath, _, files in os.walk(ev):
-            for f in files:
-                p = os.path.join(dirpath, f)
-                r = os.path.relpath(p, out)
-                artifactory.deploy(p, "asic-record", "%s/%s" % (key, r), recprops)
-                sent += 1
-        print("evidence_flow: record  %d file(s) sent to asic-record/%s" % (sent, key))
-
-        # --- the build record ------------------------------------------------
-        # Until 2026-08-25 this store had never held one, so it could say what
-        # bytes it had and never which run produced them. Two of these subtract:
-        # that difference is the delta explanation which bit-reproducibility
-        # cannot give us, because no seed exists anywhere in the P&R flow.
-        vcs = []
-        # NOTE the contract of the module's _git(): it returns "" on failure,
-        # never None. A second _git() defined here returning None instead would
-        # SHADOW it -- Python keeps the later definition -- and crash
-        # build_provenance()'s `sha[:12]` outside a git repo. That shadow was
-        # written and caught; see store_build_id() for the same trap.
-        rev = _git(["rev-parse", "HEAD"])
-        if rev:
-            vcs = [{"revision": rev,
-                    "url": _git(["config", "--get", "remote.origin.url"]) or "UNVERIFIED",
-                    "branch": _git(["rev-parse", "--abbrev-ref", "HEAD"]) or "UNVERIFIED"}]
-        dirty = _git(["status", "--porcelain"])
-        bmeta = dict(props)
-        bmeta.pop("build.timestamp", None)
-        bmeta.update({
-            "spec": rel(spec.get("__path__", "")) or "UNVERIFIED",
-            "stream.name": os.path.basename(stream),
-            "store.stream_path": "%s/%s" % (repo, stream_dest),
-            "recipe.frozen_files": len(deps),
-            # A build whose tree was dirty is reproducible only up to that
-            # delta, and saying so is cheaper than discovering it later.
-            "vcs.worktree_dirty": "yes" if dirty else "no",
-            "vcs.dirty_paths": str(len(dirty.splitlines())) if dirty else "0",
-        })
-        try:
-            artifactory.build_publish(
-                bname, bnum,
-                [{"id": idy["run_tag"], "artifacts": artifacts, "dependencies": deps}],
-                properties=bmeta, vcs=vcs,
-                principal=os.environ.get("USER", "unknown"),
-                url=os.environ.get("BUILD_URL"))
-            print("evidence_flow: build   %s/%s published: %d artefact(s), %d input(s)"
-                  % (bname, bnum, len(artifacts), len(deps)))
-            print("evidence_flow:         inspect: python3 scripts/ci/artifactory.py "
-                  "build %s %s" % (bname, bnum))
-        except artifactory.StoreUnavailable as e:
-            # The bytes are up and verified. A missing build record loses the
-            # index, not the evidence -- so it is reported loudly and does not
-            # discard a publish that otherwise succeeded.
-            print("evidence_flow: build   NOT PUBLISHED: %s" % e, file=sys.stderr)
-            print("evidence_flow:         the artefacts and their properties ARE in the "
-                  "store; what is missing is the record binding them to this run.",
-                  file=sys.stderr)
-
-        if os.path.exists(marker):
-            os.unlink(marker)
-        os.unlink(comp)
-        if tgz and os.path.exists(tgz):
-            os.unlink(tgz)
-        return 0
-    except (artifactory.StoreUnavailable, subprocess.CalledProcessError, OSError) as e:
+    NON-FATAL TO THE BUILD, FATAL TO THE CLAIM. A publish failure must not
+    destroy four hours of routing, but it leaves a NOT-PUBLISHED marker and the
+    build is not a signed-off build."""
+    marker = os.path.join(out, "NOT-PUBLISHED.txt")
+    try:
+        if phase in ("identity", "both"):
+            publish_identity(spec, out, force, drop_submitted)
+            if phase == "identity":
+                print("evidence_flow: phase 1 done -- the stream's identity is in "
+                      "the store. `collect` can now answer "
+                      "stream-identity-published; the bundle is NOT published.")
+                return 0
+        return publish_bundle(spec, out, force)
+    except (PublishRefused, artifactory.StoreUnavailable,
+            subprocess.CalledProcessError, OSError) as e:
+        os.makedirs(out, exist_ok=True)
         with open(marker, "w") as fh:
-            fh.write("NOT PUBLISHED\n%s\n%s\n\n"
+            fh.write("NOT PUBLISHED\nphase %s\n%s\n%s\n\n"
                      "A build whose evidence did not publish is not a signed-off\n"
                      "build. The signoff pipeline must read this marker as\n"
-                     "NOT-MEASURED, not as an absent file.\n" % (now(), e))
+                     "NOT-MEASURED, not as an absent file.\n" % (phase, now(), e))
         print("evidence_flow: PUBLISH FAILED (build not destroyed, claim not made): %s" % e,
               file=sys.stderr)
         print("evidence_flow: marker  %s" % rel(marker), file=sys.stderr)
@@ -2405,6 +2747,9 @@ def selftest():
     # 7. THE TWO ROWS ADJUDICATED ON 26 AUGUST that used to be declarations.
     ok = _selftest_clp(say) and ok
     ok = _selftest_antenna(say) and ok
+
+    # 8. THE PUBLISH PATH: the two defects fixed on 2026-09-09, both directions.
+    ok = _selftest_publish(say) and ok
 
     # A DEFINITION SHADOWED BY A LATER ONE OF THE SAME NAME IS SILENT. Python
     # keeps the last, imports nothing, warns about nothing, and the first
@@ -2944,6 +3289,296 @@ def _selftest_antenna(say):
     return good
 
 
+class _FakeStore:
+    """A store that RECORDS instead of storing. Every trap this arm probes is a
+    property of what we SEND and in what ORDER, so the server is the one part
+    that does not need to be real -- and using the live one would make the
+    selftest a publish."""
+
+    def __init__(self, preset=None, sticky=()):
+        self.StoreUnavailable = artifactory.StoreUnavailable
+        self.STREAM_REPOS = artifactory.STREAM_REPOS
+        self.build_props = artifactory.build_props
+        self.artifact_entry = artifactory.artifact_entry
+        self.calls = []                       # ordered log of what was asked
+        self.props = dict(preset or {})       # "repo/path" -> {k: [v]}
+        # Property keys this fake refuses to drop on an overwrite -- the server
+        # behaviour a correction depends on and which nothing here can assume.
+        self.sticky = set(sticky)
+
+    def get_properties(self, repo, path, base=None):
+        self.calls.append(("get_properties", "%s/%s" % (repo, path)))
+        return dict(self.props.get("%s/%s" % (repo, path), {}))
+
+    def deploy(self, local, repo, path, props=None, base=None, timeout=0):
+        key = "%s/%s" % (repo, path)
+        self.calls.append(("deploy", key))
+        keep = {k: v for k, v in self.props.get(key, {}).items() if k in self.sticky}
+        stored = {k: [str(v)] for k, v in (props or {}).items()}
+        stored.update(keep)
+        self.props[key] = stored
+        return stored
+
+    def build_publish(self, name, number, modules, **kw):
+        self.calls.append(("build_publish", "%s/%s" % (name, number)))
+        self.builds = getattr(self, "builds", [])
+        self.builds.append({"name": name, "number": number, "modules": modules,
+                            "properties": kw.get("properties") or {}})
+        return {}
+
+    def find_by_md5(self, md5, repo=None, base=None):
+        self.calls.append(("find_by_md5", md5))
+        out = []
+        for key, pr in self.props.items():
+            if md5 in (pr.get("pnr.raw_md5", [None])[0],
+                       pr.get("submitted.raw_md5", [None])[0]):
+                r, _, rest = key.partition("/")
+                out.append({"repo": r, "path": os.path.dirname(rest),
+                            "name": os.path.basename(rest)})
+        return out
+
+    def list_repo(self, repo, base=None):
+        self.calls.append(("list_repo", repo))
+        return []
+
+    def ping(self, base=None):
+        self.calls.append(("ping", ""))
+        return True
+
+
+def _selftest_publish(say):
+    """THE TWO PUBLISHED DEFECTS, both directions, against a recording store.
+
+    ONE: `submitted.raw_md5` was set on every stream this program deployed. It
+    is the property that means "these bytes went to a foundry", it is one of the
+    two the identity gate joins on, and it was true of nothing. The arms below
+    prove it is now set when and only when the spec DECLARES a submission, that
+    a half-written declaration is refused rather than half-applied, and that
+    removing an existing label is a deliberate act with its own flag -- because
+    the fix for a false label makes stripping a true one trivially easy, and
+    rc4-20260829's label is true.
+
+    TWO: the identity gate asked the store a question only a publish could
+    answer, and the publish ran afterwards. The arms below prove phase 1 needs
+    no evidence_report.json (so it CAN run before collect), that it deploys the
+    stream, and that the verdict properties are on the BUNDLE and never on the
+    stream.
+
+    AND THE ARM THAT MAKES THE CORRECTION SAFE: a server that does not clear a
+    property on overwrite. The retro-fit endpoint is Pro-only here, so removing
+    a property means re-deploying without it -- and whether that WORKS is a fact
+    about the server. If the label survives, the publish must fail, not print a
+    success line over an artefact still carrying the false claim."""
+    import tempfile
+    good = True
+    root = tempfile.mkdtemp(prefix="evidence-publish-selftest-")
+    real_store, real_canon = artifactory, gds_canonical_hash
+    real_root = ROOT
+    try:
+        stream_rel = "build/thisrun/outputs/top.gds"
+        stream_abs = os.path.join(root, stream_rel)
+        os.makedirs(os.path.dirname(stream_abs), exist_ok=True)
+        with open(stream_abs, "wb") as fh:
+            fh.write(b"NOT-A-REAL-GDS-" + os.urandom(4096))
+        md5 = md5_of(stream_abs)
+
+        class _Canon:
+            @staticmethod
+            def canonical(path):
+                return {"raw_md5": md5_of(path), "canonical_sha256": "c" * 64,
+                        "method": "fixture", "records": 7,
+                        "timestamp_records_neutralised": 2,
+                        "bytes": os.path.getsize(path)}
+
+        def spec_of(**kw):
+            s = {"design": "top", "run_tag": "selftest-tag", "stream": stream_rel,
+                 "publish": {"project": "p", "block": "b", "klass": "candidate"},
+                 "__path__": os.path.join(root, "spec.json")}
+            s.update(kw)
+            return s
+
+        def phase1(spec, store, out=None, **kw):
+            """-> (outcome, store) where outcome is the props dict, "REFUSED"
+            or "PUBLISH-REFUSED"."""
+            globals()["artifactory"] = store
+            globals()["gds_canonical_hash"] = _Canon
+            globals()["ROOT"] = root
+            o = out or tempfile.mkdtemp(prefix="out-", dir=root)
+            try:
+                return publish_identity(spec, o, **kw), o
+            except SystemExit:
+                return "REFUSED", o
+            except PublishRefused:
+                return "PUBLISH-REFUSED", o
+            except Exception as ex:              # noqa: BLE001
+                # NOT swallowed -- reported as its own outcome. A refusal that
+                # arrives as an unhandled traceback is not a refusal: it says
+                # nothing a reader can act on and it kills every arm after it.
+                return "CRASHED:%s" % type(ex).__name__, o
+            finally:
+                globals()["artifactory"] = real_store
+                globals()["gds_canonical_hash"] = real_canon
+                globals()["ROOT"] = real_root
+
+        # --- 1. THE DEFECT OF RECORD, both directions --------------------
+        st = _FakeStore()
+        hand, out1 = phase1(spec_of(), st)
+        p = hand["stream_props"] if isinstance(hand, dict) else {}
+        hit = (isinstance(hand, dict)
+               and not [k for k in SUBMISSION_PROPS if k in p]
+               and p.get("pnr.raw_md5") == md5 and p.get("run.tag") == "selftest-tag")
+        good = good and hit
+        say("publish: a run that declares no submission carries NO submitted.*",
+            hit, "%d stream propert(y/ies), submitted.* absent" % len(p))
+
+        st = _FakeStore()
+        hand, _ = phase1(spec_of(submission={"to": "a foundry", "date": "2026-09-01",
+                                             "why": "the shipped candidate"}), st)
+        p = hand["stream_props"] if isinstance(hand, dict) else {}
+        hit = (p.get("submitted.raw_md5") == md5
+               and p.get("submitted.date") == "2026-09-01"
+               and p.get("submitted.to") == "a foundry")
+        good = good and hit
+        say("publish: a DECLARED submission does carry submitted.*", hit,
+            "submitted.raw_md5=%s on %s" % (str(p.get("submitted.raw_md5"))[:12],
+                                            p.get("submitted.date")))
+
+        # --- 2. a label that cannot be checked is refused, not half-set ---
+        for name, sub in (("no date", {"to": "a foundry"}),
+                          ("no recipient", {"date": "2026-09-01"}),
+                          ("a date that is not a date",
+                           {"to": "a foundry", "date": "1 September"}),
+                          ("a bare flag", True)):
+            r, _ = phase1(spec_of(submission=sub), _FakeStore())
+            hit = r == "REFUSED"
+            good = good and hit
+            say("publish: a submission with %s is refused" % name, hit, str(r)[:40])
+        r, _ = phase1(spec_of(publish={"project": "p", "block": "b",
+                                       "klass": "release"}), _FakeStore())
+        hit = r == "REFUSED"
+        good = good and hit
+        say("publish: klass=release with no submission is refused", hit, str(r)[:40])
+
+        # --- 3. STRIPPING A TRUE LABEL IS ITS OWN DELIBERATE ACT ----------
+        dest = "asic-candidate/p/b/selftest-tag/stream/top.gds.zst"
+        pre = {dest: {"pnr.raw_md5": [md5], "submitted.raw_md5": [md5]}}
+        r, _ = phase1(spec_of(), _FakeStore(preset=pre), force=True)
+        hit = r == "REFUSED"
+        good = good and hit
+        say("publish: --force alone will not remove an existing submitted.*",
+            hit, str(r)[:40])
+        r, _ = phase1(spec_of(), _FakeStore(preset=pre), force=True,
+                      drop_submitted=True)
+        hit = isinstance(r, dict) and not [k for k in SUBMISSION_PROPS
+                                           if k in r["stream_props"]]
+        good = good and hit
+        say("publish: --drop-submitted removes it, and says so", hit,
+            "re-deployed with %d propert(y/ies)"
+            % (len(r["stream_props"]) if isinstance(r, dict) else 0))
+
+        # THE ARM THE CORRECTION DEPENDS ON.
+        r, _ = phase1(spec_of(), _FakeStore(preset=pre, sticky={"submitted.raw_md5"}),
+                      force=True, drop_submitted=True)
+        hit = r == "PUBLISH-REFUSED"
+        good = good and hit
+        say("publish: a server that KEEPS the label on overwrite fails the publish",
+            hit, "%s -- a success line over an artefact still carrying the false "
+                 "claim is the thing to prevent" % r)
+
+        # --- 4. THE ORDERING: phase 1 needs no report ---------------------
+        st = _FakeStore()
+        hand, out2 = phase1(spec_of(), st)
+        deployed = [k for c, k in st.calls if c == "deploy"]
+        hit = (isinstance(hand, dict) and deployed == [dest]
+               and not os.path.exists(os.path.join(out2, "evidence_report.json")))
+        good = good and hit
+        say("publish: phase 1 deploys the stream with NO evidence_report.json",
+            hit, "so it can run BEFORE collect; deployed %r" % deployed)
+
+        # and the store can now answer the question collect is about to ask
+        st.calls = []
+        hit = len(st.find_by_md5(md5)) == 1 and st.find_by_md5("0" * 32) == []
+        good = good and hit
+        say("publish: after phase 1 the identity query answers, and only for it",
+            hit, "1 hit for the stream md5, 0 for the all-zero control")
+
+        # --- 5. the verdict properties are the BUNDLE's -------------------
+        rep = {"identity": {"design": "top", "run_tag": "selftest-tag",
+                            "stream_path": stream_rel, "stream_md5": md5,
+                            "stream_sha256": "d" * 64, "stream_bytes": 4111},
+               "verdict": {"signed_off": False,
+                           "counts": {"NOT-MEASURED": 3, "FAIL": 0}}}
+        with open(os.path.join(out2, "evidence_report.json"), "w") as fh:
+            json.dump(rep, fh)
+        os.makedirs(os.path.join(out2, "evidence"), exist_ok=True)
+        with open(os.path.join(out2, "evidence", "row.txt"), "w") as fh:
+            fh.write("a cited artefact\n")
+        globals()["artifactory"] = st
+        globals()["ROOT"] = root
+        try:
+            rc = publish_bundle(spec_of(), out2)
+        finally:
+            globals()["artifactory"] = real_store
+            globals()["ROOT"] = real_root
+        stream_props = st.props[dest]
+        rec = [v for k, v in st.props.items() if k.startswith("asic-record/")]
+        hit = (rc == 0
+               and not [k for k in stream_props if k.startswith("evidence.")]
+               and rec and all("evidence.fail" in r for r in rec))
+        good = good and hit
+        say("publish: evidence.* land on the BUNDLE and never on the stream",
+            hit, "%d record artefact(s) carry evidence.*, stream carries %d"
+                 % (len(rec), len([k for k in stream_props
+                                   if k.startswith("evidence.")])))
+
+        # --- 6. phase 2 refuses what it cannot stand behind ---------------
+        rep2 = json.loads(json.dumps(rep))
+        rep2["identity"]["stream_md5"] = "0" * 32
+        with open(os.path.join(out2, "evidence_report.json"), "w") as fh:
+            json.dump(rep2, fh)
+        globals()["artifactory"] = st
+        globals()["ROOT"] = root
+        try:
+            publish_bundle(spec_of(), out2)
+            r = "PUBLISHED"
+        except SystemExit:
+            r = "REFUSED"
+        except Exception as ex:                  # noqa: BLE001
+            r = "CRASHED:%s" % type(ex).__name__
+        finally:
+            globals()["artifactory"] = real_store
+            globals()["ROOT"] = real_root
+        hit = r == "REFUSED"
+        good = good and hit
+        say("publish: a bundle describing OTHER bytes than phase 1 sent is refused",
+            hit, r)
+
+        bare = tempfile.mkdtemp(prefix="bare-", dir=root)
+        with open(os.path.join(bare, "evidence_report.json"), "w") as fh:
+            json.dump(rep, fh)
+        globals()["artifactory"] = st
+        globals()["ROOT"] = root
+        try:
+            publish_bundle(spec_of(), bare)
+            r = "PUBLISHED"
+        except SystemExit:
+            r = "REFUSED"
+        except Exception as ex:                  # noqa: BLE001
+            r = "CRASHED:%s" % type(ex).__name__
+        finally:
+            globals()["artifactory"] = real_store
+            globals()["ROOT"] = real_root
+        hit = r == "REFUSED"
+        good = good and hit
+        say("publish: phase 2 refuses when phase 1 never ran", hit, r)
+    finally:
+        globals()["artifactory"] = real_store
+        globals()["gds_canonical_hash"] = real_canon
+        globals()["ROOT"] = real_root
+        shutil.rmtree(root, ignore_errors=True)
+    return good
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__.split("\n")[0],
@@ -2956,11 +3591,29 @@ def main():
         if c == "run":
             p.add_argument("--publish", action="store_true")
             p.add_argument("--force", action="store_true")
+            p.add_argument("--drop-submitted", action="store_true",
+                           help="re-deploy a stream that currently carries a "
+                                "submitted.* label, WITHOUT it. Required, and "
+                                "deliberately awkward: removing a true label is "
+                                "as damaging as inventing a false one.")
     p = sub.add_parser("render"); p.add_argument("--out", required=True)
     p = sub.add_parser("publish")
     p.add_argument("--spec", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--force", action="store_true")
+    p.add_argument("--drop-submitted", action="store_true",
+                   help="see `run --drop-submitted`")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--identity-only", action="store_true",
+                   help="PHASE 1 ONLY: deploy the stream with its identity "
+                        "properties. This is what a `collect` needs to have "
+                        "happened before stream-identity-published can be "
+                        "answered, and it is the whole of a correction that "
+                        "only changes a stream property.")
+    g.add_argument("--bundle-only", action="store_true",
+                   help="PHASE 2 ONLY: deploy the report and the evidence with "
+                        "the evidence.* verdict properties. Refuses unless "
+                        "phase 1 already ran for this output directory.")
     sub.add_parser("selftest")
     a = ap.parse_args()
 
@@ -2972,13 +3625,28 @@ def main():
     spec = load_spec(a.spec)
     out = a.out or os.path.join(ROOT, "build", "evidence", spec["run_tag"])
     if a.cmd == "publish":
-        return publish(spec, out, a.force)
+        phase = ("identity" if a.identity_only
+                 else "bundle" if a.bundle_only else "both")
+        return publish(spec, out, a.force, phase, a.drop_submitted)
+
+    # PHASE 1 BEFORE collect, AND THAT ORDER IS THE FIX. `collect` runs
+    # stream-identity-published, which asks the store a question only a publish
+    # can answer; with the publish afterwards, a first-ever publish of a run tag
+    # rendered that row FAIL by construction and then silently repaired it. The
+    # stream's identity does not depend on any gate, so it goes first.
+    rc = 0
+    if a.cmd == "run" and a.publish:
+        rc = publish(spec, out, a.force, "identity", a.drop_submitted)
+        if rc:
+            print("evidence_flow: the stream's identity did not publish, so "
+                  "stream-identity-published below is measuring a store that "
+                  "genuinely does not carry it. That row is a TRUE fail.",
+                  file=sys.stderr)
     d = collect(spec, out)
     if a.cmd == "run":
         render(out)
-        rc = 0
-        if a.publish:
-            rc = publish(spec, out, a.force)
+        if a.publish and not rc:
+            rc = publish(spec, out, a.force, "bundle", a.drop_submitted)
         print("\n%s" % d["verdict"]["line"])
         for g in d["not_measured"]:
             print("  NOT MEASURED  %-28s %s" % (g["id"], g["why"][:110]))

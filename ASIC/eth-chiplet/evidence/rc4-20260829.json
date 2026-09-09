@@ -29,6 +29,11 @@
   "block": "nanosoc_eth_chiplet_pads",
   "klass": "candidate"
  },
+ "submission": {
+  "to": "imec mini@sic via Europractice",
+  "date": "2026-09-01",
+  "why": "THIS IS THE STREAM THAT SHIPPED, and this block is the only thing that puts submitted.* on the published artefact. Until 2026-09-09 evidence_flow.py set submitted.raw_md5 on EVERY stream it deployed, so all fourteen streams in the store claim to have been submitted, flow-validation runs included -- and a store in which every candidate says it was submitted cannot answer which bytes went to the foundry.\n  WHAT THIS CLAIM RESTS ON, stated so it can be checked rather than believed. (1) ASIC/submissions/nanosoc_eth_chiplet_pads_DRYRUN_20260829_rc4.md records md5 6b0833c4216bdb683ed2427cd0deba75 for this stream, which is the md5 of the file `stream` names above and the value already on the artefact in asic-candidate. (2) docs/tapeout/66-rc5-flow-findings.md states, in its header and again at F15, that rc4 (that md5) is the 1 September candidate and that the rc5/rc6/rc7 runs are NOT submissions. (3) ASIC/eth-chiplet/evidence/vt-baseline-20260829.json's `supersedes` says the same in words: rc4-20260829 is the stream that was submitted to imec and graded clean on 1 September 2026.\n  WHAT IT DOES NOT REST ON, and this is the gap to close next: NO FOUNDRY RETURN IN THE STORE CITES THIS md5. asic-record holds four `*/foundry/*/summary.json` and not one of them is for rc4, so scripts/ci/artifactory_publish_submission.py -- which files a stream as submitted only when a return cites it -- would still refuse this run today. Ingest the 1 September return and that program becomes the second, independent witness for this field. Until then this block is a human declaration, which is exactly what a spec field is, and it is written here rather than defaulted in code so that it is reviewable."
+ },
  "known_bad": [
   {
    "id": "lvs-below-top-missing-connection-OPEN",

@@ -65,6 +65,58 @@
 # An exemption says the newest build CANNOT YET be graded by that stage. It does
 # not say the pin is fine.
 #
+# AND THEY REACH PINS AT BUILDS THIS CHECKOUT DOES NOT HAVE — 2026-09-09
+# ---------------------------------------------------------------------
+# THE HOLE. Until today an exemption was consulted only for a tag that was a
+# real directory under BUILD_ROOT, and `pins()` could only find tags that were.
+# In a git worktree cut for an rc iteration that is most of the register, and the
+# two effects were opposite and both wrong:
+#
+#   lec-selftest / full-20260814   fell through to the DANGLING arm, which runs
+#                                  before the register is read and says "a pin at
+#                                  a build nobody has can only ever render
+#                                  UNVERIFIED". That is the right sentence about
+#                                  a typo and the wrong one here: this tag is an
+#                                  OUTPUT directory the stage's own `pre:` step
+#                                  creates with mkdir -p. This gate is `gate:
+#                                  block` and the first physical stage, so the
+#                                  whole ladder stopped one second in, on a pin
+#                                  that is not a build pin at all.
+#   gls-netlist / fp1505           went INVISIBLE, which is worse than red. The
+#                                  tag is not a directory here, so it was not in
+#                                  the scan's universe; its one path-form mention
+#                                  in this manifest sits on a `#` line inside a
+#                                  block scalar, so the dangling arm did not see
+#                                  it either; and the register's orphan arm skips
+#                                  entries whose tag is not a directory. Three
+#                                  independent narrowings, and between them a
+#                                  BLOCKING stage's pin was judged by nothing
+#                                  while this script printed a PASS line claiming
+#                                  "every one of them current or exempted".
+#
+# THE FIX, AND WHY IT IS THE EXEMPTION RATHER THAN A REPOINT OR A COPY.
+#   REPOINT is refused by the manifest itself, in capitals, for both stages and
+#   for different reasons: lec-selftest grades the LEC HARNESS and not the
+#   design, and gls-netlist's own SECONDARY clause calls a repoint at a build
+#   with no published simulation evidence "THE EXPECTED RED WHEN A RUN IS
+#   SUPERSEDED" — it would assert an absent file, not measure a netlist.
+#   MATERIALISE — copying another checkout's build directories in — would put
+#   evidence under a path this tree did not produce, in a gitignored directory,
+#   with nothing recording where it came from. This project has a standing
+#   defect class for exactly that.
+#   So: the exemption register is widened to reach absent tags, and every tag it
+#   names is searched for whether or not a directory of that name exists. A pin
+#   is now adjudicated in exactly one place, and a pin at an absent build with NO
+#   exemption still fails as a dangling pin, unchanged.
+#
+# AND THE STATED EXPIRY. When an exemption excuses a tag that is NOT in this
+# build root, its predicate is necessarily about something else — the manifest,
+# or the newest build — so the predicate alone cannot notice that the pin has
+# become archaeology. Those entries therefore carry REVIEW_BY, a date this
+# script FAILS past. It is enforced ONLY for the absent case: for a tag that is
+# present the predicate is the expiry, which is this file's whole doctrine and is
+# not being watered down with a calendar.
+#
 # PATHS ARE RELATIVE TO THE CURRENT DIRECTORY, NEVER TO __file__.
 # `signoff.py prove` runs each check inside a fixture sandbox that symlinks the
 # repository into place, so scripts/ci/build_freshness.py in the sandbox is a
@@ -200,22 +252,41 @@ def _exempt_gls(newest: Path) -> bool:
 #
 # _exempt_lec() is kept below, unreferenced, because it is the argument. Nothing
 # calls it, and `orphan_exemptions()` would report it if the key came back.
+# (stage, tag) -> (predicate, why, review_by)
+#
+# review_by is a DATE THIS SCRIPT FAILS PAST, and it is enforced only while the
+# tag is absent from this build root — see the header. It is not a substitute
+# for the predicate; it is the backstop for the one case the predicate cannot
+# see, which is a pin that has quietly become archaeology in a checkout that
+# never had the build. 2026-12-01 on all three: the far side of this tapeout,
+# chosen so the review lands when somebody is looking at the manifest anyway
+# rather than in the middle of a submission week.
 EXEMPT = {
     ("lec-selftest", "full-20260814"): (
         _exempt_lec_selftest,
         "RUN_TAG here is only the directory the harness's mutation transcripts "
         "are written into; this stage grades the LEC harness, not the design, "
-        "and reads nothing a build produced"),
+        "and reads nothing a build produced",
+        "2026-12-01"),
     ("gls-netlist", "fp1505"): (
         _exempt_gls,
         "no gate-level simulation evidence has been published under the newest "
         "build, so repointing would assert an absent file rather than measure "
-        "a netlist"),
+        "a netlist",
+        "2026-12-01"),
     ("gls-netlist", "gdsrun-20260819"): (
         _exempt_gls,
         "same: this is the SECONDARY tree, retired only by a reviewed hand edit "
-        "once a newer run's evidence is published"),
+        "once a newer run's evidence is published",
+        "2026-12-01"),
 }
+
+# Everything the register names, whether or not a directory of that name exists
+# here. This is what stops an exempted pin going invisible in a checkout that
+# does not carry the build — see the header. Not "every tag anywhere": only tags
+# a human has already written a reasoned exemption for, so an unknown string in
+# a stage still has to be a real directory before it counts as a pin.
+EXEMPT_TAGS = {tag for _sid, tag in EXEMPT}
 
 
 # -----------------------------------------------------------------------------
@@ -252,6 +323,27 @@ def _same_bytes(a: Path, b: Path, rel: str) -> bool:
                 d.update(blk)
         return d.hexdigest()
     return h(pa) == h(pb)
+
+
+_REVIEW_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _past(iso):
+    """Is `iso` (YYYY-MM-DD) strictly before today? None when it does not parse.
+
+    TODAY, not a build timestamp. This is the one clock in this file, and it is
+    deliberate: everything else here is derived from file content precisely so
+    that a clone or a copy cannot change a verdict, but an expiry that is not
+    wall-clock is not an expiry.
+    """
+    from datetime import date
+    if not isinstance(iso, str) or not _REVIEW_DATE.match(iso.strip()):
+        return None
+    try:
+        y, m, d = (int(x) for x in iso.strip().split("-"))
+        return date(y, m, d) < date.today()
+    except ValueError:
+        return None
 
 
 _DATE = re.compile(r"^date\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*$", re.M)
@@ -430,21 +522,44 @@ def _positions(tag):
 
 
 def pins(known):
-    """{stage_id: {tag, …}} and {stage_id: {dangling, …}}."""
+    """{stage_id: {tag, …}} and {stage_id: {dangling, …}}.
+
+    THE SEARCH UNIVERSE IS `known` PLUS EXEMPT_TAGS, and the second half is not
+    a convenience. A tag is normally recognised as a pin only because a
+    directory of that name exists — that is what keeps `make -C ASIC/gls-netlist
+    gls` from reading as a pin at the build directory literally named `gls`. But
+    it also means a pin at a build THIS CHECKOUT DOES NOT HAVE cannot be seen at
+    all, and until 2026-09-09 gls-netlist's pin at fp1505 was invisible in every
+    worktree for exactly that reason while this script printed a PASS line
+    claiming every pin had been examined. A tag somebody has written a reasoned
+    exemption for is a tag we already know is a build name, so it is searched
+    for unconditionally and then adjudicated by main() like any other.
+
+    A tag found this way that is NOT a directory here is still returned in
+    `named`; the caller separates "absent" from "unfinished" from "stale".
+    """
+    universe = set(known) | EXEMPT_TAGS
     named, dangling = {}, {}
     for s in _load().get("stages", []):
         sid = s.get("id")
         if not sid or sid == SELF_ID:
             continue
         t = _text_of(s)
-        hit = {b for b in known if any(p.search(t) for p in _positions(b))}
+        hit = {b for b in universe if any(p.search(t) for p in _positions(b))}
         if hit:
             named[sid] = hit
         # Dangling pins can only be found in the path form: the other positions
         # cannot be told apart from ordinary strings when the name matches no
         # directory. That is a stated limit, not an oversight.
+        #
+        # A tag already adjudicated above is subtracted here so a pin is judged
+        # in ONE place. Without this, lec-selftest's `full-20260814` — an output
+        # directory the stage's own `pre:` creates — was reported by this arm,
+        # which runs before the register is read and cannot see that an
+        # exemption exists for it.
         miss = {m for m in _PATHFORM.findall(t)
-                if m not in known and not _NOT_A_TAG.match(m)}
+                if m not in known and not _NOT_A_TAG.match(m)
+                and m not in hit}
         if miss:
             dangling[sid] = miss
     return named, dangling
@@ -535,6 +650,15 @@ def main():
         # And the tag must be a build that EXISTS here -- an exemption naming a
         # build this checkout does not have is not a waiver whose subject went
         # away, it is a waiver about somewhere else.
+        # THE `is_dir` NARROWING SURVIVES 2026-09-09'S WIDENING, and it is worth
+        # saying why, because the pin scan above no longer has it. This arm asks
+        # "the stage is here and no longer names the tag its waiver was written
+        # for" — a question about a waiver's SUBJECT. In a checkout that does not
+        # carry the build there is no way to tell that from a waiver about
+        # somewhere else, and a fixture manifest carries two or three stages by
+        # design, so widening this arm makes `prove` red in the harness rather
+        # than red in the gate. The register is maintained in the checkout that
+        # holds the builds; that is where this arm fires, and it is enough.
         if sid not in manifest_stages or not (BUILD_ROOT / tag).is_dir():
             continue
         if tag not in named.get(sid, set()):
@@ -544,13 +668,15 @@ def main():
                        "restore the pin it was written for." % (sid, tag, sid, tag))
 
     finished = {n for n, f, _t in inv if f}
+    absent_exempt = []
     for sid in sorted(named):
         for tag in sorted(named[sid]):
             if tag == newest:
                 continue
+            here = (BUILD_ROOT / tag).is_dir()
             ex = EXEMPT.get((sid, tag))
             if ex:
-                pred, reason = ex
+                pred, reason, review_by = ex
                 try:
                     still = pred(newest_dir)
                 except Exception as e:                       # noqa: BLE001
@@ -558,17 +684,57 @@ def main():
                                "(%s). An exemption that cannot be checked is not "
                                "an exemption." % (sid, tag, e))
                     continue
-                if still:
-                    print("EXEMPT  %-16s %-24s %s" % (sid, tag, reason))
-                else:
+                if not still:
                     bad.append("%s is pinned to %r under an exemption THAT HAS "
                                "LAPSED. It was granted because: %s — and that is "
                                "no longer true of %s. Repoint the stage, or "
                                "rewrite the exemption in scripts/ci/"
                                "build_freshness.py with a reason that holds "
                                "today." % (sid, tag, reason, newest))
+                    continue
+                if here:
+                    print("EXEMPT  %-16s %-24s %s" % (sid, tag, reason))
+                    continue
+                # THE ABSENT CASE, AND THE ONLY PLACE THE DATE BITES. The tag is
+                # not a build in this checkout, so the predicate above answered a
+                # question about the manifest or about the newest build and NOT
+                # about this pin. That is enough to say the pin is deliberate; it
+                # is not enough to say it is still wanted, and nothing here will
+                # ever notice on its own. Hence the stated expiry.
+                lapsed = _past(review_by)
+                if lapsed is None:
+                    bad.append("%s: the exemption for %r carries review_by=%r, "
+                               "which is not a YYYY-MM-DD date. An expiry that "
+                               "does not parse is not an expiry."
+                               % (sid, tag, review_by))
+                elif lapsed:
+                    bad.append("%s is pinned to %r, a build this checkout does "
+                               "not have, under an exemption whose REVIEW DATE "
+                               "%s HAS PASSED. The reason still holds (%s) and "
+                               "that is exactly why it needs reading rather than "
+                               "renewing: a pin nobody has looked at since it "
+                               "was granted is archaeology. Re-date it in "
+                               "scripts/ci/build_freshness.py, repoint the "
+                               "stage, or delete both."
+                               % (sid, tag, review_by, reason))
+                else:
+                    absent_exempt.append((sid, tag))
+                    print("EXEMPT  %-16s %-24s NOT IN THIS BUILD ROOT — %s "
+                          "(review by %s). This stage grades nothing here and "
+                          "will render UNVERIFIED; that is a fact about this "
+                          "checkout, not about the pin."
+                          % (sid, tag, reason, review_by))
                 continue
-            if tag not in finished:
+            if not here:
+                # No exemption and no directory: the fault the dangling arm
+                # names, reached through the pin scan because the reference was
+                # not in path form. Same finding, same wording.
+                bad.append("%s is pinned to %r, which does not exist under %s "
+                           "and carries no exemption. A pin at a build nobody "
+                           "has can only ever render UNVERIFIED — it is not a "
+                           "stale measurement, it is no measurement."
+                           % (sid, tag, BUILD_ROOT))
+            elif tag not in finished:
                 bad.append("%s is pinned to %r, which has no %s — its route did "
                            "not finish (a live run, or one that died). It may "
                            "well be the newest directory on disk; that is not "
@@ -587,9 +753,20 @@ def main():
         print("build-freshness: FAIL —", b)
     if not bad:
         pinned = sorted({t for v in named.values() for t in v})
+        # THE PASS SENTENCE IS SCOPED, because the interesting half of it is
+        # what this checkout could not judge. A green that reads "every pin
+        # examined" over a build root missing three of them is the shape this
+        # gate exists to refuse.
         print("build-freshness: PASS — newest finished route is %s; %d stage(s) "
               "name %d build tag(s), every one of them current or exempted "
-              "under a live reason." % (newest, len(named), len(pinned)))
+              "under a live reason.%s"
+              % (newest, len(named), len(pinned),
+                 "" if not absent_exempt else
+                 " %d of those tag(s) are NOT in this build root and are "
+                 "exempted rather than measured: %s. The stages naming them "
+                 "grade nothing in this checkout."
+                 % (len(absent_exempt),
+                    ", ".join("%s/%s" % st for st in sorted(absent_exempt)))))
     return 1 if bad else 0
 
 

@@ -127,6 +127,40 @@ report-unproven         4
 # THREE ROWS ARE NEW STAGES, not new proofs of old ones: pins-reachable and
 # vacuous-gates wire detectors this repository had and never called, and
 # build-freshness had a proof and no row.
+#
+# ---------------------------------------------------------------------------
+# RE-REVIEW, 2026-09-09. Four numbers moved and all four moved the SAFE way.
+#
+#   lec-cellswap            no row  ->  4   a whole new blocking stage
+#   lec-pnr                      2  ->  5   the stage gained three clauses
+#   must-fail-cases-total      135  -> 142   (+4 +3, and nothing else changed)
+#   stages-with-check           27  ->  28   (+1, lec-cellswap)
+#
+# EVERY ONE OF THEM IS "MORE PROOFS EXIST THAN THE LEDGER RECORDS". Not one is a
+# dropped fixture. All four arrived in commit 08c062a on 2026-08-31 -- the first
+# Conformal run on rc5 -- and nobody moved a row for nine days.
+#
+# AND THAT IS EXACTLY WHY IT HAD TO BE FIXED RATHER THAN TOLERATED. The checker
+# CANNOT TELL the safe direction from the dangerous one once it is red: both
+# print as "MUTATION COVERAGE LEDGER IS STALE" and both exit 1. A red checker is
+# read by nobody, so the day a proof is genuinely DELETED the line saying so
+# arrives in a report that has been red for a week and gets scrolled past. That
+# is not a hypothesis about this repository; it is what this same file recorded
+# happening between 2026-08-18 and 2026-08-29, in its own words: "a checker whose
+# output is always red is a checker that has stopped being read, which is the
+# same end state as one that is always green."
+#
+# WHAT WAS ACTUALLY CHECKED BEFORE MOVING THEM -- because a re-count is not a
+# review, and the thirty seconds this file exists to buy is the reading, not the
+# arithmetic:
+#   * every fixture directory named by both stages' `check_proof:` exists on
+#     disk (the checker asserts this; it is not taken on trust here either);
+#   * `scripts/ci/signoff.py prove lec-cellswap lec-pnr` was RUN: 11 cases, 2
+#     must_pass green, 9 must_fail red, 0 problems;
+#   * the FAIL text of each of the 9 was read, and the clause each one trips is
+#     written against its row below -- including the four cases that trip more
+#     than one, which the doctrine at the top of the proven-gates table says must
+#     be named rather than rounded up.
 # ---------------------------------------------------------------------------
 #
 # stage              must_fail cases
@@ -154,7 +188,71 @@ rom-gds                 4
 # real Conformal transcripts reached this repo.
 lec                     6
 lec-selftest            4
-lec-pnr                 2
+# 2 -> 5. NOT three new fixtures for the same clause: the STAGE changed shape.
+# Until 2026-08-31 lec-pnr graded Conformal's transcript and nothing else, so
+# its two cases were the two things a transcript can say wrong -- there is no
+# transcript (fail-no-log) and the transcript says non-equivalent
+# (fail-nonequivalent). It now requires the HARNESS's out-of-band verdict as
+# well, requires the two to AGREE, and requires that verdict to name this leg
+# and this build's netlists. Each new fixture pins one of those clauses:
+#   fail-verdict-absent     a complete, clean Conformal transcript with no
+#                           reports/lec/pnr/verdict.txt beside it. run_lec.sh
+#                           writes one for every leg that reaches a conclusion,
+#                           so its absence means the RUNNER did not finish --
+#                           and a transcript alone is Conformal's opinion with
+#                           nothing checking it.
+#   fail-harness-disagrees  Conformal says PASS and the harness says FAIL on 96
+#                           not-mapped golden flops. This is the case that
+#                           happened: the 96-flop FAIL of 2026-08-31 was real
+#                           and Conformal's own Compare Results line did not
+#                           carry it. Two independent verdicts that disagree is
+#                           not a pass by whichever one is read first.
+#   fail-wrong-leg          the `gate` leg's real verdict block, verbatim, in
+#                           the pnr slot. Everything in it is true and none of
+#                           it is about post-P&R. This is the [verdict read the
+#                           wrong stream] class inside one stage.
+# NOT ONE CLAUSE EACH, and saying so is the point of this file. Measured today:
+# fail-no-log and fail-verdict-absent trip exactly one clause; fail-wrong-leg
+# trips three (leg name, golden shape, revised shape) and fail-harness-disagrees
+# four, of which CONTRADICTION is the one it is cut for; fail-nonequivalent trips
+# six. Those are not sloppy fixtures -- they are what the real faults look like,
+# because one deleted flop lights every counter that counts flops. What it means
+# is that the count 5 is a count of FAULTS PINNED, not of clauses covered, and
+# no single clause of this guard is pinned by fail-nonequivalent alone.
+lec-pnr                 5
+# NEW 2026-08-31, ledger row added 2026-09-09. lec-cellswap is not another
+# equivalence check; it is the answer to what equivalence does not say. Conformal
+# reported rc5's post-P&R netlist equivalent over 61,599 points and was silent
+# about place-and-route having added 48,299 leaf cells and resized 2,724 of the
+# 3,007 clock gates -- a clock-tree and power change that is invisible to a
+# verdict line. This stage censuses the swap and BLOCKS on the one class of
+# change that is never benign: a sequential key point added, deleted or moved
+# between cell families.
+#   fail-sequential-change          one ICG deleted between the synthesised and
+#                                   the routed netlist. Trips THREE clauses at
+#                                   once (the ICG population, the
+#                                   sequential_deleted list, the census's own
+#                                   result) because that is what one deleted
+#                                   clock gate does to a census. Named, not
+#                                   rounded up.
+#   fail-result-contradicts-census  and this is the one-clause version of the
+#                                   same guard, and the load-bearing case: the
+#                                   census's own `result` reads PASS with an
+#                                   EMPTY `fails` list, and its per-class table
+#                                   says FLOP 58505 -> 58504. The check catches
+#                                   it by RE-DERIVING the comparison rather than
+#                                   reading the tool's summary. A gate that
+#                                   trusted `result` would be green here.
+#   fail-selftest-short             the census tool's own 10-case self-test
+#                                   reports "all 9 cases behaved as declared".
+#                                   A harness that runs fewer cases than it
+#                                   declares still prints a clean tally --
+#                                   fail-harness-blind, the same shape
+#                                   lec-selftest was closed for.
+#   fail-census-absent              no cellswap.json at all: the stage did not
+#                                   run, which is not the same as it running
+#                                   clean.
+lec-cellswap            4
 drc                     4
 erc                     3
 bnd                     4
@@ -176,13 +274,13 @@ evidence-report         4
 # Total across the proven gates. `signoff.py prove` reports its own case count
 # (must_pass + must_fail); this is the must_fail half, which is the half that
 # demonstrates a gate can FAIL.
-must-fail-cases-total  135
+must-fail-cases-total  142
 
 # Stages carrying a `check:` AND a complete proof (a must_pass plus at least one
 # must_fail, every fixture present on disk). Cross-checked against the manifest
 # so that adding a gate without a proof, or a proof without a gate, is visible
 # here and not only in a transient prove run.
-stages-with-check      27
+stages-with-check      28
 
 
 # === PENDING -- OWNED BY ANOTHER SESSION, REPORTED BUT NOT GATED ===========
