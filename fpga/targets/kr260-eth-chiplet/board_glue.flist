@@ -1,0 +1,43 @@
+################################################################################
+# fpga/targets/kr260-eth-chiplet/board_glue.flist  --  RTL_FLIST for this target
+#
+# WHAT THIS FLIST IS FOR, WHICH IS NOT WHAT A FLIST IS USUALLY FOR
+# ===========================================================================
+# On this target the SoC does not arrive as RTL.  It arrives as the PACKAGED IP
+# `soclabs.org:user:nanosoc_eth_chiplet_vivado_wrapper:1.0`, instantiated by the
+# block design, resolved through IP_REPOS.  So the RTL this flow COMPILES is
+# only the glue between that IP and the board - and that is what this file
+# lists.
+#
+# It lists ONE file: the PHY link/pad clock /2 divider.  The block design
+# instantiates it BY MODULE REFERENCE
+# (`create_bd_cell -type module -reference tidelink_phy_clk_div2`), and a module
+# reference resolves only against a file already in sources_1.  The flist stage
+# is what puts it there, before the bd stage runs.
+#
+# The other loose file - the board-level top, tidelink_design_wrapper.v, which
+# carries the SWDIO and MDIO IOBUFs - is named by TOP_HDL and read after the
+# flist by the synth stage.  It is deliberately NOT here: a file in both places
+# is read twice and elaborates as a duplicate module definition.
+#
+# TOGETHER THOSE TWO ARE EXACTLY THE LEGACY FLOW'S FILESET, and that is the
+# point.  Measured on the shipping build's own project file:
+#
+#     $ grep -oE '<File Path="[^"]*"' tidelink_project.xpr | grep -cE '\.(v|sv|svh)$'
+#     2
+#         tidelink_design_wrapper.v
+#         tidelink_phy_clk_div2.v
+#
+#
+# WHAT THIS FLIST IS NOT
+# ===========================================================================
+# It is NOT the SoC's flist.  flist/nanosoc_eth_chiplet.flist - 596 sources - is
+# what BUILDS the packaged IP, and it belongs to the packaging step
+# (PACKAGE_TCL, stage 2), which this project does not yet run.  Pointing
+# RTL_FLIST at it while also consuming the prebuilt IP put every SoC module into
+# the build TWICE: once loose, once inside the IP.  See design.mk section 5.
+#
+# Copyright (C) 2026, SoC Labs (www.soclabs.org)
+################################################################################
+
+../../../tidelink/fpga/targets/kr260-eth-chiplet/tidelink_phy_clk_div2.v
