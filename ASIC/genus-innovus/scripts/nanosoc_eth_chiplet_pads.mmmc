@@ -397,13 +397,38 @@ create_delay_corner -name typical_delay_corner\
 # cts or route; it needs place re-run. That is not a defect of this change, but
 # it has caught people, so it is written down next to the change.
 #
-# THE FILENAME IS DELIBERATELY NOT SPELLED IN THIS COMMENT.
-# flow/innovus/2_place.tcl:275 finds the constraint files by regexing this
-# WHOLE FILE for anything matching a dot-s-d-c token -- comments included -- and
-# then hard-fails if a match does not exist on disk. A worked example or a
-# "renamed from" note mentioning another one of those filenames would abort the
-# place stage before it read a single library.
-set __mmmc_sdcs [list ../outputs/nanosoc_eth_chiplet_pads_syn.sdc]
+# ── THE TWO PATHS BELOW ARE SPELLED DIFFERENTLY ON PURPOSE ────────────────
+#
+# The FIRST is the consolidated constraint file SYNTHESIS wrote, and it belongs
+# to whichever run this one is taking its synthesis from. That is
+# $::env(ASIC_SYN_DIR), which mk/flow.mk derives from SYN_RUN_TAG. It used to be
+# spelled ../outputs/ -- this run's outputs -- and the two are the same
+# directory only when synthesis and placement happen under one run tag. Point
+# SYN_RUN_TAG at another run and ../outputs is an EMPTY directory belonging to
+# this run, so a reuse either dies on a missing file or, once somebody
+# symlinks the missing products in to get past it, quietly times against
+# whatever the symlinks happen to point at. Eight such symlinks exist under
+# build/vt2-20260908/outputs today; with this spelling they are no longer
+# needed.
+#
+# The SECOND stays RELATIVE, and that is not an oversight. <run>/inputs is a
+# per-run symlink into that run's own pinned checkout, so ../inputs IS "this
+# run's pinned P&R inputs" and following ASIC_SYN_DIR would take the pad-ring
+# override from a different pin than the netlist it is applied to.
+#
+# Relative paths here resolve against the directory the tools are LAUNCHED in
+# (the run's work/), which is also what `make check` resolves them against.
+#
+# A comment in this file MAY now name a constraint file. The flow resolves this
+# mmmc by EVALUATING it in a throwaway interpreter -- see
+# flow/common/mmmc_sdc.tcl -- rather than by regexing its text for anything
+# ending .sdc, so prose is prose. Under the old text scrape, a "renamed from"
+# note naming another .sdc aborted the place stage before it read a single
+# library, and the warning that used to stand here was this project's
+# workaround for that toolkit defect.
+set __syn_dir [expr {[info exists ::env(ASIC_SYN_DIR)] && $::env(ASIC_SYN_DIR) ne ""
+                     ? $::env(ASIC_SYN_DIR) : "../outputs"}]
+set __mmmc_sdcs [list [file join $__syn_dir nanosoc_eth_chiplet_pads_syn.sdc]]
 set __io_drv     ../inputs/pnr_io_drv.sdc
 if {[file exists $__io_drv] && [file size $__io_drv]} {
     lappend __mmmc_sdcs $__io_drv
@@ -419,7 +444,7 @@ if {[file exists $__io_drv] && [file size $__io_drv]} {
 
 create_constraint_mode -name default_constraint_mode\
    -sdc_files $__mmmc_sdcs
-unset -nocomplain __mmmc_sdcs __io_drv
+unset -nocomplain __mmmc_sdcs __io_drv __syn_dir
 
 create_analysis_view -name default_analysis_view_setup -constraint_mode default_constraint_mode -delay_corner default_delay_corner_max
 create_analysis_view -name default_analysis_view_hold -constraint_mode default_constraint_mode -delay_corner default_delay_corner_min
