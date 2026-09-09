@@ -380,7 +380,28 @@ BONDPAD_CELLS ?= PAD70GU_SL PAD70NU_SL
 ## .GLOBAL -- see lvs_project.mk:197-204. Not done here; this is the cheap half.
 LVS_POWER       ?= VDD VDDIO
 LVS_GROUND      ?= VSS VSSIO
-LVS_GLOBAL_NETS ?= VDD VDDIO VSSIO
+
+## VSS IS BACK IN .GLOBAL -- 2026-09-09, and it is safe ONLY because of the ROM
+## CDL rename in section 9. The two land together or not at all; VSS here without
+## that rename fabricates a short across both boot ROMs' power gates, source-side
+## only, and is strictly worse than the omission it replaces.
+##
+## WHY THE OMISSION HAD TO GO. It was not merely lossy -- it INVERTED THE CHECK'S
+## SIGN. Without VSS in .GLOBAL, ~18k phantom one-pin /VSS source nets appear; a
+## STRANDED ground pin then matches a phantom net exactly while a CORRECTLY
+## CONNECTED one mismatches. Measured on a deliberately stranded DB: the gate
+## returned PASS and the affected cell vanished from the report entirely.
+## Breaking a power pin made LVS look cleaner, so LVS could not detect a stranded
+## PG pin at all. It also produced false positives -- Calibre pairs stray layout
+## nets with arbitrary orphans ("1036 nets ... matched arbitrarily"), one of which
+## flipped a gate FAIL on rc2 by binding a QSPI_SCLK pad port to a CKND1's phantom
+## /VSS 800um away.
+##
+## SEVENTH INSTANCE OF THE UNREACHABLE-KNOB CLASS. The root fix landed 2026-08-27
+## in ../genus-innovus/lvs_project.mk:261, which ONLY the legacy Makefile
+## includes, so the toolkit path -- the one that builds the shipping GDS -- kept
+## running the inverted check for thirteen days.
+LVS_GLOBAL_NETS ?= VDD VDDIO VSS VSSIO
 
 ## THE PG-LABELLED LVS STREAM -- SET 2026-08-21. Fourth and fifth instance of the
 ## same unreachable-knob class as BONDPAD_CELLS and LVS_POWER above: all four are
@@ -568,8 +589,44 @@ MACRO_CDLS ?= \
     $(MEM_BASE)/rf_32k/rf_32k.cdl \
     $(MEM_BASE)/flash_cache_data/flash_cache_data.cdl \
     $(MEM_BASE)/flash_cache_tag/flash_cache_tag.cdl \
-    $(ROMLIBS_DIR)/cc_rom/rom_via.cdl \
-    $(ROMLIBS_DIR)/eth_rom/eth_rom_via.cdl
+    $(LVS_ROM_CDL_DIR)/cc_rom/rom_via.cdl \
+    $(LVS_ROM_CDL_DIR)/eth_rom/eth_rom_via.cdl
+
+## ── THE ROM CDLs ARE DERIVED, NOT READ DIRECTLY ────────────────────────────
+## The two ROMs above are the ONLY entries not read from their source tree. They
+## are copies whose macro-internal virtual ground `VSS` is renamed
+## `VSS_ROMVIRT`, which is what makes `.GLOBAL VSS` in section 8 safe: the ROMs'
+## real supplies are VDDE/VSSE and their `VSS` is the SWITCHED ground on the far
+## side of the power-gate footers, so an unscoped .GLOBAL would merge it with the
+## chip ground and fabricate a short across the switch. CONTRACT.md 6d prescribes
+## exactly this -- derive a project-local copy, never edit vendor collateral.
+##
+## PER-RUN, AND THAT IS THE ONE THING THIS MUST NOT COPY FROM THE LEGACY PATH.
+## ../genus-innovus uses a single shared outputs/lvs_rom_cdl, which is correct
+## THERE because its ROMLIBS_DIR is also single. Here $(ROMLIBS_DIR) is
+## $(RUN_DIR)/romlibs -- the ROMs are per-run and MASK PROGRAMMED -- so a shared
+## derived directory would let run A's renamed ROM be consumed by run B's compare
+## with nothing to say so. That is a content error of exactly the class the ROM
+## gates exist to catch, wearing the costume of a caching optimisation.
+## IT FOLLOWS LVS_RUN, NOT RUN_TAG. lvs.mk:104-105 lets LVS select a DIFFERENT
+## run's outputs from the one RUN_TAG names, and the tool recommends that form
+## ("pick a run: make lvs-batch LVS_RUN=<dir>"). Tie the ROM CDLs to RUN_TAG and
+## an LVS_RUN invocation compares one run's STREAM against another run's ROMS --
+## the wrong-stream class, in the one place where the content is mask programmed.
+## Measured 2026-09-09: with LVS_RUN=gdsrun-20260823-rzG the rule went looking in
+## build/default/romlibs. Same resolution idiom as LVS_IN_DIR, deliberately.
+LVS_RUN_ROOT     ?= $(if $(LVS_RUN),$(if $(filter /%,$(LVS_RUN)),$(LVS_RUN),$(LVS_RUNS_DIR)/$(LVS_RUN)),$(RUN_DIR))
+LVS_ROM_CDL_DIR  ?= $(LVS_RUN_ROOT)/lvs_rom_cdl
+LVS_ROM_SRC_DIR  ?= $(LVS_RUN_ROOT)/romlibs
+
+## The rename rule itself lives BELOW the engine include -- see section 11. It
+## cannot live here: a pattern rule's target and prerequisites are expanded when
+## the makefile is READ, and $(RUN_DIR) is not defined until flow.mk is included
+## 35 lines further down. Defined here, the rule's target becomes the literal
+## `/lvs_rom_cdl/%.cdl` and matches nothing, while $(LVS_ROM_CDL_DIR) above --
+## being a recursive variable expanded at USE time -- resolves perfectly. So
+## `make lvs-help` prints the right path and the build then fails with "No rule
+## to make target". Measured 2026-09-09, and the split is the whole trap.
 
 # ── WHY DRC_DECK IS DELIBERATELY EMPTY ──────────────────────────────────────
 # This is what reconciles the toolkit's drc-project recipe with this project's
@@ -1134,6 +1191,32 @@ cpf-patch:
 #   syn            the generated sub-flists and the ROM libraries
 #   place          the CPF patch, between the two tools
 syn place cts route: legacy-paths pad-lef rom-ensure
+
+# The derived ROM CDLs, before anything reads MACRO_CDLS. Without this the rename
+# is never run and preflight stops with `MISS MACRO_CDLS <path>` -- loud, but a
+# step no operator should have to take by hand.
+#
+# HYPHENATED, unlike lvs_project.mk:364's `lvs_batch`: the toolkit spells these
+# targets with hyphens and the underscore forms do not exist here. That drift is
+# the same one that makes POST_STREAM_TEST_PROCEDURE.md 7a's `make lvs_pg_gds`
+# fail with "No rule to make target".
+lvs-preflight lvs-source lvs-batch: $(filter $(LVS_ROM_CDL_DIR)/%,$(MACRO_CDLS))
+
+# The rename, with its acceptance test inline: no bare VSS may survive, and VSSE
+# must be untouched. Ported from lvs_project.mk:196 -- a rename that silently
+# half-applied would be indistinguishable from the bug it fixes.
+#
+# HERE, NOT IN SECTION 9, because a pattern rule is expanded at READ time and
+# $(RUN_DIR) only exists after the engine include above.
+$(LVS_ROM_CDL_DIR)/%.cdl: $(LVS_ROM_SRC_DIR)/%.cdl
+	@mkdir -p $(dir $@)
+	@sed -E 's/\bVSS\b/VSS_ROMVIRT/g' $< > $@.tmp
+	@test "$$(grep -coE '\bVSS\b' $@.tmp)" = 0 || { \
+	    echo "LVS ROM CDL: bare VSS survived the rename in $@"; rm -f $@.tmp; exit 1; }
+	@test "$$(grep -coE '\bVSSE\b' $@.tmp)" = "$$(grep -coE '\bVSSE\b' $<)" || { \
+	    echo "LVS ROM CDL: the rename altered VSSE in $@"; rm -f $@.tmp; exit 1; }
+	@mv $@.tmp $@
+	@echo "LVS ROM CDL: $< -> $@ (internal VSS renamed VSS_ROMVIRT)"
 syn:   asic-flist romlibs-check
 place: cpf-patch
 
