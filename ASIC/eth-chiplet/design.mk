@@ -473,8 +473,18 @@ LVS_PG_MERGE_GDS ?= \
     $(MEM_BASE)/rf_01k/rf_01k.gds2 \
     $(MEM_BASE)/flash_cache_data/flash_cache_data.gds2 \
     $(MEM_BASE)/flash_cache_tag/flash_cache_tag.gds2 \
-    $(ROMLIBS_DIR)/cc_rom/rom_via.gds2 \
-    $(ROMLIBS_DIR)/eth_rom/eth_rom_via.gds2
+    $(LVS_ROM_SRC_DIR)/cc_rom/rom_via.gds2 \
+    $(LVS_ROM_SRC_DIR)/eth_rom/eth_rom_via.gds2
+
+## THE ROM ENTRIES FOLLOW LVS_RUN, NOT RUN_TAG -- corrected 2026-09-10, and this
+## was MY OWN residual bug from 5c04870. That commit taught MACRO_CDLS to follow
+## LVS_RUN via LVS_ROM_SRC_DIR and left this list on $(ROMLIBS_DIR), which is
+## RUN_TAG-based. Consequence with `LVS_RUN=<other tag>`: the ROM LAYOUT merged
+## into the stream came from build/$(RUN_TAG)/romlibs while the ROM NETLIST came
+## from the LVS_RUN -- one run's mask-programmed ROM graded against another's,
+## which is the exact hazard the comment beside LVS_ROM_CDL_DIR warns about.
+## Found by running the flow, not by reading it: an `LVS_RUN=rc1eco-20260826`
+## re-stream reported `MISS LVS_PG_MERGE_GDS .../build/default/romlibs/...`.
 
 
 # ── 9. SIGNOFF DECLARATIONS ─────────────────────────────────────────────────
