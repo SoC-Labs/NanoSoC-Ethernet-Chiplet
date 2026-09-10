@@ -1,0 +1,45 @@
+# FIXTURE — the manifest as it is: no stage runs or gates on a foundry antenna
+# check. The antenna-signoff gap's refuted_by must exit 1 over this file (gap
+# still real).
+#
+# THIS GAP IS NOT ABOUT A MISSING TOOL AND THE FIXTURE MUST NOT PRETEND IT IS.
+# Measured 2026-08-26: the foundry antenna deck is installed on this host, at
+# the revision imec ran, Calibre had 150 free DRC seats, `make -C
+# ASIC/genus-innovus ant` runs it, and every foundry rulecheck came back zero.
+# What is still true is the narrow clause: THIS PIPELINE does not run it. So the
+# refuting artefact is a STAGE IN THIS FILE, and both halves of this fixture are
+# manifests, not logs.
+#
+# FOUR DECOYS, each one a thing that is true today and refutes nothing:
+#   * `drc`'s description names the antenna deck. The probe reads s['id'], not
+#     the prose — a grep for the word "antenna" would match this file's own
+#     comments, which is why the probe was written as an id scan.
+#   * `route` genuinely runs Innovus check_process_antenna and writes
+#     reports/*_imp_antenna.rep. That is the ROUTER's model over the router's
+#     database and must never be quoted as the foundry check.
+#   * the `unsupported:` entry below has 'antenna' in ITS id. The probe scans
+#     `stages`, so a declaration cannot refute itself.
+#   * `evidence-report` is where the out-of-band antenna-foundry-deck verdict
+#     actually reaches a reader. Out of band is the whole point of the gap.
+design: nanosoc_eth_chiplet
+top: nanosoc_eth_chiplet
+stages:
+  - id: route
+    phase: physical
+    gate: block
+    description: "detailed route; runs check_process_antenna and writes reports/nanosoc_eth_chiplet_pads_imp_antenna.rep — the router's model, not the foundry deck"
+    run: make route
+  - id: drc
+    phase: physical
+    gate: block
+    description: "Calibre physical verification against the foundry DRC deck; the antenna rules are a separate deck and a separate run"
+    run: make drc
+  - id: evidence-report
+    phase: physical
+    gate: block
+    description: "collate the evidence flow's graded gates into one report"
+    run: scripts/ci/evidence_flow.py report
+unsupported:
+  - id: antenna-signoff
+    reason: "fixture"
+    refuted_by: "false"

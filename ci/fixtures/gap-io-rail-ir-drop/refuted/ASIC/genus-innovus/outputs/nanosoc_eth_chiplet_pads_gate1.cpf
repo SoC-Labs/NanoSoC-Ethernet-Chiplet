@@ -1,0 +1,40 @@
+# FIXTURE — the day the gap closes: the GENERATED CPF, the one Innovus reads,
+# declares the IO rails. The io-rail-ir-drop gap's refuted_by must exit 0 over
+# this file, which makes `signoff.py lint` go red and forces the declaration to
+# be rewritten.
+#
+# ONE LINE, AT COLUMN 1, separates this half from still-real. Both decoys are
+# unchanged — the commented VDDIO line and the indented one from the dead
+# hand-written intent are both still here — so the pair isolates exactly the
+# clause the probe is written on, which is the ANCHOR as much as the net name.
+#
+# WHAT REFUTATION WOULD AND WOULD NOT MEAN. Declared power intent is the
+# PREREQUISITE for an IO rail verdict, not the verdict. The gap's reason names a
+# second condition the probe cannot see: the IO supply is distributed by
+# ABUTMENT inside the pad cells, so there is no top-level PDN to analyse. A CPF
+# declaring VDDIO over an unrouted ring would produce ~0 mV and look excellent.
+# So this probe going red means "go and re-read the entry", not "the IO rails are
+# signed off" — which is the correct behaviour for a refutation probe and is
+# recorded here so the day it fires nobody reads it as a pass.
+set_cpf_version 2.0
+
+set_design nanosoc_eth_chiplet_pads
+
+create_power_domain -name PD_TOP \
+    -default
+create_power_domain -name PD_IO \
+    -instances {u_pads}
+
+create_ground_nets -nets VSS
+create_power_nets -nets VDD
+create_ground_nets -nets VSSIO
+create_power_nets -nets VDDIO -voltage 3.3
+
+# create_power_nets -nets VDDIO -voltage 3.3   ;# decoy, unchanged: a comment.
+# create_ground_nets -nets VSSIO               ;# decoy, unchanged.
+
+# from the dead hand-written intent, never read by the flow:
+  create_power_nets -nets VDDIO -voltage 3.3
+  create_ground_nets -nets VSSIO
+
+end_design

@@ -1,0 +1,53 @@
+# FIXTURE — the generated CPF as the flow writes it today: VDD and VSS only.
+# The io-rail-ir-drop gap's refuted_by must exit 1 over this file (gap still
+# real). Modelled on the shape of the real 21-line *_gate1.cpf (set_cpf_version
+# / set_design / create_power_domain / create_ground_nets / create_power_nets);
+# the values are synthetic.
+#
+# THE PREREQUISITE IS NOT A TOOL, IT IS THE POWER INTENT. Because this file
+# declares no VDDIO/VSSIO, report_power cannot attribute the IO group to them
+# and files ~30% of chip power on an unnamed Default rail at the CORE voltage.
+# Adding those nets to a rail run WITHOUT routing to analyse would return ~0 mV
+# and look excellent — a false green by construction, which is why the ir-drop
+# stage excludes the IO ring BY NAME.
+#
+# TWO DECOYS, both near-misses of '^create_power_nets .*VDDIO':
+#   * a COMMENTED create_power_nets line naming VDDIO. The regex anchors at
+#     column 1, so a `#` must defeat it — this is how a proposal in a comment
+#     gets read as power intent.
+#   * an INDENTED create_power_nets line naming VDDIO, in the dead
+#     hand-written-CPF branch. Same anchor, and this one is the live hazard:
+#     the hand-written nanosoc_chip_pads.cpf does declare the IO rails, and the
+#     gap is about the CPF THE FLOW ACTUALLY READS.
+#
+# TWO `.__exclusive__` MARKERS, AND WHAT THEY DO. The probe GLOBS
+# (`ASIC/eth-chiplet/build/*/outputs/*_gate1.cpf`), and globbing follows the
+# symlinks a sandbox is built from. Without the marker on
+# ASIC/eth-chiplet/build/ the sandbox sees SIX real generated CPFs — including
+# the one belonging to whatever P&R run is in flight — and the case is decided
+# by a seven-file grep instead of by this fixture.
+#
+# MEASURED, and stated because it is less than it looks: none of those six
+# declares VDDIO at column 1 today, so both halves would reach the same verdict
+# with the markers removed. The markers buy ISOLATION, not the verdict — the
+# refuted half would otherwise be passing on a grep across seven files, six of
+# them live build output that changes under it. A proof whose inputs move is not
+# a proof, and this is the same reason `drc` carries one.
+set_cpf_version 2.0
+
+set_design nanosoc_eth_chiplet_pads
+
+create_power_domain -name PD_TOP \
+    -default
+
+create_ground_nets -nets VSS
+create_power_nets -nets VDD
+
+# create_power_nets -nets VDDIO -voltage 3.3   ;# NOT DECLARED. See gap io-rail-ir-drop.
+# create_ground_nets -nets VSSIO               ;# NOT DECLARED.
+
+# from the dead hand-written intent, never read by the flow:
+  create_power_nets -nets VDDIO -voltage 3.3
+  create_ground_nets -nets VSSIO
+
+end_design

@@ -283,6 +283,91 @@ must-fail-cases-total  142
 stages-with-check      28
 
 
+# === GAP PROBES -- CAN EACH REFUTATION ACTUALLY SUCCEED? ===================
+# ADDED 2026-09-09. NO NUMBER IN THIS FILE MOVED, AND THAT IS THE FINDING.
+#
+# scripts/ci/check_mutation_coverage.py counts STAGES: `must-fail-cases-total`
+# and `stages-with-check` are derived from `check_proof:` blocks, and an
+# `unsupported:` entry has none. So on 2026-09-09 eight gap fixtures were added,
+# `signoff.py prove` went from 181 cases over 1 gap probe to 189 over 9, and
+# this ledger's four asserted numbers did not change by one:
+#
+#   blocking-unproven          0  ->  0
+#   report-unproven            4  ->  4
+#   must-fail-cases-total    142  -> 142
+#   stages-with-check         28  ->  28
+#
+# The checker was RUN and prints "ci/MUTATION_COVERAGE agrees with
+# ci/signoff.yaml". It is right, and it is blind here, in exactly the way this
+# file's own header warns about the green line: "`prove` skips these stages
+# entirely -- they do not appear in its case count, so the green N problem(s): 0
+# line says nothing whatever about them." Substitute "gap probes" for "stages"
+# and the sentence still holds. The rows below are therefore NOT asserted by any
+# checker -- they are a hand-kept record, and they are marked as such rather
+# than dressed up as a measurement.
+#
+# WHY GAP PROBES BELONG IN A GATE-COVERAGE LEDGER AT ALL. A `refuted_by:` that
+# exits 1 is what keeps a permanent exemption alive. Nine of them decide which
+# rows stay NOT-MEASURED forever in a graded evidence report. Before this date
+# EIGHT of the nine had never been shown capable of exiting 0 -- `prove` printed
+# "executed by lint but has never been shown to discriminate" and counted it as
+# no problem. An attempted refutation that cannot succeed is a gate that cannot
+# fail with the sign flipped, and this ledger exists for exactly that shape.
+#
+# HAND-KEPT, NOT ASSERTED. Fixtures live at ci/fixtures/gap-<id>/{still-real,
+# refuted}/ and are found by convention; nothing in the manifest declares them,
+# so nothing goes red if one is deleted except `prove` quietly returning to
+# "NO FIXTURE". Provenance, decoys and known limits: ci/fixtures/README.md.
+#
+#   gap                             cases   fixture pair
+#   d2d-tx-clock-boundary-untimed     2     constraints.sdc with / without the
+#                                           `-group [get_clocks $_tx_grp]` cut
+#   sta-hold-coverage                 2     pre-existing; the hold coverage
+#                                           report present / absent
+#   antenna-signoff                   2     a manifest with / without a stage
+#                                           whose id names antennas
+#   metal-density-fill                2     4b_pnr_route_eval.tcl with
+#                                           EVR_METAL_FILL defaulting 0 / 1
+#   gds-completeness                  2     a PDK stand-in with / without a
+#                                           *_BE package directory
+#   lvs                               2     a PDK stand-in with / without
+#                                           transistor-level CDL over 1 kB
+#   dynamic-ir-drop                   2     a PDK stand-in with / without cell
+#                                           SPICE over 1 kB
+#   io-rail-ir-drop                   2     a generated CPF declaring / not
+#                                           declaring VDDIO at column 1
+#   full-design-lint-gating           2     a manifest whose stages do / do not
+#                                           run verif/lint/full/run.sh
+#
+# 18 cases, 9 probes, all green under `signoff.py prove` on 2026-09-09.
+#
+# WHAT WAS ACTUALLY CHECKED, because a count is not a review:
+#   * every `refuted_by:` was read against the CLAIM its `reason:` makes, and
+#     the refuting artefact identified as a thing that could arrive -- not as a
+#     rewording. Four of the nine turn on vendor collateral this site does not
+#     have; for those the fixture stages the collateral APPEARING, in synthetic
+#     form, and never in real form (public repository, and these gaps are ABOUT
+#     vendor collateral).
+#   * both halves were run: still-real must exit 1, refuted must exit 0. A pair
+#     where only one half is checked proves nothing, which is the same doctrine
+#     as must_pass-without-must_fail above.
+#   * `signoff.py lint` was run as well as `prove`, and it is the run that
+#     mattered: the first cut of the gap-dynamic-ir-drop fixture made lint print
+#     "dynamic-ir-drop STALE -- refuted_by SUCCEEDED" over a gap that is wide
+#     open, because that probe's `find ${TSMC_65_HOME}` degrades to `find .` on
+#     any host with no PDK and had found the fixture. A gap fixture that refutes
+#     its own gap is worse than no fixture. Fixed by depth; the real fix is in
+#     ci/fixtures/PROPOSED_GAP_PROBES.yaml.
+#   * FIVE probes discriminate but measure a PROXY for their claim, and are
+#     named in ci/fixtures/README.md rather than quietly strengthened. None was
+#     weakened to make a fixture pass.
+#
+# ONE SUPPORTING CHANGE OUTSIDE THIS LEDGER: scripts/ci/signoff.py's
+# _sandbox_env() now sets TSMC_65_HOME=. for the duration of a prove sandbox,
+# the same treatment SIGNOFF_BUILD_ROOT already had. Without it the three PDK
+# fixtures are authoritative wherever the PDK is absent and decorative on
+# srv03335 -- the one host that does the real physical signoff.
+
 # === PENDING -- OWNED BY ANOTHER SESSION, REPORTED BUT NOT GATED ===========
 # EMPTY as of 2026-08-29. ir-drop and ir-drop-selftest landed and now carry rows
 # of their own (6 and 3). The mechanism stays: a stage in flight belongs here

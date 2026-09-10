@@ -891,12 +891,67 @@ def _sandbox_env(m):
     manifest variables from each stage's `proof_vars`, never from the
     environment, so by construction the environment's copy is not what a proof is
     supposed to read. Anything a check needs must come from the fixture.
+
+    TSMC_65_HOME, REPOINTED 2026-09-09, and it is the same defect one layer over
+    -- in the GAP probes rather than the stage checks. Repointed, not dropped:
+    see the last paragraph.
+
+    Three `unsupported:` probes scope a `find` by ${TSMC_65_HOME}:
+    gds-completeness (is there a *_BE package?), lvs (is there a real .cdl?) and
+    dynamic-ir-drop (is there cell SPICE or cell GDS?). Every one of them asks
+    "has the missing collateral arrived", and the ONLY way to fixture that is to
+    stage a synthetic tree in which it has. With the variable left in the
+    environment those fixtures are decorative on the machine that matters:
+    unset -- CI, a sim host, this laptop -- an empty expansion makes `find`
+    default to ".", the sandbox, and the fixture decides; SET -- srv03335, the
+    one host that does the real physical signoff -- the probe walks the real PDK
+    instead, the `refuted` half finds no synthetic CDL there and reports BROKEN,
+    and the `still-real` half passes for a reason that has nothing to do with
+    the fixture. The proof would then say the opposite thing on the two hosts,
+    which by this repository's own rule is not a proof: "A proof that behaves
+    differently on the machine that does the real signoff is not a proof."
+
+    So it is taken out of the operator's hands here, for the same reason
+    SIGNOFF_BUILD_ROOT is: it is an ABSOLUTE path out of the sandbox. `lint` is
+    untouched -- it runs each refuted_by with the operator's real environment
+    from the repo root, so in PRODUCTION these probes still search the real PDK
+    and still answer the real question. Only `prove` reads the fixture.
+
+    SET TO ".", NOT DELETED, and the difference matters twice. Deleting it works
+    by accident -- `find ${TSMC_65_HOME}` with the variable unset collapses to a
+    bare `find`, which GNU find happens to read as ".". That is the same silent
+    empty-expansion this scrub exists to close, pointed somewhere harmless, and
+    it would break the moment a probe quoted the variable or guarded on it being
+    set. Pointing it AT the sandbox says the intended thing outright: inside a
+    proof, the fixture IS the PDK root. It also keeps the hardened probes
+    proposed in ci/fixtures/PROPOSED_GAP_PROBES.yaml provable -- those exit 2
+    (UNVERIFIABLE) when the variable is unset, which is correct on a host with no
+    PDK and would turn every one of these six fixture halves red under a scrub.
+
+    WHAT THIS DOES NOT PROVE, stated because the substitution is silent: the
+    fixtures pin the NAME, SIZE, TYPE and DEPTH clauses of each probe and say
+    nothing whatever about whether it looks in the right PLACE. That clause has
+    no fixture and cannot have one -- a real PDK root is not stageable in a
+    public repository -- and it is the residual risk of these three gap proofs.
+    See ci/fixtures/README.md.
+
+    THE OTHER HALF OF THE SAME EMPTY EXPANSION IS NOT FIXED HERE AND CANNOT BE.
+    `lint` runs these probes from the REPOSITORY ROOT, so where the variable is
+    unset they walk the git working tree and report "still real" about it. That
+    needs a probe change, not a sandbox change; the replacement text is in
+    ci/fixtures/PROPOSED_GAP_PROBES.yaml and the interim mitigation (fixture
+    depth) is in ci/fixtures/README.md.
+
+    No `check:`, `pre:` or `run:` body in ci/signoff.yaml references
+    TSMC_65_HOME (measured 2026-09-09), so no stage proof changes behaviour.
     """
     drop = {"SIGNOFF_BUILD_ROOT"}
     for spec in (m.get("vars") or {}).values():
         if isinstance(spec, dict) and spec.get("env"):
             drop.add(spec["env"])
-    return {k: None for k in drop}
+    env = {k: None for k in drop}
+    env["TSMC_65_HOME"] = "."
+    return env
 
 
 def cmd_prove(args):

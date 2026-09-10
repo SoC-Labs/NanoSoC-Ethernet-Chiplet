@@ -1,0 +1,47 @@
+# FIXTURE — the day the gap closes: a stage in THIS manifest RUNS
+# verif/lint/full/run.sh, so the whole-design lint executes on every signoff run
+# and its findings are gated. The full-design-lint-gating gap's refuted_by must
+# exit 0 over this file, which makes `signoff.py lint` go red and forces this
+# declaration to be deleted.
+#
+# ONE STAGE separates this half from still-real: `lint-full`. Every decoy is
+# unchanged — the 3-file `lint` wrapper still runs verif/lint, and
+# `full-lint-report` still only READS the output — so the pair isolates exactly
+# one clause: the string appearing in a stage's `run:`.
+#
+# NOTE WHAT THE PROBE STILL WOULD NOT SEE. It reads `run:`, not `gate:`. A
+# `gate: report` stage that runs the harness and blocks on nothing would refute
+# this gap just as well as the blocking one below, and the gap's own words are
+# "no signoff run has ever executed it and its findings are ungated" — two
+# conditions, of which the probe tests the first. The stage below is written
+# `gate: block` because that is what closing the gap honestly looks like; the
+# probe could not tell the difference. Recorded in ci/fixtures/README.md.
+design: nanosoc_eth_chiplet
+top: nanosoc_eth_chiplet
+stages:
+  - id: lint
+    phase: rtl
+    gate: block
+    description: "Verilator + HAL over the 3 authored wrapper files"
+    run: bash verif/lint/run.sh
+  - id: lint-full
+    phase: rtl
+    gate: block
+    description: "Verilator + HAL 22.03 over the whole 590-file ASIC flist, top nanosoc_eth_chiplet_chip, only Arm IP black-boxed; graded against verif/lint/full/baseline"
+    run: bash verif/lint/full/run.sh
+    check: "python3 verif/lint/full/check_baseline.py --report build/lint/full/report.json"
+  - id: full-lint-report
+    phase: rtl
+    gate: report
+    description: "collate whatever verif/lint/full last left behind, if anything"
+    run: python3 scripts/ci/collate_lint.py
+    check: "test -s build/lint/full/report.json"
+  - id: elab
+    phase: rtl
+    gate: block
+    description: "VCS elaboration of the full ASIC flist"
+    run: make elab
+unsupported:
+  - id: full-design-lint-gating
+    reason: "fixture — verif/lint/full/run.sh exists and no stage invokes it"
+    refuted_by: "false"

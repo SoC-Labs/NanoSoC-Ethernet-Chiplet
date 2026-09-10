@@ -1,0 +1,44 @@
+# FIXTURE — the day the gap closes: a stage in THIS manifest runs the foundry
+# antenna deck and blocks on it. The antenna-signoff gap's refuted_by must exit
+# 0 over this file, which makes `signoff.py lint` go red and forces this
+# declaration to be deleted.
+#
+# THE ONE THING THAT CHANGED is the `antenna-foundry-deck` stage. Every decoy
+# from the still-real half is still here — `route` still runs
+# check_process_antenna, `drc`'s description still names the deck, the
+# `unsupported:` entry is still called antenna-signoff — so this pair isolates
+# exactly one clause: a stage id in `stages:` containing "antenna".
+#
+# WHAT THE PROBE DOES NOT CHECK, and it is worth naming rather than fixing
+# silently: `'antenna' in s['id']` is satisfied by the NAME alone. A stage
+# called antenna-anything with `gate: report` and a `run:` that touches no deck
+# would refute this gap just as well as the one below. The probe watches for
+# somebody claiming the ground, not for the ground being taken. See
+# ci/fixtures/README.md.
+design: nanosoc_eth_chiplet
+top: nanosoc_eth_chiplet
+stages:
+  - id: route
+    phase: physical
+    gate: block
+    description: "detailed route; runs check_process_antenna and writes reports/nanosoc_eth_chiplet_pads_imp_antenna.rep — the router's model, not the foundry deck"
+    run: make route
+  - id: drc
+    phase: physical
+    gate: block
+    description: "Calibre physical verification against the foundry DRC deck; the antenna rules are a separate deck and a separate run"
+    run: make drc
+  - id: antenna-foundry-deck
+    phase: physical
+    gate: block
+    description: "the foundry antenna deck over the STREAMED layout, via scripts/calibre/run_ant.sh; every rulecheck zero over a population the run demonstrates is non-empty"
+    run: make -C ASIC/genus-innovus ant
+  - id: evidence-report
+    phase: physical
+    gate: block
+    description: "collate the evidence flow's graded gates into one report"
+    run: scripts/ci/evidence_flow.py report
+unsupported:
+  - id: antenna-signoff
+    reason: "fixture"
+    refuted_by: "false"

@@ -1,0 +1,46 @@
+# FIXTURE — the manifest as it is: verif/lint/full/run.sh exists and does lint
+# the whole 590-file design, and NO STAGE HERE INVOKES IT. The
+# full-design-lint-gating gap's refuted_by must exit 1 over this file (gap still
+# real).
+#
+# THE GAP IS ABOUT GATING, NOT ABOUT THE HARNESS. "The harness exists" and "the
+# pipeline runs it" are different claims, and the predecessor gap
+# (`full-design-lint`, "nobody lints the whole design") was deleted on
+# 2026-08-17 when the first became true. Collapsing the second into the first is
+# how a closed gap becomes an overclaim, so the refuting artefact is narrow: a
+# stage in `stages:` whose `run:` executes it.
+#
+# THREE DECOYS, each true today and each refuting nothing:
+#   * `lint` is the real stage, and it is the 3-file wrapper pass. Its `run:`
+#     names verif/lint, NOT verif/lint/full — one path segment is the whole
+#     difference between 3 files and 590.
+#   * `full-lint-report` READS the harness's output and never runs it. This is
+#     the sharpest decoy: a stage could grade a report left by a hand-run of the
+#     harness and satisfy any probe keyed on the string appearing anywhere in
+#     the stage, while no signoff run had executed one line of it. The probe
+#     reads `run:` only, which is why it survives this.
+#   * the `unsupported:` entry names the path in its own reason. A declaration
+#     cannot refute itself; the probe scans `stages`.
+design: nanosoc_eth_chiplet
+top: nanosoc_eth_chiplet
+stages:
+  - id: lint
+    phase: rtl
+    gate: block
+    description: "Verilator + HAL over the 3 authored wrapper files"
+    run: bash verif/lint/run.sh
+  - id: full-lint-report
+    phase: rtl
+    gate: report
+    description: "collate whatever verif/lint/full last left behind, if anything"
+    run: python3 scripts/ci/collate_lint.py
+    check: "test -s build/lint/full/report.json"
+  - id: elab
+    phase: rtl
+    gate: block
+    description: "VCS elaboration of the full ASIC flist"
+    run: make elab
+unsupported:
+  - id: full-design-lint-gating
+    reason: "fixture — verif/lint/full/run.sh exists and no stage invokes it"
+    refuted_by: "false"

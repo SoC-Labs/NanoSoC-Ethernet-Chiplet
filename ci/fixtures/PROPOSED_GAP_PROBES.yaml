@@ -1,0 +1,254 @@
+# =============================================================================
+# PROPOSED ci/signoff.yaml GAP-PROBE REPLACEMENTS
+# A joint work commissioned on behalf of SoC Labs, under Arm Academic Access license.
+#
+# Copyright 2026, SoC Labs (www.soclabs.org)
+# =============================================================================
+# THIS FILE IS A PATCH, NOT A MANIFEST. ci/signoff.yaml is being edited by other
+# sessions; splice these in rather than letting two writers collide. Same
+# convention as ci/fixtures/boundary-scan/PROPOSED_STANZA.yaml.
+#
+# WHERE THEY COME FROM
+#   On 2026-09-09 the eight `unsupported:` entries that had no gap fixture got
+#   one — ci/fixtures/gap-<id>/{still-real,refuted}/ — so `signoff.py prove`
+#   now runs all nine probes against evidence where the gap is real (must exit
+#   1) and evidence where it has closed (must exit 0). Nine of nine discriminate.
+#
+#   Building those fixtures required reading each probe against the claim it
+#   defends. FOUR DEFECTS fell out. NONE of them stops the fixture from
+#   discriminating, so none of them was applied — a probe must not be changed
+#   to make a fixture pass. They are written up here instead, with the exact
+#   replacement text, because each one is a way the probe can say the wrong
+#   thing about the real design on a real host.
+#
+#   Line numbers are against ci/signoff.yaml at the commit this was written
+#   from (flow/rc5-virtual-tapeout, working tree of 2026-09-09). Re-locate by
+#   the `- id:` line, not by number.
+#
+# AFTER SPLICING ANY OF THEM, RUN BOTH
+#   scripts/ci/signoff.py lint      # the probe against the REAL tree
+#   scripts/ci/signoff.py prove     # the probe against both fixtures
+#   ...because they run the probe from different working directories with
+#   different environments, and three of the four defects below are only
+#   visible from one of the two.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# [1] gds-completeness, lvs, dynamic-ir-drop — AN UNSET ${TSMC_65_HOME} MAKES
+#     THESE PROBES SEARCH THE WORKING TREE, AND CALL THE RESULT A MEASUREMENT.
+#
+# Lines 4859, 4891-4893 and 4916-4918.
+#
+# MEASURED 2026-09-09 on a host with no PDK installed. All three probes are
+#
+#     find ${TSMC_65_HOME} <predicates> 2>/dev/null | grep -q .
+#
+# With TSMC_65_HOME unset the expansion is EMPTY and GNU find falls back to ".",
+# which under `lint` is the repository root. So on every CI runner, every sim
+# host and every laptop, these three probes have been walking the git working
+# tree and reporting "still real (refuted_by exited 1)" — a statement about the
+# repository, offered as a statement about the PDK. It was never a measurement
+# of the thing the gap is about; it exited 1 because no file in the repo
+# happened to be named tcbn65lp*.cdl.
+#
+# THAT IS NOT A HYPOTHETICAL. It fired the same day. The first cut of
+# ci/fixtures/gap-dynamic-ir-drop/refuted/ put its synthetic cell-SPICE
+# stand-in at repository depth 7, inside that probe's `-maxdepth 8`, and lint
+# immediately printed
+#
+#     dynamic-ir-drop   STALE   refuted_by SUCCEEDED — this gap no longer exists
+#
+# of a gap that is wide open, having found nothing but the fixture written to
+# prove the probe could notice. Any file added to this repository under a
+# matching name — a test, a doc, an export, another fixture — silently refutes
+# a permanent gap. The current fixtures are held clear of it by DEPTH, which is
+# arithmetic recorded in each FIXTURE_NOTE.md and is exactly the kind of
+# invariant that decays.
+#
+# THE FIX IS THE ONE THIS FILE'S OWN LINT DOCTRINE ALREADY DEMANDS: a probe
+# that cannot answer must exit neither 0 nor 1. `lint` reads any other status as
+# UNVERIFIABLE and says "the probe FAILED, this says nothing about the gap",
+# which is the truth on a host with no PDK. Today that same host gets a
+# confident "still real".
+#
+# Note the quoting as well: "${TSMC_65_HOME}" is quoted in the replacement, so
+# a PDK root containing a space stops silently searching the wrong two places.
+#
+# COMPATIBLE WITH THE FIXTURES AS THEY STAND. `prove` runs gap probes with
+# TSMC_65_HOME set to "." (scripts/ci/signoff.py, _sandbox_env), so the guard
+# passes inside a sandbox and the search root is the fixture. That is why
+# _sandbox_env SETS the variable instead of deleting it: under a delete, all six
+# halves of these three fixtures would go red the moment this stanza landed.
+
+gds-completeness:
+  refuted_by: |
+    # An unset PDK root means this host cannot answer. Exit 2, which `lint`
+    # reports as UNVERIFIABLE — never 1, which means "asked, and not refuted".
+    [ -n "${TSMC_65_HOME}" ] || exit 2
+    [ -d "${TSMC_65_HOME}" ] || exit 2
+    find "${TSMC_65_HOME}" -maxdepth 4 -name '*_BE' -type d 2>/dev/null | grep -q .
+
+lvs:
+  refuted_by: |
+    [ -n "${TSMC_65_HOME}" ] || exit 2
+    [ -d "${TSMC_65_HOME}" ] || exit 2
+    find "${TSMC_65_HOME}" -maxdepth 6 -size +1k \
+      \( -name 'tcbn65lp*.cdl' -o -name 'tphn65*.cdl' -o -name 'tpbn65v*.cdl' \) \
+      2>/dev/null | grep -q .
+
+dynamic-ir-drop:
+  refuted_by: |
+    [ -n "${TSMC_65_HOME}" ] || exit 2
+    [ -d "${TSMC_65_HOME}" ] || exit 2
+    find "${TSMC_65_HOME}" -maxdepth 8 -size +1k \
+      \( -name 'tcbn65lp*.sp' -o -name 'tcbn65lp*.spi' -o -name 'tcbn65lp*.gds*' \) \
+      2>/dev/null | grep -q .
+
+
+# -----------------------------------------------------------------------------
+# [2] d2d-tx-clock-boundary-untimed — A MISSING constraints.sdc REPORTS THE GAP
+#     AS CLOSED.
+#
+# Lines 4739-4741. Current probe:
+#
+#     ! grep -qF -- '-group [get_clocks $_tx_grp]' \
+#       ASIC/genus-innovus/inputs/constraints.sdc
+#
+# grep exits 0 found, 1 not found, 2 ERROR — and the leading `!` maps BOTH 1 and
+# 2 onto 0. So if constraints.sdc is missing, unreadable, or renamed, the probe
+# exits 0 and `lint` prints
+#
+#     d2d-tx-clock-boundary-untimed  STALE  refuted_by SUCCEEDED
+#
+# i.e. "this design now times the D2D transmit boundary", concluded from being
+# unable to read the file that would say so. It is the same inversion the
+# io-rail-ir-drop entry already guards against with `[ -n "$f" ] || exit 1` and
+# documents in its own comment; this entry was written without it.
+#
+# The fixtures in ci/fixtures/gap-d2d-tx-clock-boundary-untimed/ do not exercise
+# this: both halves supply the file, because the still-real half must depict the
+# design as it is. The `prove` harness offers exactly two cases per gap, so a
+# third "the file is gone" case has nowhere to live — which is itself worth
+# knowing about the harness.
+
+d2d-tx-clock-boundary-untimed:
+  refuted_by: |
+    # A file that cannot be read is not evidence that the boundary is timed.
+    f=ASIC/genus-innovus/inputs/constraints.sdc
+    [ -r "$f" ] || exit 2
+    grep -qF -- '-group [get_clocks $_tx_grp]' "$f" && exit 1
+    exit 0
+
+
+# -----------------------------------------------------------------------------
+# [3] metal-density-fill — THE PROBE TESTS A DEFAULT IN A SCRIPT; THE CLAIM IS
+#     ABOUT A STREAM.
+#
+# Line 4832. Current probe greps 4b_pnr_route_eval.tcl for
+# `opt EVR_METAL_FILL <non-zero>`. The gap's claim is "no streamed GDS has been
+# filled". Those come apart in both directions:
+#
+#   * a run invoked with -EVR_METAL_FILL 1 on the command line fills a stream
+#     while this probe still exits 1 — the gap closes and nothing notices;
+#   * flipping the default in the script refutes the gap on the spot, before any
+#     filled stream exists — the declaration is deleted ahead of the fact.
+#
+# The second direction is the safer one (a human reads a STALE line) and is why
+# this is a PROPOSAL rather than a defect report. The fixtures in
+# ci/fixtures/gap-metal-density-fill/ prove the probe discriminates on the
+# clause it is written on; they cannot prove the clause is the right one.
+#
+# The replacement asks the graded build's own route log instead. It keeps the
+# script grep as a second arm so that turning the option on is still noticed,
+# and it fails UNVERIFIABLE rather than "still real" when there is no log to
+# read — because "no route log" is not evidence that the stream is unfilled.
+#
+# NOT DROP-IN: it needs @GRADED_BUILD@ substitution, which `load()` applies to
+# stages and NOT to `unsupported:` entries, and gap probes have no `proof_vars:`.
+# Landing it therefore also needs one of: variable substitution extended to gap
+# probes plus a proof value for them, or the build tag resolved inside the probe
+# from SIGNOFF_GRADED_BUILD with the same unset-is-an-error discipline the
+# manifest already applies. Written out so the next person has the text, not so
+# it can be pasted unread.
+
+metal-density-fill:
+  refuted_by: |
+    # ARM 1: the option is on in the flow script.
+    if grep -qE '^[[:space:]]*opt[[:space:]]+EVR_METAL_FILL[[:space:]]+[1-9]' \
+        ASIC/genus-innovus/scripts/4b_pnr_route_eval.tcl; then
+      exit 0
+    fi
+    # ARM 2: the GRADED STREAM itself carries fill, whatever the default says.
+    b=ASIC/eth-chiplet/build/@GRADED_BUILD@/logs
+    [ -d "$b" ] || exit 2          # nothing to read: UNVERIFIABLE, not "still real"
+    grep -rqE 'add_metal_fill|Metal fill.*inserted' "$b" && exit 0
+    exit 1
+
+
+# -----------------------------------------------------------------------------
+# [4] antenna-signoff and full-design-lint-gating — A CRASHED PROBE IS READ AS
+#     "STILL REAL".
+#
+# Lines 4822-4824 and 4982-4985. Both are `python3 -c` one-liners over the
+# manifest, and both can raise instead of deciding:
+#
+#   antenna-signoff          `s['id']` — KeyError on any stage with no id.
+#   full-design-lint-gating  `'verif/lint/full' in s.get('run','')` — TypeError
+#                            on any stage written `run:` with no value, because
+#                            PyYAML returns None and the default never applies.
+#
+# CPython exits 1 on an uncaught exception. 1 is the ONE status `lint` reads as
+# "ran, and did not refute". So a malformed manifest — the exact condition under
+# which nobody should trust a manifest introspection — reports both gaps as
+# still real, in the confident wording, forever. The tri-state `lint` is careful
+# to maintain is defeated by the probe's own crash.
+#
+# The replacements separate the two cases instead of collapsing them onto 1.
+# A manifest that will not parse, or a stage with no `id:`, exits 2 —
+# UNVERIFIABLE, which is the truth. A stage written `run:` with no value is not
+# a malformed manifest, only an absent command, so that one is coerced to "" and
+# answers 1 normally. MEASURED 2026-09-09 against a three-line manifest with a
+# valueless `run:` and no `id:`: today's probes return 1 (KeyError, TypeError),
+# the replacements return 2 and 1 respectively.
+#
+# NOT FIXED HERE, AND WORTH KNOWING SEPARATELY: both probes test a NAME, not a
+# behaviour. `'antenna' in s['id']` is satisfied by any stage called
+# antenna-anything with gate: report and a run: that touches no deck;
+# full-design-lint-gating's is satisfied by a `gate: report` stage that runs the
+# harness and blocks on nothing, while its own reason says "its findings are
+# ungated" — two conditions, of which the probe tests one. Both are recorded in
+# the refuted-half fixtures rather than silently strengthened, because
+# tightening them is a decision about what closing the gap means and belongs to
+# whoever owns the entry.
+
+antenna-signoff:
+  refuted_by: |
+    python3 - <<'PY'
+    import sys, yaml
+    try:
+        m = yaml.safe_load(open('ci/signoff.yaml'))
+        stages = m.get('stages') or []
+        ids = [s.get('id') for s in stages]
+    except Exception as e:                      # unreadable manifest answers nothing
+        print(f"probe could not read ci/signoff.yaml: {e}", file=sys.stderr)
+        sys.exit(2)
+    if any(i is None for i in ids):
+        print("a stage has no id: — the manifest is malformed", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(0 if any('antenna' in i for i in ids) else 1)
+    PY
+
+full-design-lint-gating:
+  refuted_by: |
+    python3 - <<'PY'
+    import sys, yaml
+    try:
+        m = yaml.safe_load(open('ci/signoff.yaml'))
+        stages = m.get('stages') or []
+        runs = [(s.get('run') or '') for s in stages]
+    except Exception as e:
+        print(f"probe could not read ci/signoff.yaml: {e}", file=sys.stderr)
+        sys.exit(2)
+    sys.exit(0 if any('verif/lint/full' in r for r in runs) else 1)
+    PY

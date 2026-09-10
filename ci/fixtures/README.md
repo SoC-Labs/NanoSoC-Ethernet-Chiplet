@@ -317,3 +317,137 @@ the only shape where guard 1 fires alone.
 `signoff.py lint` fails any stage that has a `check:` and no `check_proof:`, so a
 new gate cannot be added without one. Keep fixtures **small** — these are
 excerpts of the handful of lines a check reads, never copies of a 43 MB log.
+
+## Gap fixtures — proving a REFUTATION can succeed
+
+`ci/signoff.yaml` declares nine `unsupported:` coverage gaps, and `signoff.py
+lint` executes each one's `refuted_by:` on every invocation, reading exit 1 as
+"the gap is still real". That is worth exactly as much as the probe's ability to
+have exited 0. A refutation attempt nobody has shown capable of SUCCEEDING is
+the same shape as a gate that cannot fail, wearing the opposite label — and this
+pipeline has already shipped one: `sta-signoff` declared "No Tempus or PrimeTime
+installed" behind `command -v tempus`, which tests PATH rather than
+installation, while Tempus was installed and had run six times.
+
+So a gap probe gets the same treatment as a `check:`, by convention rather than
+by manifest declaration (`GAP_KEYS` stays `{id, reason, refuted_by}`):
+
+| directory | probe must exit |
+|---|---|
+| `ci/fixtures/gap-<id>/still-real/` | **1** — the gap is real over this evidence |
+| `ci/fixtures/gap-<id>/refuted/` | **0** — the gap has closed over this evidence |
+
+**BEFORE 2026-09-09 EIGHT OF THE NINE HAD NO FIXTURE.** `prove` reported them
+`NO FIXTURE ... executed by lint but has never been shown to discriminate` and
+did not count them as problems. They are precisely the rows that stay
+NOT-MEASURED forever in a graded evidence report, so "the refutation was
+attempted and failed" was carrying the entire weight of eight permanent
+exemptions. All nine now have both halves; `prove` reports 9 gap probe(s).
+
+### The refuting artefact, per gap
+
+The question a gap fixture answers is not "how would this be worded differently"
+but **what concrete thing arriving would make the claim false**. Four of these
+are about collateral this site does not have, and the answer is that collateral
+appearing.
+
+| gap | what actually refutes it | staged as |
+|---|---|---|
+| `d2d-tx-clock-boundary-untimed` | the SDC stops declaring the D2D transmit group asynchronous — Option A folds it into `clk`, or Option B gives it its own pad | two `constraints.sdc` excerpts, the second with the TX clock moved into `_sys_grp` and per-path exceptions in place of the group cut |
+| `sta-hold-coverage` | `report_analysis_coverage -check_type hold` stops raising TCLCMD-1056 and writes a report | *(pre-existing)* presence vs absence of `analysis_coverage_hold.rpt` |
+| `antenna-signoff` | a stage **in this manifest** runs the foundry deck. Not a tool, not a licence, not a deck — all three are already here | two manifests, the second carrying an `antenna-foundry-deck` stage |
+| `metal-density-fill` | `EVR_METAL_FILL` stops defaulting to 0 | two excerpts of `4b_pnr_route_eval.tcl` differing in one digit |
+| `gds-completeness` | a `*_BE` package directory appears in the PDK — the Back-End collateral whose absence empties 424 cell masters | synthetic PDK stand-in trees, the second with a `..._BE` directory |
+| `lvs` | transistor-level CDL over 1 kB for the standard-cell, IO or bond-pad libraries appears | synthetic PDK stand-in trees, the second with a `tcbn65lp*.cdl` |
+| `dynamic-ir-drop` | cell SPICE or cell GDS appears, so a cell-accurate power grid library becomes buildable | synthetic PDK stand-in trees, the second with a `tcbn65lp*.sp` |
+| `io-rail-ir-drop` | the **generated** CPF — the one Innovus reads — declares VDDIO/VSSIO | two `*_gate1.cpf` files differing in one line at column 1 |
+| `full-design-lint-gating` | a stage's `run:` invokes `verif/lint/full/run.sh` | two manifests, the second carrying a `lint-full` stage |
+
+### Provenance and confidence
+
+| fixture set | derived from | confidence |
+|---|---|---|
+| `gap-d2d-tx-clock-boundary-untimed/` | an excerpt of the real `ASIC/genus-innovus/inputs/constraints.sdc` clock-group block (the `set_clock_groups` call and the `_rx_grp`/`_tx_grp`/`_sys_grp` construction are the file's own text); the `refuted` half is that block with Option A applied, which has never been run | high for still-real, **medium for refuted — Option A is a design change nobody has made, so its shape is inferred from `docs/asic/C2_TRANSMIT_GROUP_OPTIONS.md`, not captured** |
+| `gap-antenna-signoff/`, `gap-full-design-lint-gating/` | hand-written miniature manifests, same method as the pre-existing `gap-sta-signoff/`. The probes read only `stages[].id` and `stages[].run`, so the rest is scaffolding | high — the subject is the manifest's own schema, not a tool's output |
+| `gap-metal-density-fill/` | an excerpt of the real `4b_pnr_route_eval.tcl` option block (lines 128-146); the `opt EVR_METAL_FILL` line and the `set_metal_fill`/`add_metal_fill` call site are the file's own text | high |
+| `gap-io-rail-ir-drop/` | modelled on the shape of the real 21-line generated `*_gate1.cpf` (`set_cpf_version` / `set_design` / `create_power_domain` / `create_ground_nets` / `create_power_nets`). **Values synthetic** | medium-high — interface captured, values invented |
+| `gap-gds-completeness/`, `gap-lvs/`, `gap-dynamic-ir-drop/` | **wholly synthetic, deliberately and permanently.** Marker files and invented netlists; device models named `SYNTH_NMOS`/`SYNTH_PMOS` and cells `CELL_SYNTHETIC_*`, corresponding to nothing in any process or library | the shape is the subject; see the two limits below |
+
+**NO VENDOR COLLATERAL, EVER, IN THESE THREE.** This is a public repository and
+these three gaps are *about* vendor collateral. The library prefixes in the
+filenames are the ones already written in `ci/signoff.yaml`; nothing else comes
+from a PDK. If real collateral ever lands on this site the gap closes by `lint`
+going red against the real PDK — **never** by a fixture acquiring real content.
+
+### Two limits these three fixtures do not close
+
+**1. They pin the name, size, type and depth clauses. They cannot pin the
+PLACE.** All three probes are `find ${TSMC_65_HOME} ...`, and `prove` runs them
+with `TSMC_65_HOME=.` inside the sandbox (`_sandbox_env()` in
+`scripts/ci/signoff.py`) so the fixture is authoritative on every host —
+including srv03335, where the real PDK is installed and would otherwise decide
+the case. The cost is that nothing proves the probe looks at the right root.
+A real PDK root is not stageable here, and that is the residual risk.
+
+**2. An unset `${TSMC_65_HOME}` makes those probes search the working tree, and
+`lint` calls the result "still real".** Empty expansion, GNU `find` falls back
+to `.`, and on any host with no PDK the verdict is a statement about this
+repository offered as a statement about the PDK. **This bit on the day the
+fixtures were written**: the first cut put `gap-dynamic-ir-drop`'s synthetic
+`.sp` at repo depth 7, inside that probe's `-maxdepth 8`, and lint reported
+`dynamic-ir-drop STALE — refuted_by SUCCEEDED` over a gap that is wide open. The
+three PDK fixtures are now held clear by DEPTH, per-gap arithmetic recorded in
+each `FIXTURE_NOTE.md`:
+
+| gap | probe `-maxdepth` | depth in the sandbox | depth from the repo root |
+|---|---|---|---|
+| `gap-gds-completeness` | 4 | **3** (inside) | **7** (outside) |
+| `gap-lvs` | 6 | **4** (inside) | **8** (outside) |
+| `gap-dynamic-ir-drop` | 8 | **6** (inside) | **10** (outside) |
+
+Moving or adding anything under `pdk-stand-in/` means redoing that arithmetic
+and running **both** `prove` and `lint` — `prove` alone cannot see this failure,
+because it never runs the probe from the repository root. The real fix is a
+probe that exits 2 (UNVERIFIABLE) when the variable is unset instead of silently
+searching the tree; the replacement text is in
+`ci/fixtures/PROPOSED_GAP_PROBES.yaml`, unapplied because `ci/signoff.yaml` is
+written by other sessions.
+
+### Probes that discriminate but measure a proxy
+
+Recorded here rather than silently strengthened: tightening a probe is a
+decision about what closing the gap *means*, and belongs to whoever owns the
+entry. All four are written up with replacement text in
+`ci/fixtures/PROPOSED_GAP_PROBES.yaml`.
+
+* **`d2d-tx-clock-boundary-untimed` reports the gap CLOSED if `constraints.sdc`
+  is missing.** `! grep -qF ... file` maps grep's error status 2 onto 0 exactly
+  as it maps 1 onto 0, so an unreadable file prints `STALE — refuted_by
+  SUCCEEDED`. Measured. The `prove` harness offers two cases per gap and both
+  must supply the file, so no fixture here can catch it.
+* **`metal-density-fill` tests a default in a script; the claim is about a
+  stream.** A run invoked with `-EVR_METAL_FILL 1` fills a stream while the
+  probe still exits 1; flipping the default refutes the gap before any filled
+  stream exists.
+* **`gds-completeness` tests the root cause, not the consequence.** BE packages
+  arriving does not by itself put transistors in the stream — the design would
+  have to be re-streamed. Over-eager in the STALE direction, which a human reads.
+* **`antenna-signoff` and `full-design-lint-gating` test a NAME, not a
+  behaviour**, and a crash in either reads as "still real". `s['id']` raises
+  KeyError on a stage with no id; `s.get('run','')` raises TypeError on `run:`
+  written with no value; CPython exits 1 on both, and 1 is the one status `lint`
+  reads as "asked, and not refuted". Measured against a three-line malformed
+  manifest.
+* **`dynamic-ir-drop`'s reason makes two claims and the probe tests one.** The
+  collateral half is probed; *"no switching activity anywhere in this flow — no
+  SAIF, no VCD"* is not, so cell SPICE arriving would refute the whole entry
+  while the activity half stayed true.
+
+### Adding a gap fixture
+
+`prove` finds them by convention — no manifest entry, so nothing forces one to
+exist. Build `still-real/` from the site AS IT IS (never a synthetic
+impossibility; the still-real half is the one an auditor will read as a
+description of this project), build `refuted/` by changing **one** thing, and
+put near-miss decoys in both so the pair isolates a single clause. Then run
+`signoff.py prove` **and** `signoff.py lint`.
