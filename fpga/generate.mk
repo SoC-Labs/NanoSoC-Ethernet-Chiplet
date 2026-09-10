@@ -127,7 +127,84 @@ bootstrap-status:
 	else \
 	  echo "  All five tiers present. \`make check\` then \`make all\`."; \
 	  echo ""; \
+	  phcs="$(PHC_REPO_DIR)"; phcn="$$P/nanosoc-multicore-system/ptp-hardware-clock-ahb"; \
+	  cs=$$(git -C "$$phcs" rev-parse --short HEAD 2>/dev/null); \
+	  cn=$$(git -C "$$phcn" rev-parse --short HEAD 2>/dev/null); \
+	  if [ -n "$$cs" ] && [ -n "$$cn" ] && [ "$$cs" != "$$cn" ]; then \
+	    echo "  WARNING  phc_ip is built from an UNPINNED source, and the two differ:"; \
+	    echo "             PHC_REPO_DIR (sibling, no sha recorded) $$phcs @ $$cs"; \
+	    echo "             pinned submodule                        $$phcn @ $$cn"; \
+	    echo "           Only phc_ip is affected - the chiplet's own PHC RTL resolves"; \
+	    echo "           through the pinned submodule. But a clone gets $$cn and this"; \
+	    echo "           host packages $$cs, so the two do not build the same phc_ip."; \
+	    echo "           Deliberately NOT switched here: which commit is correct is a"; \
+	    echo "           design decision, and silently changing it would change what"; \
+	    echo "           ships. See fpga/REBUILD.md step 5."; \
+	  fi; \
+	  echo ""; \
 	  echo "  NOTE none of this proves the packaged IP is the V2 build. Packaging"; \
 	  echo "  outside \`make package_eth_chiplet_ip\` silently substitutes the V1"; \
 	  echo "  GPIO-PHY and still compiles - REBUILD.md step 5 has the tell."; \
 	fi
+
+#-----------------------------------------------------------------------------
+# ip-phy-check - is the packaged IP the V2 build, or the silent V1 substitute?
+#
+# THE TRAP THIS EXISTS FOR, measured 2026-09-10.
+# tidelink/fpga/vivado_ip/nanosoc_eth_chiplet_filelist.tcl:146-148 DELETES the
+# v2 flist the Makefile wrote seconds earlier, and line 57 then falls back to
+# the V1 list SILENTLY - exit 0, no warning. The result is a different SoC: the
+# whole GPIO-PHY generation is substituted, six PHY framing files vanish, and
+# the include directory moves from tidelink-phy to tidelink-gpio-phy. It
+# compiles clean and reaches a bitstream.
+#
+# The make recipe's regeneration step is the only thing preventing it, so
+# anyone who sources the packaging TCL directly, re-runs it under another
+# driver, or resumes a failed run gets a V1 chiplet. This project does not
+# control that file - it lives in a submodule shared with the compute chiplet -
+# so instead of relying on the trap being fixed, it DETECTS the result.
+#
+# TESTED BY NAME, NOT BY COUNT. The reported tell is 601/20/4 sources against
+# 597/19/1, but a count moves whenever the design does and would then need
+# updating in lockstep - a check that has to be maintained to keep working is
+# one that stops working. File presence is a direct fact about which PHY got
+# packaged.
+#
+# TWO-SIDED on purpose: it requires the V2 files present AND the V1-only file
+# absent. A one-sided test passes on an IP that somehow contains both, which is
+# the shape a half-finished repackage leaves behind.
+#-----------------------------------------------------------------------------
+IP_PHY_V2_MARKERS := WlinkGPIOPHY_v2.v tidelink_lane_deskew_v2.sv \
+                     tidelink_phy_align_calibrator_v2.sv WavD2DGpio_v2.v
+IP_PHY_V1_MARKER  := tidelink_eye_regs.sv
+
+## ip-phy-check: prove the packaged IP is the V2 PHY build, not the silent V1 one
+##   Runs before synth. Reads only - no Vivado, no licence, under a second.
+.PHONY: ip-phy-check
+ip-phy-check:
+	@bad=""; root=""; \
+	for d in $(IP_REPOS); do [ -d "$$d" ] && root="$$root $$d"; done; \
+	if [ -z "$$root" ]; then \
+	  echo "ip-phy-check: no IP_REPOS directory exists yet - nothing to check."; \
+	  echo "  This is not a pass. Run \`make bootstrap-status\`."; exit 0; fi; \
+	for m in $(IP_PHY_V2_MARKERS); do \
+	  if ! find $$root -name "$$m" 2>/dev/null | grep -q .; then bad="$$bad $$m"; fi; \
+	done; \
+	v1=$$(find $$root -name '$(IP_PHY_V1_MARKER)' 2>/dev/null | head -1); \
+	if [ -n "$$bad" ] || [ -n "$$v1" ]; then \
+	  echo "FAIL: the packaged IP is NOT the V2 PHY build." >&2; \
+	  [ -n "$$bad" ] && echo "      missing V2 file(s):$$bad" >&2; \
+	  [ -n "$$v1" ]  && echo "      found V1-only file: $$v1" >&2; \
+	  echo "" >&2; \
+	  echo "      The packaging TCL falls back to the V1 GPIO-PHY silently when" >&2; \
+	  echo "      its v2 flist is absent - which it deletes itself. A V1 chiplet" >&2; \
+	  echo "      compiles clean and reaches a bitstream, so nothing downstream" >&2; \
+	  echo "      would have told you." >&2; \
+	  echo "" >&2; \
+	  echo "      Repackage through the make target, never the TCL directly:" >&2; \
+	  echo "        make -C tidelink/fpga package_eth_chiplet_ip" >&2; \
+	  echo "      See fpga/REBUILD.md step 5." >&2; \
+	  exit 1; fi; \
+	echo "  ip-phy-check: V2 PHY confirmed ($(words $(IP_PHY_V2_MARKERS)) markers present, V1 marker absent)"
+
+synth: ip-phy-check
