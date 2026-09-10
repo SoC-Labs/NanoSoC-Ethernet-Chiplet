@@ -335,7 +335,36 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     # In-flow floor 0, as justified above. The ceiling is 20 against 11 MEASURED
     # on 2026-08-26: enough room for a floorplan nudge, not enough to hide a new
     # family of sites.
-    set PG_V3R4_EXPECT {0 20}
+    # WIDENED 2026-09-09 FOR THE add-vias TOPOLOGY, deliberately and with the
+    # basis written down, because the census asked for exactly that.
+    #
+    # vt3pg-20260909 stopped here at 55 against 0..20. That was the census doing
+    # its job: its stated purpose is to catch "nobody noticed the topology
+    # moved", and EVP_PG_ADD_VIAS=markers moved it. The pass adds ~1,401 PG
+    # vias; M4 crossings of a merged-macro footprint went 4,273 (the 2026-08-26
+    # derivation) to 4,420, and every one of the 55 located sites is a
+    # `special_via` -- the object class add-vias creates. This is more of the
+    # same family, not a new one: the 55 sit on the same merged macros
+    # (eth_rom_via, flash_cache_*, rf_*) named in the original measurement.
+    #
+    # 55 CANDIDATES IS NOT 55 VIOLATIONS, and the census says so in its own
+    # header. The deck's escape clause counts VIA3 cuts that are VENDOR geometry
+    # inside the merged macro, which Innovus has no object for, so a candidate
+    # cannot be evaluated here. The measured funnel on this design is
+    # 36,029 -> 4,273 -> 11 -> 1: Calibre reports ONE VIA3.R.4:M4 result.
+    #
+    # WHAT IS THEREFORE NOT CLAIMED: that the violation count is still 1. Only
+    # Calibre can say, and this flow does not run it. What IS known is that the
+    # defect is closed post-route by the marker-driven ECO
+    # (pg_drc_via3r4_m4_narrow.tcl, proven 738 -> 737 on two lineages), which is
+    # fed the run's own .drc.results and is not in this flow either way. A run
+    # that streams without it ships VIA3.R.4:M4 >= 1 with or without add-vias.
+    #
+    # THE CEILING IS 60, NOT 55. Setting it to the number this run produced is
+    # the "budget set to the day's number" antipattern -- it would refuse the
+    # next run for one extra via. 60 is 55 plus the ~10% headroom the add-vias
+    # site count varies by, and it still refuses a step change.
+    set PG_V3R4_EXPECT {0 60}
     # THE SCRIPT REFUSES WITHOUT AN ARTEFACT PATH, deliberately -- a census
     # nobody can read afterwards is not evidence. In-flow that refusal must not
     # become a way to lose a five-hour build to an unset variable, so the same
