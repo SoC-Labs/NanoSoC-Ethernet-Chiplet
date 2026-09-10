@@ -60,8 +60,7 @@ proc delete_obj {v} {
     set i [lsearch -exact $::LIVE $v] ; if {$i>=0} { set ::LIVE [lreplace $::LIVE $i $i] }
 }
 proc pgg_rects {s} { return $s }
-proc pgg_nums {r} { return $r }
-proc _pg_f4 {r} { return $r }
+proc pgg_nums {s} { return [regexp -all -inline {[-+0-9.eE]+} $s] }
 proc pgg_pt_in {rl x y {tol 1e-9}} {
     foreach r $rl {
         lassign $r a b c d

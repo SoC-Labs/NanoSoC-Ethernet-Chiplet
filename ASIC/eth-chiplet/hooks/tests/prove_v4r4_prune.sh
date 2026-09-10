@@ -61,7 +61,12 @@ drv = src[src.index("# --- EDIT 1 ---"):src.index("# --- EDIT 2 ---")]
 drv = drv.split("    if {$PG_DRC_DRY_RUN} {")[0] + "\n}\n"
 for tok in ("PRUNE", "_pg_v4r4_added_neighbour", "UNFIXABLE"):
     if tok not in drv: sys.exit("prove_v4r4_prune: driver carries no %s -- nothing to test" % tok)
-procs = ["_pg_v4_key", "_pg_v4r4_fits2", "_pg_added_m5_faces", "_pg_v4r4_added_neighbour"]
+# _pg_f4 and _pg_f2 are lifted REAL, not stubbed. The fixtures used to stub
+# _pg_f4 as identity, which made them structurally unable to see that a POINT
+# had been handed to the RECT formatter -- the bug that aborted vt3pg-20260909.
+# A fixture that stubs the proc which fails cannot fail with it.
+procs = ["_pg_v4_key", "_pg_v4r4_fits2", "_pg_added_m5_faces",
+         "_pg_v4r4_added_neighbour", "_pg_f4", "_pg_f2"]
 open(W + "/unit.tcl", "w").write("\n\n".join(grab(n) for n in procs) + "\n\n" + drv)
 PY
 [ $? -eq 0 ] || exit 2

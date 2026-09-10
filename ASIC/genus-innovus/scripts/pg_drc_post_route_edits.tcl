@@ -140,6 +140,12 @@ proc _pg_rect_is {r x1 y1 x2 y2} {
 proc _pg_ceil_grid {v g} { return [expr {ceil($v/$g - 1e-9)*$g}] }
 proc _pg_die {} { return [lrange [pgg_nums [get_db current_design .bbox]] 0 3] }
 proc _pg_f4 {r} { return [format "%.3f %.3f %.3f %.3f" {*}[lrange [pgg_nums $r] 0 3]] }
+# A POINT is two numbers, not four. `.point` returns x y; _pg_f4 above formats a
+# RECT and its `format` raises "not enough arguments for all format specifiers"
+# when handed one. That is not hypothetical: it aborted vt3pg-20260909 at the
+# first prune deletion, five minutes into a place stage, on a run whose whole
+# purpose was to execute this code.
+proc _pg_f2 {p} { return [format "%.3f %.3f" {*}[lrange [pgg_nums $p] 0 1]] }
 # Does a located box coincide with one of the recorded lineage boxes?
 proc _pg_lineage {box lst {tol 0.002}} {
     lassign [pgg_nums $box] a b c d
@@ -857,7 +863,7 @@ if {$PG_DRC_V4R4} {
             foreach d $_del {
                 lassign $d v why C L
                 _pg_say [format "  VIA4.R.4 PRUNE pass%d: deleting %s at %s net %s -- %s" \
-                    $_pass [get_db $v .via_def.name] [_pg_f4 [get_db $v .point]] \
+                    $_pass [get_db $v .via_def.name] [_pg_f2 [get_db $v .point]] \
                     [get_db $v .net.name] $why]
                 delete_obj $v
                 incr _pruned
