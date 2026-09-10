@@ -73,3 +73,61 @@ $(XDC_CLOCKS_GEN): $(XDC_TIMING)
 # The stages that need it. flist does not read constraints, but generating here
 # means a broken filter is found in seconds rather than after synthesis starts.
 flist synth: $(XDC_CLOCKS_GEN)
+
+#-----------------------------------------------------------------------------
+# bootstrap-status - where am I in the rebuild chain?
+#
+# A clean clone of this project CANNOT build it: the SoC arrives as packaged IP
+# that is gitignored, and reaching that needs four tiers of generated inputs.
+# Two of the four must stay untracked - one holds per-machine tool roots and
+# resolves an Arm IP release path into a PUBLIC repository, the other is 2626
+# files of Arm generator output that are not ours to redistribute. So the chain
+# is documented (fpga/REBUILD.md) rather than committed, and this target says
+# where you are in it.
+#
+# READ-ONLY. Generates nothing, takes no licence, and names the ONE command for
+# the first tier that is missing rather than listing all of them - a reader
+# facing five commands does not know which one to run.
+#-----------------------------------------------------------------------------
+.PHONY: bootstrap-status
+bootstrap-status:
+	@echo "Rebuild chain for $(BLOCK) - see fpga/REBUILD.md for why each step exists."
+	@echo ""
+	@fail=""; \
+	chk() { \
+	  if [ -n "$$3" ]; then printf '  %-4s %-34s %s\n' "ok" "$$1" "$$2"; \
+	  else printf '  %-4s %-34s %s\n' "MISS" "$$1" "$$2"; \
+	       [ -z "$$fail" ] && fail="$$4"; fi; \
+	  FAILCMD="$$fail"; \
+	}; \
+	P=$(PROJECT_ROOT); T=$$P/tidelink; \
+	n_site=$$([ -f $$T/site.env ] && echo x); \
+	n_xhb=$$(find $$T/deps/xhb500/generated -type f 2>/dev/null | head -1); \
+	n_soc=$$(find $$P/nanosoc-multicore-system/build_soc/rtl -type f 2>/dev/null | head -1); \
+	n_f=$$([ -f $$P/build/elab/soc_vcs.f ] && echo x); \
+	n_ip=$$(for d in $(IP_REPOS); do [ -d "$$d" ] && echo x && break; done); \
+	fail=""; \
+	chk "1. tidelink/site.env"            "per-machine tool + Arm IP roots"   "$$n_site" "cp tidelink/site.env.example tidelink/site.env && edit it"; \
+	fail="$$FAILCMD"; \
+	chk "2. deps/xhb500/generated"        "Arm XHB-500 generator output"      "$$n_xhb"  "source tidelink/set_env.sh"; \
+	fail="$$FAILCMD"; \
+	chk "3. build_soc/rtl"                "nanosoc_gen render of sys_desc"    "$$n_soc"  "make -C nanosoc-multicore-system soc"; \
+	fail="$$FAILCMD"; \
+	chk "4. build/elab/soc_vcs.f"         "flattened flist (no licence needed)" "$$n_f"  "python3 flist/flatten_soc_flist.py ... (or make elab, which also runs VCS)"; \
+	fail="$$FAILCMD"; \
+	chk "5. IP_REPOS"                     "the SoC as packaged Vivado IP"     "$$n_ip"  "make -C tidelink/fpga package_eth_chiplet_ip"; \
+	fail="$$FAILCMD"; \
+	echo ""; \
+	if [ -n "$$fail" ]; then \
+	  echo "  NEXT: $$fail"; \
+	  echo ""; \
+	  echo "  Only the first missing tier is named on purpose. Each one feeds the"; \
+	  echo "  next, so a list of five commands would not tell you which to run."; \
+	  exit 1; \
+	else \
+	  echo "  All five tiers present. \`make check\` then \`make all\`."; \
+	  echo ""; \
+	  echo "  NOTE none of this proves the packaged IP is the V2 build. Packaging"; \
+	  echo "  outside \`make package_eth_chiplet_ip\` silently substitutes the V1"; \
+	  echo "  GPIO-PHY and still compiles - REBUILD.md step 5 has the tell."; \
+	fi
