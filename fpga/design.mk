@@ -584,6 +584,14 @@ BD_GLOBAL_SYNTH ?= 1
 # most volatile of the three - it was last rewritten 2026-08-21.
 XDC_TIMING ?= $(LEGACY_TARGET_DIR)/kr260_eth_chiplet_tidelink_timing.xdc
 
+# XDC_CLOCKS - the clock definitions for SYNTHESIS, GENERATED from XDC_TIMING.
+# The VALUE is declared here; the RULE that builds it lives in generate.mk,
+# which the Makefile includes AFTER mk/flow.mk. It has to: a rule's target is
+# expanded when the rule is parsed, and BUILD_DIR is an engine variable that
+# does not exist until flow.mk has been read. See generate.mk for the argument.
+XDC_CLOCKS_GEN = $(BUILD_DIR)/gen/kr260_eth_chiplet_clocks.xdc
+XDC_CLOCKS    ?= $(XDC_CLOCKS_GEN)
+
 # DRC severities and the ALLOW_COMBINATORIAL_LOOPS waiver for the XHB500
 # HREADY loopback.  Implementation only.
 XDC_DRC ?= $(LEGACY_TARGET_DIR)/kr260_eth_chiplet_tidelink_drc.xdc

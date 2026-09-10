@@ -39,3 +39,9 @@ FPGA_DIR := $(CURDIR)
 
 include $(FPGA_DIR)/design.mk
 include $(FPGA_FLOW_DIR)/mk/flow.mk
+
+# The inputs this project DERIVES rather than hand-maintains. LAST, and after
+# mk/flow.mk on purpose: a rule's target is expanded when the rule is parsed,
+# and every path in there names an engine variable that does not exist until
+# the line above has been read.
+include $(FPGA_DIR)/generate.mk
