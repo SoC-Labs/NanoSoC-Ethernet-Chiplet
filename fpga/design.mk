@@ -307,8 +307,21 @@ SYS_CLK_FREQ_HZ ?= 25000000
 #
 # The honest state is: the flist HAS a generator, the generator is not
 # separable from a simulator run today, and until it is, the two .f files are
-# treated as inputs whose freshness is the caller's problem.  `make check`
-# reports their absence via the flist scan rather than pretending otherwise.
+# treated as inputs whose freshness is the caller's problem.
+#
+# THIS PARAGRAPH USED TO CLAIM "`make check` reports their absence via the flist
+# scan rather than pretending otherwise". THAT WAS FALSE, and it was false in
+# the worst direction: it named a check that does not happen, which is the one
+# reason someone would trust the check to catch it. RTL_FLIST for this target is
+# board_glue.flist - ONE line, no `-f` includes at all - so there is nothing for
+# the flist scan to follow and `make flist` succeeds whether or not those two
+# .f files have ever existed. Found 2026-09-10 by a clean-checkout run that
+# reached synthesis without them.
+#
+# They are not needed by THIS target. The SoC arrives through IP_REPOS as
+# packaged IP, not through the flist. If a future target reads them directly
+# then the -f-include walk in `make check` WILL report them missing - that
+# machinery is real - but nothing in this manifest exercises it today.
 RTL_FLIST_GEN ?=
 
 # The flist carries its own +incdir+ for src/rtl.  Nothing extra is needed.
