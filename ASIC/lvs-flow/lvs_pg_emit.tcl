@@ -539,9 +539,23 @@ foreach ly $layers {
 }
 
 if {[llength $rows] == 0} {
-    lvs_pg_die "nothing to append: every requested layer already names its special\
-                \n      nets. If the layout still streams without PG text, the cause\
-                \n      is elsewhere -- check the LVS deck's TEXT LAYER statements."
+    # NOT an error, and this used to be a hard stop -- ported from the toolkit
+    # copy 2026-09-10. A map that ALREADY carries `NAME <layer>/SPNET` rows is
+    # the obvious thing for a project to point LVS_PG_MAP_IN at, so this path is
+    # normal rather than exceptional. Nothing downstream needs a non-empty
+    # $rows: it is consumed by a bare `foreach` that appends, and
+    # LVS_PG_STRIP_OBS is handled separately, so the output map is still written
+    # correctly and the summary reports "0 SPNET row(s) appended".
+    #
+    # THIS WAS LIVE, NOT LATENT. The legacy path sets
+    # `LVS_PG_MAP_IN ?= $(PDK_GDSMAP)` (lvs_project.mk:264) and that map carries
+    # 10 SPNET rows -- measured 2026-09-10 -- so this die could fire on the one
+    # path that still reaches this copy of the file.
+    lvs_pg_warn "no SPNET rows appended: the input map already names its special\
+                 \n      nets on every requested layer. That is this step's goal, so\
+                 \n      this is success, not a failure -- continuing.\
+                 \n      If the layout still streams without PG text, the cause is\
+                 \n      elsewhere: check the LVS deck's TEXT LAYER statements."
 }
 
 # The LEFPIN name rows. Same shape as the SPNET block above, derived from the
@@ -585,11 +599,21 @@ if {$pin_text} {
     }
 
     if {[llength $pin_rows] == 0} {
-        lvs_pg_die "LVS_PG_PIN_TEXT=1, but every requested layer already names its\
-                    \n      LEF macro pins in $map_in. Boxed leaves should already be\
-                    \n      extracting with named pins; if they are not, the cause is\
-                    \n      elsewhere -- check the LVS deck's TEXT LAYER statements and\
-                    \n      that the stream really passed -output_macros."
+        # NOT an error -- same reasoning as the SPNET block above, ported from
+        # the toolkit copy 2026-09-10. Reachable only when every layer took the
+        # `continue`, i.e. the input map already names its LEF macro pins
+        # everywhere: the postcondition is already true.
+        #
+        # The tsmc65 pack map carries no `NAME <layer>/LEFPIN` rows, so this
+        # block appends normally there. It tolerates the empty case anyway: the
+        # ONLY thing separating it from the SPNET case is which purpose a given
+        # pack's map happens to name.
+        lvs_pg_warn "no $pin_purpose rows appended: the input map already names\
+                     \n      its LEF macro pins on every requested layer. That is this\
+                     \n      step's goal, so this is success, not a failure -- continuing.\
+                     \n      If boxed leaves still extract without named pins, the cause\
+                     \n      is elsewhere -- check the LVS deck's TEXT LAYER statements\
+                     \n      and that the stream really passed -output_macros."
     }
 }
 

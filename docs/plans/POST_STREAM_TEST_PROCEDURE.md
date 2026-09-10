@@ -184,7 +184,7 @@ the same flow with `LVS_PG` on reconciled 268,171 nets against our 62,493.
 ### 7a. Turn the coverage on
 
 ```bash
-make -C $W/ASIC/eth-chiplet lvs_pg_gds RUN_TAG=$TAG LVS_PG=1 LVS_PG_PIN_TEXT=1
+make -C $W/ASIC/eth-chiplet lvs-pg-gds RUN_TAG=$TAG LVS_PG=1 LVS_PG_PIN_TEXT=1
 make -C $W/ASIC/eth-chiplet lvs-batch  RUN_TAG=$TAG LVS_PG=1
 ```
 
