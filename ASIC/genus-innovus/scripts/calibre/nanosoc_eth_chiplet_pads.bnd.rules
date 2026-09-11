@@ -34,13 +34,44 @@
 // Every pad-row-derived check then evaluates against nothing. THE ~200 ZEROS
 // WERE A FABRICATED CLEAN, not a pass.
 //
-// PITCH_70_STAGGER is the right one, on two independent pieces of evidence:
-//   - we instantiate PAD70GU and PAD70NU (place_bondpads.tcl:140-165), i.e.
-//     70um-pitch bond pads; the library's single-in-line variants PAD70GU_SL /
-//     PAD70NU_SL are NOT used.
-//   - floorplan.tcl:11 -- the bond ring is staggered, PAD70GU outer and PAD70NU
-//     inner. Two rows = staggered, not single-in-line.
-#DEFINE PITCH_70_STAGGER
+// STAGGER is right. THE NUMBER WAS WRONG, AND THE REASONING WENT STALE.
+//
+// What this file used to say, and why it no longer holds:
+//   "we instantiate PAD70GU and PAD70NU ... the library's single-in-line
+//    variants PAD70GU_SL / PAD70NU_SL are NOT used."
+// That was TRUE when written on 2026-08-17. On 2026-08-21, four days later,
+// commit 66a2f69 swapped every bond pad to the _SL cells -- all 8 create_inst
+// calls in place_bondpads.tcl are _SL today and none is not. The justification
+// outlived the design it described. (It also mislabels them: _SL is "slim",
+// SIZE 25.000 against the plain cells' 30.000, chosen so the pads origin-align
+// with the 25.000-wide IO cells and clear imec's 82 abutment errors. It is not
+// "single-in-line", and reading it that way is how a cell name came to stand in
+// for a measurement.)
+//
+// A CELL NAME IS NOT A PITCH. PAD70* is a part number; the pitch is wherever
+// place_bondpads.tcl actually puts the pads. MEASURED, from imec's own ERC pad
+// table (ASIC/imec_results/PadShorts/ERCresults_..._WithSealRing.txt, 82 pads
+// with x/y for each):
+//   - two rows per edge -- left at x=56 and x=158, right at x=1481 and x=1583
+//     -- which is what "staggered" means and confirms the STAGGER half.
+//   - in-row spacing a uniform 134 (12 of 12 gaps on the left edge, no spread).
+//   - two interleaved rows at 134 in-row => an effective bond pitch of 67.
+//
+// The deck's own switch block (in whatever $BND_FOUNDRY_DECK resolves to on
+// your site -- lines 22-26 there; read it in your PDK, not reproduced here) defines each family as a MINIMUM pitch, not
+// a nominal one: the 60 family wants at least 60, the 70 family at least 70,
+// the 80 family at least 80. 67 satisfies only the first. PITCH_70_STAGGER --
+// what this file used to set -- and PITCH_80_STAGGER -- what imec has run on
+// every submission to date, rc4's grading run included -- both demand a COARSER
+// pitch than this design has, so both check pad openings against rules written
+// for pads further apart than ours are. That direction under-checks.
+//
+// WHAT THIS DOES NOT DO. It does not make the pad-opening rules meaningful
+// here: the passivation-opening layer is absent from our stream (see below), so
+// those checks stay silent rather than becoming clean. This corrects the rule
+// family so that the day the openings do appear, they are measured against the
+// right one. The imec-side switch is not ours to set and remains an open ask.
+#DEFINE PITCH_60_STAGGER
 //
 // CORRECTION to what this file used to claim: it said a single-pad switch was
 // "a switch left at the foundry default". That was wrong. The lines it cited are
