@@ -85,6 +85,53 @@
 ## and is now worth diffing against it, because -fix_drc "leaves a gap" whenever
 ## it cannot swap a violating filler for a legal one.
 
+## ── WHAT THIS FILE LEAVES BEHIND FOR THE STAGE'S GATE ────────────────────
+##
+##   ::filler(problems)   findings the calling stage must lift into its hard
+##                        list, one string per finding, empty on a clean run.
+##
+## A STEP CANNOT FAIL ITS OWN RUN, and must not try. This file is sourced from
+## place_bondpads.tcl, i.e. BEFORE the bond pads, the stream, the reports and
+## the stage's verdict exist. An `error` or an `exit` here would delete the
+## record of the very thing it is reporting, and the checkpoint it would fall
+## back to is a routed database with no fill in it — not the artefact anyone
+## wants to debug from. So this file RECORDS and the stage JUDGES.
+##
+## WHY A LIST AND NOT A FILE. $REPORT_DIR outlives a run, so a gate that read a
+## file would fail today's repaired design on yesterday's leftovers. And ABSENCE
+## would read as clean, which is the same defect one level up: which file does
+## the fill, and whether it runs at all, is a wiring decision that has already
+## changed twice — route_setup.tcl used to source this file, place_bondpads.tcl
+## does now, and ../eth-chiplet/overrides/filler.tcl exists precisely to keep a
+## SECOND fill implementation from running alongside it. A gate keyed on "no
+## file" scores a pass for a step that never ran. The list is built in the
+## process being judged and cannot be stale or absent-by-accident.
+##
+## WHO READS IT. Both stages that judge anything:
+##   engine  the toolkit's flow/innovus/4_route.tcl, section "the fill repair,
+##           and the half of it the ROUTER owns", lifts ::filler(problems) into
+##           its `hard` list. THAT IS THE STAGE THIS CHIPLET ACTUALLY RUNS, and
+##           it is why the identical fix already made to the toolkit's own
+##           flow/steps/filler.tcl would never have fired here: that step is
+##           replaced by the deliberately empty ../eth-chiplet/overrides/
+##           filler.tcl, and the fill arrives instead down BONDPADS_TCL ->
+##           place_bondpads.tcl -> this file.
+##   eval    ../scripts/4b_pnr_route_eval.tcl section 16, the same lift.
+## The third caller — the legacy asic-flows Cadence/4_pnr_route.tcl — judges
+## NOTHING: not this, not check_drc, not check_filler, not check_connectivity,
+## not the antenna report. It has no verdict list to lift into, and giving it
+## one is a change to a shared flow repo, not to this file. Recording is still
+## right there: the list costs nothing, and the day that stage grows a gate it
+## reads the same seam as the other two.
+##
+## Proof that the seam is joined at both ends, and that it fires only when it
+## should: ../eth-chiplet/hooks/tests/prove_filler_route_eco_gate.sh.
+##
+## GUARDED, not a bare `set`. If the empty override is ever deleted, the
+## toolkit's own filler step runs FIRST and initialises this list; clearing it
+## here would silently drop whatever that step had already recorded.
+if {![info exists ::filler(problems)]} { set ::filler(problems) {} }
+
 add_filler_gaps 0.2 -effort high
 
 ## Pass 1 — insert. -check_drc true here is filler-vs-ROUTING only: "If the
@@ -139,15 +186,59 @@ add_fillers -base_cells [list FILL64 FILL32 FILL16 FILL8 FILL4 FILL2 FILL1 ANTEN
 ## If route_eco -target aborts, the run must still finish: the post-route DB was
 ## already checkpointed by the `write_db $block_name` immediately before
 ## place_bondpads.tcl is sourced, but losing the tail costs the bond pads, the
-## stream and every report. So the failure is caught, shouted, and the run
-## continues UNREPAIRED and says so.
+## stream and every report. So the failure is caught, SHOUTED, and RECORDED in
+## ::filler(problems) — the run continues UNREPAIRED, says so, and can no
+## longer come out of the far end reporting success.
+##
+## UNTIL 2026-09-11 THE THREE `puts` BELOW WERE THE WHOLE OF IT. Nothing read
+## them, nothing gated on them, the stage exited 0 and the stream was written
+## from a database whose own error message said not to. The `puts` lines are
+## kept — they are what a human tailing the log sees at the moment of failure,
+## and they are bare `puts` on purpose: this file is sourced by three different
+## harnesses and only two of them define say/warn. The ENFORCEMENT is the
+## lappend.
+##
+## THE STAMP FILE IS EVIDENCE, NOT THE GATE. It carries the tool's own message
+## at the point it was raised, for whoever opens $REPORT_DIR afterwards. It is
+## deleted BEFORE the pass that can write it, so it can only ever describe THIS
+## run — and nothing keys on its absence, for the reasons in the contract note
+## at the top of this file.
+##
+## _bondpads IN THE NAME, and not by accident. The toolkit's own filler step
+## writes ${block_name}_route_eco_FAILED.txt for the same failure. Today it
+## cannot collide, because that step is the empty override — but the override's
+## own header contemplates the day it is deleted, and on that day both fills
+## run, this one second. Sharing the name would mean this file deleting the
+## other one's evidence on the way past and then naming a path that no longer
+## exists. Two repairs, two stamps, and you can tell which one refused.
 ##
 ## FIRST PERSON TO GET A SEAT: run `route_eco -help`, confirm -target, delete
 ## this catch, and record the runtime in this header. A caught error in a
-## signoff flow is a temporary measure, not a design.
+## signoff flow is a temporary measure, not a design. Deleting the catch does
+## NOT delete the gate: an uncaught error here aborts the stage outright, which
+## is a louder failure, not a quieter one.
+set route_eco_stamp $REPORT_DIR/${block_name}_route_eco_FAILED_bondpads.txt
+file delete -force $route_eco_stamp
+
 if {[catch {route_eco -target} route_eco_msg]} {
+    set f [open $route_eco_stamp w]
+    puts $f "route_eco -target FAILED: $route_eco_msg"
+    puts $f ""
+    puts $f "Filler-induced NET-BASED DRC is NOT repaired in this run"
+    puts $f "(IMPSP-5217). Treat the stage's check_drc report as UNREPAIRED,"
+    puts $f "and do not stream this database out for manufacture."
+    close $f
+    lappend ::filler(problems) "route_eco -target FAILED after fill\
+        ($route_eco_msg), so the NET-BASED half of the fill repair did not run\
+        (IMPSP-5217) and this database is UNREPAIRED. add_fillers -fix_drc\
+        repairs filler-vs-CELL only and cannot touch filler-vs-NET; nothing\
+        later in this stage retries it. Read\
+        ${REPORT_DIR}/${block_name}_imp_drc.rep as UNREPAIRED and DO NOT STREAM\
+        THIS DATABASE OUT FOR MANUFACTURE. Evidence: $route_eco_stamp"
     puts "ERROR: route_eco -target FAILED: $route_eco_msg"
     puts "ERROR: filler-induced net-based DRC is NOT repaired in this run (IMPSP-5217)."
     puts "ERROR: treat ${REPORT_DIR}/${block_name}_imp_drc.rep as UNREPAIRED."
-    puts "ERROR: do not stream this database out."
+    puts "ERROR: evidence is $route_eco_stamp, and the stage's verdict now"
+    puts "ERROR: carries this as a HARD failure. Do not stream this database"
+    puts "ERROR: out for manufacture."
 }

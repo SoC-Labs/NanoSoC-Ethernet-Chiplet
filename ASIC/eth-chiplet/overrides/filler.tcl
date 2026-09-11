@@ -44,6 +44,27 @@
 # the whole section, so if the project's filler had not run the count is zero and
 # the stage fails - whatever this file says.
 #
+# ── THE OTHER THING THIS FILE SWITCHES OFF, AND WHERE IT WENT ──────────────
+#
+# The toolkit's flow/steps/filler.tcl does more than insert. Its route_eco arm
+# RECORDS a failed net-based fill repair into ::filler(problems), and section
+# "the fill repair, and the half of it the ROUTER owns" in 4_route.tcl lifts
+# that into the stage's hard-failure list. Replacing the step with this file
+# switches that recording off too - so between 2026-09-09, when the toolkit
+# gained it, and 2026-09-11 the engine's reader existed on this design with
+# nothing on this design able to write to it.
+#
+# ../genus-innovus/scripts/filler.tcl now fills that list itself, from the same
+# catch, on the same seam. Nothing needs to change here: the reader is in the
+# engine, the writer is in the file place_bondpads.tcl sources, and this file
+# stays empty. Proof, no licence, about a second:
+#     hooks/tests/prove_filler_route_eco_gate.sh
+#
+# If this file is ever given a body, read that script's contract note first: the
+# toolkit step initialises ::filler(problems) and the project's guards against
+# clobbering it, so the two can coexist in either order - but only in that order
+# of care.
+#
 # ── WHEN TO DELETE THIS FILE ───────────────────────────────────────────────
 #
 # When place_bondpads.tcl no longer sources filler.tcl itself. The engine's slot

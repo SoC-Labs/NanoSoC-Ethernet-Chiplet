@@ -2076,6 +2076,34 @@ if {$EVR_CHECKS} {
     }
 }
 
+# --- the fill repair, and the half of it the ROUTER owns ------------------------
+# ../scripts/filler.tcl - sourced from place_bondpads.tcl in section 9 - runs two
+# repairs after insertion: add_fillers -fix_drc for filler-vs-CELL, and
+# route_eco -target for filler-vs-NET. The second can fail, and it is caught
+# there rather than made fatal for the same reason nothing in section 9 is
+# fatal: a step that dies before the pads takes the stream, the reports and this
+# verdict with it. See that file's contract note for the seam.
+#
+# THIS IS THE LINE THAT MAKES THAT CATCH A GATE on this stage. Until 2026-09-11
+# the finding reached three puts lines in the log and stopped there: nothing read
+# them, and this section went on to write route_gate.txt saying "HARD FAILURES:
+# none" about a database whose own error message said not to stream it.
+#
+# THE DRCF(filler) ARM ABOVE IS NOT A SUBSTITUTE and must not be read as one. It
+# fires only when an unrepaired violation NAMES a FILLER_PD_TOP instance, which
+# is the filler-vs-CELL class -fix_drc owns. The class route_eco owns is
+# filler-vs-NET: those records name the net and the wire, so they land in
+# DRCF(regular) at best and in DRCF(unclassified) at worst - and on a run where
+# route_eco never executed, the repair that would have removed them never ran, so
+# the report cannot be read as a measurement of anything.
+#
+# Hard, not budgeted: an unrepaired net-based violation is not a quantity to
+# ratchet, and this stage cannot say how much of the DRC census above it accounts
+# for.
+if {[info exists ::filler(problems)]} {
+    foreach p $::filler(problems) { lappend hard $p }
+}
+
 # --- antenna -------------------------------------------------------------------
 # Not budgeted. This check has been clean on every run and there is no reason to
 # tolerate a regression: an antenna violation is a gate-oxide damage mechanism.
