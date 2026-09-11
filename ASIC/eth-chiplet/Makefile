@@ -45,3 +45,12 @@ include $(ASIC_DIR)/../floorplan-hazards.mk
 #     make evidence-selftest   prove the gates BOTH directions, no licence
 #     make evidence-vars       what it will do, without doing it
 include $(ASIC_DIR)/../evidence.mk
+
+# Signoff artefacts from a database an ECO produced. LAST, for the same reason
+# the two includes above are: an include cannot see a target collision, and all
+# three of its names were checked against mk/*.mk, design.mk, common.mk,
+# floorplan-hazards.mk, evidence.mk and the root Makefile before being written.
+#
+#     make eco-emit RUN_TAG=<tag>      GDS + netlist from that run's ECO database
+#     make eco-emit-vars RUN_TAG=<tag> what it would do, without doing it
+include $(ASIC_DIR)/../eco.mk
