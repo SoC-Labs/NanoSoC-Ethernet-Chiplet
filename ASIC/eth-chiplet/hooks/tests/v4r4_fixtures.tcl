@@ -36,6 +36,12 @@ array set ::V {
 }
 set ::LIVE {vA vN vB vC vD}
 set ::DELETED {}
+# MUTATION HOOK for _pg_v4r4_prune_check. Empty in every normal scenario --
+# delete_obj behaves for real. Listing an id here makes delete_obj record the
+# call (so _pruned still increments, exactly as it would against a real
+# Innovus API that returned success) WITHOUT actually removing the object,
+# simulating a delete_obj that silently no-ops.
+set ::BREAK_DELETE {}
 
 proc _f {id i} { return [lindex $::V($id) $i] }
 proc get_db {a args} {
@@ -57,6 +63,7 @@ proc get_db {a args} {
 }
 proc delete_obj {v} {
     lappend ::DELETED $v
+    if {[lsearch -exact $::BREAK_DELETE $v] >= 0} { return }  ;# MUTATION: silent no-op
     set i [lsearch -exact $::LIVE $v] ; if {$i>=0} { set ::LIVE [lreplace $::LIVE $i $i] }
 }
 proc pgg_rects {s} { return $s }
@@ -94,8 +101,8 @@ proc _pg_v4r4_seek {} {
 set ::UNIT [lindex $argv 0]
 set ::VERBOSE [expr {[llength $argv] > 1 && [lindex $argv 1] eq "-v"}]
 
-proc scenario {name live added prune want_del want_err} {
-    set ::LIVE $live ; set ::DELETED {}
+proc scenario {name live added prune want_del want_err {break_delete {}}} {
+    set ::LIVE $live ; set ::DELETED {} ; set ::BREAK_DELETE $break_delete
     global PG_V4R4_PRUNE_ADDED
     set PG_V4R4_PRUNE_ADDED $prune
     if {$added eq "none"} { unset -nocomplain ::EVP_PGAV_ADDED } else { set ::EVP_PGAV_ADDED $added }
@@ -123,7 +130,38 @@ foreach r [list \
  [scenario "prune armed, power_plan published nothing -> refuse"            {vA vN vB vC vD} none 1 0 "does not exist"] \
  [scenario "key drift: added-set non-empty, matches no via -> refuse"       {vA vN vB vC vD} {NOPE@0.0000,0.0000#VIA4 1} 1 0 "drifted"] \
  [scenario "added via exists but is NOT in the arming plate -> no neighbour"  {vA vN vE vD} {VDD@400.0000,900.0000#VIA5 1} 1 0 "cannot be repaired"] \
+ [scenario "delete_obj silently no-ops on vB -> prune-check catches it"     {vA vN vB vC vD} $AN  1 4 "did not actually remove the via" {vB}] \
 ] { if {$r} { incr pass } else { incr fail } }
+
+# THE POINT OF THE SCENARIO ABOVE. Its final count (2: vB survives the no-op,
+# vD is the untouched lineage site) sits INSIDE the default PG_V4R4_EXPECT
+# {0 2} -- so the range check this project already had would have shipped it
+# silently. Prove that with the fixture's own (simplified but faithful)
+# _pg_range_check, not just assert it in a comment.
+puts "  --- proof that PG_V4R4_EXPECT {0 2} alone would NOT have caught the mutation above"
+if {[catch { _pg_range_check "VIA4.R.4:M5" 2 {0 2} } _rc_e]} {
+    puts "  BAD: _pg_range_check(final=2, {0 2}) unexpectedly errored: $_rc_e" ; incr fail
+} else {
+    puts "  ok: _pg_range_check(final=2, {0 2}) does not error -- PG_V4R4_EXPECT is\
+blind here; _pg_v4r4_prune_check (baseline+deletions, derived) is what catches it"
+    incr pass
+}
+
+puts "  --- prune-check arithmetic (baseline + prune deletions, derived, not a literal)"
+foreach c [list \
+    [list "all attributed, none left over"      4 3 1 0] \
+    [list "one deletion did not stick"          4 3 2 1] \
+    [list "prune never ran: baseline==final"    4 0 4 0] \
+    [list "impossible without a bug: must fire" 4 0 5 1] \
+    [list "every site resolved"                 4 4 0 0] \
+] {
+    lassign $c tag n0 pruned nfinal want_err
+    set got_err [expr {[catch { _pg_v4r4_prune_check $n0 $pruned $nfinal }] ? 1 : 0}]
+    set ok [expr {$got_err == $want_err}]
+    puts [format "  %-58s n0=%d pruned=%d final=%d err=%d/%d %s" \
+        $tag $n0 $pruned $nfinal $got_err $want_err [expr {$ok?"ok":"BAD"}]]
+    if {$ok} { incr pass } else { incr fail }
+}
 
 puts "  --- fit predicate (two cuts need 2*0.100 + VIA4_S_1 = 0.300)"
 foreach c [list [list vA-0.220x0.190 [_f vA 7] [_f vA 8] 0] \

@@ -245,6 +245,50 @@ proc _pg_range_check {what n rng {note ""}} {
     }
 }
 
+# DERIVED FROM THE RUN'S OWN NUMBERS, NOT A LITERAL. n0 is the pre-prune
+# census (the seek count BEFORE the prune loop deletes anything) and pruned
+# is the count of vias this pass actually deleted -- both already computed by
+# the driver for other reasons, so this costs nothing extra to measure.
+#
+# THE INVARIANT. Every deletion the prune makes is credited with resolving
+# exactly one site: a self-deletion (case a) removes a hit's own via, and a
+# neighbour-deletion (case b) is only made because it is causally why some
+# OTHER hit's wide plate exists (see _pg_v4r4_added_neighbour) -- delete it
+# and that hit stops qualifying. So a prune that is doing what it believes it
+# is doing can never leave MORE than n0-pruned sites behind. Leaving fewer is
+# fine (a neighbour deletion can resolve more than the one site it was aimed
+# at, if the same plate armed two candidates) -- only MORE is a refusal.
+#
+# WHAT THIS CATCHES THAT PG_V4R4_EXPECT CANNOT. PG_V4R4_EXPECT bounds the
+# ABSOLUTE final count against a human-judged tolerance (see the comment
+# above where the hook sets it), and that tolerance has to stay a literal --
+# derive it from this run's own baseline and, with the prune off, baseline
+# and final are the SAME number by construction, so a baseline-derived
+# ceiling would be unconditionally true and could never fire. This check is
+# orthogonal and does not replace it: it says nothing about how many sites
+# are tolerable, only whether the deletions this pass THINKS it made actually
+# reduced the count by as much as it is claiming. A delete_obj that silently
+# no-ops (wrong object, a stale handle, a future Innovus API change) leaves
+# the via in the database -- the next re-seek finds it again, a second pass
+# may try to delete it again, and the final count can still land inside a
+# perfectly reasonable-looking range. PG_V4R4_EXPECT would not notice; this
+# does.
+proc _pg_v4r4_prune_check {n0 pruned n_final} {
+    set ceil [expr {$n0 - $pruned}]
+    if {$n_final > $ceil} {
+        error "VIA4.R.4:M5 prune: baseline $n0 site(s), $pruned via(s) deleted,\
+               so at most $ceil site(s) should remain -- the post-prune seek\
+               still finds $n_final.\n   \
+               This means at least one deletion this pass believed it made did\
+               not actually remove the via (delete_obj no-op, wrong object, or\
+               the same via re-counted after failing to disappear) -- look at\
+               the PRUNE lines above for a via that appears in more than one\
+               pass. This is not the same failure as PG_V4R4_EXPECT and\
+               widening that will not help: the deletions themselves are the\
+               problem, not the tolerance."
+    }
+}
+
 # ===========================================================================
 # EDIT 1 -- VIA4.R.4:M5.  A single-cut PG VIA4 standing in the 0.800 um shadow
 # of a WIDE M5 plate.  Re-cut 1 -> 2 cuts ALONG the landing.  NO METAL CHANGE.
@@ -800,6 +844,10 @@ _pg_say "=========================================================="
 # --- EDIT 1 ----------------------------------------------------------------
 if {$PG_DRC_V4R4} {
     set _v4 [_pg_v4r4_seek]
+    # THE PRE-PRUNE CENSUS. Captured before the prune loop can touch anything,
+    # so it is the baseline half of "baseline + prune deletions" -- see
+    # _pg_v4r4_prune_check below, which is the check that actually uses it.
+    set _v4_n0 [llength $_v4]
 
     # --- PRUNE ---------------------------------------------------------------
     # A single-cut VIA4 in the wide-M5 shadow whose landing cannot hold two cuts
@@ -875,6 +923,7 @@ if {$PG_DRC_V4R4} {
                      re-seek finds [llength $_v4] site(s)"
         }
     }
+    _pg_v4r4_prune_check $_v4_n0 $_pruned [llength $_v4]
 
     set _n 0 ; set _unfix 0
     foreach h $_v4 {

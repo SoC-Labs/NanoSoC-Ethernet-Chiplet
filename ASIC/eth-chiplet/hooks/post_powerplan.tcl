@@ -154,7 +154,36 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     set PG_DRC_DRY_RUN 0
     set PG_DRC_V4R4    1
     set PG_DRC_M8S3    1
+    # PG_V4R4_EXPECT {0 2} STAYS A LITERAL, DELIBERATELY -- audited 2026-09-11
+    # against "can this be re-expressed as baseline + prune deletions instead
+    # of a hardcoded number". It cannot, and forcing it would make the check
+    # WORSE: with the prune off (PG_V4R4_PRUNE_ADDED=0, e.g. EVP_PG_ADD_VIAS
+    # off or unset) the pre-prune seek IS the final seek, so a ceiling derived
+    # from that same run's baseline would equal the final count by
+    # construction and could never fire -- exactly the vt1/vt2-20260902
+    # scenario this literal exists to catch (4 sites, prune off, MUST refuse).
+    # "How many genuinely-hard sites are tolerable to hand to _pg_v4r4_apply"
+    # is a human judgement call, not a measurement, and it cannot be derived
+    # from the quantity it is judging.
+    #
+    # WHAT COULD BE DERIVED, AND NOW IS: not the tolerance, but whether the
+    # prune's OWN deletions did what they claimed. _pg_v4r4_prune_check in
+    # pg_drc_post_route_edits.tcl asserts final <= (pre-prune census) -
+    # (vias this pass actually deleted) -- both numbers the run produces,
+    # zero new literals. It is a companion to this ceiling, not a
+    # replacement: proven (ASIC/eth-chiplet/hooks/tests/prove_v4r4_prune.sh)
+    # to catch a delete_obj that silently no-ops on exactly the case where
+    # the resulting count still lands inside {0 2} and this literal would
+    # have shipped it.
     set PG_V4R4_EXPECT {0 2}
+    # PG_M8S3_EXPECT {0 3} STAYS A LITERAL TOO, for a different reason: M8.S.3
+    # has NO PRUNE ARM AT ALL. _pg_m8s3_apply trims a via master's M8 face in
+    # place; nothing is ever deleted, so there is no "vias the prune actually
+    # deleted" number to fold in and no baseline-vs-final split to derive
+    # from -- _pg_m8s3_seek runs exactly once and its result IS the final
+    # count, tautologically equal to itself. The ceiling is the same 24-Aug
+    # lineage measurement (2 known sites) the script's own standalone default
+    # already carries; only the floor is widened here, same as its siblings.
     set PG_M8S3_EXPECT {0 3}
     # PRUNE WHAT THE ADD-VIAS PASS CREATED, and only that.
     #
@@ -364,6 +393,18 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     # the "budget set to the day's number" antipattern -- it would refuse the
     # next run for one extra via. 60 is 55 plus the ~10% headroom the add-vias
     # site count varies by, and it still refuses a step change.
+    #
+    # AUDITED 2026-09-11 against "can this be baseline + prune deletions
+    # instead of a literal": no, and there is no near-miss the way there is
+    # for PG_V4R4_EXPECT. This census has NO EDIT ARM AND NO PRUNE -- see the
+    # header of pg_drc_v3r4_census.tcl for why (the deciding VIA3 cuts are
+    # vendor geometry inside a merged macro; Innovus has no object for them,
+    # so nothing here is ever deleted). _v3c_seek runs once; its count IS the
+    # final count. "60" is not a transcribed observation standing in for a
+    # derivation that was never attempted -- it is 55 MEASURED on THIS
+    # design's add-vias topology (vt3pg-20260909) plus explicit headroom, and
+    # the provenance is the paragraph above, not this comment. Leaving it a
+    # literal is the honest answer, not a shortcut.
     set PG_V3R4_EXPECT {0 60}
     # THE SCRIPT REFUSES WITHOUT AN ARTEFACT PATH, deliberately -- a census
     # nobody can read afterwards is not evidence. In-flow that refusal must not

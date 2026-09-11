@@ -28,6 +28,15 @@
 # and the pgg_* geometry helpers stubbed. It does not prove that delete_obj
 # leaves a legal grid -- only a run can say that, and the check_power_vias /
 # check_connectivity pair either side of the add-vias pass is what measures it.
+#
+# 2026-09-11 ADDITION: _pg_v4r4_prune_check, which replaces "trust that
+# deleting N vias removed N sites" with a derived, run-measured assertion --
+# see its header in pg_drc_post_route_edits.tcl. Proven here two ways: direct
+# unit calls against the lifted proc (a hand-picked number the arithmetic
+# cannot pass, and one it cannot fail), and one integrated scenario where
+# delete_obj is mutated to silently no-op on one via -- the exact failure
+# mode PG_V4R4_EXPECT was shown NOT to catch (the resulting count still lands
+# inside the default {0 2} range).
 #===============================================================================
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -66,7 +75,7 @@ for tok in ("PRUNE", "_pg_v4r4_added_neighbour", "UNFIXABLE"):
 # had been handed to the RECT formatter -- the bug that aborted vt3pg-20260909.
 # A fixture that stubs the proc which fails cannot fail with it.
 procs = ["_pg_v4_key", "_pg_v4r4_fits2", "_pg_added_m5_faces",
-         "_pg_v4r4_added_neighbour", "_pg_f4", "_pg_f2"]
+         "_pg_v4r4_added_neighbour", "_pg_f4", "_pg_f2", "_pg_v4r4_prune_check"]
 open(W + "/unit.tcl", "w").write("\n\n".join(grab(n) for n in procs) + "\n\n" + drv)
 PY
 [ $? -eq 0 ] || exit 2
