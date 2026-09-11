@@ -1,0 +1,19 @@
+--- a/fpga/targets/kr260-eth-chiplet/kr260_eth_chiplet_tidelink_timing.xdc
++++ b/fpga/targets/kr260-eth-chiplet/kr260_eth_chiplet_tidelink_timing.xdc
+@@ -197,8 +197,14 @@
+ # edge, so Vivado balances rather than hold-pads every lane. The far die samples
+ # MID-CELL (160 ns from either pad transition at 320 ns), so +/-20 ns leaves
+ # >=140 ns of true eye margin each side.
+-set_output_delay -clock [get_clocks pad_clk_tx_fwd] -max 20.000 [get_ports {pad_tx[*]}]
+-set_output_delay -clock [get_clocks pad_clk_tx_fwd] -min -20.000 [get_ports {pad_tx[*]}]
++# EXPERIMENT 2026-09-11 - declare the edge the far die actually captures on.
++# The far die captures on the FALLING edge (pad_clk_rx' in both shipped routed
++# netlists; the comment above already says it samples MID-CELL). Without
++# -clock_fall this described a window around the RISING edge, which is what
++# manufactured the -22.273ns hold "failure" - a check against a requirement that
++# does not exist in the hardware. +/-8.000 is a BUDGET, not a measurement.
++set_output_delay -clock [get_clocks pad_clk_tx_fwd] -clock_fall -max  8.000 [get_ports {pad_tx[*]}]
++set_output_delay -clock [get_clocks pad_clk_tx_fwd] -clock_fall -min -8.000 [get_ports {pad_tx[*]}]
+ 
+ #-----------------------------------------------------------------------------
+ # [3] RX pad capture: TIMED source-synchronous group, RELATIVE skew bounded

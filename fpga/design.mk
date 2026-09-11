@@ -778,6 +778,17 @@ TCLSH ?= tclsh
 # already has a class of exactly that.  Set each one after the first run, with
 # the measurement, the date, the run tag and the margin written beside it.
 EXPECT_WNS_MIN  ?= -1
+# STAYS AT -1 UNTIL patches/tidelink-pad_tx-clock_fall.patch LANDS UPSTREAM.
+# Hold is NOT missed by this design. The -22.145ns comes from a set_output_delay
+# on pad_tx[*] that omits -clock_fall, so it checks a window around the RISING
+# edge while the far die captures on the FALLING one (pad_clk_rx' in both
+# shipped routed netlists; the XDC's own comment four lines up already says the
+# far die samples MID-CELL). Measured with the edge declared, two builds
+# differing only in those two lines: WHS -22.145 -> +0.010, failing hold 8 -> 0,
+# pad_tx worst slack +151.592ns, and IDENTICAL utilisation - the design does not
+# change, only what is checked. Setup is unaffected (+0.332 -> +0.276, 0 fails).
+# The project still builds against the stock XDC, so arming this now would fail
+# every build. When the patch lands, hold becomes gateable for the first time.
 EXPECT_WHS_MIN  ?= -1
 EXPECT_LUT_MAX  ?= -1
 EXPECT_FF_MAX   ?= -1

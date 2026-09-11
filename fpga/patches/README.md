@@ -84,3 +84,78 @@ net), fixed in RTL by a shared-BUFG hoist, not by any constraint.
 ---
 
 Copyright (C) 2026, SoC Labs (www.soclabs.org)
+
+---
+
+## `tidelink-pad_tx-clock_fall.patch`
+
+**The KR260 design does not miss hold. The constraint checks an edge nothing
+captures on.** Applies cleanly to `tidelink @ 5e8bdb5`.
+
+`set_output_delay` on `pad_tx[*]` omits `-clock_fall`, so it describes a
+setup/hold window around the **rising** edge of the forwarded clock. The
+receiving die captures on the **falling** edge. On the RX side Vivado infers the
+capture edge from the capture flop — which is why `pad_rx[*]` shows no phantom
+violation — but on the TX side the capture flop is off-chip and invisible, so
+the edge has to be *declared*.
+
+### Evidence that the far die captures on the falling edge
+
+| | |
+|---|---|
+| routed netlist, `kr260-pair-nptp` | 82 endpoints clocked by **`pad_clk_rx'`** (primed = inverted) |
+| routed netlist, `kr260-pair-flip-nptp` | 86 endpoints, same |
+| RTL | `WavD2DGpio.v` reset default selects the inverted pad clock |
+| the XDC itself, four lines above the constraint | *"MID-CELL (160 ns from either pad transition)"* |
+
+The file already states the physics correctly and then constrains the wrong
+edge.
+
+### Measured, two builds differing ONLY in these two lines
+
+Same design sha, same toolkit, same `SYNTH_GATED_CLOCK_CONVERSION=off`:
+
+| | stock ±20 rising | `-clock_fall` ±8 |
+|---|---|---|
+| WNS | +0.332 | +0.276 |
+| failing setup | 0 | 0 |
+| WHS | **−22.145** | **+0.010** |
+| THS | −176.923 | 0.000 |
+| **failing hold** | **8**, all `pad_tx[*]` | **0** |
+| `pad_tx` worst hold slack | −22.145 | **+151.592** |
+| LUT / FF / BUFGCE | 59,851 / 54,337 / 23 | 59,851 / 54,337 / 23 |
+
+**Identical utilisation.** The design does not change; only what is checked does.
+
+### Where ±20 came from
+
+Not a board measurement. Verbatim from commit `9aee1d39`:
+
+> `set_output_delay pad_tx +/-5 -> +/-20 ns (period-scaled 4x, same
+> 12.5%-of-period fraction; far die samples mid-cell so >=60 ns margin)`
+
+It is ±5 multiplied by four because the link rate dropped by four. The comment
+now above those lines claims they are absolute board-trace nanoseconds and that
+the 12.5% framing was "a coincidence of its rate" — git says otherwise. That
+comment is a retcon and this patch replaces it.
+
+### ±8.000 is a BUDGET, not a measurement
+
+No receiver setup/hold requirement is documented anywhere in these repositories;
+the Wavious IP that owns the PHY constrains nothing on its pads, and no transmit
+eye has ever been measured. ±8 is the same absolute on-die figure this ribbon's
+receiving end already applies to its pad→capture path, and ~5% of the 159.93 ns
+window the opposite-edge capture grants. **It should be replaced by a real
+number when someone scopes the ribbon** — the highest-value measurement is the
+duty cycle of `pad_clk_tx` at the connector, because the whole window exists
+only by virtue of the opposite-edge capture.
+
+### Why this is a patch and not a commit
+
+`tidelink` is a shared submodule on a detached HEAD, also consumed by the
+compute chiplet. Same reasoning as `tidelink-remove-dead-set_bus_skew.patch`.
+
+**`EXPECT_WHS_MIN` in `fpga/design.mk` stays at `-1` until this lands upstream.**
+The project builds against the stock XDC, which still reports −22.145. Arming
+the gate before the fix lands would fail every build. Once it lands, hold
+becomes gateable for the first time.
