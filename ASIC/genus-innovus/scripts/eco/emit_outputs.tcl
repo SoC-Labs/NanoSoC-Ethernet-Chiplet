@@ -108,6 +108,29 @@ if {![llength $MERGE]} {
               mistaken for one."
 }
 
+# EVERY MERGE FILE MUST EXIST, AND write_stream WILL NOT TELL YOU.
+#
+# On 2026-09-11 this script streamed a 330 MB GDS with BOTH BOOT ROMS ABSENT.
+# The merge list named <run>/romlibs/{cc_rom,eth_rom}/*.gds2; the run directory
+# had been created by hand for an ECO and never ran the ROM build, so it had no
+# romlibs/ at all. write_stream skipped both files, raised nothing, and exited
+# 0. The guard below the stream passed it, because it asked "did a non-empty
+# GDS appear?" -- which is not the same question as "did the merge list
+# survive". 13,092,760 missing bytes, and the only reason it was noticed is
+# that `make check` refused to run LEC afterwards for the same reason.
+#
+# A merge entry that silently evaporates is the worst shape of defect this flow
+# has: the stream is enormous, well-formed, passes a size check, and is missing
+# a boot ROM. So this is a REFUSAL, before any tool runs.
+set missing {}
+foreach m $MERGE { if {![file readable $m]} { lappend missing $m } }
+if {[llength $missing]} {
+    emit_die "[llength $missing] of [llength $MERGE] merge file(s) do not              exist:
+      [join $missing "\n      "]
+  write_stream would              SKIP them without error and produce a stream that is missing              their content -- a macro or a boot ROM -- while still looking              like a valid GDS. If this run directory was made by hand, it has              not built its own ROMs:
+      make -C ASIC -f common.mk rom-run              ROM_RUN_DIR=<run>/romlibs"
+}
+
 set GDS $OUT/${BLOCK}.gds
 set NET $OUT/${BLOCK}_pnr.v
 set REP $OUT/${BLOCK}_stream.rep

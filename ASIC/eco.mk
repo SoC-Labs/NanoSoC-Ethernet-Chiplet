@@ -35,7 +35,13 @@ eco-emit-vars:
 	@echo "block  : $(BLOCK)"
 	@test -d "$(ECO_EMIT_DB)" && echo "db     : PRESENT" || echo "db     : MISSING"
 
-eco-emit:
+# DEPENDS ON THE FLOW'S OWN INPUT CHECK, and that is not belt-and-braces.
+# On 2026-09-11 this target ran without it and emitted a GDS missing both boot
+# ROMs. `make check` had the answer already -- "no cc_rom macro directory at
+# <run>/romlibs/cc_rom" -- and refused the very next gate for exactly that
+# reason. A hand-made run directory is precisely the case where the standing
+# input check earns its keep, so this target no longer steps around it.
+eco-emit: check-quiet
 	@test -r "$(ECO_EMIT_TCL)" || { echo "FAIL: no emitter at $(ECO_EMIT_TCL)"; exit 1; }
 	@test -d "$(ECO_EMIT_DB)"  || { \
 	    echo "FAIL: no ECO database at $(ECO_EMIT_DB)"; \
