@@ -105,8 +105,27 @@ IP, ~577 sources, which is what `IP_REPOS` in `fpga/design.mk` points at.
 
 `phc_ip` comes from `PHC_REPO_DIR`, which defaults to a `$HOME`-relative sibling
 checkout with no submodule and no pinned sha — so that one IP is **not**
-reproducible from this repository alone. It affects 9 files; the chiplet's own
-PHC RTL resolves through the nested submodule and is fine.
+reproducible from this repository alone.
+
+**Resolved 2026-09-11, and it is not a judgement call.** The sibling is an
+**ancestor** of the pinned submodule — 7 commits and ~3 months behind, missing a
+signed frac-trim fix, an alarm-IRQ W1C fix, a `STATUS.running` fix and ASIC bug
+7 (`hw_capture` synchronisation). The pinned one is correct, so pass it
+explicitly:
+
+```sh
+make -C tidelink/fpga package_phc_ip      PHC_REPO_DIR=$PWD/nanosoc-multicore-system/ptp-hardware-clock-ahb
+```
+
+> Test ancestry in the repo that knows **both** shas. The sibling has never
+> fetched the other, so `git merge-base --is-ancestor` run *there* returns false
+> in both directions and reads as "divergent". It is not.
+
+**It is moot for this target.** `phc_ip` is added to `ip_repo_paths` and then
+never instantiated — zero `create_bd_cell` matches, zero occurrences in
+`utilization_hier_{synth,impl}.rpt`. Being on the IP path is not being in the
+design. The chiplet's own PHC RTL resolves through the nested submodule and is
+fine.
 
 ### 6. Build
 

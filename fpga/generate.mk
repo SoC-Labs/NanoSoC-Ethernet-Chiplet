@@ -137,9 +137,23 @@ bootstrap-status:
 	    echo "           Only phc_ip is affected - the chiplet's own PHC RTL resolves"; \
 	    echo "           through the pinned submodule. But a clone gets $$cn and this"; \
 	    echo "           host packages $$cs, so the two do not build the same phc_ip."; \
-	    echo "           Deliberately NOT switched here: which commit is correct is a"; \
-	    echo "           design decision, and silently changing it would change what"; \
-	    echo "           ships. See fpga/REBUILD.md step 5."; \
+	    echo "           RESOLVED 2026-09-11 - this is NOT a design decision. The two"; \
+	    echo "           are not divergent: the sibling is an ANCESTOR of the pinned"; \
+	    echo "           submodule, 7 commits and ~3 months behind, missing a signed"; \
+	    echo "           frac-trim fix, an alarm-IRQ W1C fix, a STATUS.running fix and"; \
+	    echo "           ASIC bug 7 (hw_capture sync). The PINNED one is correct."; \
+	    echo "           Test it in the repo that knows BOTH shas - the sibling has"; \
+	    echo "           never fetched the other, so an ancestry test run there"; \
+	    echo "           returns false in both directions and reads as 'divergent'."; \
+	    echo "           NOT switched here only because PHC_REPO_DIR is defined in"; \
+	    echo "           tidelink/fpga/Makefile, a SHARED submodule this project does"; \
+	    echo "           not edit. To build the right one, pass it explicitly:"; \
+	    echo "             make -C tidelink/fpga package_phc_ip \\"; \
+	    echo "                  PHC_REPO_DIR=\$$PWD/nanosoc-multicore-system/ptp-hardware-clock-ahb"; \
+	    echo "           MOOT FOR THIS TARGET: phc_ip is added to ip_repo_paths and"; \
+	    echo "           then never instantiated - 0 create_bd_cell, 0 in"; \
+	    echo "           utilization_hier_{synth,impl}. Being on the IP path is not"; \
+	    echo "           being in the design. See fpga/REBUILD.md step 5."; \
 	  fi; \
 	  echo ""; \
 	  echo "  NOTE none of this proves the packaged IP is the V2 build. Packaging"; \
