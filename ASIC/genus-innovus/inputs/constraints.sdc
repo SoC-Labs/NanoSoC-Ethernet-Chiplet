@@ -899,10 +899,13 @@ set_input_transition -min 0.50 [get_ports NRST] ;# [PLACEHOLDER] on-table pessim
 # TEST and SE are STATIC configuration pins -- strapped, and never toggling in
 # mission mode -- so their slew has no timing consequence whatsoever. They are
 # constrained only so that no top-level input is left on the 0 ns default.
-# SE in particular is constrained NOWHERE ELSE: it is absent from this file's
-# delay section and from all three sourced IP SDCs. See the report.
+# SE in particular WAS constrained nowhere else -- true when written, stale
+# since 2026-08-19. bscan_constraints.sdc:39 now gives it a real
+# `set_input_delay -clock clk -max 1.0`, because SE stopped being a strap and
+# became the IEEE 1149.1 boundary-scan enable. See the REMOVED note further
+# down this file for why case-analysing it would delete the TAP.
 set_input_transition -max 2.00 [get_ports TEST]           ;# [CONVENTION] generic 3.3V LVCMOS board driver; static strap pin, no timing consequence
-set_input_transition -max 2.00 [get_ports SE]             ;# [CONVENTION] as TEST. NOTE: SE is otherwise unconstrained in every SDC
+set_input_transition -max 2.00 [get_ports SE]             ;# [CONVENTION] as TEST. SE is ALSO delay-constrained in bscan_constraints.sdc
 set_input_transition -max 2.00 [get_ports {HOSTIO4_P1[*]}]
 
 # SCAN IS OFF IN MISSION MODE, AND SAYING SO IS WORTH REAL TIMING.
