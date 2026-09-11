@@ -835,6 +835,57 @@ XDC_BASELINE ?=
 # So the divergence was never in what this flow BUILDS.  It was in a recipe the
 # manifest did not state, and this is the manifest stating it.
 # ===========================================================================
+# ===========================================================================
+# GATED-CLOCK CONVERSION IS OFF FOR THIS DESIGN, AND THE TOOLKIT DEFAULT IS NOT
+#
+# The toolkit defaults SYNTH_GATED_CLOCK_CONVERSION to `auto`, and that default
+# is right: Arm IP is written for ASIC and arrives carrying clock gates, so a
+# Xilinx flow that never converts them leaves area and buffers on the table.
+# This project overrides it because THIS design has something the general case
+# does not, and the override is what the project/toolkit split is for.
+#
+# MEASURED 2026-09-11, two builds from design sha 4691a24 differing ONLY in this
+# knob, both carried through to a bitstream:
+#
+#                     off        auto
+#     LUT (impl)      59,851     59,615      -236   auto wins
+#     WNS             +0.332     +0.215
+#     WHS             -22.145    -23.654
+#     failing hold    8          15          +7     auto loses
+#     BUFGCE (impl)   23         24          +1     auto loses
+#
+# READ THE IMPLEMENTATION NUMBERS, NOT THE SYNTHESIS ONES. At synthesis `auto`
+# reported 10 BUFG against `off`'s 12 and looked like a win on both axes. The
+# count INVERTS through implementation. A synth-stage area or buffer figure is
+# an intermediate, not a result.
+#
+# WHAT THE 7 EXTRA FAILURES ARE. All 8 of `off`'s failures are `pad_tx[*]`, the
+# -20ns set_output_delay-on-the-wrong-edge artefact documented at XDC_TIMING
+# below - phantom, not real. `auto` has those same 8 PLUS seven REAL ones, at
+# -2.158ns and -1.871ns, on /CE pins in u_soc/u_network_core/u_rmii_to_mii:
+# mrxd_reg[0..3], mrxdv_reg, rmii_txd_r_reg[0..1]. That is the Ethernet RECEIVE
+# datapath.
+#
+# THE MECHANISM, read off the path report rather than inferred: rmii_to_mii
+# divides the receive clock IN FABRIC (mrx_clk_reg). Conversion turns that
+# generated clock into a clock ENABLE and inserts a BUFGCE to distribute it -
+# the failing path is literally `mrx_clk_reg/Q -> BUFGCE (Logic Levels: 1) ->
+# mrxd_reg/CE`, both ends on mii_rx_clk. That inserted buffer is the +1 BUFGCE,
+# and the enable arrives ~2.16ns too early to meet hold.
+#
+# So the rule for anyone reading this on another design: conversion is a good
+# default, and it is unsafe wherever a clock is DIVIDED IN FABRIC. Check for
+# those before enabling it, and judge the result on impl numbers.
+#
+# Vivado also emits `WARNING [Synth 8-5866] 'keep_hierarchy' ... gated clock
+# conversion will not be possible` for tidelink_design_i, axi_ahb_eth_ss and
+# axi_smc, so conversion only ever reached the modules without kept hierarchy.
+# That is why the damage is concentrated in the SoC internals.
+#
+# To re-measure: make all RUN_TAG=<tag> SYNTH_GATED_CLOCK_CONVERSION=auto
+# ===========================================================================
+export SYNTH_GATED_CLOCK_CONVERSION ?= off
+
 export IMPL_OPT_DIRECTIVE       ?= Default
 export IMPL_PLACE_DIRECTIVE     ?= Default
 export IMPL_PHYS_OPT_DIRECTIVE  ?= AggressiveExplore
