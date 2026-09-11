@@ -1,10 +1,25 @@
-# imec round-trip — SEND TODAY (Sat 29 August)
+# imec round-trip — still unsent, RE-BASED ON rc4 (2026-09-11)
 
-    status   DRAFT for review. NOT SENT.
-    basis    Final Report on the rc2 merged + dummy + seal-ring stream,
-             28 Aug 14u40, md5 6d64126c80b86497c015774cb71c3bb4 — imec's own
-             report names that md5, that byte count and that write time, so it
-             graded exactly what we published.
+    status   DRAFT. NOT SENT — and the deadline it was written against has
+             passed. rc4 was submitted on 1 September and imec graded it clean
+             on 31 Aug 17u35. NOTHING IN THIS LETTER WAS ANSWERED, because it
+             was never asked: all three asks below survive unchanged into rc4,
+             which is why this file is re-based rather than retired.
+    basis    RE-BASED 2026-09-11 onto the stream that actually shipped:
+             nanosoc_eth_chiplet_pads_rc4_logo.gds, 303,996,534 bytes,
+             md5 6b0833c4216bdb683ed2427cd0deba75. Two independent sources
+             agree on that md5 — imec's own rc4 Final Report names it, and our
+             local calibre_runs/ant_rc4_0829 manifest computed it from the file
+             we published. Quote THIS md5 to imec, not the rc2 one this letter
+             originally carried (6d64126c80b86497c015774cb71c3bb4), or the
+             answer will be about a retired candidate.
+    changed  Since drafting, one half of ask 1 has been fixed ON OUR SIDE: our
+             own wire-bond deck was still selecting PITCH_70_STAGGER — the
+             superseded guess — so the P60 family had never been run by imec
+             OR by us. Our deck is now P60 (commit 87db1ed). The ask to imec is
+             unchanged; we simply no longer have the same bug locally.
+             Independent re-measurement on 2026-09-11 reproduced the 67 µm
+             derivation below exactly from imec's pad table.
     replaces docs/tapeout/59-imec-round-trip-2026-08-27.md, which was written
              against the 25 Aug run on the PINFIX stream and was never sent.
              Two of its five asks are now answered by imec's own 28 Aug results
@@ -66,6 +81,15 @@ deck's shipped default.
 has **never been run against this design** — every run so far has been P80 — so
 we have no clean result for the switch that actually applies. We would rather
 find that out now than on the final stream.
+
+**Still true of rc4.** The Final Report on the graded rc4 stream
+(31 Aug 17u35) again reads `bnd Pad_Pitch Pitch_80_STAGGER`, with
+`CB.W.1:P80_ST = 2` and `CB.W.2:P80_ST = 2` — identical to every archived run
+back to 17 August. So the switch has been P80 on **every** submission,
+including the one that graded clean, and "graded clean" therefore says nothing
+about the pad-opening rules that actually apply to a 67 µm ring. This is a
+deck-configuration mismatch, not a design-rule violation, and the two are not
+in tension.
 
 An earlier message of ours stated our parts are 70 µm staggered. That was our
 error and this supersedes it.
