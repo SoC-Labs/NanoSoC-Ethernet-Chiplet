@@ -1,0 +1,5 @@
+* SYNTHETIC STAND-IN — no foundry content.
+* Stands in for the one 92-byte unit.cdl that is the whole of the CDL this site
+* has. Under 1 kB on purpose: -size +1k must exclude it.
+.SUBCKT unit
+.ENDS

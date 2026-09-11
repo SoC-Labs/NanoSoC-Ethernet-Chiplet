@@ -44,18 +44,120 @@ This is why **a `check:` must address its evidence by repo-relative path**. An
 absolute path escapes the sandbox and the check silently reads real, unrelated
 evidence — which looks like a passing proof and is not one.
 
-Two directives, because an overlay can add files but cannot take the repo's away:
+Three directives. The first two exist because an overlay can add files but
+cannot take the repo's away; the third exists because there are filenames this
+repository is not allowed to track.
 
 | marker | effect |
 |---|---|
 | `<name>.__absent__` | the path `<name>` must NOT exist in the sandbox — proves a check's *missing evidence* arm |
 | `.__exclusive__` | nothing from the repo is symlinked into this directory, so the fixture is the only thing in it |
+| `<name>.__fixture__.txt` | the file is staged in the sandbox as `<name>`, suffix stripped — for a `<name>` the vendor guard refuses to let anybody track |
 
 `.__exclusive__` matters wherever a check **globs** instead of naming a file.
 `drc` takes `sorted(*.drc.summary)[0]`, so on srv03335 — where a real `drc_run`
 exists — the repository's own summary would leak into the fixture directory and
 decide the case. A proof that behaves differently on the machine that does the
 real signoff is not a proof.
+
+### `.__fixture__.txt` — staging a filename the repository may not contain
+
+**The collision.** Three gap probes search the PDK **by extension**:
+
+    find ${TSMC_65_HOME} -maxdepth 6 -size +1k -name 'tcbn65lp*.cdl' ... | grep -q .
+
+so the refuting half of their fixture has to contain a file whose name ends
+`.cdl` — the probe matches on the name and nothing else. The pre-commit vendor
+guard (`ASIC/asic-toolkit/ci/check-vendor-collateral.sh`, rule `file.ext`)
+refuses any tracked file with that extension, and refuses it **without reading
+it**: *"a tracked .cdl - foundry collateral by its nature"*. That rule is
+extension-keyed **on purpose**, precisely so that *"but this one is synthetic,
+read its first line"* — which is exactly what these fixtures say, in their first
+line — is not an argument it can be talked out of. A guard that can be argued
+with by inspecting content is a guard that eventually lets content through.
+
+Both positions are right and **neither is bent**. The suffix moves the collision
+from **commit time** to **materialisation time**:
+
+| | on disk / in git | in the prove sandbox |
+|---|---|---|
+| refuting CDL | `.../cdl/tcbn65lp.cdl.__fixture__.txt` | `.../cdl/tcbn65lp.cdl` |
+
+The tracked tree contains no `.cdl`, `.lef`, `.lib` or `.sp`; the guard stays
+exactly as strict; the probe still finds the name it greps for. **Measured
+2026-09-11**: `vendor.untracked.file.ext` went from **14 finding(s)** to the
+gate not firing at all, with no allowlist entry, no waiver and no change to the
+guard.
+
+**Adding one is the whole procedure.** Name the file
+`<the name the check reads>.__fixture__.txt` and stop. There is nothing to
+declare — not in `ci/signoff.yaml`, not here. `prove` strips it. It composes
+with the other two directives (`x.cdl.__fixture__.txt.__absent__` declares
+`x.cdl` absent; `.__absent__` is stripped first, being the outer suffix), and
+it is not limited to the PDK fixtures — any fixture that must stage a name the
+guard forbids uses it.
+
+**The `.txt` is load-bearing; do not shorten the suffix to `.__fixture__`.**
+`file.ext` keys on the *last* extension, so any non-collateral tail would dodge
+it — but the guard's VALUE rules (`value.lef`, `value.lefwin`, `value.map`,
+`value.libtag`, `ident`, `path`, `licence`) read only files inside a text corpus
+that is *also* keyed by extension, and `.cdl`, `.lef`, `.lib` and `.sp` are all
+in it. A basename ending `.__fixture__` matches none of those globs and drops
+out of the value scan entirely — which would trade an honest block for a silent
+hole, one in which these fixtures could later acquire real foundry numbers with
+no rule left looking at them. **Measured, not reasoned**: the guard's own corpus
+line reads
+
+| suffix | files scanned for values |
+|---|---|
+| `.__fixture__.txt` | **909** |
+| `.__fixture__` | **895** — all 14 fixture files silently outside the value rules |
+
+So only the rule about a file's KIND is sidestepped. Every rule about its
+CONTENT still reads these files, which is the half that matters for a public
+repository whose fixtures are *about* foundry collateral.
+
+### A rename that quietly did nothing would be worse than the block it lifts
+
+If the strip fails to happen, the file sits in the sandbox under its tracked
+name, `find ... -name 'tcbn65lp*.cdl'` matches nothing and exits **1** — and 1
+is exactly the exit code `gap:still-real` is waiting for. The `refuted` half
+would go BROKEN, but the `still-real` half would print `ok` while measuring an
+empty directory, and `lint` would go on reporting "still real" for a reason that
+has nothing to do with the PDK. **A permanent false verdict is worse than an
+uncommitted fixture**, so the mechanism is not allowed to no-op quietly. Three
+layers, in `scripts/ci/signoff.py`:
+
+1. **`_assert_materialised()`** — after the overlay, every `.__fixture__.txt`
+   file must exist in the sandbox under its stripped name, must not have come
+   back under its tracked name, and no two fixture files may claim one sandbox
+   name (which `shutil.copy2` would otherwise resolve by silent overwrite).
+   Failure raises `FixtureError`, naming the file.
+2. **The arming block** — `prove` refuses to run **any** case until it has
+   staged an invented specimen (`specimen_arming.cdl.__fixture__.txt`), watched
+   it materialise as `specimen_arming.cdl`, **and** watched `_assert_materialised`
+   *fire* on a sandbox where the strip was skipped. A guard nobody has watched
+   fail is not known to work. Same doctrine, and same shape, as the vendor
+   guard's own SECTION 1: *"every rule must fire on an invented specimen"* before
+   the script is entitled to say anything about the repository. It prints one
+   line and exits **2** — a broken run, not a failed gate — if either half is
+   inert.
+3. **`UNSTAGED`** — a per-case verdict distinct from BROKEN, counted as a
+   problem, for a fixture that could not be staged. "The check was never asked
+   the question" is not "the check answered no".
+
+**Measured, by mutation, 2026-09-11** — the counterfactual, with the strip, the
+assert and the arming all disabled:
+
+    lvs              gap:still-real   ok       rc=1
+    lvs              gap:refuted      BROKEN   rc=1, wanted 0
+    dynamic-ir-drop  gap:still-real   ok       rc=1
+    dynamic-ir-drop  gap:refuted      BROKEN   rc=1, wanted 0
+
+Both `still-real` halves read **ok** over sandboxes holding nothing but
+`tcbn65lp.cdl.__fixture__.txt` — green, and measuring nothing. With the guard in
+place, disabling the strip and disabling the assert each stop `prove` dead at
+the arming line with the file named. That is the difference the three layers buy.
 
 ## What these fixtures do NOT prove
 
@@ -358,8 +460,8 @@ appearing.
 | `antenna-signoff` | a stage **in this manifest** runs the foundry deck. Not a tool, not a licence, not a deck — all three are already here | two manifests, the second carrying an `antenna-foundry-deck` stage |
 | `metal-density-fill` | `EVR_METAL_FILL` stops defaulting to 0 | two excerpts of `4b_pnr_route_eval.tcl` differing in one digit |
 | `gds-completeness` | a `*_BE` package directory appears in the PDK — the Back-End collateral whose absence empties 424 cell masters | synthetic PDK stand-in trees, the second with a `..._BE` directory |
-| `lvs` | transistor-level CDL over 1 kB for the standard-cell, IO or bond-pad libraries appears | synthetic PDK stand-in trees, the second with a `tcbn65lp*.cdl` |
-| `dynamic-ir-drop` | cell SPICE or cell GDS appears, so a cell-accurate power grid library becomes buildable | synthetic PDK stand-in trees, the second with a `tcbn65lp*.sp` |
+| `lvs` | transistor-level CDL over 1 kB for the standard-cell, IO or bond-pad libraries appears | synthetic PDK stand-in trees, the second with a `tcbn65lp*.cdl` — tracked as `tcbn65lp.cdl.__fixture__.txt`, see the suffix convention above |
+| `dynamic-ir-drop` | cell SPICE or cell GDS appears, so a cell-accurate power grid library becomes buildable | synthetic PDK stand-in trees, the second with a `tcbn65lp*.sp` — tracked as `tcbn65lp.sp.__fixture__.txt`, see the suffix convention above |
 | `io-rail-ir-drop` | the **generated** CPF — the one Innovus reads — declares VDDIO/VSSIO | two `*_gate1.cpf` files differing in one line at column 1 |
 | `full-design-lint-gating` | a stage's `run:` invokes `verif/lint/full/run.sh` | two manifests, the second carrying a `lint-full` stage |
 
@@ -378,6 +480,13 @@ these three gaps are *about* vendor collateral. The library prefixes in the
 filenames are the ones already written in `ci/signoff.yaml`; nothing else comes
 from a PDK. If real collateral ever lands on this site the gap closes by `lint`
 going red against the real PDK — **never** by a fixture acquiring real content.
+
+**`gap-lvs/` and `gap-dynamic-ir-drop/` are tracked under the
+`.__fixture__.txt` suffix**, documented above: their probes search by extension,
+so their evidence files have to be named `*.cdl`, `*.lef`, `*.lib` and `*.sp`,
+and the vendor guard refuses to let any of those four be tracked whatever they
+contain. The suffix is stripped when `prove` stages the sandbox. Nothing else
+about either fixture changes — same bytes, same directory depths, same decoys.
 
 ### Two limits these three fixtures do not close
 
@@ -407,7 +516,15 @@ each `FIXTURE_NOTE.md`:
 
 Moving or adding anything under `pdk-stand-in/` means redoing that arithmetic
 and running **both** `prove` and `lint` — `prove` alone cannot see this failure,
-because it never runs the probe from the repository root. The real fix is a
+because it never runs the probe from the repository root.
+
+Since 2026-09-11 there is a second, independent reason those two fixtures cannot
+refute their own gaps from the repository root: **their tracked names no longer
+match the probes at all** — `tcbn65lp.cdl.__fixture__.txt` is not
+`-name 'tcbn65lp*.cdl'`. **That does not retire the depth rule.**
+`gap-gds-completeness` refutes on a DIRECTORY name (`*_BE`), which carries no
+suffix and never will, so depth is the only thing holding it clear; and the next
+fixture written may not need the suffix either. Belt and braces, both kept. The real fix is a
 probe that exits 2 (UNVERIFIABLE) when the variable is unset instead of silently
 searching the tree; the replacement text is in
 `ci/fixtures/PROPOSED_GAP_PROBES.yaml`, unapplied because `ci/signoff.yaml` is

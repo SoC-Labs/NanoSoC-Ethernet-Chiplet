@@ -1,0 +1,161 @@
+/* SYNTHETIC STAND-IN — no foundry content.
+   DECOY. Over 1 kB, right library prefix, and it is HALF of exactly what this
+   site has: .lib timing plus LEF abstracts. set_pg_library_mode -cell_type
+   stdcells needs a transistor-level view to model the path from a cell's PG pin
+   to its devices, and neither of these is one. A probe that answered to size and
+   prefix alone would report a cell-accurate power grid reachable off the very
+   collateral whose insufficiency IS the gap. */
+library (tcbn65lp_tt_SYNTHETIC) {
+  time_unit : "1ns";
+  voltage_unit : "1V";
+  cell (CELL_SYNTHETIC_000) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_001) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_002) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_003) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_004) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_005) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_006) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_007) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_008) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_009) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_010) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_011) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_012) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_013) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_014) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_015) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_016) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_017) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_018) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_019) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_020) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_021) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_022) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_023) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_024) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_025) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_026) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_027) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_028) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+  cell (CELL_SYNTHETIC_029) {
+    area : 1.44;
+    pin (Z) { direction : output; timing () { related_pin : "A"; } }
+    pin (A) { direction : input; capacitance : 0.001; }
+  }
+}

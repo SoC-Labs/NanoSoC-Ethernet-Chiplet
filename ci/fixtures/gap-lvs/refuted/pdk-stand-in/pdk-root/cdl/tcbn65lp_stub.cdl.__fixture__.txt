@@ -1,0 +1,7 @@
+* SYNTHETIC STAND-IN — no foundry content.
+* DECOY. The NAME matches 'tcbn65lp*.cdl' exactly. The file is under 1 kB, so
+* -size +1k must exclude it. This is the clause that keeps the probe from
+* reporting the gap closed off a header stub, a placeholder or an empty file
+* somebody dropped in the right directory with the right name.
+.SUBCKT stub
+.ENDS

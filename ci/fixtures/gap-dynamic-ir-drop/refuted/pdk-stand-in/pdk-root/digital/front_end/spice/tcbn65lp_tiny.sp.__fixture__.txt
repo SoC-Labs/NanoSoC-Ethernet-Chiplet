@@ -1,0 +1,6 @@
+* SYNTHETIC STAND-IN — no foundry content.
+* DECOY. Right name, right extension, UNDER 1 kB. -size +1k must exclude it: a
+* header stub is not a cell library, and a power grid library built from one
+* would be techonly wearing a cell-accurate label.
+.SUBCKT stub
+.ENDS

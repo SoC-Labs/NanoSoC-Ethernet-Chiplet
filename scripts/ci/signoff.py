@@ -89,6 +89,42 @@ ABSENT_SUFFIX = ".__absent__"
 # not a proof.
 EXCLUSIVE_MARKER = ".__exclusive__"
 
+# A fixture file whose tracked name ends with this suffix is materialised in the
+# sandbox under the name with the suffix REMOVED —
+# `tcbn65lp.cdl.__fixture__.txt` on disk becomes `tcbn65lp.cdl` in the sandbox.
+#
+# WHY THE TRACKED NAME CANNOT BE THE NAME THE CHECK READS. Three gap probes
+# search the PDK BY EXTENSION —
+#
+#     find ${TSMC_65_HOME} -maxdepth 6 -size +1k -name 'tcbn65lp*.cdl' ...
+#
+# so the refuting half of their fixture has to contain a file whose name ends
+# `.cdl`. The vendor guard refuses exactly that:
+# ASIC/asic-toolkit/ci/check-vendor-collateral.sh, rule `file.ext`, "a tracked
+# .cdl - foundry collateral by its nature", and it refuses it WITHOUT READING
+# IT. That rule is extension-keyed ON PURPOSE, so that "but this one is
+# synthetic, read its first line" — which is precisely what these fixtures say
+# — is not an argument it can be talked out of. Both positions are correct and
+# both are kept whole: the suffix moves the collision from COMMIT time to
+# MATERIALISATION time. Nothing about the guard is relaxed and nothing about the
+# probe is weakened; the tracked tree simply stops containing a `.cdl`.
+#
+# THE `.txt` IS PART OF THE SUFFIX AND IT IS LOAD-BEARING. `file.ext` keys on
+# the LAST extension, so any non-collateral tail would dodge it — but the
+# guard's VALUE rules (value.lef, value.lefwin, value.map, value.libtag, ident,
+# path, licence) only read files inside a text corpus that is ALSO keyed by
+# extension (VC_TEXT_GLOBS), and `.cdl`, `.lef`, `.lib` and `.sp` are all in it.
+# A basename ending `.__fixture__` matches none of those globs, so it would fall
+# out of the value scan entirely — trading an honest block for a silent hole, in
+# which a fixture could later acquire real foundry numbers with no rule left
+# looking. `.txt` is in that corpus. MEASURED 2026-09-11: the guard scanned 908
+# files for values before the rename and 908 after, and the 14 `file.ext`
+# findings went to zero. Only the KIND rule is sidestepped; every content rule
+# still reads these files.
+#
+# See ci/fixtures/README.md for the author-facing statement of the convention.
+FIXTURE_SUFFIX = ".__fixture__.txt"
+
 
 # -----------------------------------------------------------------------------
 # MANIFEST VARIABLES — @NAME@, and why there is no default
@@ -130,6 +166,17 @@ VAR_RE = re.compile(r"@([A-Z][A-Z0-9_]*)@")
 
 class VarError(Exception):
     """A manifest variable could not be resolved. Never a warning."""
+
+
+class FixtureError(Exception):
+    """A fixture could not be staged as declared. Never a silent skip.
+
+    Raised only from the sandbox builder, and the reason it is an exception
+    rather than a log line is that the failure it reports is INVISIBLE
+    downstream: a fixture file that does not arrive under the name the check
+    greps for is indistinguishable, to the check, from evidence that is simply
+    not there — which is the answer half these fixtures are built to elicit.
+    """
 
 
 def _map_strings(obj, fn):
@@ -831,6 +878,61 @@ def _rmtree_no_follow(p: Path):
     p.rmdir()
 
 
+def _sandbox_name(name: str):
+    """(name in the sandbox, is a NOT-EXIST directive, was RENAMED).
+
+    Both suffixes are dodges of the same extension-keyed vendor rule, one for a
+    path that must not exist and one for a file that must, so they compose:
+    `x.cdl.__fixture__.txt.__absent__` declares `x.cdl` absent. ABSENT is
+    stripped first because it is the outer of the two.
+    """
+    absent = name.endswith(ABSENT_SUFFIX)
+    if absent:
+        name = name[: -len(ABSENT_SUFFIX)]
+    renamed = name.endswith(FIXTURE_SUFFIX)
+    if renamed:
+        name = name[: -len(FIXTURE_SUFFIX)]
+    return name, absent, renamed
+
+
+def _assert_materialised(fixture: Path, dest: Path, renamed):
+    """Every FIXTURE_SUFFIX file reached the sandbox under its stripped name.
+
+    THIS IS NOT A BELT-AND-BRACES ASSERT, and it is the whole reason the rename
+    is allowed to exist. If the strip silently does not happen — the constant
+    edited, the copy loop refactored past it, a fixture written with the suffix
+    before the mechanism was in place — then
+    `find ... -name 'tcbn65lp*.cdl' | grep -q .` finds nothing and exits 1,
+    which is EXACTLY the exit code `gap:still-real` is waiting for. The refuted
+    half would go BROKEN, but the still-real half would print `ok` while
+    measuring an empty tree, and `lint` would keep printing "still real" for a
+    reason that has nothing to do with the PDK. A check that measures nothing
+    must not pass; a fixture that stages nothing must not read as evidence of
+    absence.
+
+    So the failure is raised at the point it happens, naming the file, rather
+    than left to be inferred from a probe's exit code.
+    """
+    for src_rel, tgt_rel in renamed:
+        if tgt_rel == src_rel:
+            raise FixtureError(
+                f"{fixture}: `{src_rel}` carries {FIXTURE_SUFFIX} and its "
+                f"sandbox name came back identical — THE SUFFIX WAS NOT "
+                f"STRIPPED. The check greps for `{src_rel.name[:-len(FIXTURE_SUFFIX)]}`, "
+                f"which is not in this sandbox at all.")
+        if not (dest / tgt_rel).is_file():
+            raise FixtureError(
+                f"{fixture}: `{src_rel}` carries {FIXTURE_SUFFIX} but "
+                f"`{tgt_rel}` was NOT materialised in the sandbox. A check "
+                f"looking for `{tgt_rel.name}` would find nothing and read that "
+                f"as missing evidence — a pass that measured nothing.")
+        if (dest / src_rel).exists():
+            raise FixtureError(
+                f"{fixture}: `{src_rel}` reached the sandbox under its TRACKED "
+                f"name as well as `{tgt_rel}`. A check that globs the directory "
+                f"would see both, and the suffixed one is not evidence.")
+
+
 def _sandbox(fixture: Path, dest: Path):
     """Mirror ROOT into dest by symlink, then overlay the fixture tree onto it."""
     files = sorted(p.relative_to(fixture) for p in fixture.rglob("*") if p.is_file())
@@ -844,14 +946,39 @@ def _sandbox(fixture: Path, dest: Path):
 
     supplied = {}                      # dir -> names the fixture owns
     exclusive = set()
+    plan = []                          # (fixture-relative src, sandbox-relative dst)
+    renamed = []                       # the FIXTURE_SUFFIX subset of `plan`
     for f in files:
-        name = f.name
-        if name == EXCLUSIVE_MARKER:
+        if f.name == EXCLUSIVE_MARKER:
             exclusive.add(f.parent)
             continue
-        if name.endswith(ABSENT_SUFFIX):
-            name = name[: -len(ABSENT_SUFFIX)]
+        name, absent, was_renamed = _sandbox_name(f.name)
+        if was_renamed and not name:
+            # Otherwise the copy target is the parent DIRECTORY and shutil
+            # raises IsADirectoryError, which names nothing useful.
+            raise FixtureError(
+                f"{fixture}: `{f}` is nothing but the suffix — there is no "
+                f"name left to materialise it under.")
+        # Registered even when absent: the point of the directive is to shadow
+        # the repository's own entry of that name.
         supplied.setdefault(f.parent, set()).add(name)
+        if absent:
+            continue                   # a directive, not evidence
+        plan.append((f, f.parent / name))
+        if was_renamed:
+            renamed.append((f, f.parent / name))
+
+    # Two fixture files cannot claim one sandbox name. Left undetected this is
+    # silent — shutil.copy2 would simply overwrite, and which of the two decided
+    # the case would depend on sort order.
+    claimed = {}
+    for src_rel, tgt_rel in plan:
+        if tgt_rel in claimed:
+            raise FixtureError(
+                f"{fixture}: `{src_rel}` and `{claimed[tgt_rel]}` both "
+                f"materialise as `{tgt_rel}`. One of them would silently "
+                f"overwrite the other.")
+        claimed[tgt_rel] = src_rel
 
     for d in sorted(real_dirs, key=lambda p: len(p.parts)):
         (dest / d).mkdir(parents=True, exist_ok=True)
@@ -866,10 +993,80 @@ def _sandbox(fixture: Path, dest: Path):
             if not link.exists() and not link.is_symlink():
                 os.symlink(str(entry), str(link))
 
-    for f in files:
-        if f.name.endswith(ABSENT_SUFFIX) or f.name == EXCLUSIVE_MARKER:
-            continue                   # directives, not evidence
-        shutil.copy2(fixture / f, dest / f)
+    for src_rel, tgt_rel in plan:
+        shutil.copy2(fixture / src_rel, dest / tgt_rel)
+
+    _assert_materialised(fixture, dest, renamed)
+
+
+# -----------------------------------------------------------------------------
+# ARM THE RENAME, on every `prove`, BEFORE any verdict rests on it.
+#
+# Borrowed wholesale from ASIC/asic-toolkit/ci/check-vendor-collateral.sh, whose
+# first section refuses to say anything about the repository until every one of
+# its rules has fired on an invented specimen. Same reasoning, same shape: a
+# mechanism that has stopped working contributes a silent zero to a green total,
+# and this particular mechanism's silent zero is a gap probe reporting "still
+# real" about an empty directory.
+#
+# Two specimens, because there are two ways to be wrong and passing only the
+# first is how a detector ends up decorative:
+#
+#   1. the strip HAPPENS  — `specimen.cdl.__fixture__.txt` materialises as
+#      `specimen.cdl`, and the tracked name is not left lying beside it;
+#   2. the assert FIRES   — handed a sandbox where the same file was copied
+#      WITHOUT the strip, _assert_materialised must raise. If it returns
+#      quietly, the guard in (1) is worth nothing and prove stops here.
+# -----------------------------------------------------------------------------
+ARM_STEM = "specimen_arming.cdl"
+
+
+def _arm_fixture_suffix(base: Path) -> str:
+    """Prove the FIXTURE_SUFFIX machinery works AND can fail. -> detail string."""
+    arm = base / ".arming"
+    if arm.exists():
+        _rmtree_no_follow(arm)
+    fixture = arm / "fixture" / "armdir"
+    fixture.mkdir(parents=True)
+    tracked = ARM_STEM + FIXTURE_SUFFIX
+    (fixture / tracked).write_text(
+        "* SYNTHETIC ARMING SPECIMEN - invented here, in this file, and not\n"
+        "* foundry content. It exists so that `prove` cannot trust the\n"
+        "* fixture rename until it has watched it work, and watched its\n"
+        "* guard fire on a fixture where it did not happen.\n")
+
+    good = arm / "sandbox"
+    good.mkdir(parents=True)
+    _sandbox(arm / "fixture", good)     # raises FixtureError if the strip failed
+    if not (good / "armdir" / ARM_STEM).is_file():
+        raise FixtureError(
+            f"the arming specimen did not materialise as `{ARM_STEM}` and "
+            f"_assert_materialised did not notice — the guard is inert.")
+    if (good / "armdir" / tracked).exists():
+        raise FixtureError(
+            f"the arming specimen's tracked name `{tracked}` survived into the "
+            f"sandbox beside `{ARM_STEM}`.")
+
+    # (2) the same file, deliberately NOT stripped. The assert must refuse it.
+    broken = arm / "unstripped"
+    (broken / "armdir").mkdir(parents=True)
+    shutil.copy2(fixture / tracked, broken / "armdir" / tracked)
+    fired = None
+    try:
+        _assert_materialised(arm / "fixture", broken,
+                             [(Path("armdir") / tracked, Path("armdir") / ARM_STEM)])
+    except FixtureError as e:
+        fired = str(e)
+    if fired is None:
+        raise FixtureError(
+            "the materialisation assert did NOT fire on a fixture file copied "
+            "under its tracked name. Every gap probe that searches by extension "
+            "would then report its gap 'still real' over a directory the "
+            "fixture never populated, and nothing would say so.")
+
+    _rmtree_no_follow(arm)
+    return (f"`{tracked}` materialises as `{ARM_STEM}`, and the assert fires "
+            f"when it does not")
 
 
 def _sandbox_env(m):
@@ -966,6 +1163,20 @@ def cmd_prove(args):
 
     base = OUT / "prove"
     base.mkdir(parents=True, exist_ok=True)
+
+    # Nothing below is trustworthy until the fixture rename is known to work AND
+    # known to be guarded. Exit 2 (a broken run), not 1 (a failed gate): if this
+    # fails, no case ran and this verb has measured nothing.
+    try:
+        armed = _arm_fixture_suffix(base)
+    except FixtureError as e:
+        print(f"signoff: FIXTURE MATERIALISATION IS BROKEN — {e}", file=sys.stderr)
+        print("signoff: refusing to prove anything. A gap probe reading an "
+              "unpopulated fixture reports its gap 'still real', which is a "
+              "pass that measured nothing.", file=sys.stderr)
+        return 2
+    print(f"arming: fixture suffix {FIXTURE_SUFFIX} — {armed}")
+
     results, bad = [], 0
 
     for s in m.get("stages", []):
@@ -1030,7 +1241,14 @@ def cmd_prove(args):
             sand = base / sid / Path(rel).name
             _rmtree_no_follow(sand) if sand.exists() else None
             sand.mkdir(parents=True, exist_ok=True)
-            _sandbox(fixture, sand)
+            try:
+                _sandbox(fixture, sand)
+            except FixtureError as e:
+                # NOT "the check failed". The evidence never reached the
+                # sandbox, so the check was never asked the question.
+                results.append((sid, label, "UNSTAGED", str(e)))
+                bad += 1
+                continue
             log = base / sid / f"{Path(rel).name}.log"
             rc, secs = sh(s["check"], log, cwd=sand, timeout=args.timeout,
                           env=sandbox_env)
@@ -1121,7 +1339,16 @@ def _prove_gaps(m, base, args, results, want, sandbox_env=None):
             if sand.exists():
                 _rmtree_no_follow(sand)
             sand.mkdir(parents=True, exist_ok=True)
-            _sandbox(fixture, sand)
+            try:
+                _sandbox(fixture, sand)
+            except FixtureError as e:
+                # The dangerous one. Half of these probes are `find | grep -q .`,
+                # and an unpopulated sandbox makes them exit 1 — the exit code
+                # `still-real` is waiting for. Reported as a problem in its own
+                # right so it can never arrive as `ok`.
+                results.append((uid, label, "UNSTAGED", str(e)))
+                bad += 1
+                continue
             log = base / f"gap-{uid}" / f"{case}.log"
             rc, secs = sh(cmd, log, cwd=sand, timeout=args.timeout,
                           env=sandbox_env)
