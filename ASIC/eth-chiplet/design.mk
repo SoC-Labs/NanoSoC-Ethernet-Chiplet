@@ -1280,8 +1280,23 @@ export ROUTE_BUDGET_DANGLING ?= 176
 ## note first said: the `= low` the stage prints before route_design is the
 ## pre-route engine's value, and vt7flow with medium made explicit reproduced
 ## vt3pg to the picosecond. The 45 ps is tQuantus versus signoff qrc.
-## docs/tapeout/71-violation-mechanisms-*.md s2. vt7high tests `high`.
-export ROUTE_EXTRACT_EFFORT ?= medium
+## docs/tapeout/71-violation-mechanisms-*.md s2.
+##
+## vt7high MEASURED `high` (IQuantus) on the same CTS database, 2026-09-14:
+##   medium  route -0.084 / 9 endpoints; ECO's first qrc read -0.117 (33 ps)
+##   high    route +0.072 / 0 endpoints; ECO's first qrc read +0.066 ( 6 ps)
+##           +25 % route runtime (8769 s vs 6991 s); 3 hold endpoints
+##           (-0.036) and 37 more max_tran nets, which the ECO stage takes
+## `high` is the engine whose in-flow number the signoff view believes.
+## docs/tapeout/72-flow-validation-2026-09-14.md.
+export ROUTE_EXTRACT_EFFORT ?= high
+##
+## The ECO stage's passes, one opt_signoff call per token, in order. Measured
+## on the `high` route (vt7higheco): -setup +0.066 -> +0.059 / 0; -drv
+## max_tran 107 -> 98 nets, setup unchanged; -hold 3 -> 2 endpoints (the
+## fast-hot av_ml view: two bus-matrix input-stage registers, -0.024), max_tran
+## 98 -> 99. The residue is the 0.300 ns limit and those two endpoints.
+export ECO_OPT_ARGS ?= -setup -drv -hold
 
 ## THE TOOLS make eco SHELLS OUT TO. opt_signoff runs Tempus and qrc, and
 ## Innovus resolves neither from its own install: the stage's second real run
