@@ -118,10 +118,23 @@ path; `-out_file` is refused):
 Two facts. The 82 is the design's own number, present on every database,
 and only a delta against the input can turn it into a measurement. And the
 overlaps are not the failed legalization's alone: the medium-route ECO has a
-clean log and nine overlapping fillers. The stage's re-fill is
-`add_fillers` without `-eco_mode`, and the reference says that switch is
-what "resolves overlaps of standard cells with fillers by removing the
-overlapping fillers" in an ECO flow - the mechanism under test next.
+clean log and nine overlapping fillers.
+
+The mechanism, from the databases (20:12-20:16): every one of vt7eco's nine
+is an ANTENNA-cell `FILLER_*` instance, and they sit in pairs and a triple
+on one 0.4 um site each. In the parent the same nine instances sit at nine
+distinct sites. opt_signoff's legalizer moved them. The project's smallest
+filler is the ANTENNA diode (36,125 of them, every one fill-named); the
+tech pack's `filler_cells` does not list it, so the stage's `setFillerMode`
+never named it, and to `place_detail` those 36 k instances were standard
+cells - moved, stacked, or "no legal location". The parent's fill stayed in
+the database through every pass.
+
+Toolkit 45abc9b: the filler cell list is derived from the database (the
+base cells of every `<filler_prefix>_*` instance; tech pack as fallback;
+the manifest says which), the fill is deleted before the first pass
+(`ECO_DELETE_FILLERS`) and put back once after the ECO route - the
+conventional ECO order. vt7higheco2 measures it under the new gate.
 
 Toolkit 5118e17 gives the stage the three instruments the place, CTS and
 route stages already had: a log scan for IMPSP-2021/9022/2040 after the
