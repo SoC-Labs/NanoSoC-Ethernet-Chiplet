@@ -1,4 +1,22 @@
-# Verified fixes that belong in another repository
+# Patches held for tidelink
+
+> **BOTH PATCHES IN THIS DIRECTORY LANDED UPSTREAM ON 2026-09-14.**
+>
+> | patch | landed as |
+> |---|---|
+> | `tidelink-remove-dead-set_bus_skew.patch` | tidelink `cbe5e43` |
+> | `tidelink-pad_tx-clock_fall.patch` | tidelink `4d87846` |
+>
+> `origin/main` moved `5e8bdb5` -> `4d87846`, a fast-forward, and this project's
+> submodule pin moved with it. The `.patch` files are kept as the record of what
+> was changed and why it was believed — they are no longer pending work, and
+> they will no longer apply to a current checkout. Delete them once the evidence
+> below has a better home.
+>
+> The compute chiplet is on a divergent lineage
+> (`integ/compute-on-eth-lineage`, merge-base 43 commits back) and carries the
+> SAME `kr260-eth-chiplet` target with the SAME defect. Cherry-picking `4d87846`
+> there is its owner's decision, not ours.
 
 Each patch here was **measured**, not merely written, and each applies to a
 repository this project consumes rather than owns — so it cannot be committed
