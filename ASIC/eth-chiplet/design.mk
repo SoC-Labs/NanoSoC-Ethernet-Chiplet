@@ -2109,6 +2109,11 @@ export CTS_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501 \
                                 CHKCTS-18 CHKCTS-19 CHKCTS-20 \
                                 CHKCTS-1 CHKCTS-2 CHKCTS-9
 export ROUTE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
+# The ECO stage reads the same database and raises the same two at read_db.
+# NOT allowlisted: IMPSP-2021 / IMPSP-9022 - opt_signoff's insertion passes
+# left 17 + 4 cells it could not legalize on vt7higheco-20260914 and returned
+# normally; the stage now counts them (legalize_scan + this census).
+export ECO_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501
 
 
 # ── 11. THE COUNTS THIS DIE IS, AND THE RATCHETS THAT HOLD THEM ─────────────
