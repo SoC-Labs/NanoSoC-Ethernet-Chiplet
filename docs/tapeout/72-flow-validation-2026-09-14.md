@@ -178,8 +178,20 @@ One defect found by the run itself: the derived filler list matched
 PFILLER cells (delete_filler left them alone; setFillerMode refused them,
 IMPSP-5121 x8, and carried on). Toolkit 9429462 matches the prefix on the
 leaf name and excludes the tech pack's `io_filler_cells`, recording the
-exclusion. LEC, Calibre DRC against vt7high as control, and LVS on this
-output are running.
+exclusion.
+
+Signoff on vt7higheco2's output, with controls (21:18-21:53):
+
+| check | vt7higheco2 | control | verdict |
+|---|---|---|---|
+| LEC | 61,599 equivalent, 0 non-equivalent, 0 not-compared, 0 aborted | vt7eco / vt6opt identical | pass |
+| Calibre DRC, rulecheck section | 742 results / 36 rulechecks, no per-rule difference | vt7high 742 / 36 | **the fixed stage added nothing** |
+| Calibre LVS | INCORRECT, pad-ring class, discrepancy lines identical to vt7eco's | vt7eco, vt6opt, rc4 | unchanged |
+
+That is the state a port should expect from `make route` at `high` followed
+by `make eco -setup -drv -hold`: setup closed at signoff, hold and
+max_transition down to what the floorplan allows (section 8), placement
+legal, and nothing added to the DRC or LVS that the parent did not have.
 
 ## 8. vt8hold: the hold-cell lever, and what it is really made of
 
