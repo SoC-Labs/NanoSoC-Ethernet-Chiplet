@@ -90,3 +90,47 @@ LVS, 4 min 40 s.
 Not settled by these runs: the 0.300 ns transition limit (the DRV class is
 that decision), the fast-hot hold residue (two endpoints; second pass
 untested), and vt8hold's question.
+
+## 6. What the ECO stage did not measure (found 20:00, fixed 20:30)
+
+Reading vt7higheco's session log for the two residual hold endpoints found
+this instead:
+
+    -drv pass    IMPSP-2040 "no legal location" x17, IMPSP-2021 "Could not
+                 legalize <17> instances", IMPSP-9022 "place_detail completed
+                 with some error(s)"
+    -hold pass   the same, <4> instances
+    opt_signoff  returned normally both times
+    the gate     HARD FAILURES: none / ADVISORY: none
+
+The stage judged on opt_signoff's own slack lines and on the resize census
+and never read the tool's errors. `unplaced` reads 0: the cells are placed,
+illegally. `check_place`, run by hand on the databases (positional report
+path; `-out_file` is refused):
+
+| database | placement violations | of which bond pads outside the core | overlapping instances |
+|---|---|---|---|
+| vt7flow routed (parent) | 82 | 82 | 0 |
+| vt7high routed (parent) | 82 | 82 | 0 |
+| vt7eco (ECO on vt7flow; log has **no** IMPSP-2021) | 91 | 82 | **9** fillers |
+| vt7higheco (ECO on vt7high; IMPSP-2021 twice) | 87 | 82 | **5** fillers |
+
+Two facts. The 82 is the design's own number, present on every database,
+and only a delta against the input can turn it into a measurement. And the
+overlaps are not the failed legalization's alone: the medium-route ECO has a
+clean log and nine overlapping fillers. The stage's re-fill is
+`add_fillers` without `-eco_mode`, and the reference says that switch is
+what "resolves overlaps of standard cells with fillers by removing the
+overlapping fillers" in an ECO flow - the mechanism under test next.
+
+Toolkit 5118e17 gives the stage the three instruments the place, CTS and
+route stages already had: a log scan for IMPSP-2021/9022/2040 after the
+passes (`legalize_scan`), the message census against a new
+`ECO_ERROR_ALLOWLIST` (unexpected error ids are HARD), and `check_place` on
+the input database before the first pass and again after the ECO route,
+judged as a delta (`place_viol`, `place_overlaps`, `place_unplaced` against
+`base_*`). Every gate line is now also written to the session log. Two stub
+scenarios prove each instrument fires (`eco_unlegalized.tcl`: both; 
+`eco_place_regressed.tcl`: a clean log and a database that says otherwise).
+Harness 126 / 0. Under the new gate both of today's ECO runs are HARD
+failures, which is the correct reading of them.
