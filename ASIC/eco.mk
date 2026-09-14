@@ -97,6 +97,8 @@ eco-emit: check-quiet
 # without taking a licence, which is the flow working; needing them is not.
 #
 #     make eco-lvs-preflight RUN_TAG=<tag>   resolve inputs only, no licence
+#                                            (LVS half deferred until the
+#                                            PG re-stream exists -- see ORDER)
 #     make eco-lvs           RUN_TAG=<tag>   PG re-stream, then full LVS
 
 ECO_LVS_DIR ?= $(ASIC_DIR)/../genus-innovus
@@ -113,11 +115,28 @@ ECO_LVS_FWD  = LVS_RUN='$(RUN_DIR)' \
 
 .PHONY: eco-lvs eco-lvs-preflight
 
+# ORDER. lvs-preflight requires $(OUT_DIR)/$(BLOCK)_lvs.gds, and lvs_pg_gds
+# is what BUILDS it. Running lvs-preflight first therefore MISSes on every
+# fresh ECO run -- MEASURED 2026-09-14 on vt7eco: LEC and DRC passed, then
+# `make eco-lvs` died in its own preflight at 17:07 before streaming anything.
+# It had passed on vt6opt-20260911 only because that stream already existed
+# from the hand-run; the target was green on prior state, not on itself.
+#
+# So: eco-lvs-preflight resolves what can be resolved without the stream (the
+# PG re-stream inputs always; the LVS inputs only once the stream exists, else
+# it says so and defers). eco-lvs does not depend on it: in lvs.mk each tool
+# step already carries its own preflight (lvs_pg_gds: lvs-pg-preflight,
+# lvs_batch: lvs-preflight), so the checks run in the only order that can pass.
 eco-lvs-preflight:
 	$(MAKE) -C $(ECO_LVS_DIR) lvs-pg-preflight $(ECO_LVS_FWD)
-	$(MAKE) -C $(ECO_LVS_DIR) lvs-preflight    $(ECO_LVS_FWD)
+	@if [ -s '$(OUT_DIR)/$(BLOCK)_lvs.gds' ]; then \
+	    $(MAKE) -C $(ECO_LVS_DIR) lvs-preflight $(ECO_LVS_FWD); \
+	else \
+	    echo "== LVS preflight DEFERRED: $(OUT_DIR)/$(BLOCK)_lvs.gds does not exist yet =="; \
+	    echo "   lvs_pg_gds builds it (make eco-lvs); lvs_batch re-runs this preflight after that."; \
+	fi
 
-eco-lvs: eco-lvs-preflight
+eco-lvs:
 	$(MAKE) -C $(ECO_LVS_DIR) lvs_pg_gds $(ECO_LVS_FWD)
 	@# ARTEFACT, NOT EXIT STATUS -- the standing rule in this file.
 	@test -s '$(OUT_DIR)/$(BLOCK)_lvs.gds' || { \
