@@ -147,3 +147,36 @@ scenarios prove each instrument fires (`eco_unlegalized.tcl`: both;
 `eco_place_regressed.tcl`: a clean log and a database that says otherwise).
 Harness 126 / 0. Under the new gate both of today's ECO runs are HARD
 failures, which is the correct reading of them.
+
+## 7. The fixed stage, measured (vt7higheco2, 20:16-21:15)
+
+`make eco -setup -drv -hold` on vt7high again, under toolkit 45abc9b (filler
+list derived from the database, fill deleted before the first pass, one
+re-fill after the ECO route) and the new gates:
+
+| | vt7higheco (before) | vt7higheco2 (after) |
+|---|---|---|
+| legalization log scan (IMPSP-2021 / 9022 / 2040) | 2 / 2 / 21 | **0 / 0 / 0** |
+| check_place, input -> after (overlapping) | 82 -> 87 (0 -> 5) | **82 -> 82 (0 -> 0)** |
+| unexpected error ids | (not measured) | none |
+| setup Initial -> Final | +0.066 -> +0.059 / 0 | +0.066 -> +0.066 / 0 |
+| hold Initial -> Final | -0.036 / 3 -> -0.024 / 2 | -0.036 / 3 -> **-0.021 / 2** |
+| max_transition (nets / terms) | 99 / 265 | **93 / 237** |
+| edits | 10 inserted, 28 resized | 10 inserted, 30 resized |
+| fillers | kept through the passes | 113,042 deleted, re-added |
+| gate | green (wrongly) | green, HARD none, ADVISORY none |
+| wall | 3358 s | 3455 s |
+
+The two hold endpoints that remain are the same two (the multicore and
+eth_ss bus-matrix input-stage registers, fast-hot view, -0.021 / -0.012),
+and the tool's reason is now the real one: "15 net(s): could not be fixed
+because of 'no legal location'" with the fill out of the way, on a die at
+100.00 % placement density. That is a floorplan number, not a flow one.
+
+One defect found by the run itself: the derived filler list matched
+`*FILLER_*` anywhere in the instance name and so included the pad ring's
+PFILLER cells (delete_filler left them alone; setFillerMode refused them,
+IMPSP-5121 x8, and carried on). Toolkit 9429462 matches the prefix on the
+leaf name and excludes the tech pack's `io_filler_cells`, recording the
+exclusion. LEC, Calibre DRC against vt7high as control, and LVS on this
+output are running.
