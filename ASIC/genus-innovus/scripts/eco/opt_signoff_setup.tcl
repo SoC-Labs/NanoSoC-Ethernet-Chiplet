@@ -318,5 +318,42 @@ foreach k {drc opens dangling} {
 }
 if {[llength $bad]} { error "OPT: the database REGRESSED and will not be written:\n   [join $bad "\n   "]" }
 
+# THIS SCRIPT'S DRC GATE IS NOT SIGNOFF DRC, AND IT MISSED A REAL REGRESSION.
+#
+# Measured 2026-09-14 on the database this script wrote. The gate above compared
+# Innovus check_drc: 3 before, 3 after, "no regression", database written.
+# Calibre signoff DRC on the same two streams says 36 -> 39 failing rulechecks:
+# the ECO added M1.S.1 x2, M1.S.5 x1 and VIA1.R.4:M1 x2, five results this gate
+# is structurally unable to see. check_drc reads routing, the power grid,
+# blockages and whatever cell GDS was merged; the rules an ECO breaks at M1 are
+# not all in that set.
+#
+# So the gate above is a REGRESSION TRIPWIRE, not a verdict, and the stamp below
+# says so in the run directory rather than in a comment nobody reads. A database
+# from this script is not signed off until a Calibre DELTA against its parent
+# has been run -- not against rc4, and not in isolation: the parent already
+# carried 4 rulechecks rc4 does not, so an absolute count cannot separate what
+# the ECO did from what it inherited. That control is the only thing that
+# attributed these five correctly.
+set stamp $R/reports/SIGNOFF_DRC_REQUIRED.txt
+set fh [open $stamp w]
+puts $fh "This database has passed opt_signoff_setup.tcl's in-flow checks ONLY."
+puts $fh ""
+puts $fh "check_drc is not signoff DRC. On 2026-09-14 it reported 3 -> 3 on a"
+puts $fh "database whose Calibre count went 36 -> 39 (M1.S.1 x2, M1.S.5 x1,"
+puts $fh "VIA1.R.4:M1 x2). Do not quote this database as DRC-clean."
+puts $fh ""
+puts $fh "Required before use:"
+puts $fh "  make eco-emit RUN_TAG=<this run>"
+puts $fh "  make drc      RUN_TAG=<this run>"
+puts $fh "  make drc      RUN_TAG=<parent run>     # the CONTROL. Without it an"
+puts $fh "                                         # absolute count cannot say"
+puts $fh "                                         # what the ECO caused."
+puts $fh "  then diff the two RULECHECK RESULTS STATISTICS sections -- the"
+puts $fh "  section only, not the whole file: the (BY CELL) section that follows"
+puts $fh "  it inflates a whole-file grep and reverses the comparison."
+close $fh
+say "stamp: $stamp -- in-flow checks only, signoff DRC still required"
+
 write_db $R/work/nanosoc_eth_chiplet_pads_routed
 say "database written"
