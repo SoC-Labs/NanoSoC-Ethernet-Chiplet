@@ -180,3 +180,38 @@ IMPSP-5121 x8, and carried on). Toolkit 9429462 matches the prefix on the
 leaf name and excludes the tech pack's `io_filler_cells`, recording the
 exclusion. LEC, Calibre DRC against vt7high as control, and LVS on this
 output are running.
+
+## 8. vt8hold: the hold-cell lever, and what it is really made of
+
+Same CTS input, vt7flow's route knobs, one change: `CTS_OPT_HOLD_CELLS`
+restricted to DEL005..DEL4, BUFFD2..6, CKBD2..6 (no CKBD0 / CKBD1). CTS
+6599 s, route 21:26.
+
+| | vt7flow (all cells) | vt8hold (no CKBD0/1) |
+|---|---|---|
+| hold cells inserted (FE_PHC) | 34,736, 29 k of them CKBD0/1 | 20,709: BUFFD2 5827, DEL005 5636, DEL01 4608, BUFFD3 1230, DEL015 901, CKBD2 869 |
+| max_transition nets / worst / TNS | 261 / -0.180 / -8.298 | **69 / -0.063 / -0.865** |
+| setup after route (in-flow) | -0.084 / 9 | **+0.053 / 0** |
+| hold after CTS | +0.005 / 0 | -0.161 / 1 |
+| hold after route_design | +0.005 / 0 | -0.160 / 1 |
+| hold after post-route opt | +0.006 / 0 | **-0.337 / -8.1 / 83** |
+| check_drc · PG opens · dangling | 3 · 26 · 177 | 3 · 26 · 177 |
+
+The max_transition class is the hold-cell choice: three-quarters of it goes
+when the two weakest buffers are withheld, and setup closes in-flow at
+`medium` because 14,000 fewer weak cells load the data paths. But the
+post-route hold repair then cannot place what it needs: the tool's own
+reasons are "642 net(s): no legal loc" for buffering, "335: no legal loc"
+and "194: all the cells are filtered" for resizing. CKBD0 fits where a
+DEL005 or a BUFFD2 does not. The die is at 85.5 % utilisation before fill
+and 100.00 % placement density after it.
+
+So the three residues that survived every flow change today have one
+cause: the ~100 max_transition nets (weak hold cells chosen because they
+fit), vt7higheco2's two fast-hot hold endpoints ("no legal location"), and
+vt8hold's 84 (the same, with larger cells). That is a floorplan number, not
+a flow knob. For a port: leave the hold-cell list alone and leave room -
+utilisation in the 60s or 70s - so hold repair can use cells that do not
+manufacture transition violations. On this die the trade stands as
+measured, and the ECO stage on the `high` route is the best result of the
+day: setup +0.066 / 0, hold 2 endpoints, max_tran 93, placement legal.
