@@ -20,7 +20,11 @@ decision, not from the design.
 
 ## 2. Setup: the optimiser was working from the wrong parasitics
 
-    vt4drv route stage         extract_rc_effort_level = low      (its own log)
+    vt4drv route stage         tQuantus (effort medium), 5 extractions -- its
+                               early print of `extract_rc_effort_level = low`
+                               is the PRE-ROUTE engine's value, read before
+                               route_design; I first mistook it for the
+                               post-route engine (corrected 2026-09-14 pm)
     in-flow post-route result  -0.104 ns / 5 endpoints
     same DB, signoff extraction -0.149 ns / 9 endpoints
     opt_signoff on those        -0.010 ns / 2 endpoints, 21 resizes, 0 inserts
@@ -29,11 +33,16 @@ The project already asks the route stage for +0.110 ns setup margin
 (design.mk:1274) and the attribute took (read back 0.11). The optimiser still
 ended at -0.104 with "setup improving moves not found". opt_signoff, on QRC
 parasitics, found 21 resizes worth 140 ps on the same paths. The difference is
-the extraction engine, not the optimiser: the flow never sets
-`extract_rc_effort_level`, and despite `design_process_node 65` and a QRC
-techfile on every mmmc corner (IMPEXT-6202 confirms the tool saw it), Innovus
-stayed on the native cap-table engine and warned seven times that the RC table
-"is not interpolated for wire width 204" on M2..M7.
+the extraction engine, not the optimiser -- but not the engine I first named.
+The flow never sets `extract_rc_effort_level`; the tool's own post-route
+default at this node with a QRC deck is tQuantus (medium), and every route run
+in this lineage ran it (vt3pg 4 starts, vt4drv 5, vt7flow 4, all in their
+logs). The stage's early line `extract_rc_effort_level = low` is the PRE-ROUTE
+engine's value, printed before route_design. So the 45 ps is tQuantus versus
+signoff qrc, not cap table versus qrc. The consequence is unchanged: the
+optimiser's numbers were 45 ps kinder than the ones that judge it. vt7flow,
+routed with ROUTE_EXTRACT_EFFORT=medium made explicit, reproduced vt3pg's
+in-flow result to the picosecond -- which is how the misreading was caught.
 
 The two endpoints that remain are a genuine structural path - a ripple-shaped
 32-bit incrementer feeding a flop's SI pin at 100 MHz - and 10 ps at signoff.
@@ -101,7 +110,9 @@ automated away.
 
 1. **Extraction effort is set, read back and refused if it did not take**
    (`pnr_extraction_setup`, knob `ROUTE_EXTRACT_EFFORT`, default `medium`
-   when the tech pack declares a QRC deck). The layer map the signoff engine
+   when the tech pack declares a QRC deck -- which is what the tool already
+   chose; the knob makes it explicit and refusable, and `high` / `signoff`
+   are now one variable away. vt7high tests `high`). The layer map the signoff engine
    needs is now a tech-pack key (`qrc_layer_map`) shipped with tsmc65.
 2. **A signoff ECO stage** (`make eco`, `flow/innovus/5_eco.tcl`): opt_signoff
    setup+hold+DRV on signoff parasitics, told not to create DRV while fixing

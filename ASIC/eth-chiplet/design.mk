@@ -1276,11 +1276,11 @@ export ROUTE_BUDGET_DANGLING ?= 176
 ## -0.104 ns, the optimiser reporting "setup improving moves not found". The
 ## same database under signoff extraction read -0.149 / 9 endpoints, and
 ## opt_signoff on THOSE numbers found 21 resizes worth 140 ps. The route stage
-## had been optimising on `extract_rc_effort_level = low` -- the native
-## cap-table engine -- because nothing ever set it, and the tool does not raise
-## it by itself even with a QRC deck on every corner (IMPEXT-6202 shows it saw
-## one). Measured 2026-09-14; docs/tapeout/71-violation-mechanisms-*.md s2.
-## `medium` is TQuantus on the pack's deck through the pack's layer map.
+## was on tQuantus (medium), the tool's own default here -- NOT `low`, as this
+## note first said: the `= low` the stage prints before route_design is the
+## pre-route engine's value, and vt7flow with medium made explicit reproduced
+## vt3pg to the picosecond. The 45 ps is tQuantus versus signoff qrc.
+## docs/tapeout/71-violation-mechanisms-*.md s2. vt7high tests `high`.
 export ROUTE_EXTRACT_EFFORT ?= medium
 export ROUTE_OPT_SETUP_TARGET ?= 0.110
 export ROUTE_OPT_HOLD_TARGET  ?= 0.080
