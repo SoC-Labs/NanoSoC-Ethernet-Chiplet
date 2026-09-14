@@ -100,8 +100,13 @@ eco-emit: check-quiet
 #     make eco-lvs           RUN_TAG=<tag>   PG re-stream, then full LVS
 
 ECO_LVS_DIR ?= $(ASIC_DIR)/../genus-innovus
+# An ECO run's database is <block>_eco, not <block>_routed. design.mk's
+# LVS_PG_DB names the latter, which exists in no ECO run; forwarding it as-is
+# made `make eco-lvs` on an ECO run preflight-MISS. Prefer the ECO database
+# when this run has one.
+ECO_LVS_DB  ?= $(if $(wildcard $(WORK_DIR)/$(BLOCK)_eco),$(WORK_DIR)/$(BLOCK)_eco,$(LVS_PG_DB))
 ECO_LVS_FWD  = LVS_RUN='$(RUN_DIR)' \
-               LVS_PG_DB='$(LVS_PG_DB)' \
+               LVS_PG_DB='$(ECO_LVS_DB)' \
                LVS_PG_MERGE_GDS='$(LVS_PG_MERGE_GDS)' \
                ROMLIBS_DIR='$(ROMLIBS_DIR)' \
                LVS_ROM_CDL_DIR='$(LVS_ROM_CDL_DIR)'
