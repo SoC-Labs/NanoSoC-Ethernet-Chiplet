@@ -1282,6 +1282,18 @@ export ROUTE_BUDGET_DANGLING ?= 176
 ## vt3pg to the picosecond. The 45 ps is tQuantus versus signoff qrc.
 ## docs/tapeout/71-violation-mechanisms-*.md s2. vt7high tests `high`.
 export ROUTE_EXTRACT_EFFORT ?= medium
+
+## THE TOOLS make eco SHELLS OUT TO. opt_signoff runs Tempus and qrc, and
+## Innovus resolves neither from its own install: the stage's second real run
+## (vt7eco-20260914) died on IMPESO-365 "Tempus executable not found in PATH"
+## two and a half minutes in, after deleting and re-adding every filler. The
+## flow's eco target puts TEMPUS_BIN's directory and QUANTUS_HOME's bin dirs
+## on PATH and refuses before taking a licence if either tool is still
+## missing. ASIC/sta/site.env already names both for the STA flow (gitignored,
+## plain KEY=value, so make can include it); this is the same site contract
+## reused, not a second copy.
+-include $(ASIC_DIR)/../sta/site.env
+export TEMPUS_BIN QUANTUS_HOME
 export ROUTE_OPT_SETUP_TARGET ?= 0.110
 export ROUTE_OPT_HOLD_TARGET  ?= 0.080
 
