@@ -68,3 +68,54 @@ eco-emit: check-quiet
 	    echo "      netlist is NOT a substitute -- this ECO changed cells."; exit 1; }
 	@echo "OK: emitted $$(ls -la $(ECO_EMIT_OUT_DIR)/$(BLOCK).gds | awk '{print $$5}') byte GDS + netlist"
 	@echo "    next: make lec-pnr RUN_TAG=$(RUN_TAG)   (cheapest gate, ~7 min)"
+
+#-----------------------------------------------------------------------------
+# LVS ON A BUILD OF THIS FLOW.
+#
+# `make lvs` here CANNOT WORK, and this is not a bug in either flow. The
+# toolkit's lvs-batch needs $(OUT_DIR)/$(BLOCK)_lvs.gds -- a PG-labelled
+# re-stream -- and nothing in the eth-chiplet flow builds one. The thing that
+# does is lvs-flow/lvs_pg_emit.tcl, reachable only through ASIC/genus-innovus,
+# whose Makefile does not include eth-chiplet/design.mk. So the LVS defaults
+# there are the LEGACY ones:
+#
+#   LVS_PG_DB       defaults to work/<block> -- the BARE name. This flow writes
+#                   <block>_placed/_cts/_routed, so the default exists in NO run
+#                   and the preflight MISSes even on a fully routed one.
+#   ROM merge/CDL   default under genus-innovus/, not this run's romlibs. The
+#                   ROMs are MASK PROGRAMMED and per-run: comparing run A's
+#                   stream against run B's ROMs is a content error wearing the
+#                   costume of a default.
+#
+# design.mk ALREADY computes all four correctly (:632, :642, :758, :792). They
+# are simply invisible across the flow seam. So this forwards them rather than
+# restating them -- a second copy of a ROM path is the defect above, written by
+# hand.
+#
+# MEASURED 2026-09-14 doing this by hand on vt6opt-20260911: four overrides,
+# discovered one preflight failure at a time. The preflight named every one
+# without taking a licence, which is the flow working; needing them is not.
+#
+#     make eco-lvs-preflight RUN_TAG=<tag>   resolve inputs only, no licence
+#     make eco-lvs           RUN_TAG=<tag>   PG re-stream, then full LVS
+
+ECO_LVS_DIR ?= $(ASIC_DIR)/../genus-innovus
+ECO_LVS_FWD  = LVS_RUN='$(RUN_DIR)' \
+               LVS_PG_DB='$(LVS_PG_DB)' \
+               LVS_PG_MERGE_GDS='$(LVS_PG_MERGE_GDS)' \
+               ROMLIBS_DIR='$(ROMLIBS_DIR)' \
+               LVS_ROM_CDL_DIR='$(LVS_ROM_CDL_DIR)'
+
+.PHONY: eco-lvs eco-lvs-preflight
+
+eco-lvs-preflight:
+	$(MAKE) -C $(ECO_LVS_DIR) lvs-pg-preflight $(ECO_LVS_FWD)
+	$(MAKE) -C $(ECO_LVS_DIR) lvs-preflight    $(ECO_LVS_FWD)
+
+eco-lvs: eco-lvs-preflight
+	$(MAKE) -C $(ECO_LVS_DIR) lvs_pg_gds $(ECO_LVS_FWD)
+	@# ARTEFACT, NOT EXIT STATUS -- the standing rule in this file.
+	@test -s '$(OUT_DIR)/$(BLOCK)_lvs.gds' || { \
+	    echo "FAIL: no PG re-stream at $(OUT_DIR)/$(BLOCK)_lvs.gds"; exit 1; }
+	@echo "OK: PG re-stream $$(stat -c%s '$(OUT_DIR)/$(BLOCK)_lvs.gds') bytes"
+	$(MAKE) -C $(ECO_LVS_DIR) lvs_batch $(ECO_LVS_FWD)
