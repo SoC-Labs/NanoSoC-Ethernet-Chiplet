@@ -1271,6 +1271,17 @@ export ROUTE_BUDGET_DANGLING ?= 176
 ## To sweep, set them in the ENVIRONMENT for one run -- they are read by `opt`,
 ## so an environment value wins and route_manifest.txt records what was used:
 ##     ROUTE_OPT_SETUP_TARGET=0.075 make route RUN_TAG=t075 IN_RUN_TAG=main
+## THE TARGET ABOVE COULD NOT BE REACHED, AND THIS IS WHY. vt4drv-20260910 set
+## opt_setup_target_slack 0.11 (read back, it took) and still ended at
+## -0.104 ns, the optimiser reporting "setup improving moves not found". The
+## same database under signoff extraction read -0.149 / 9 endpoints, and
+## opt_signoff on THOSE numbers found 21 resizes worth 140 ps. The route stage
+## had been optimising on `extract_rc_effort_level = low` -- the native
+## cap-table engine -- because nothing ever set it, and the tool does not raise
+## it by itself even with a QRC deck on every corner (IMPEXT-6202 shows it saw
+## one). Measured 2026-09-14; docs/tapeout/71-violation-mechanisms-*.md s2.
+## `medium` is TQuantus on the pack's deck through the pack's layer map.
+export ROUTE_EXTRACT_EFFORT ?= medium
 export ROUTE_OPT_SETUP_TARGET ?= 0.110
 export ROUTE_OPT_HOLD_TARGET  ?= 0.080
 
