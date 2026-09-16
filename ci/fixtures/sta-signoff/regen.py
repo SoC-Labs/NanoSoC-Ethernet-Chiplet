@@ -452,6 +452,25 @@ def selftest():
          lambda: refuse_undeclared(
              F({"a.rpt": "x\nCHANGED\n", "b.rpt": "ALSO\n"}, [{"file": "a.rpt", "why": "declared"}]),
              F(run)), True)
+    # 5. THE RELOCATION HAZARD. ROOT is derived from this file's own location
+    # (HERE/../../..), so a COPY of this generator run from anywhere else
+    # resolves ROOT to the wrong tree and fails deep inside cut_pass with
+    # "build <tag> has neither eco_manifest.txt nor route_manifest.txt" -- a
+    # message about the run, for a fault in the harness. Measured 2026-09-16:
+    # a mutant copied to /tmp to test the guard above failed exactly this way
+    # and was briefly read as the guard being broken. Assert the anchor here,
+    # so a relocated copy says what is actually wrong.
+    anchors = ["ci/fixtures/sta-signoff/regen.py", "ASIC/sta/sta_gate.py", "ci/signoff.yaml"]
+    missing = [a for a in anchors if not os.path.exists(os.path.join(ROOT, a))]
+    if not missing:
+        print("  ok    ROOT resolves to the repository (this file is where it thinks it is)")
+        ok += 1
+    else:
+        print(f"  BROKEN ROOT = {ROOT} is not this repository: missing {missing}. "
+              f"This generator derives ROOT from its own path; a relocated copy "
+              f"reports a fault in the RUN for a fault in the HARNESS.")
+        bad += 1
+
     print(f"\nSELFTEST: {ok} passed, {bad} broken")
     return 1 if bad else 0
 
