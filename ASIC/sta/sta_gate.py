@@ -242,6 +242,43 @@ def parse_analysis_coverage(path, r):
     return total_unt
 
 
+_UNTESTED_ROW = re.compile(r"\bUNTESTED\s+(?P<reason>\S.*?)\s*$")
+
+
+def parse_untested_reasons(path):
+    """Bucket untested checks by the Reason column of report_analysis_coverage
+    -verbose untested.
+
+    Returns {reason: count}, or None when the report is absent — which is the
+    normal state for every run predating 2026-09-16, because
+    run_signoff_sta.tcl called report_analysis_coverage BARE until then. The
+    caller must treat None as "not measured", never as "nothing found": the
+    summary report carries no Reason column at all, so an untested census
+    without this file cannot be apportioned to a budget.
+
+    The `UNTESTED` token is the anchor rather than a column offset, because the
+    Pin and Reference Pin columns hold full hierarchical paths and overflow
+    their width routinely.
+    """
+    if not os.path.isfile(path):
+        return None
+    counts = {}
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if "UNTESTED" not in line:
+                continue
+            mo = _UNTESTED_ROW.search(line)
+            if not mo:
+                continue
+            reason = mo.group("reason").strip()
+            # Rule-off and banner lines survive the anchor test on some
+            # Tempus versions; they are not reasons.
+            if not reason or set(reason) <= set("-#= "):
+                continue
+            counts[reason] = counts.get(reason, 0) + 1
+    return counts or None
+
+
 def check(reports_dir, policy, r):
     man_path = os.path.join(reports_dir, "sta_manifest.txt")
     man = parse_manifest(man_path, r)
@@ -349,8 +386,52 @@ def check(reports_dir, policy, r):
     untested = parse_analysis_coverage(os.path.join(reports_dir, "analysis_coverage.rpt"), r)
     if untested is not None:
         r.fact("untested_checks", untested)
-        if untested > 0:
-            r.fail("UNTESTED_CHECKS", f"{untested} timing checks are UNTESTED. These are endpoints the analysis never evaluated; they cannot be assumed to pass.")
+        budgets = policy.get("untested_budget_by_reason")
+        if not budgets:
+            # No policy: the original all-or-nothing rule. Kept so a tree
+            # without the new key behaves exactly as before.
+            if untested > 0:
+                r.fail("UNTESTED_CHECKS", f"{untested} timing checks are UNTESTED. These are endpoints the analysis never evaluated; they cannot be assumed to pass.")
+        elif untested == 0:
+            # Nothing to apportion. Demanding the verbose report here would
+            # make a fully-covered run unprovable, which is how the previous
+            # rule ended up with a must-pass fixture no tool could produce.
+            pass
+        else:
+            reasons = parse_untested_reasons(
+                os.path.join(reports_dir, "analysis_coverage_untested.rpt"))
+            if reasons is None:
+                # NOT a pass. The budget exists but cannot be apportioned,
+                # because this run predates the -verbose untested emission.
+                # Failing here rather than falling back to the total keeps the
+                # distinction visible: "we cannot tell" must not read as
+                # "we checked".
+                r.fail("UNTESTED_REASONS_MISSING",
+                       f"{untested} untested checks and no analysis_coverage_untested.rpt "
+                       f"to apportion them against the policy budget. The summary report "
+                       f"carries no Reason column, so this run cannot be graded per reason. "
+                       f"Re-run signoff STA: run_signoff_sta.tcl emits the verbose report "
+                       f"since 2026-09-16.")
+            else:
+                r.fact("untested_by_reason",
+                       ", ".join(f"{k}={v}" for k, v in
+                                 sorted(reasons.items(), key=lambda kv: -kv[1])))
+                for reason, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+                    if reason not in budgets:
+                        # A reason class nobody has ruled on is a decision, not
+                        # a default-allow. New library arcs and new constraint
+                        # styles both surface here first.
+                        r.fail("UNTESTED_REASON_UNKNOWN",
+                               f"{n} untested check(s) with reason {reason!r}, which the "
+                               f"policy does not rule on. Add it to "
+                               f"untested_budget_by_reason with a budget and a justification.")
+                        continue
+                    budget = budgets[reason]
+                    if budget is None:
+                        continue   # deliberately unlimited; see the policy comment
+                    if n > budget:
+                        r.fail("UNTESTED_OVER_BUDGET",
+                               f"{n} untested check(s) with reason {reason!r}, budget {budget}.")
 
     # --- quality ----------------------------------------------------------
     # Tempus splits these across two files: report_timing_summary -checks setup
