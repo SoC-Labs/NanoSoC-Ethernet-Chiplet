@@ -21,6 +21,13 @@ reason — as it should. A must-pass cut verbatim would be a must-fail. The must
 set descends from the edited pass and still yields one code each. **Replace this
 fixture with an unedited cut the day a run passes.**
 
+**The convention is enforced, not observed.** `regen.py` re-cuts a pristine
+copy of the run and refuses to emit a pass fixture that differs from it in any
+file no `pass_edits` entry declares; each declared edit is annotated with the
+number of lines it changed. `regen.py --selftest` proves the guard in both
+directions (5 cases: verbatim accepted, undeclared refused, the same edit
+declared accepted and sized, one declared file not licensing another).
+
 The previous (2026-08-26) fixtures were hand-cut: the pass fixture's
 `analysis_coverage.rpt` had its untested column zeroed and three rows deleted, a state
 no real Tempus run of this design can reproduce, and the must-fails carried up to four

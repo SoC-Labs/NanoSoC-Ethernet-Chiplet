@@ -64,7 +64,15 @@ Fixtures: 13, cut from this run by `ci/fixtures/sta-signoff/regen.py`, one code
 each, with the single declared edit described in `PROVENANCE.md`.
 `signoff.py prove sta-signoff`: 13 cases, 0 problems. `signoff.py lint`: clean.
 `sta_gate.py --selftest` 54 / 0, `sta_extract_evidence.py` 20 / 0,
-`sta_binding.py` 20 / 0.
+`sta_binding.py` 20 / 0, `regen.py --selftest` 5 / 0. Full `signoff.py prove`
+over every stage: 194 cases, 0 problems.
+
+The root defect this closes is not the stale numbers. Nothing tied a
+`sta_policy.json` edit to regenerating the fixtures, so a policy tightened on
+29 August met fixtures cut on the 26th and `prove` stayed green on four of the
+five, because a rotted must-fail still fails — for the wrong reason. A
+generator that cuts from a real run and refuses an undeclared edit removes the
+class: there is no hand-maintained copy left to drift.
 
 The block flip is sound only on a tree whose pinned database defines all three
 hold views; the frozen branch's rc1 database defines one.

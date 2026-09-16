@@ -7,7 +7,8 @@
       "file": "ASIC/sta/work/vt7higheco2-20260914/reports/timing_summary_hold.rpt",
       "was": "View : ALL            -0.022  -0.037     2",
       "now": "View : ALL 0.056 0.000 0",
-      "why": "hold FEP 2 on the real run (the parity gap); row taken from the run's own passing default_analysis_view_hold"
+      "why": "hold FEP 2 on the real run (the parity gap); row taken from the run's own passing default_analysis_view_hold",
+      "changed_lines": 1
     }
   ],
   "fixtures": {

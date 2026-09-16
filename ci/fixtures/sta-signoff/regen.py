@@ -381,23 +381,112 @@ def verify(dest_root, expectations):
     return rows, problems
 
 
+def refuse_undeclared(base, pristine):
+    """Every departure of the pass fixture from its run must be DECLARED.
+
+    Raises SystemExit on any file that differs without a pass_edits entry, and
+    annotates each declared edit with the number of lines it changed.
+
+    Sometimes a must-pass fixture cannot be the run verbatim: a gate has to be
+    provable before any run passes it. The honest form is one named field with
+    its source and reason recorded. The fixture this generator replaced had its
+    untested column zeroed AND three rows deleted with none of that, so nobody
+    could tell it was unreachable by the tool until somebody asked the tool to
+    reproduce it. Refused here rather than noticed later.
+    """
+    declared = {e["file"] for e in base.pass_edits}
+    undeclared = sorted(k for k, v in base.files.items()
+                        if pristine.files.get(k) != v and k not in declared)
+    if undeclared:
+        raise SystemExit(
+            "REFUSED: the pass fixture differs from the run in file(s) no "
+            "pass_edits entry declares:\n  " + "\n  ".join(undeclared) +
+            "\nDeclare the edit (a named function appending to fx.pass_edits) "
+            "or do not make it.")
+    for e in base.pass_edits:
+        a = (pristine.files.get(e["file"]) or "").splitlines()
+        b = base.files[e["file"]].splitlines()
+        e["changed_lines"] = sum(1 for x, y in zip(a, b) if x != y) + abs(len(a) - len(b))
+    return base
+
+
+def selftest():
+    """The guard, in both directions. No run, no tool, milliseconds."""
+    class F:
+        def __init__(self, files, edits=()):
+            self.files, self.pass_edits = dict(files), [dict(e) for e in edits]
+
+    ok = bad = 0
+
+    def case(name, fn, want_refusal):
+        nonlocal ok, bad
+        try:
+            fn()
+            refused = False
+        except SystemExit as e:
+            refused, msg = True, str(e)
+        if refused == want_refusal:
+            print(f"  ok    {name}")
+            ok += 1
+        else:
+            print(f"  BROKEN {name}: refused={refused}, wanted {want_refusal}")
+            bad += 1
+
+    run = {"a.rpt": "x\ny\n", "b.rpt": "p\n"}
+    # 1. verbatim cut passes
+    case("a fixture identical to its run is accepted",
+         lambda: refuse_undeclared(F(run), F(run)), False)
+    # 2. an UNDECLARED edit is refused -- the defect this guard exists for
+    case("an undeclared edit is REFUSED",
+         lambda: refuse_undeclared(F({"a.rpt": "x\nCHANGED\n", "b.rpt": "p\n"}), F(run)), True)
+    # 3. the same edit, declared, is accepted and sized
+    b = F({"a.rpt": "x\nCHANGED\n", "b.rpt": "p\n"}, [{"file": "a.rpt", "why": "declared"}])
+    case("the same edit, declared, is accepted",
+         lambda: refuse_undeclared(b, F(run)), False)
+    if b.pass_edits and b.pass_edits[0].get("changed_lines") == 1:
+        print("  ok    a declared edit records how many lines it changed"); ok += 1
+    else:
+        print(f"  BROKEN changed_lines: {b.pass_edits}"); bad += 1
+    # 4. declaring ONE file does not licence edits to another
+    case("a declared file does not licence an undeclared one",
+         lambda: refuse_undeclared(
+             F({"a.rpt": "x\nCHANGED\n", "b.rpt": "ALSO\n"}, [{"file": "a.rpt", "why": "declared"}]),
+             F(run)), True)
+    print(f"\nSELFTEST: {ok} passed, {bad} broken")
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--reports", help="the real run's report directory")
     ap.add_argument("--build-tag", help="the build tag that run timed")
     ap.add_argument("--write", action="store_true", help="write the fixture set here")
     ap.add_argument("--verify", action="store_true", help="grade every fixture and check its codes")
+    ap.add_argument("--selftest", action="store_true", help="prove the undeclared-edit guard in both directions")
     ap.add_argument("--pass-hold-row-edit", action="store_true",
                     help="DECLARED edit: replace the hold View:ALL row of the pass fixture with the run's worst passing hold view (see declare_hold_row_pass)")
     ap.add_argument("--expectations", default=os.path.join(HERE, "expectations.json"),
                     help="where --write records, and --verify reads, each fixture's expected codes")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest()
     if args.write:
         if not (args.reports and args.build_tag):
             ap.error("--write needs --reports and --build-tag")
         base = cut_pass(os.path.abspath(args.reports), args.build_tag)
         if args.pass_hold_row_edit:
             declare_hold_row_pass(base)
+        # THE CONVENTION, ENFORCED. The must-pass fixture is the run, scrubbed.
+        # Where it is not -- and sometimes it cannot be, because a gate has to
+        # be provable before any run passes it -- every departure is DECLARED:
+        # named function, named file, recorded in expectations.json, explained
+        # in PROVENANCE.md. The fixture this one replaced had its untested
+        # column zeroed and three rows deleted with none of that, so nobody
+        # could tell it was unreachable by the tool until somebody asked the
+        # tool to reproduce it. An undeclared edit is refused here rather than
+        # noticed later.
+        pristine = cut_pass(os.path.abspath(args.reports), args.build_tag)
+        refuse_undeclared(base, pristine)
         fxs = [base] + mutants(base)
         exp = {}
         for fx in fxs:
