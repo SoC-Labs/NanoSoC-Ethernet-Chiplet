@@ -1071,10 +1071,36 @@ def gate_sta_signoff(spec, bundle):
     hp = os.path.join(rep, "timing_summary_hold.rpt")
     setup, hold = _sta_summary(sp), _sta_summary(hp)
     cites = [mc]
-    for p, nme in ((sp, "sta/timing_summary_setup.rpt"),
+    # Keep the PRODUCER's filename. run_signoff_sta.tcl:400 writes
+    # timing_summary.rpt and sta_gate.py:363 reads timing_summary.rpt; renaming
+    # it here made the bundle un-gradable — running sta_gate.py against
+    # build/evidence/rc4-20260829/evidence/sta gave FAIL [SUMMARY_MISSING] and a
+    # MEASURED block with no setup_wns/setup_fep at all, hiding the fact that
+    # rc4 closes setup at +0.015 with 0 failing endpoints. This copier was the
+    # lone outlier of the four places that spell the name, and has no readers.
+    # The last three were stranded in the work dir until 2026-09-16. The gate
+    # fails on UNTESTED_CHECKS (57,955 on rc4), and analysis_coverage.rpt is a
+    # 23-line SUMMARY with no Reason column — so the bundle physically could not
+    # answer "untested why?", which is why nobody had ever enumerated them.
+    # run_signoff_sta.tcl already writes all three to $REP; only the copy was
+    # missing. check_timing.rpt is the enumeration (8,397 endpoints, pin by pin)
+    # and analysis_coverage_early_all.rpt is what proves the exclusions are
+    # symmetric rather than a one-way analysis gap.
+    for p, nme in ((sp, "sta/timing_summary.rpt"),
                    (hp, "sta/timing_summary_hold.rpt"),
                    (os.path.join(rep, "analysis_coverage.rpt"), "sta/analysis_coverage.rpt"),
-                   (os.path.join(rep, "timing_derate.rpt"), "sta/timing_derate.rpt")):
+                   (os.path.join(rep, "timing_derate.rpt"), "sta/timing_derate.rpt"),
+                   (os.path.join(rep, "analysis_coverage_hold.rpt"), "sta/analysis_coverage_hold.rpt"),
+                   (os.path.join(rep, "analysis_coverage_early_all.rpt"), "sta/analysis_coverage_early_all.rpt"),
+                   (os.path.join(rep, "check_timing.rpt"), "sta/check_timing.rpt"),
+                   # The Reason column. Absent from every run before 2026-09-16
+                   # (run_signoff_sta.tcl called report_analysis_coverage bare);
+                   # these are what make an untested-check budget auditable
+                   # rather than a number nobody can account for. Older report
+                   # sets simply will not have them — bundle.add is a no-op on a
+                   # missing file, so this stays safe against historical runs.
+                   (os.path.join(rep, "analysis_coverage_untested.rpt"), "sta/analysis_coverage_untested.rpt"),
+                   (os.path.join(rep, "analysis_coverage_untested_hold.rpt"), "sta/analysis_coverage_untested_hold.rpt")):
         c = bundle.add(p, nme)
         if c:
             cites.append(c)

@@ -375,6 +375,20 @@ step check_timing {
 step report_analysis_coverage {
     report_analysis_coverage > $REP/analysis_coverage.rpt
     rec analysis_coverage_bytes [expr {[file exists $REP/analysis_coverage.rpt] ? [file size $REP/analysis_coverage.rpt] : 0}]
+    # -verbose untested adds the Reason column. Without it this step emits a
+    # ~23-line SUMMARY, and sta_gate.py FAILS on untested > 0 while the evidence
+    # is physically incapable of saying WHY anything is untested. That is why
+    # 57,955 untested checks on rc4 went un-enumerated for weeks: the only file
+    # on disk carrying a Reason was a PLACE-stage report from a different build.
+    # Measured 2026-09-16: 85% of them are "No endpoint clock" on async CDN/SDN
+    # pins driven by reset-synchroniser DATA nets — structurally uncomputable,
+    # not unconstrained. A per-reason budget cannot be written, let alone
+    # audited, until the signoff run reports the reason itself.
+    # catch: -verbose is honoured by Tempus 21.11 here (proven at the place
+    # stage on this design) but the step must not take the run down if a future
+    # version drops the flag — the summary above is still written either way.
+    catch { report_analysis_coverage -verbose untested > $REP/analysis_coverage_untested.rpt }
+    rec analysis_coverage_untested_bytes [expr {[file exists $REP/analysis_coverage_untested.rpt] ? [file size $REP/analysis_coverage_untested.rpt] : 0}]
 }
 
 step report_clocks {
@@ -449,6 +463,11 @@ step report_analysis_coverage_hold {
     # ExternalDelay(Early)), whose violated counts sum to the hold FEP.
     report_analysis_coverage -check_type hold > $REP/analysis_coverage_hold.rpt
     catch { report_analysis_coverage > $REP/analysis_coverage_early_all.rpt }
+    # Reason column for the early side too — the untested exclusions are
+    # symmetric (Setup 2,377 == Hold 2,377, LibCG 3,007 both, Recovery ==
+    # Removal 2,998), and that symmetry is what shows they are endpoints
+    # excluded from timing altogether rather than a one-way analysis gap.
+    catch { report_analysis_coverage -verbose untested > $REP/analysis_coverage_untested_hold.rpt }
     rec analysis_coverage_hold_bytes [expr {[file exists $REP/analysis_coverage_hold.rpt] ? [file size $REP/analysis_coverage_hold.rpt] : 0}]
     set_db timing_analysis_check_type $_ct_restore
 }

@@ -108,15 +108,27 @@ believe the tool prints" into evidence.
    and FEP fields of `pass` are the only numbers changed; `fail-violating`
    carries the candidate's real setup row verbatim.
 
-3. **`clock_count` tracks `ASIC/sta/sta_policy.json`, not a captured run.** The
-   fixtures carry 52 because that is the committed tripwire; a fixture written to
-   any other number would fail the must-pass case for a reason unrelated to the
-   arm under test. The tripwire was re-pinned from 66 to 52 on 2026-08-26 after
-   the 33-vs-66 question was resolved (`get_db clocks` returns one object per
-   active analysis view, and this MMMC activates two, so the database number is
-   always twice the SDC's). **If that policy value moves again, these fixtures
-   must move with it** — `signoff.py prove` will go red on `sta-signoff/pass`
-   the moment they disagree, which is the intended coupling and not a defect.
+3. **`clock_count` AND `analysis_views_hold` track `ASIC/sta/sta_policy.json`,
+   not a captured run.** The fixtures carry `clock_count = 104` and all three
+   required hold views because those are the committed tripwire and the
+   committed requirement; a fixture written to any other value fails *every*
+   case for a reason unrelated to the arm under test. Re-pinned 66 -> 52 on
+   2026-08-26 after the 33-vs-66 question was resolved, then 52 -> 104 on
+   2026-08-29 when `required_hold_views` went from one view to three
+   (`get_db clocks` returns one object per active analysis view, so 26 SDC
+   clocks x 4 active views = 104). **If either policy value moves again, all
+   five manifest-carrying fixtures must move with it.**
+
+   The coupling is only half-armed, and the missing half is the trap: `prove`
+   goes red on `sta-signoff/pass` the moment they disagree, but it stays
+   **green on every `fail-*` case while they rot** — those simply fail for
+   extra reasons. That happened between 2026-08-29 and 2026-09-16: four
+   must_fail fixtures reported up to 4 failure codes where only 1 was their
+   own, so each would still have "failed correctly" with the clause it exists
+   to test deleted. The composite `check:` hides it further, because
+   `sta_binding.py ... || exit 1` means a binding-arm fixture never reaches
+   `sta_gate.py` at all. **Check the codes, not the exit status** — run
+   `sta_gate.py` alone against each fixture tree and confirm exactly one.
 
 `fail-wrong-build` needed no invention: it is `pass` with the build tag replaced
 by the one all six historical runs actually read. It is the load-bearing case —

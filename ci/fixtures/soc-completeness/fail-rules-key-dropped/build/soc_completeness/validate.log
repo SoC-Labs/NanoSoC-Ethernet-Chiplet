@@ -1,0 +1,4 @@
+[sys_desc] Validating /w/nanosoc-multicore-system/sys_desc/nanosoc_multicore_soc.yaml (tiers 1-3)
+[INFO] (t3/completeness) [uart-present] A UART exists for console bring-up: no instance matches
+System completeness: 8/9 checks pass
+0 error(s), 0 warning(s)

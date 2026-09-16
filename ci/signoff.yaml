@@ -22,6 +22,96 @@ top: nanosoc_eth_chiplet
 
 stages:
   # --- RTL phase — no PDK, runs on either host --------------------------------
+  - id: soc-completeness
+    phase: rtl
+    gate: block
+    label: soclabs-sim
+    description: "SoC description declares every component it is supposed to (tier-3 completeness)"
+    # THE SYSTABLE WENT MISSING AND NOTHING NOTICED. The CoreSight system ROM
+    # table (chip part identity + the ECOREVNUM metal-fix hook) is instantiated
+    # in nanosoc_m0_soc and nanosoc_micropython_soc and in NO chiplet-lineage
+    # design. soc_model/completeness.py could have caught it for the entire life
+    # of the project — it shipped with the generator, runs in seconds, needs no
+    # licence — but nothing ever invoked it, and its bundled default policy has
+    # no ROM-table rule anyway. This stage is the invocation.
+    #
+    # Runs BEFORE anything renders RTL, and asserts over the MODEL. That is
+    # deliberate: build_soc/ is gitignored generator output whose regeneration is
+    # mtime-guarded (set_env.sh only rebuilds when the TOP yaml is newer), so a
+    # check reading build_soc/ can pass against a stale tree. The flists and the
+    # SOCD discovery table are no better — nanosoc-simple-chiplet compiles both
+    # systable .v files in three flists and instantiates neither, and the SOCD
+    # table truncates names to 4 chars where a "syst" entry ALREADY exists that
+    # is `system`, not `systable`.
+    pre:
+      - mkdir -p build/soc_completeness
+    run: make -C nanosoc-multicore-system/sys_desc validate 2>&1 | tee build/soc_completeness/validate.log; exit ${PIPESTATUS[0]}
+    # Re-read the log rather than trusting the rc, because the two ways this gate
+    # goes falsely green both exit 0:
+    #
+    #   TIER 3 DID NOT RUN   revert sys_desc/Makefile's validate target to
+    #                        --validate-only and it still validates, still exits
+    #                        0, and silently stops evaluating any rule. No tally
+    #                        line is printed — that absence is the tell.
+    #   RULES KEY DROPPED    remove configurator.yaml's `rules:` key and the
+    #                        adapter falls back to the generator's bundled
+    #                        9-rule default, which has no systable rule. The
+    #                        tally still prints, but names 9 rules instead of 11.
+    #
+    # Hence: the tally must exist, and must account for at least RULES_MIN rules.
+    # Bump RULES_MIN when rules are added; a drop is what this is here to catch.
+    check: |
+      python3 - <<'EOF'
+      import os, re, sys
+      LOG = "build/soc_completeness/validate.log"
+      RULES_MIN = 11
+      if not os.path.exists(LOG) or not os.path.getsize(LOG):
+          print(f"soc-completeness: FAIL - no log at {LOG}; the run left no "
+                f"evidence and 'nothing reported' is not 'nothing found'")
+          sys.exit(1)
+      txt = open(LOG, encoding="utf-8", errors="replace").read()
+      m = re.search(r"System completeness:\s*(\d+)/(\d+)\s+checks pass", txt)
+      if not m:
+          print("soc-completeness: FAIL - no 'System completeness: N/M' tally in "
+                "the log, so tier 3 never ran. Check that sys_desc/Makefile's "
+                "validate target still calls soc_model.configurator check and has "
+                "not been reverted to --validate-only.")
+          sys.exit(1)
+      passed, total = int(m.group(1)), int(m.group(2))
+      if total < RULES_MIN:
+          print(f"soc-completeness: FAIL - only {total} rules evaluated, expected "
+                f"at least {RULES_MIN}. The project policy has been dropped: check "
+                f"that nanosoc-multicore-system/configurator.yaml still sets "
+                f"rules: sys_desc/completeness_rules.yaml (without it the bundled "
+                f"9-rule default applies and the systable rules vanish).")
+          sys.exit(1)
+      e = re.search(r"(\d+) error\(s\)", txt)
+      if not e:
+          print("soc-completeness: FAIL - tally present but no error-count line; "
+                "the run did not finish")
+          sys.exit(1)
+      errors = int(e.group(1))
+      if errors:
+          print(f"soc-completeness: FAIL - {errors} error-level finding(s), "
+                f"{passed}/{total} checks pass")
+          for line in txt.splitlines():
+              if line.lstrip().startswith("[ERROR]"):
+                  print("  " + line.strip())
+          sys.exit(1)
+      print(f"soc-completeness: OK - {passed}/{total} checks pass over {total} "
+            f"rules, 0 errors")
+      sys.exit(0)
+      EOF
+    check_proof:
+      must_pass: ci/fixtures/soc-completeness/pass
+      must_fail:
+        - ci/fixtures/soc-completeness/fail-no-log
+        - ci/fixtures/soc-completeness/fail-tier3-absent
+        - ci/fixtures/soc-completeness/fail-error-finding
+        - ci/fixtures/soc-completeness/fail-rules-key-dropped
+    artifacts:
+      - build/soc_completeness/validate.log
+
   - id: chip-boundary
     phase: rtl
     gate: block
