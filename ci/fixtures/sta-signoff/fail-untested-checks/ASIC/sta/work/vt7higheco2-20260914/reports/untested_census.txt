@@ -1,0 +1,7 @@
+# side|check_type|reason|count  -- derived in-session from analysis_coverage_untested{,_hold}.rpt
+hold|DataCheckHold|const|83
+hold|Hold|const|258
+hold|Hold|False Path|2119
+hold|Removal|const|11
+hold|Removal|False Path|2994
+hold|Library Clock Gating Hold|const|3007

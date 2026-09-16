@@ -4458,31 +4458,54 @@ stages:
   # on every run it ever made. Deleted by this change; scripts/ci/preflight.sh
   # now resolves both tools by DECLARATION and refuses a host that cannot.
   #
-  # gate: report IS A CHOICE. gdsrun-20260826-rc1 fails this gate today on real
-  # numbers -- setup WNS -0.049 over 4 endpoints, hold -0.053 over 394, 57,955
-  # untested checks -- and that is being worked separately. Per this file's own
-  # definition `report` is for a flow that is real and whose findings are not yet
-  # triaged to zero, which is why ir-drop is `report`. A blocking row red on day
-  # one for a known, owned reason teaches its reader to skip it.
+  # gate: block SINCE 2026-09-16. It was `report` from 2026-08-26 because the
+  # candidate of the day failed it on real numbers and a blocking row red for a
+  # known, owned reason teaches its reader to skip it. Three things changed:
+  #   * the candidate closes: vt7higheco2-20260914 under standalone Quantus
+  #     parasitics (signoff effort, four views, 104 clocks) -- see
+  #     docs/tapeout/75-signoff-sta-on-parasitics-2026-09-16.md;
+  #   * the gate now REFUSES a run that cannot show it extracted (extractor
+  #     banner, IMPEXT-3518 / EXTSNZ-127 / IMPEXT-5016 all zero, effort read
+  #     back as signoff, a layer map in force), so "timed" can no longer mean
+  #     "timed on a cap table";
+  #   * the 57,955 untested checks are budgeted PER REASON as a ratchet cut from
+  #     the run (ASIC/sta/sta_policy.json untested_budget), so the row is green
+  #     on the accounted-for population and red on a class that grows.
+  # The fixtures below are cut from that run by ci/fixtures/sta-signoff/regen.py
+  # and each must-fail is verified to carry exactly its own code -- see
+  # ci/fixtures/sta-signoff/PROVENANCE.md.
   #
-  # THE BLOCKING HALF IS THE ROW BELOW. "Has this been timed, and does the timing
+  # SOUND ONLY WHERE THE PINNED DATABASE DEFINES ALL THREE HOLD VIEWS. The
+  # policy requires default_analysis_view_hold, av_ml_libset_hold and
+  # av_ltfix_libset_hold; a tree whose graded build was routed under a one-hold-
+  # view MMMC cannot satisfy that by construction and would sit red here for a
+  # reason that is about the MMMC, not the timing.
+  #
+  # THE BINDING HALF IS THE ROW BELOW. "Has this been timed, and does the timing
   # belong to it" is a different question from "does it close". Do not merge the
   # rows: one `gate:` field cannot hold both answers.
   - id: sta-signoff
     phase: physical
-    gate: report
+    gate: block
     label: soclabs-sta
-    description: "Signoff STA in Tempus on the routed database with Quantus parasitics: OCV, CPPR both, re-issued derate, graded by ASIC/sta/sta_gate.py against a committed policy"
+    description: "Signoff STA in Tempus on the routed (or ECO) database with standalone Quantus parasitics: OCV, CPPR both, re-issued derate, extraction proven from the logs, untested checks budgeted per reason, graded by ASIC/sta/sta_gate.py against a committed policy"
     # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
     # fixtures. See the `vars:` block at the head of this file.
-    proof_vars: {GRADED_BUILD: gdsrun-20260826-rc1}
+    proof_vars: {GRADED_BUILD: vt7higheco2-20260914}
     # The two artefacts ir-drop names, for its reason: work/<block>_routed means
     # a route STARTED, route_manifest.txt is written at the route's END and is
     # the only proof it FINISHED. Declaring them makes an unrouted build render
     # UNVERIFIED (indicts the run) rather than FAIL (indicts the design).
+    #
+    # ECO-AWARE SINCE 2026-09-16. An ECO run's tree holds <block>_eco and
+    # eco_manifest.txt, and NO route_manifest.txt: the finished route is its
+    # parent's, named in the ECO manifest. The globs admit either shape
+    # ([er]* is _eco or _routed; [er][co]*_manifest.txt is eco_ or route_);
+    # scripts/ci/sta_binding.py then does the exact naming and, for an ECO,
+    # resolves the parent route and refuses one that never finished.
     needs_implementation:
-      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/nanosoc_eth_chiplet_pads_routed
-      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/route_manifest.txt
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/work/nanosoc_eth_chiplet_pads_[er]*
+      - ASIC/eth-chiplet/build/@GRADED_BUILD@/reports/[er][co]*_manifest.txt
     # MEASURED 716 s wall on gdsrun-20260826-rc1 (09:56:24 -> 10:08:20), mostly
     # extraction over 223,168 nets. Budgeted at 5x: a wedged Tempus with no
     # timeout holds a runner and a seat; one set tight kills a healthy run and
@@ -4500,11 +4523,14 @@ stages:
     run: |
       set -u
       TAG=@GRADED_BUILD@
-      DB="$PWD/ASIC/eth-chiplet/build/$TAG/work/nanosoc_eth_chiplet_pads_routed"
+      # The ECO database when the run has one, else the routed one -- the
+      # same choice ASIC/sta.mk and ASIC/eco.mk make. Never a placed one.
+      DB="$PWD/ASIC/eth-chiplet/build/$TAG/work/nanosoc_eth_chiplet_pads_eco"
+      [ -d "$DB" ] || DB="$PWD/ASIC/eth-chiplet/build/$TAG/work/nanosoc_eth_chiplet_pads_routed"
       W="$PWD/ASIC/sta/work/$TAG"
       mkdir -p "$W/reports" "$W/outputs"
       python3 ASIC/sta/make_sta_mmmc.py --db "$DB" --out "$W/mmmc_sta.tcl" < /dev/null
-      STA_OUT="$W/outputs" STA_REP="$W/reports" STA_WORK="$W" \
+      STA_TAG="$TAG" STA_OUT="$W/outputs" STA_REP="$W/reports" STA_WORK="$W" \
         STA_MMMC="$W/mmmc_sta.tcl" \
         ASIC/sta/run_sta.sh "$DB" < /dev/null
     # TWO GRADERS, AND THE ORDER IS THE POINT. sta_binding.py first: which build
@@ -4527,16 +4553,29 @@ stages:
       python3 ASIC/sta/sta_gate.py \
           --reports "$REP" --policy ASIC/sta/sta_policy.json
     # Both directions. Every must_fail is a shape this project has already been
-    # misled by: wrong-build is the 17-18 August runs verbatim, violating is the
-    # candidate's own setup row, no-result is the state this repo shipped in.
+    # misled by: wrong-build is the 17-18 August runs verbatim, violating is a
+    # candidate's own setup row, no-result is the state this repo shipped in,
+    # no-extraction / cap-table-fallback / effort-not-signoff are the 2026-08-18
+    # run that timed a 65 nm die on a cap table and looked signed off. ONE
+    # mutation each, cut by ci/fixtures/sta-signoff/regen.py from the real run,
+    # and each verified (regen.py --verify) to be refused under exactly its own
+    # code -- because `prove` reads the exit status, and a must-fail that fails
+    # for some OTHER reason proves nothing about the arm it is named after.
     check_proof:
       must_pass: ci/fixtures/sta-signoff/pass
       must_fail:
         - ci/fixtures/sta-signoff/fail-wrong-build
+        - ci/fixtures/sta-signoff/fail-eco-parent-missing
         - ci/fixtures/sta-signoff/fail-violating
         - ci/fixtures/sta-signoff/fail-unfinished
         - ci/fixtures/sta-signoff/fail-no-result
         - ci/fixtures/sta-signoff/fail-untested-checks
+        - ci/fixtures/sta-signoff/fail-no-extraction
+        - ci/fixtures/sta-signoff/fail-cap-table-fallback
+        - ci/fixtures/sta-signoff/fail-effort-not-signoff
+        - ci/fixtures/sta-signoff/fail-spef-too-small
+        - ci/fixtures/sta-signoff/fail-view-missing
+        - ci/fixtures/sta-signoff/fail-clock-count
     # PINNED TO MATCH run: AND check:. A `*` would sweep the six stale 17-18
     # August report sets under ASIC/sta/reports/ into the bundle beside a verdict
     # computed from none of them. The huge SPEF and SDF are deliberately not
@@ -4546,7 +4585,13 @@ stages:
       - ASIC/sta/work/@GRADED_BUILD@/reports/sta_manifest.txt
       - ASIC/sta/work/@GRADED_BUILD@/reports/timing_summary.rpt
       - ASIC/sta/work/@GRADED_BUILD@/reports/timing_summary_hold.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/timing_summary_views.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/timing_summary_hold_views.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/timing_summary_drv.rpt
       - ASIC/sta/work/@GRADED_BUILD@/reports/analysis_coverage.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/analysis_coverage_hold.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/analysis_coverage_early_all.rpt
+      - ASIC/sta/work/@GRADED_BUILD@/reports/untested_census.txt
       - ASIC/sta/work/@GRADED_BUILD@/reports/timing_derate.rpt
       - ASIC/sta/work/@GRADED_BUILD@/reports/clocks.rpt
       - ASIC/sta/work/@GRADED_BUILD@/reports/tempus_sta.log
@@ -4739,53 +4784,6 @@ unsupported:
     refuted_by: |
       ! grep -qF -- '-group [get_clocks $_tx_grp]' \
         ASIC/genus-innovus/inputs/constraints.sdc
-  - id: sta-hold-coverage
-    # REPLACED THE `sta-signoff` GAP, 2026-08-26: two stages now run STA, so
-    # that entry was deleted rather than reworded -- a gap whose refutation has
-    # fired is not a gap. What survives is this, narrower and separately true,
-    # buried in the old entry's prose where nothing could test it.
-    #
-    # MEASURED on gdsrun-20260826-rc1 and on 2026-08-18 -- every signoff STA
-    # this project has completed:
-    #
-    #   **ERROR: (TCLCMD-1056): 'early check types checkTypeName cannot be
-    #   reported in Late Analysis Mode'
-    #
-    # raised by run_signoff_sta.tcl's report_analysis_coverage_hold step, which
-    # records that step FAILED and writes no report. So the untested-check
-    # census sta-signoff grades -- 57,955 on the candidate -- is a LATE-SIDE
-    # census being read as the whole design.
-    #
-    # NOT A MISSING FEATURE: the tool refuses the request in the mode the session
-    # is in, as it refuses `-early` with `-late` (TCLCMD-1130) outside
-    # simultaneous setup-and-hold mode. The fix is one step in
-    # ASIC/sta/run_signoff_sta.tcl and no change to any gate here; declared
-    # rather than fixed because that file is being edited concurrently.
-    #
-    # THE HOLD NUMBER IS NOT MISSING: report_timing_summary -checks hold runs
-    # fine and the candidate's hold WNS and FEP are graded. What is missing is
-    # the early-side DENOMINATOR.
-    reason: >
-      Hold-side analysis coverage has never been measured. Every completed
-      signoff STA raises TCLCMD-1056 on report_analysis_coverage -check_type
-      hold and writes no report, so the untested-check census the sta-signoff
-      stage grades is a setup-only census. Hold WNS and failing endpoints ARE
-      measured; the number of hold checks that went unevaluated is not, and an
-      unevaluated check reads exactly like a passing one.
-    # Keyed on the ARTEFACT, not on the command being present in the Tcl: that
-    # command has been there since 2026-08-18 and has failed every time, so a
-    # grep for it would report this gap closed while it was wide open.
-    #
-    # A LOOP, NOT `ls ... && test -s ...`, AND THE FIRST DRAFT WAS THE BAD ONE:
-    # `ls` on a glob matching nothing exits 2, the `&&` short-circuits, and lint
-    # calls a 2 UNVERIFIABLE -- the same decorated-but-unfalsifiable shape as the
-    # entry this replaced. An unmatched glob expands to the literal pattern and
-    # `[ -s ]` is false on it.
-    refuted_by: |
-      for f in ASIC/sta/work/*/reports/analysis_coverage_hold.rpt; do
-        [ -s "$f" ] && exit 0
-      done
-      exit 1
   - id: antenna-signoff
     # CORRECTED 2026-08-26, and the correction is the same shape as
     # sta-signoff's above: the clause that was doing the work turned out to be

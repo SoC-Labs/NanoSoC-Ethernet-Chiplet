@@ -1,0 +1,238 @@
+date                     2026-09-14 17:40:30
+runtime_s                8769
+stage                    route
+run_tag                  vt7high-20260914
+host                     srv03335.soton.ac.uk
+user                     dam1n19
+tool                     Innovus Implementation System
+tool_version             21.11-s130_1
+log_file                 innovus.log
+prov.schema                              1
+prov.stage                               route
+prov.design.git_describe                 gdsrun-20260819-293-g08731fd-dirty
+prov.design.git_sha                      08731fd
+prov.design.git_dirty                    yes
+prov.flist.path                          /builds/nanosoc-ethernet-chiplet/flist/nanosoc_eth_chiplet_asic.flist
+prov.flist.sha256                        2ee761190cad9c4f014f0ee7cb7c5740cc70ccd6dfad76705e8543f136522dec
+prov.flist.bytes                         6901
+prov.flist.hashed_at                     stage-end
+prov.flist.mutated_under_run             not-pinned
+prov.mmmc.path                           /builds/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/nanosoc_eth_chiplet_pads.mmmc
+prov.mmmc.sha256                         e4e1454b60248010c549bd30493d3863fa71fb26a78382396f618484d694404c
+prov.mmmc.bytes                          36483
+prov.mmmc.hashed_at                      stage-end
+prov.mmmc.mutated_under_run              not-pinned
+prov.floorplan.path                      /builds/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/floorplan.tcl
+prov.floorplan.sha256                    9453b176a1cc1125410625e11fa153c24ab9f23b18cb92e7e860613811741440
+prov.floorplan.bytes                     34220
+prov.floorplan.hashed_at                 stage-end
+prov.floorplan.mutated_under_run         not-pinned
+prov.bondpads.path                       /builds/nanosoc-ethernet-chiplet/ASIC/genus-innovus/scripts/place_bondpads.tcl
+prov.bondpads.sha256                     e88cf67370f33c7100d7af6515eb53853401656dd32ffbe9ea3dd19b4d623b34
+prov.bondpads.bytes                      5485
+prov.bondpads.hashed_at                  point-of-use
+prov.bondpads.mutated_under_run          no
+prov.macros.count                        103
+prov.pads.pattern                        uPAD_%RAIL%_*
+prov.pads.VDD                            6
+prov.pads.VDDIO                          12
+prov.pads.VSS                            4
+prov.pads.VSSIO                          12
+prov.pads.overlap                        0
+prov.pads.inst_pattern                   uPAD_*_*
+prov.pads.total                          86
+prov.tech.name                           tsmc65lp
+prov.tech.dir.path                       /builds/nanosoc-ethernet-chiplet/ASIC/asic-toolkit/tech/tsmc65
+prov.tech.pack.path                      /builds/nanosoc-ethernet-chiplet/ASIC/asic-toolkit/tech/tsmc65/tech.tcl
+prov.tech.pack_sha256                    5bfd6cb06b1c4b9e59b4d32a205c0a2114964363ff8f5084353819e46b5440ca
+prov.tech_env.ARM_CLN65LP_TECH           sha256:dbd0b6bf6c83e0950ba711b88b1ced5707cff655a33ec5d6695b28563b123893
+prov.tech_env.TSMC_65_HOME               sha256:fe5c0b5880086340678f1f8514de02699bf443ca13263f31b022d73e75f4d6f5
+prov.tech_env.census                     2
+prov.rom.dir.path                        /builds/nanosoc-ethernet-chiplet/build/rom_verify
+prov.rom.eth.content_sha256              78f10d715f8d4ab8353b80027d1c0d0b5dc03e932856650e55200ce85473640e
+prov.rom.eth.code_sha256                 582200fea960fd5987a4b276b28544ea32c2612cc2c6d24809f72fea52a1e29c
+prov.rom.cc.content_sha256               4fb86ef603fc44f93488cf5b7512bb47df1c877e3cf7153ed61af92b8081021f
+prov.rom.cc.code_sha256                  20095b283997c1dde4a05511443780291798a8b50624325058cc240627f2510f
+prov.rom.census                          2
+block                    nanosoc_eth_chiplet_pads
+db_prefix                nanosoc_eth_chiplet_pads
+work_dir                 /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/work
+in_db_dir                /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt3pg-20260909/work
+log_dir                  /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/logs
+report_dir               /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/reports
+out_dir                  /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/outputs
+tech                     tsmc65lp
+tech_dir                 /builds/nanosoc-ethernet-chiplet/ASIC/asic-toolkit/tech/tsmc65
+project_git_sha          08731fd
+project_git_dirty        yes
+toolkit_git_sha          f5b5d88
+toolkit_git_dirty        no
+ASIC_LOCAL_CPU           14
+ASIC_DISTRIBUTED         0
+ASIC_REMOTE_HOSTS        (default)
+ASIC_CPU_PER_REMOTE      6
+step_files               route_setup=toolkit filler=PROJECT OVERRIDE metal_fill=toolkit pg_capacity=toolkit
+hooks_run                pre_route(3s) post_route(183s)
+ROUTE_IN_TAG             cts
+ROUTE_CHECKS             1
+ROUTE_STRICT             1
+ROUTE_HOLD_SANITY        1
+ROUTE_UNCAP_CHECKS       1
+ROUTE_DRV_TRIAGE         1
+ROUTE_FILLER_GAPS        1
+ROUTE_PG_AUDIT           1
+ROUTE_REGWIRE_REPAIR     1
+ROUTE_REGWIRE_REPAIR_MAX 50
+ROUTE_PG_CAPACITY        1
+ROUTE_DENSITY_CHECK      1
+ROUTE_MTARPT             0
+ROUTE_STREAM             1
+ROUTE_NETLIST            1
+ROUTE_NETLIST_PG         1
+ROUTE_SDF                1
+ROUTE_EXTRACT_EFFORT     high
+ROUTE_OPT_DRV            0
+ROUTE_METAL_FILL         0
+ROUTE_VIA_FILL           0
+ROUTE_TOP_LAYER          
+ROUTE_CALIBRE            0
+ROUTE_SIGNOFF_STRICT     0
+ROUTE_OPT_MODE           setup_hold
+ROUTE_OPT_SETUP_RECOVERY auto
+ROUTE_OPT_SETUP_TARGET   0.110
+ROUTE_OPT_HOLD_TARGET    0.080
+ROUTE_VIEWS_SETUP        default_analysis_view_setup
+ROUTE_VIEWS_HOLD         default_analysis_view_hold av_ltfix_libset_hold av_ml_libset_hold
+ROUTE_VIEWS_TYPICAL      
+ROUTE_BUDGET_DRC         0
+ROUTE_BUDGET_OPENS       24
+ROUTE_BUDGET_DANGLING    176
+ROUTE_BUDGET_DRV_TRAN    0
+ROUTE_BUDGET_DRV_CAP     0
+ROUTE_BUDGET_SETUP_FEP   0
+ROUTE_BUDGET_HOLD_FEP    0
+ROUTE_BUDGET_PG_VIAS     25
+ROUTE_EXPECT_UNROUTED    0
+ROUTE_MIN_DIODES         1
+ROUTE_MIN_GDS_MB         1
+ROUTE_EXPECT_BONDPADS    -1
+ROUTE_MARKER_LIMIT       200000
+ROUTE_SRCLAT_TOL         0.05
+ROUTE_ERROR_ALLOWLIST    IMPLF-223 IMPMSMV-3501
+ROUTE_GDS_MAP_FILE       /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/work/tech/gdsout.stream.map
+ROUTE_GDS_UNIT           1000
+ROUTE_GDS_LIB_NAME       DesignLib
+ROUTE_MTARPT_PATHS       10000
+ROUTE_MULTI_CUT_EFFORT   medium
+ROUTE_TIMING_DRIVEN      1
+ROUTE_SI_DRIVEN          1
+ROUTE_DERATE             1
+ROUTE_DERATE_DATA_E      0.95
+ROUTE_DERATE_DATA_L      1.05
+ROUTE_DERATE_CLK_E       0.97
+ROUTE_DERATE_CLK_L       1.03
+ROUTE_DERATE_CORNERS     
+ROUTE_DERATE_WITNESS     0
+METAL_FILL               0
+METAL_FILL_VIA           0
+METAL_FILL_MODE          grounded
+METAL_FILL_TIMING_AWARE  sta
+METAL_FILL_SLACK_THRESHOLD 0.1
+METAL_FILL_OWNER         foundry
+METAL_FILL_CHECK         1
+METAL_FILL_CHECK_EXTRA   1
+METAL_FILL_CUT_CHECK     1
+METAL_FILL_REPORT        1
+METAL_FILL_TRIM          0
+METAL_FILL_TRIM_SPACING  0.5
+METAL_FILL_TRIM_SLACK    0.1
+METAL_FILL_STREAM_GATE   1
+ROUTE_PG_SCAN_LINES      21
+ROUTE_PG_DEMAND_MA       0
+ROUTE_PG_NETS            
+POST_ROUTE_STATE_TIMING  1
+pnr.analysis_coverage    0
+pnr.check_timing         1
+pnr.db_dir               /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/work
+pnr.db_prefix            nanosoc_eth_chiplet_pads
+pnr.echo_max_run         5000
+pnr.hold_missing         0
+pnr.hold_summary         1
+pnr.in_db_dir            /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt3pg-20260909/work
+pnr.is_innovus           1
+pnr.msg_log              
+pnr.opt_report_dir       /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/reports
+pnr.route_markers        
+    "Done routing data preparation"
+    "Start Detail Routing"
+    "start initial detail routing"
+
+pnr.stage                route
+pnr.t_start              1789395262
+pnr.timing_max_paths     50
+pnr.timing_nworst        5
+total_insts              363845
+total_nets               267263
+setup_wns_tns_fep        0.072 0.000 0
+hold_wns_tns_fep         -0.036 -0.066 3
+input_db                 /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt3pg-20260909/work/nanosoc_eth_chiplet_pads_cts
+output_db                /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/work/nanosoc_eth_chiplet_pads_routed
+gate_numbers_from        post-fill pnr_hold_summary
+opt_mode                 setup_hold
+extract_effort           high
+extract_effort_read      high
+extract_log_scan         IMPEXT-3518 0 EXTSNZ-127 0 IMPEXT-5016 0 IMPEXT-6202 1
+opt_setup_recovery       auto
+opt_setup_target         0.11
+opt_hold_target          0.08
+views_setup              default_analysis_view_setup
+views_hold               default_analysis_view_hold av_ltfix_libset_hold av_ml_libset_hold
+timing_analysis_type     ocv
+extract_rc_effort        high
+top_routing_layer        M8
+filler_insts             113367
+antenna_diodes           36306
+bond_pads                -1
+filler_gaps              0
+metal_fill               off
+via_fill                 off
+metal_fill_shapes        unmeasured
+metal_fill_area          unmeasured
+metal_fill_owner         foundry
+density_windows          6931
+density_delegated        13
+drc_total                3
+drc_trailer              3
+drc_declared             3
+drc_attested             trailer
+drc_command              check_drc -limit 200000 -out_file /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/reports/nanosoc_eth_chiplet_pads_imp_drc.rep
+drc_classes              MINCUT 2 MINHOLE 1
+drc_special              3
+drc_regular              0
+drc_pin_only             0
+drc_filler               0
+drc_bondpad              0
+drc_unclassified         0
+drc_rail_short           0
+drc_rail_short_layers    (none)
+calibre_in_flow          off
+drc_prerepair            32
+drc_prerepair_rail_short 0
+pg_via_range             M1 AP
+pg_via_missing           27
+pg_via_by_pair           M4->M5 4 M5->M6 4 M7->M8 1 M8->M9 1 M9->AP 1
+pg_via_nets              VDD VSS
+conn_opens               26
+conn_dangling            177
+conn_no_routing          0
+conn_markers             203
+antenna_clean            yes
+setup_wns_tns_fep        0.071 0.000 0
+hold_wns                 -0.036
+hold_fep                 3
+drv_max_tran             -0.217 -11.160 298
+drv_max_cap              N/A N/A 0
+gds_bytes                346693336
+gds_map_file             /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/work/tech/gdsout.stream.map
+gds_map_lefobs           own-layer-or-absent
+gds_map_spnet_names      yes

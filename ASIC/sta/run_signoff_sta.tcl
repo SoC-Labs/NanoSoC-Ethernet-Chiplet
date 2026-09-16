@@ -74,6 +74,7 @@ proc rec {key val} {
 rec sta_tool          "tempus"
 rec sta_tool_version  "21.11"
 rec sta_db            $STA_DB
+rec sta_run_tag       [envdef STA_TAG "<untagged>"]
 rec sta_started       [clock format $start_time -format "%Y-%m-%dT%H:%M:%S"]
 
 # `step` runs a body, records pass/fail, and NEVER lets a tool error look like
@@ -245,17 +246,73 @@ step set_derate {
 # PROPOSAL, not an edit tonight — recorded here so the run that carries the
 # ambiguity is the run that reports it.
 ################################################################################
+# CONFIGURED BEFORE IT IS RECORDED. Corrected 2026-09-16. Until now the layer
+# map was set INSIDE the extract_parasitics step, i.e. AFTER this record step
+# had already read the attribute back -- so every manifest this harness ever
+# wrote shows `extract.extract_rc_lef_tech_file_map =` EMPTY, over runs whose
+# qrc logs prove the map was in force. A record of the wrong moment is a record
+# that says the opposite of what happened. Everything extraction-related is now
+# set here and read back below, in that order.
+#
+# A MISSING LAYER MAP IS A HARD STOP, not a note. Without it qrc cannot resolve
+# the AP layer (EXTSNZ-127), exits non-zero, Tempus reports IMPEXT-5016 "qrc
+# failed: No such file or directory" (NOT a missing binary), and the flow falls
+# back (IMPEXT-3518) to a cap table -- silently, on a 65 nm design. A run that
+# would do that must not start.
+step configure_extraction {
+    set_db extract_rc_coupled true
+    if {![file exists $QRC_LAYER_MAP]} {
+        rec extract.layer_map "<missing:$QRC_LAYER_MAP>"
+        error "no QRC layer map at $QRC_LAYER_MAP - extraction would fall back to a cap table (IMPEXT-3518)"
+    }
+    set_db extract_rc_lef_tech_file_map $QRC_LAYER_MAP
+    rec extract.layer_map      [file tail $QRC_LAYER_MAP]
+    # Repo-relative, never absolute: the manifest is a committed fixture input.
+    set _rel $QRC_LAYER_MAP
+    if {[string first $REPO/ $_rel] == 0} { set _rel [string range $_rel [string length $REPO/] end] }
+    rec extract.layer_map_path $_rel
+    # Innovus's engine/effort attributes. Tempus 21.11 does NOT define either
+    # (tempusCUI/extract_rc_Category_Attributes.html lists neither): its
+    # extract_parasitics is standalone Quantus qrc, which IS what Innovus calls
+    # effort `signoff`. Both are attempted so a release that grows them is
+    # driven correctly, and the outcome is recorded either way -- a silent
+    # catch here would be a claim the attribute was set.
+    foreach {a want} {extract_rc_engine post_route extract_rc_effort_level signoff} {
+        if {[catch {set_db $a $want} _e]} {
+            rec "extract.set.$a" "unsupported ([string map {"\n" " "} [string range $_e 0 80]])"
+        } else {
+            # The attempted VALUE is recorded with the outcome: on Tempus 21.11
+            # set_db returns ok and get_db then reads back EMPTY (a tool quirk,
+            # measured 2026-09-16), so the read-back row below cannot carry it.
+            rec "extract.set.$a" "ok ($want)"
+        }
+    }
+}
+if {[llength [get_db insts]] == 0 || ![file exists $QRC_LAYER_MAP]} {
+    rec sta_aborted "extraction not configurable (see extract.layer_map)"
+    close $mf
+    exit 1
+}
+
 step record_extraction_setup {
     # Attribute names taken from tempusCUI/extract_rc_Category_Attributes.html
     # for THIS release (21.11), not from Innovus habit. Innovus's
     # extract_rc_effort_level is not in the Tempus extract_rc category at all;
     # Tempus drives Quantus through extract_rc_qrc_run_mode instead. Reading a
     # name that does not exist is recorded as <unreadable> rather than assumed.
+    # extract_rc_engine / extract_rc_effort_level are read back deliberately:
+    # <unreadable> on Tempus is the honest value, and the runner's log scan
+    # (sta_extract_evidence.py) supplies extract_engine / extract_effort_read
+    # from what the extractor itself printed.
     foreach a {extract_rc_lef_tech_file_map \
+               extract_rc_engine extract_rc_effort_level \
                extract_rc_qrc_cmd_file extract_rc_qrc_cmd_type extract_rc_qrc_run_mode \
                extract_rc_coupled extract_rc_total_cap_threshold \
                extract_rc_coupling_cap_threshold extract_rc_cap_filter_mode} {
         if {[catch {set v [get_db $a]}]} { set v "<unreadable>" }
+        # A path read back is absolute on this host; the manifest is a fixture
+        # input and the repository is public, so record it repo-relative.
+        if {[string first $REPO/ $v] == 0} { set v [string range $v [string length $REPO/] end] }
         rec "extract.$a" $v
     }
     foreach rc [get_db rc_corners] {
@@ -273,19 +330,15 @@ if {$SKIP_EXT} {
     rec step.extract_parasitics "skipped_by_request"
 } else {
     step extract_parasitics {
-        set_db extract_rc_coupled true
-        # Tempus requires the layer map whenever extract_rc_qrc_cmd_type is
-        # `auto`, which is the default and what this run uses
-        # (tempusCUI/extract_rc_Category_Attributes.html). A missing file is
-        # recorded rather than silently ignored: without it the run cannot
-        # produce a SPEF at all, so a blank here explains the whole failure.
-        if {[file exists $QRC_LAYER_MAP]} {
-            set_db extract_rc_lef_tech_file_map $QRC_LAYER_MAP
-            rec extract.lef_tech_file_map [file tail $QRC_LAYER_MAP]
-        } else {
-            rec extract.lef_tech_file_map "<missing:$QRC_LAYER_MAP>"
-        }
+        # Everything this needs was set and read back in configure_extraction /
+        # record_extraction_setup above. Tempus requires the layer map whenever
+        # extract_rc_qrc_cmd_type is `auto` (the default, and this run's).
+        set _t0 [clock seconds]
         extract_parasitics
+        rec extract.wall_seconds [expr {[clock seconds] - $_t0}]
+        # Kept under its old key too: older graders and the rc4 evidence
+        # manifest read this name.
+        rec extract.lef_tech_file_map [file tail $QRC_LAYER_MAP]
     }
 
     # One SPEF per RC corner. There is currently NO SPEF anywhere in this repo
@@ -375,6 +428,20 @@ step check_timing {
 step report_analysis_coverage {
     report_analysis_coverage > $REP/analysis_coverage.rpt
     rec analysis_coverage_bytes [expr {[file exists $REP/analysis_coverage.rpt] ? [file size $REP/analysis_coverage.rpt] : 0}]
+    # -verbose untested adds the Reason column. Without it this step emits a
+    # ~23-line SUMMARY, and sta_gate.py FAILS on untested > 0 while the evidence
+    # is physically incapable of saying WHY anything is untested. That is why
+    # 57,955 untested checks on rc4 went un-enumerated for weeks: the only file
+    # on disk carrying a Reason was a PLACE-stage report from a different build.
+    # Measured 2026-09-16: 85% of them are "No endpoint clock" on async CDN/SDN
+    # pins driven by reset-synchroniser DATA nets — structurally uncomputable,
+    # not unconstrained. A per-reason budget cannot be written, let alone
+    # audited, until the signoff run reports the reason itself.
+    # catch: -verbose is honoured by Tempus 21.11 here (proven at the place
+    # stage on this design) but the step must not take the run down if a future
+    # version drops the flag — the summary above is still written either way.
+    catch { report_analysis_coverage -verbose untested > $REP/analysis_coverage_untested.rpt }
+    rec analysis_coverage_untested_bytes [expr {[file exists $REP/analysis_coverage_untested.rpt] ? [file size $REP/analysis_coverage_untested.rpt] : 0}]
 }
 
 step report_clocks {
@@ -404,6 +471,23 @@ step report_timing_summary {
 step report_timing_summary_hold {
     report_timing_summary -checks hold > $REP/timing_summary_hold.rpt
     rec timing_summary_hold_bytes [expr {[file exists $REP/timing_summary_hold.rpt] ? [file size $REP/timing_summary_hold.rpt] : 0}]
+}
+
+# PER VIEW. The two files above print ONE `View : ALL` row, which is what the
+# gate parses and what cannot say which of three hold corners a number came
+# from. `-expand_views` adds a row per active view; it is written to SEPARATE
+# files because the expanded rows carry a marker column the gate's row regex
+# does not expect, and a parser that silently stops matching is the failure
+# mode sta_gate.py's header is about. `-checks drv` is the max_transition /
+# max_capacitance / max_fanout census the ECO stage reports (93 nets on
+# vt7higheco2's own view) and no signoff run had reported before 2026-09-16.
+step report_timing_summary_views {
+    report_timing_summary -checks setup -expand_views > $REP/timing_summary_views.rpt
+    report_timing_summary -checks hold  -expand_views > $REP/timing_summary_hold_views.rpt
+    catch { report_timing_summary -checks drv -expand_views > $REP/timing_summary_drv.rpt }
+    catch { report_constraint -drv_violation_type max_transition -all_violators > $REP/max_transition.rpt }
+    rec timing_summary_drv_bytes [expr {[file exists $REP/timing_summary_drv.rpt] ? [file size $REP/timing_summary_drv.rpt] : 0}]
+    rec max_transition_bytes     [expr {[file exists $REP/max_transition.rpt] ? [file size $REP/max_transition.rpt] : 0}]
 }
 
 # Coverage again, for the EARLY (hold) side. The late-only coverage report
@@ -449,8 +533,80 @@ step report_analysis_coverage_hold {
     # ExternalDelay(Early)), whose violated counts sum to the hold FEP.
     report_analysis_coverage -check_type hold > $REP/analysis_coverage_hold.rpt
     catch { report_analysis_coverage > $REP/analysis_coverage_early_all.rpt }
+    # Reason column for the early side too — the untested exclusions are
+    # symmetric (Setup 2,377 == Hold 2,377, LibCG 3,007 both, Recovery ==
+    # Removal 2,998), and that symmetry is what shows they are endpoints
+    # excluded from timing altogether rather than a one-way analysis gap.
+    catch { report_analysis_coverage -verbose untested > $REP/analysis_coverage_untested_hold.rpt }
     rec analysis_coverage_hold_bytes [expr {[file exists $REP/analysis_coverage_hold.rpt] ? [file size $REP/analysis_coverage_hold.rpt] : 0}]
     set_db timing_analysis_check_type $_ct_restore
+}
+
+# THE CENSUS OF THE UNTESTED CHECKS, from the two Reason-column reports the
+# steps above wrote in this session (analysis_coverage_untested.rpt for the
+# late side, analysis_coverage_untested_hold.rpt for the whole early side).
+# Until 2026-09-16 the enumeration lived in a separate Tempus run
+# (scripts/ci/sta_untested_reasons.tcl) that read the database without
+# parasitics, so the census that graded a signoff run was cut from a different
+# session than the numbers beside it. The reason a check is untested is a
+# property of netlist + SDC, not of RC, so the two agree -- but "they agree"
+# was an argument, and now it is one file set.
+#
+# The verbose reports run to ~25 MB on this design (one wrapped pin name per
+# check), which no fixture can carry. So the run also writes
+# untested_census.txt: one line per (side, check type, reason) with the count,
+# derived by the SAME anchor sta_gate.py uses (the literal UNTESTED token, so a
+# wrapped pin name cannot be read as a check type). The gate cross-foots the
+# census against the coverage tables' Untested columns (late side against
+# analysis_coverage.rpt, early side against analysis_coverage_early_all.rpt)
+# and, when a verbose report is present too, against that. Per-reason totals
+# are recorded in the manifest as untested.<side>.<reason>, reason squeezed to
+# [a-z] exactly as the gate canonicalises it.
+proc census_of {path side} {
+    set counts [dict create]
+    if {![file exists $path]} { return $counts }
+    set fh [open $path r]
+    set in_details 0
+    while {[gets $fh line] >= 0} {
+        if {[string match "*TIMING CHECK COVERAGE DETAILS*" $line]} { set in_details 1 ; continue }
+        if {!$in_details} { continue }
+        if {![regexp {^(.*?)\s{2,}UNTESTED\s+(\S.*?)\s*$} $line -> pre reason]} { continue }
+        set pre [string trim $pre]
+        if {[string match -nocase "check type*" $pre]} { continue }
+        # `pre` is "<check type>" on a detail row (the pin columns are on the
+        # two lines above it); collapse internal runs of spaces.
+        regsub -all {\s+} $pre " " ctype
+        dict incr counts [list $side $ctype $reason]
+    }
+    close $fh
+    return $counts
+}
+
+step untested_census {
+    set all [dict merge [census_of $REP/analysis_coverage_untested.rpt setup] \
+                        [census_of $REP/analysis_coverage_untested_hold.rpt hold]]
+    set cf [open $REP/untested_census.txt w]
+    puts $cf "# side|check_type|reason|count  -- derived in-session from analysis_coverage_untested{,_hold}.rpt"
+    set per_reason [dict create]
+    foreach key [lsort [dict keys $all]] {
+        lassign $key side ctype reason
+        set n [dict get $all $key]
+        puts $cf "$side|$ctype|$reason|$n"
+        regsub -all {[^a-z]} [string tolower $reason] "" sq
+        dict incr per_reason [list $side $sq] $n
+    }
+    close $cf
+    foreach key [lsort [dict keys $per_reason]] {
+        lassign $key side sq
+        rec "untested.$side.$sq" [dict get $per_reason $key]
+    }
+    set _tot_s 0 ; set _tot_h 0
+    foreach key [dict keys $all] {
+        lassign $key side - -
+        if {$side eq "setup"} { incr _tot_s [dict get $all $key] } else { incr _tot_h [dict get $all $key] }
+    }
+    rec untested.setup.total $_tot_s
+    rec untested.hold.total  $_tot_h
 }
 
 # Per-view worst paths. Signing off means naming the view, so each view gets
@@ -460,6 +616,32 @@ step report_timing_per_view {
         catch { report_timing -view $v -late  -max_paths 50 > $REP/timing_setup_${v}.rpt }
         catch { report_timing -view $v -early -max_paths 50 > $REP/timing_hold_${v}.rpt }
     }
+}
+
+# WATCH LIST. STA_WATCH_PINS names endpoints (space-separated) whose hold slack
+# is wanted per view regardless of rank -- the two the ECO stage's own signoff
+# view left violating in av_ml_libset_hold, so their slack under standalone
+# Tempus can be set beside the in-tool number. Recorded per view; an unfound
+# pin is recorded as such rather than skipped.
+step watch_pins {
+    set _wp [envdef STA_WATCH_PINS ""]
+    set _i 0
+    foreach pin $_wp {
+        incr _i
+        # get_db takes a glob: `[23]` is a character class, not a bus index.
+        # Try the name as given, then with the brackets escaped.
+        set _p [get_db pins $pin]
+        if {[llength $_p] == 0} { set _p [get_db pins [string map {[ \\[ ] \\]} $pin]] }
+        if {[llength $_p] == 0} { rec "watch.$_i" "NOT FOUND: $pin" ; continue }
+        rec "watch.$_i" [get_db [lindex $_p 0] .name]
+        foreach v [get_db [get_db analysis_views -if {.is_hold}] .name] {
+            catch { report_timing -view $v -early -to [lindex $_p 0] -max_paths 1 > $REP/watch_${_i}_hold_${v}.rpt }
+        }
+        foreach v [get_db [get_db analysis_views -if {.is_setup}] .name] {
+            catch { report_timing -view $v -late -to [lindex $_p 0] -max_paths 1 > $REP/watch_${_i}_setup_${v}.rpt }
+        }
+    }
+    rec watch.count $_i
 }
 
 step write_sdf {

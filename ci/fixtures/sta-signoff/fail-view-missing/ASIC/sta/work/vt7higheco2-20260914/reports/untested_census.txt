@@ -1,0 +1,16 @@
+# side|check_type|reason|count  -- derived in-session from analysis_coverage_untested{,_hold}.rpt
+hold|DataCheckHold|const|83
+hold|Hold|const|258
+hold|Hold|False Path|2119
+hold|Removal|const|11
+hold|Removal|False Path|2994
+hold|Library Clock Gating Hold|const|3007
+setup|ClockPeriod|const|38
+setup|DataCheckSetup|const|83
+setup|PulseWidth|const|6273
+setup|PulseWidth|No endpoint clock|43200
+setup|Recovery|const|11
+setup|Recovery|False Path|2994
+setup|Setup|const|258
+setup|Setup|False Path|2119
+setup|Library Clock Gating Setup|const|3007

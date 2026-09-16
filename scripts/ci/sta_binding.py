@@ -67,6 +67,19 @@ import tempfile
 # this file exists to refuse.
 ROUTED_DB_NAME = "nanosoc_eth_chiplet_pads_routed"
 
+# THE ECO DATABASE, ADDED 2026-09-16.  opt_signoff (ASIC/genus-innovus/scripts/
+# eco/run_opt_signoff.sh) reads a routed database and writes <block>_eco beside
+# its own eco_manifest.txt -- and writes NO route_manifest.txt, because no route
+# finished in that tree: the route that finished is the PARENT's, and the ECO
+# manifest names it (`parent_manifest`) along with the database it read
+# (`in_db`).  Timing that database is signoff STA on a routed design, so this
+# check accepts it -- but only when the ECO tree carries its manifest and that
+# manifest's parent resolves to a finished route.  Forging a route_manifest.txt
+# into an ECO tree to satisfy the old rule would counterfeit the one artefact
+# whose meaning is "a route finished here"; widening the model is the fix.
+ECO_DB_NAME = "nanosoc_eth_chiplet_pads_eco"
+ECO_MANIFEST = "eco_manifest.txt"
+
 # Every Tempus report carries this header block.  The SI state is read from
 # HERE and from nowhere else -- see the SI note below.
 _SIGNOFF_SETTINGS = re.compile(r"^#\s*Signoff Settings:\s*(?P<state>.+?)\s*$", re.M)
@@ -225,12 +238,14 @@ def check(reports_dir, build_tag, build_root, r):
     r.fact("sta_db", db)
 
     norm = os.path.normpath(db)
-    if os.path.basename(norm) != ROUTED_DB_NAME:
+    base = os.path.basename(norm)
+    is_eco = base == ECO_DB_NAME
+    if base not in (ROUTED_DB_NAME, ECO_DB_NAME):
         r.fail("DB_NOT_ROUTED",
-               f"sta_db ends in {os.path.basename(norm)!r}, not {ROUTED_DB_NAME!r}. "
-               f"Signoff STA must read the ROUTED database. A placed or "
-               f"post-CTS database times with estimated interconnect and "
-               f"reports better numbers than the die has.")
+               f"sta_db ends in {base!r}, not {ROUTED_DB_NAME!r} (or {ECO_DB_NAME!r} "
+               f"for an ECO run). Signoff STA must read the ROUTED database. A "
+               f"placed or post-CTS database times with estimated interconnect "
+               f"and reports better numbers than the die has.")
 
     # The string test.  Runs everywhere, including in a fixture sandbox where
     # no build tree exists, which is what makes this arm provable.
@@ -252,7 +267,7 @@ def check(reports_dir, build_tag, build_root, r):
     # mistaken for a passing measurement.  Two paths can carry the same tag and
     # be different directories (a symlinked or relocated build), and two
     # different strings can be the same directory.
-    expect = os.path.join(build_root, build_tag, "work", ROUTED_DB_NAME)
+    expect = os.path.join(build_root, build_tag, "work", base)
     if os.path.isdir(expect):
         if not os.path.isdir(norm):
             r.fail("DB_GONE",
@@ -276,7 +291,13 @@ def check(reports_dir, build_tag, build_root, r):
     # into the pinned location and by hand-editing one line.  This is not:
     # a run cannot have read a database that did not exist when it started.
     rm = os.path.join(build_root, build_tag, "reports", "route_manifest.txt")
-    if not os.path.isfile(rm):
+    if is_eco:
+        # The route that finished is the PARENT's.  Resolve it through the ECO
+        # manifest, never by looking for a route_manifest.txt in the ECO tree.
+        rm = _eco_parent_route(build_root, build_tag, r)
+    if rm is None:
+        pass                                   # already failed above, with the reason
+    elif not os.path.isfile(rm):
         r.fail("NO_FINISHED_ROUTE",
                f"no {rm}. That file is written at the END of the route stage, so "
                f"its absence means this build's route never finished -- there is "
@@ -339,6 +360,63 @@ def check(reports_dir, build_tag, build_root, r):
                "untested-check census below is a SETUP census being read as if "
                "it were the whole design. See the sta-hold-coverage gap.")
     return r
+
+
+def parse_ws_kv(path):
+    """`key<spaces>value` per line -- the shape route_manifest.txt and
+    eco_manifest.txt share (the STA manifest is `key = value`; see parse_kv)."""
+    out = {}
+    if not os.path.isfile(path):
+        return out
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            mo = re.match(r"^\s*(\S+)\s+(.*?)\s*$", line)
+            if mo and not mo.group(1).startswith("#"):
+                out[mo.group(1)] = mo.group(2)
+    return out
+
+
+def _eco_parent_route(build_root, build_tag, r):
+    """The finished route an ECO tree descends from, or None after a failure.
+
+    Reads <build_root>/<tag>/reports/eco_manifest.txt (`key<spaces>value`, the
+    same shape as route_manifest.txt) and resolves its `parent_manifest` row:
+    first as written, then -- because the row is an absolute path on the host
+    that ran the ECO, and a fixture sandbox is not that host -- by the tag it
+    names under THIS build root.  Both the row and the resolution are recorded.
+    """
+    em = os.path.join(build_root, build_tag, "reports", ECO_MANIFEST)
+    if not os.path.isfile(em):
+        r.fail("ECO_UNRECORDED",
+               f"sta_db is the ECO database but there is no {em}. The ECO stage "
+               f"writes that file at its END, so either the ECO never finished or "
+               f"this is not an ECO run's tree. Neither is a routed design to "
+               f"sign off.")
+        return None
+    eco = parse_ws_kv(em)
+    parent = eco.get("parent_manifest", "")
+    r.fact("eco_manifest", em)
+    if eco.get("in_db"):
+        r.fact("eco_in_db", eco["in_db"])
+    if not parent:
+        r.fail("ECO_PARENT_MISSING",
+               f"{em} has no parent_manifest row, so the route this ECO descends "
+               f"from is unrecorded and cannot be checked to have finished.")
+        return None
+    cands = [parent]
+    ptag = _tag_in(parent, build_root)
+    if ptag:
+        cands.append(os.path.join(build_root, ptag, "reports", "route_manifest.txt"))
+    for c in cands:
+        if os.path.isfile(c):
+            r.fact("eco_parent", f"{c}  (from parent_manifest = {parent})")
+            return c
+    r.fail("ECO_PARENT_MISSING",
+           f"{em} names parent_manifest = {parent}, which resolves to no file "
+           f"here (tried {', '.join(cands)}). An ECO whose parent route cannot "
+           f"be shown to have finished has no routed ancestor to be signed off "
+           f"against.")
+    return None
 
 
 def _tag_in(path, build_root):
@@ -416,9 +494,34 @@ GOOD_REPORT = """\
 """
 
 
+ECO_TAG = "gdsrun-20260826-rc1-eco"
+
+# The ECO stage's manifest, the row set the real one carries (vt7higheco2-
+# 20260914), with the parent named by the SAME synthetic root the STA manifest
+# uses.  {root} is filled per case, so the tag-based resolution is exercised.
+GOOD_ECO_MANIFEST = """\
+run_tag                  {eco_tag}
+in_db                    {root}/{tag}/work/nanosoc_eth_chiplet_pads_routed
+parent_manifest          {root}/{tag}/reports/route_manifest.txt
+opt_args                 -setup -drv -hold
+extract_effort_read      signoff
+db                       {root}/{eco_tag}/work/nanosoc_eth_chiplet_pads_eco
+wall_seconds             3455
+"""
+
+ECO_STA_MANIFEST = GOOD_MANIFEST.replace(
+    "sta_db = {root}/{tag}/work/nanosoc_eth_chiplet_pads_routed",
+    "sta_db = {root}/{eco_tag}/work/nanosoc_eth_chiplet_pads_eco")
+
+
 def _mk(tmp, manifest=GOOD_MANIFEST, route=GOOD_ROUTE_MANIFEST,
-        report=GOOD_REPORT, tag=TAG, make_db=True):
-    """Build a throwaway tree: <base>/build/<tag>/... plus a reports dir."""
+        report=GOOD_REPORT, tag=TAG, make_db=True,
+        eco=None, eco_tag=ECO_TAG):
+    """Build a throwaway tree: <base>/build/<tag>/... plus a reports dir.
+
+    `eco` is the ECO manifest text to write under <base>/build/<eco_tag>/
+    reports/, or the empty string to make the ECO tree with NO manifest.
+    The STA manifest under test is then the ECO one, judged as <eco_tag>."""
     base = tempfile.mkdtemp(dir=tmp)
     root = os.path.join(base, "build")
     if make_db:
@@ -427,11 +530,17 @@ def _mk(tmp, manifest=GOOD_MANIFEST, route=GOOD_ROUTE_MANIFEST,
     if route is not None:
         with open(os.path.join(root, tag, "reports", "route_manifest.txt"), "w") as fh:
             fh.write(route)
+    if eco is not None:
+        os.makedirs(os.path.join(root, eco_tag, "reports"), exist_ok=True)
+        if eco:
+            with open(os.path.join(root, eco_tag, "reports", ECO_MANIFEST), "w") as fh:
+                fh.write(eco.format(root=root, tag=tag, eco_tag=eco_tag))
+        tag = eco_tag                       # the tree under judgement
     reps = os.path.join(base, "sta", tag, "reports")
     if manifest is not None:
         os.makedirs(reps, exist_ok=True)
         with open(os.path.join(reps, "sta_manifest.txt"), "w") as fh:
-            fh.write(manifest.format(root=root, tag=tag))
+            fh.write(manifest.format(root=root, tag=TAG, eco_tag=eco_tag))
     if report is not None:
         os.makedirs(reps, exist_ok=True)
         with open(os.path.join(reps, "timing_summary.rpt"), "w") as fh:
@@ -548,6 +657,49 @@ def selftest():
             print(f"BROKEN absent-build-tree control: ok={rw.ok} "
                   f"failures={[c for c, _ in rw.failures]}")
             failed += 1
+
+        # THE ECO SHAPE, 2026-09-16.  A signoff STA of an ECO'd database is a
+        # signoff STA of a routed design and must PASS -- through the ECO
+        # manifest's parent, recorded -- and the three ways that chain can be
+        # broken must each be refused under their own code.
+        reps_e, root_e = _mk(tmp, manifest=ECO_STA_MANIFEST, eco=GOOD_ECO_MANIFEST)
+        re_ = check(reps_e, ECO_TAG, root_e, Result())
+        if re_.ok and "eco_parent" in re_.facts:
+            print("ok    ECO database PASSES through its recorded parent route  [eco_parent]")
+            passed += 1
+        else:
+            print(f"BROKEN ECO positive control: ok={re_.ok} failures="
+                  f"{[c for c, _ in re_.failures]} facts={list(re_.facts)}")
+            failed += 1
+        eco_cases = [
+            ("an _eco database with no eco_manifest.txt",
+             dict(manifest=ECO_STA_MANIFEST, eco=""), "ECO_UNRECORDED"),
+            ("eco_manifest.txt with no parent_manifest row",
+             dict(manifest=ECO_STA_MANIFEST,
+                  eco=GOOD_ECO_MANIFEST.replace(
+                      "parent_manifest          {root}/{tag}/reports/route_manifest.txt\n", "")),
+             "ECO_PARENT_MISSING"),
+            ("parent_manifest names a route that never finished",
+             dict(manifest=ECO_STA_MANIFEST, eco=GOOD_ECO_MANIFEST, route=None),
+             "ECO_PARENT_MISSING"),
+            ("ECO STA started before its parent route finished",
+             dict(manifest=ECO_STA_MANIFEST.replace(
+                 "sta_started = 2026-08-26T09:56:24", "sta_started = 2026-08-25T22:10:00"),
+                  eco=GOOD_ECO_MANIFEST), "PREDATES_ROUTE"),
+        ]
+        for name, kw, want in eco_cases:
+            reps_c, root_c = _mk(tmp, **kw)
+            rr = check(reps_c, ECO_TAG, root_c, Result())
+            codes = [c for c, _ in rr.failures]
+            if rr.ok:
+                print(f"BROKEN {name!r}: PASSED a mutant it must reject")
+                failed += 1
+            elif want not in codes:
+                print(f"BROKEN {name!r}: failed with {codes}, expected {want}")
+                failed += 1
+            else:
+                print(f"ok    rejects: {name}  [{want}]")
+                passed += 1
 
         reps_h, root_h = _mk(tmp, manifest=GOOD_MANIFEST +
                              "si_analysis = off (mmmc -si stripped for IMPESI-3490)\n")

@@ -1,0 +1,106 @@
+{
+  "source_reports": "ASIC/sta/work/vt7higheco2-20260914/reports",
+  "build_tag": "vt7higheco2-20260914",
+  "parent_tag": "vt7high-20260914",
+  "pass_edits": [
+    {
+      "file": "ASIC/sta/work/vt7higheco2-20260914/reports/timing_summary_hold.rpt",
+      "was": "View : ALL            -0.022  -0.037     2",
+      "now": "View : ALL 0.056 0.000 0",
+      "why": "hold FEP 2 on the real run (the parity gap); row taken from the run's own passing default_analysis_view_hold"
+    }
+  ],
+  "fixtures": {
+    "pass": {
+      "binding": [],
+      "gate": [],
+      "why": "the real run, scrubbed; must PASS both graders"
+    },
+    "fail-wrong-build": {
+      "binding": [
+        "WRONG_BUILD"
+      ],
+      "gate": [],
+      "why": "sta_db names a different build (the 17-18 August shape, verbatim)"
+    },
+    "fail-eco-parent-missing": {
+      "binding": [
+        "ECO_PARENT_MISSING"
+      ],
+      "gate": [],
+      "why": "an ECO tree whose recorded parent route has no finished route_manifest.txt"
+    },
+    "fail-unfinished": {
+      "binding": [
+        "RUN_INCOMPLETE"
+      ],
+      "gate": [
+        "RUN_INCOMPLETE"
+      ],
+      "why": "manifest has no sta_finished: the run did not reach its last line"
+    },
+    "fail-no-result": {
+      "binding": [
+        "STA_NOT_RUN"
+      ],
+      "gate": null,
+      "why": "the report directory exists and is empty: the state this repo shipped in"
+    },
+    "fail-violating": {
+      "binding": [],
+      "gate": [
+        "SETUP_FEP"
+      ],
+      "why": "setup View:ALL row replaced by a violating one"
+    },
+    "fail-untested-checks": {
+      "binding": [],
+      "gate": [
+        "UNTESTED_REASONS_MISSING"
+      ],
+      "why": "the late-side census rows removed: untested checks present, never enumerated"
+    },
+    "fail-no-extraction": {
+      "binding": [],
+      "gate": [
+        "EXTRACTION_UNMEASURED"
+      ],
+      "why": "extract_engine = UNMEASURED: no extractor banner/completion in the logs"
+    },
+    "fail-cap-table-fallback": {
+      "binding": [],
+      "gate": [
+        "EXTRACT_FALLBACK"
+      ],
+      "why": "logscan.IMPEXT-3518 = 1: the extractor was bypassed for a capacitance table"
+    },
+    "fail-effort-not-signoff": {
+      "binding": [],
+      "gate": [
+        "EXTRACT_EFFORT"
+      ],
+      "why": "extract_effort_read = high: a lower effort wearing a signoff label"
+    },
+    "fail-spef-too-small": {
+      "binding": [],
+      "gate": [
+        "SPEF_TOO_SMALL"
+      ],
+      "why": "one corner's SPEF is 412 bytes: truncated"
+    },
+    "fail-view-missing": {
+      "binding": [],
+      "gate": [
+        "VIEW_ABSENT"
+      ],
+      "why": "av_ml_libset_hold dropped from the active hold views (clock_count moved with it)"
+    },
+    "fail-clock-count": {
+      "binding": [],
+      "gate": [
+        "CLOCK_COUNT"
+      ],
+      "why": "clock_count = 100: a clock vanished between P&R and STA"
+    }
+  }
+}

@@ -51,6 +51,10 @@ fi
 # the Innovus that built the DB. Older EXT_15/17/18 installs also carry a
 # `qrc` and would be picked up by a stale PATH — do not let them, a
 # mismatched extractor against a 21.11 database is a silent-wrong-answer risk.
+# The Tempus bin directory goes on PATH too, exactly as the ECO runner
+# (ASIC/genus-innovus/scripts/eco/run_opt_signoff.sh) does: Tempus resolves
+# helper binaries beside itself by PATH, not by its own install root.
+export PATH="$(dirname "$TEMPUS"):$PATH"
 QUANTUS="${QUANTUS_HOME:-}"
 if [ -n "$QUANTUS" ] && [ -x "$QUANTUS/tools/bin/qrc" ]; then
     export PATH="$QUANTUS/bin:$QUANTUS/tools/bin:$PATH"
@@ -68,9 +72,21 @@ export STA_DB="${1:-$REPO/ASIC/eth-chiplet/build/full-20260814/work/nanosoc_eth_
 # manifest ends up describing one database and a timing report another. Set
 # STA_OUT/STA_REP/STA_WORK (and STA_MMMC, read by run_signoff_sta.tcl) to keep
 # each build's evidence in its own directory.
-export STA_OUT="${STA_OUT:-$STA_ROOT/outputs}"
-export STA_REP="${STA_REP:-$STA_ROOT/reports}"
-STA_WORK="${STA_WORK:-$STA_ROOT/work}"
+#
+# STA_TAG is the short form: with it set, every output lands under
+# ASIC/sta/work/<tag>/ -- the layout ci/signoff.yaml's sta-signoff stage and
+# ASIC/sta.mk both read -- and STA_MMMC defaults to the generated MMMC there.
+if [ -n "${STA_TAG:-}" ]; then
+    export STA_TAG
+    STA_WORK="${STA_WORK:-$STA_ROOT/work/$STA_TAG}"
+    export STA_OUT="${STA_OUT:-$STA_WORK/outputs}"
+    export STA_REP="${STA_REP:-$STA_WORK/reports}"
+    export STA_MMMC="${STA_MMMC:-$STA_WORK/mmmc_sta.tcl}"
+else
+    export STA_OUT="${STA_OUT:-$STA_ROOT/outputs}"
+    export STA_REP="${STA_REP:-$STA_ROOT/reports}"
+    STA_WORK="${STA_WORK:-$STA_ROOT/work}"
+fi
 
 mkdir -p "$STA_OUT" "$STA_REP" "$STA_WORK"
 
@@ -104,4 +120,18 @@ echo "tempus  = $TEMPUS"
 # NOTE: the exit code above is deliberately NOT checked. EDA tools exit 0 after
 # errors, so it carries no information. sta_gate.py asserts on the artefacts.
 echo "tempus returned $? (not trusted — run sta_gate.py)"
+
+# THE EXTRACTION EVIDENCE, FROM THE LOGS. The Tcl session can record what it
+# SET; only the extractor's own output says what RAN. sta_extract_evidence.py
+# scans the Tempus log and this run's qrc logs for the engine banner and the
+# fallback codes (IMPEXT-3518 cap-table fallback, EXTSNZ-127 unmapped layer,
+# IMPEXT-5016 qrc exit) and appends the findings to the manifest, where
+# sta_gate.py refuses a run that cannot show it extracted. Missing rows grade
+# as UNMEASURED, never as a pass -- so this step is not optional and its
+# failure is reported, not swallowed.
+if ! python3 "$STA_ROOT/sta_extract_evidence.py" \
+        --reports "$STA_REP" --log "$STA_REP/tempus_sta.log" --work "$STA_WORK" < /dev/null; then
+    echo "WARNING: sta_extract_evidence.py did not complete; the manifest carries no" >&2
+    echo "         extraction evidence and sta_gate.py will grade it UNMEASURED." >&2
+fi
 exit 0

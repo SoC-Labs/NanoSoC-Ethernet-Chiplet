@@ -1,0 +1,37 @@
+run_tag                  vt7higheco2-20260914
+in_db                    /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/work/nanosoc_eth_chiplet_pads_routed
+parent_manifest          /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7high-20260914/reports/route_manifest.txt
+opt_args                 -setup -drv -hold
+extract_effort           signoff
+extract_effort_read      signoff
+eso_initial_setup        0.066 0.000 0
+eso_final_setup          0.066 0.000 0
+eso_initial_hold         -0.036 -0.069 3
+eso_final_hold           -0.021 -0.033 2
+setup_wns_tns_fep        0.066 0.000 0
+hold_wns_tns_fep         -0.021 -0.033 2
+hold_fep                 2
+drv_max_tran_signoff     -0.227 93 237
+inserted                 10
+resized                  30
+eco_route_rc             0
+legalize_scan            IMPSP-2021 0 IMPSP-9022 0 IMPSP-2040 0
+filler_cells             ANTENNA FILL1 FILL16 FILL2 FILL32 FILL4 FILL64 FILL8 PFILLER10_G PFILLER1_G PFILLER20_G PFILLER5_G
+filler_source            database (113367 FILLER_* instances)
+fillers_deleted          113042
+unexpected_errors        none
+ECO_ERROR_ALLOWLIST      IMPLF-223 IMPMSMV-3501
+drc_total                3
+conn_opens               26
+conn_dangling            177
+place_viol               82
+place_overlaps           0
+place_unplaced           0
+base_drc_total           3
+base_conn_opens          26
+base_conn_dangling       177
+base_place_viol          82
+base_place_overlaps      0
+db                       /builds/nanosoc-ethernet-chiplet/ASIC/eth-chiplet/build/vt7higheco2-20260914/work/nanosoc_eth_chiplet_pads_eco
+gds_bytes                341205708
+wall_seconds             3455

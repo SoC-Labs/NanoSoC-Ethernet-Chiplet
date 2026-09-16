@@ -54,3 +54,15 @@ include $(ASIC_DIR)/../evidence.mk
 #     make eco-emit RUN_TAG=<tag>      GDS + netlist from that run's ECO database
 #     make eco-emit-vars RUN_TAG=<tag> what it would do, without doing it
 include $(ASIC_DIR)/../eco.mk
+
+# Signoff STA on a build of this flow: Tempus on the routed (or ECO) database
+# with standalone Quantus parasitics, graded by scripts/ci/sta_binding.py and
+# ASIC/sta/sta_gate.py. LAST, for the reason the three includes above are: an
+# include cannot see a target collision, and its three names were checked
+# against mk/*.mk, design.mk, common.mk, floorplan-hazards.mk, evidence.mk,
+# eco.mk and the root Makefile before being written.
+#
+#     make sta RUN_TAG=<tag> [IN_DB=<db>]   run and grade
+#     make sta-gate RUN_TAG=<tag>           grade an existing run, no licence
+#     make sta-vars RUN_TAG=<tag>           what it would do, without doing it
+include $(ASIC_DIR)/../sta.mk

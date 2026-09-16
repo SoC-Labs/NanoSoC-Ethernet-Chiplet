@@ -119,6 +119,30 @@ DEFAULT_POLICY = {
         "av_ml_libset_hold",
         "av_ltfix_libset_hold",
     ],
+    # EXTRACTION MUST BE SHOWN TO HAVE HAPPENED. Added 2026-09-16. A Tempus
+    # run whose extractor never ran -- no layer map, qrc exits on EXTSNZ-127,
+    # Tempus reports IMPEXT-5016 and falls back to a cap table (IMPEXT-3518) --
+    # still writes a SPEF-sized file and a clean-looking summary. The evidence
+    # is in the logs and ASIC/sta/sta_extract_evidence.py copies it into the
+    # manifest; rows it cannot produce say UNMEASURED. Absent rows and
+    # UNMEASURED grade the same way: FAIL. Never a pass.
+    "require_extraction_evidence": True,
+    "require_extract_effort": "signoff",
+    # PER-REASON UNTESTED BUDGETS, one table per side. A ratchet: each ceiling
+    # is the count measured on the run this policy was cut from, and a reason
+    # absent from a table has ceiling 0, so a NEW class of untested check
+    # fails. The count going DOWN is progress and passes; going UP is the
+    # signal. Mirrors ASIC/sta/sta_policy.json, which carries the arithmetic
+    # behind each number; this built-in default must not be weaker than it.
+    "untested_budget_by_reason": {
+        "No endpoint clock": None,   # netlist property (async set/reset pins); census recorded, not gated
+        "const": None,               # tied-off endpoints; the same
+        "False Path": 0,             # the async-group exposure, constraints.sdc:706: a hole, not a decision
+    },
+    # A ceiled class whose breach is REPORTED on every run and never blocks:
+    # "False Path 5,113, ceiling 0, FAIL (report-only)" stays on screen until
+    # somebody closes the class, where a passing ratchet would hide it.
+    "untested_budget_report_only": ["False Path"],
 }
 
 
@@ -382,6 +406,175 @@ def parse_untested_reasons(path, r):
     return counts
 
 
+def parse_census(path, side, r):
+    """{canonical_reason: count} for one side from untested_census.txt, the
+    compact per-(side, check type, reason) table run_signoff_sta.tcl derives
+    in-session from the verbose enumeration by the same UNTESTED anchor.
+
+    None when the file is absent (the verbose report may still be there).
+    An unreadable file is a FAILURE, never None, for the reason
+    parse_untested_reasons gives.  Rows for the OTHER side are ignored, not
+    counted, so a census carrying only one side yields {} for the other.
+    """
+    if not os.path.isfile(path):
+        return None
+    text = open(path, errors="replace").read()
+    if not text.strip():
+        r.fail("UNTESTED_CENSUS_EMPTY", f"the untested census is an empty file: {path}")
+        return {}
+    counts = {}
+    rows = 0
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("|")
+        if len(parts) != 4:
+            r.fail("UNTESTED_CENSUS_UNPARSED",
+                   f"census row is not side|check_type|reason|count: {line!r}")
+            return counts
+        rows += 1
+        if parts[0].strip() != side:
+            continue
+        try:
+            n = int(parts[3])
+        except ValueError:
+            r.fail("UNTESTED_CENSUS_UNPARSED", f"census count is not a number: {line!r}")
+            return counts
+        reason = _canon_reason(parts[2])
+        counts[reason] = counts.get(reason, 0) + n
+    if rows == 0:
+        r.fail("UNTESTED_CENSUS_UNPARSED",
+               f"parsed zero rows from {path}. A census that cannot be read is "
+               f"not evidence of a reason set.")
+    return counts
+
+
+def grade_untested(reports_dir, policy, r, side, coverage_file, enum_file):
+    """One side's untested population: coverage table -> enumeration or census
+    -> cross-foot -> recognised reasons -> per-reason ceilings.
+
+    THE REPLACEMENT FOR `untested > 0`, extended 2026-09-16 with ceilings.
+    Not "there are untested checks" -- on this design there always are (the
+    PulseWidth checks on async-reset pins alone are ~49k) -- but "there are
+    untested checks nobody has accounted for", and now also "a class of them
+    has GROWN past the count this policy was cut from".
+    """
+    untested = parse_analysis_coverage(os.path.join(reports_dir, coverage_file), r)
+    if untested is None:
+        return
+    r.fact(f"untested_checks_{side}", untested)
+    enum_path = os.path.join(reports_dir, enum_file)
+    reasons = parse_untested_reasons(enum_path, r)
+    census = parse_census(os.path.join(reports_dir, "untested_census.txt"), side, r)
+    if reasons is not None and census:
+        # Both present: they were cut from the same report by the same anchor
+        # and MUST agree. Disagreement means one of them is not this run's.
+        if reasons != census:
+            r.fail("UNTESTED_CENSUS_DISAGREES",
+                   f"[{side}] the verbose enumeration reads {reasons} but "
+                   f"untested_census.txt reads {census}. Two accounts of one "
+                   f"population that differ were not cut from the same run.")
+    if reasons is None:
+        reasons = census                      # census alone is acceptable evidence
+    if untested == 0:
+        pass                                  # nothing to enumerate; absence is correct
+    elif not reasons:
+        # None (no file) and {} (a census with no rows for THIS side) are the
+        # same finding: this side's population was not enumerated.
+        r.fail("UNTESTED_REASONS_MISSING",
+               f"[{side}] {untested} timing checks are UNTESTED and no enumeration "
+               f"exists at {enum_file} (nor a census row for this side in "
+               f"untested_census.txt). An unenumerated coverage hole cannot be "
+               f"told apart from a population of checks that would have failed.")
+    elif reasons:
+        total = sum(reasons.values())
+        r.fact(f"untested_by_reason_{side}",
+               ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
+        if total != untested:
+            # THE CROSS-FOOT. A reason list that does not add up to its own
+            # total has enumerated some other population, and the shortfall
+            # is exactly the part nobody has looked at.
+            r.fail("UNTESTED_ENUM_SHORT",
+                   f"[{side}] the enumeration accounts for {total} untested checks "
+                   f"but {coverage_file} reports {untested}. "
+                   f"{abs(untested - total)} check(s) are in neither column "
+                   f"of this evidence.")
+        unknown = reasons.get("unknown", 0)
+        budget = policy.get("untested_unknown_budget", 0)
+        if budget is not None and unknown > budget:
+            r.fail("UNTESTED_UNKNOWN_REASON",
+                   f"[{side}] {unknown} untested check(s) carry a reason this gate "
+                   f"does not recognise (budget {budget}). Recognised: "
+                   f"{', '.join(UNTESTED_REASONS)}. A check the tool "
+                   f"declined to perform AND declined to attribute is "
+                   f"indistinguishable from one that would have failed.")
+        # THE BUDGET, BY REASON. One map for both sides, keyed by Tempus's own
+        # Reason text ("No endpoint clock", "const", "False Path") and shared
+        # verbatim with the frozen branch's gate, so the two carry one contract.
+        #   null      deliberately unlimited: the class is a property of the
+        #             netlist (async set/reset pins; tied-off endpoints), not a
+        #             requirement, and a ceiling there fails on every legitimate
+        #             RTL change until it is widened into meaninglessness. The
+        #             census is still written to the manifest, for drift.
+        #   integer   a ceiling: the count the policy was cut from. Growth FAILS.
+        #   absent    a class nobody has decided about. Its presence FAILS.
+        # A policy key the alias table cannot canonicalise is a policy error,
+        # never a silently un-budgeted class.
+        table = policy.get("untested_budget_by_reason")
+        if table is not None:
+            report_only = set()
+            for key in (policy.get("untested_budget_report_only") or []):
+                cid = _canon_reason(key)
+                if cid == "unknown":
+                    r.fail("UNTESTED_POLICY_KEY_UNKNOWN",
+                           f"untested_budget_report_only names {key!r}, which is not a "
+                           f"reason this gate recognises.")
+                else:
+                    report_only.add(cid)
+            canon_table = {}
+            for key, ceiling in table.items():
+                cid = _canon_reason(key)
+                if cid == "unknown":
+                    r.fail("UNTESTED_POLICY_KEY_UNKNOWN",
+                           f"untested_budget_by_reason names {key!r}, which is not a "
+                           f"reason this gate recognises. Recognised: "
+                           f"{', '.join(UNTESTED_REASONS)}.")
+                    continue
+                canon_table[cid] = ceiling
+            for reason, n in sorted(reasons.items()):
+                if reason == "unknown" or n == 0:
+                    continue
+                if reason not in canon_table:
+                    r.fail("UNTESTED_REASON_UNKNOWN",
+                           f"[{side}] {n} untested check(s) are {reason}, a class "
+                           f"untested_budget_by_reason does not name. A new class of "
+                           f"unexamined check is not covered by any existing decision.")
+                elif canon_table[reason] is not None and n > int(canon_table[reason]):
+                    msg = (f"[{side}] {n} untested check(s) are {reason}; the policy "
+                           f"ceiling is {canon_table[reason]}.")
+                    if reason in report_only:
+                        # Visible every run, blocks none: the outstanding
+                        # decision restated each time somebody looks.
+                        r.warn("UNTESTED_OVER_BUDGET_REPORT", msg + " FAIL (report-only): "
+                               "this class is a hole nobody has closed, and the policy "
+                               "says so on every run rather than hiding it under a number.")
+                    else:
+                        r.fail("UNTESTED_OVER_BUDGET", msg + " This class has GROWN since "
+                               "the ceiling was measured -- more of the design is "
+                               "unexamined than was decided.")
+        for kind in ("no_endpoint_clock", "no_startpoint_clock"):
+            if reasons.get(kind):
+                # A constraint hole is not a decision. Reported, not failed:
+                # three quarters of this design's untested checks are this,
+                # all PulseWidth on CDN/SDN pins, and failing on it today
+                # would only get the row muted again. The CEILING is the
+                # tripwire.
+                r.warn("UNTESTED_CONSTRAINT_HOLE",
+                       f"[{side}] {reasons[kind]} untested check(s) are {kind} — "
+                       f"nobody decided these; a clock is simply undefined "
+                       f"at one end of the check.")
+
+
 def check(reports_dir, policy, r):
     man_path = os.path.join(reports_dir, "sta_manifest.txt")
     man = parse_manifest(man_path, r)
@@ -452,6 +645,86 @@ def check(reports_dir, policy, r):
                 continue
             if n < min_bytes:
                 r.fail("SPEF_TOO_SMALL", f"{k} = {n} bytes, require >= {min_bytes}. A truncated SPEF times as an optimistic design.")
+
+    # --- extraction actually RAN, with the signoff engine ------------------
+    # The rows come from sta_extract_evidence.py's log scan. An absent row and
+    # an UNMEASURED row are the same finding: this run cannot show it
+    # extracted. A SPEF of the right size is not that evidence -- a cap-table
+    # fallback writes one too.
+    if policy.get("require_extraction_evidence"):
+        eng = man.get("extract_engine")
+        if eng is None:
+            r.fail("EXTRACTION_UNMEASURED",
+                   "extraction UNMEASURED: manifest has no extract_engine row. The "
+                   "log scan (sta_extract_evidence.py) did not run, so nothing "
+                   "here can say which extractor produced these parasitics.")
+        elif eng.strip().upper() == "UNMEASURED":
+            r.fail("EXTRACTION_UNMEASURED",
+                   "extraction UNMEASURED: no extractor banner and completion in "
+                   "this run's logs. The timing below rests on parasitics nobody "
+                   "can name.")
+        else:
+            r.fact("extract_engine", eng)
+        for key, code, why in (
+                ("logscan.IMPEXT-3518", "EXTRACT_FALLBACK",
+                 "cap-table fallback: the extractor was bypassed and a 65 nm "
+                 "design was timed on a capacitance table"),
+                ("logscan.IMPEXT-5016", "EXTRACT_QRC_FAILED",
+                 "qrc exited non-zero (NOT a missing binary: read the qrc log "
+                 "for EXTSNZ-127 first)"),
+                ("logscan.EXTSNZ-127", "EXTRACT_LAYER_UNMAPPED",
+                 "a design layer has no entry in the LEF->tech layer map"),
+                ("qrc.EXTSNZ-127", "EXTRACT_LAYER_UNMAPPED",
+                 "a design layer has no entry in the LEF->tech layer map (qrc log)")):
+            raw = man.get(key)
+            if raw is None:
+                r.fail("EXTRACTION_UNMEASURED",
+                       f"extraction UNMEASURED: manifest has no {key} row, so the "
+                       f"fallback this arm exists to catch was never looked for.")
+                continue
+            try:
+                n = int(raw)
+            except ValueError:
+                r.fail("EXTRACTION_UNMEASURED", f"{key} = {raw!r} is not a count")
+                continue
+            if n > 0:
+                r.fail(code, f"{key} = {n}: {why}.")
+        lm = man.get("extract.layer_map")
+        if lm is None or lm.startswith("<missing"):
+            r.fail("LAYER_MAP_MISSING",
+                   f"extract.layer_map = {lm!r}: no LEF->tech layer map was in "
+                   f"force, which is the exact condition under which qrc cannot "
+                   f"resolve AP and the run falls back to a cap table.")
+        # EVERY OTHER ERROR ID, censused. Known read_db noise on this design is
+        # IMPLF-223 (duplicate LEF via definitions), IMPMSMV-3501, and
+        # IMPLIC-90 (a tpsxl licence message inside read_db's floorplan load
+        # while the design loads fully -- measured 2026-09-16). Anything else
+        # is a WARN naming the id: a finding to read, never a pass by silence
+        # and never an allow-list entry added here to make a run green.
+        ids = man.get("logscan.error_ids")
+        if ids and ids != "<none>":
+            known = set(policy.get("known_tool_error_ids") or
+                        ("IMPLF-223", "IMPMSMV-3501", "IMPLIC-90"))
+            odd = [x for x in ids.split(",") if x.split(":")[0] not in known]
+            r.fact("tool_error_ids", ids)
+            if odd:
+                r.warn("UNEXPECTED_TOOL_ERRORS",
+                       f"the session log carries ERROR ids outside the known "
+                       f"read_db noise: {', '.join(odd)}. Read them before "
+                       f"quoting a number from this run.")
+    want_eff = policy.get("require_extract_effort")
+    if want_eff:
+        got = man.get("extract_effort_read")
+        if got is None or got.strip().upper() == "UNMEASURED":
+            r.fail("EXTRACT_EFFORT_UNMEASURED",
+                   f"extract_effort_read = {got!r}: the effort the extractor "
+                   f"actually ran at is unmeasured; require {want_eff!r}.")
+        elif got.split()[0] != want_eff:
+            r.fail("EXTRACT_EFFORT",
+                   f"extract_effort_read = {got!r}, require {want_eff!r}. A lower "
+                   f"effort is the optimiser's estimate wearing a signoff label.")
+        else:
+            r.fact("extract_effort_read", got)
 
     # --- view set has not silently shrunk ---------------------------------
     # RUNS BEFORE THE CLOCK CHECK, because the clock check cross-foots against
@@ -526,56 +799,19 @@ def check(reports_dir, policy, r):
                            f"vanished between P&R and STA is a whole timing domain "
                            f"nobody is checking.")
 
-    # --- coverage ---------------------------------------------------------
-    untested = parse_analysis_coverage(os.path.join(reports_dir, "analysis_coverage.rpt"), r)
-    if untested is not None:
-        r.fact("untested_checks", untested)
-        enum_path = os.path.join(reports_dir, "analysis_coverage_untested.rpt")
-        reasons = parse_untested_reasons(enum_path, r)
-        if untested == 0:
-            pass                       # nothing to enumerate; absence is correct
-        elif reasons is None:
-            # THE REPLACEMENT FOR `untested > 0`. Not "there are untested
-            # checks" -- there always are -- but "there are untested checks and
-            # nobody has said what they are".
-            r.fail("UNTESTED_UNENUMERATED",
-                   f"{untested} timing checks are UNTESTED and no enumeration "
-                   f"exists at {os.path.basename(enum_path)}. Run "
-                   f"scripts/ci/sta_untested_reasons.tcl against this build. An "
-                   f"unenumerated coverage hole cannot be told apart from a "
-                   f"population of checks that would have failed.")
-        elif reasons:
-            total = sum(reasons.values())
-            r.fact("untested_by_reason",
-                   ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
-            if total != untested:
-                # THE CROSS-FOOT. A reason list that does not add up to its own
-                # total has enumerated some other population, and the shortfall
-                # is exactly the part nobody has looked at.
-                r.fail("UNTESTED_ENUM_SHORT",
-                       f"the enumeration accounts for {total} untested checks "
-                       f"but analysis_coverage.rpt reports {untested}. "
-                       f"{abs(untested - total)} check(s) are in neither column "
-                       f"of this evidence.")
-            unknown = reasons.get("unknown", 0)
-            budget = policy.get("untested_unknown_budget", 0)
-            if budget is not None and unknown > budget:
-                r.fail("UNTESTED_UNKNOWN_REASON",
-                       f"{unknown} untested check(s) carry a reason this gate "
-                       f"does not recognise (budget {budget}). Recognised: "
-                       f"{', '.join(UNTESTED_REASONS)}. A check the tool "
-                       f"declined to perform AND declined to attribute is "
-                       f"indistinguishable from one that would have failed.")
-            for kind in ("no_endpoint_clock", "no_startpoint_clock"):
-                if reasons.get(kind):
-                    # A constraint hole is not a decision. Reported, not failed:
-                    # 43,200 of rc4's 57,955 are this, all PulseWidth on CDN
-                    # pins, and failing on it today would only get the row muted
-                    # again. The COUNT is the tripwire.
-                    r.warn("UNTESTED_CONSTRAINT_HOLE",
-                           f"{reasons[kind]} untested check(s) are {kind} — "
-                           f"nobody decided these; a clock is simply undefined "
-                           f"at one end of the check.")
+    # --- coverage, both sides ---------------------------------------------
+    # Late side: analysis_coverage.rpt + analysis_coverage_untested.rpt.
+    # Early side: the unqualified report in hold mode (analysis_coverage_
+    # early_all.rpt) + analysis_coverage_untested_hold.rpt, the pair
+    # run_signoff_sta.tcl writes in the same hold-mode step. The early side
+    # is graded only when the policy carries a by-reason budget, and then
+    # its enumeration is REQUIRED (R1): a declared hold budget with no hold census
+    # is a hold population nobody looked at.
+    grade_untested(reports_dir, policy, r, "setup",
+                   "analysis_coverage.rpt", "analysis_coverage_untested.rpt")
+    if policy.get("untested_budget_by_reason") is not None:
+        grade_untested(reports_dir, policy, r, "hold",
+                       "analysis_coverage_early_all.rpt", "analysis_coverage_untested_hold.rpt")
 
     # --- quality ----------------------------------------------------------
     # Tempus splits these across two files: report_timing_summary -checks setup
@@ -665,6 +901,13 @@ extract.qrc_set.default_rc_corner_typical = yes
 spef.default_rc_corner_worst.bytes = 250000000
 spef.default_rc_corner_best.bytes = 250000000
 spef.default_rc_corner_typical.bytes = 250000000
+extract.layer_map = qrc_layer_map.ccl
+extract_engine = Quantus qrc standalone 21.1.1-s329 x3 run(s)
+extract_effort_read = signoff
+logscan.IMPEXT-3518 = 0
+logscan.IMPEXT-5016 = 0
+logscan.EXTSNZ-127 = 0
+qrc.EXTSNZ-127 = 0
 sta_finished = 2026-08-18T02:00:00
 """
 
@@ -750,12 +993,40 @@ GOOD_ENUM = _enum([("PulseWidth", "No endpoint clock", 43),
                    ("Setup", "False Path", 5)])
 
 
+# The early-side table (report_analysis_coverage in hold mode), zero untested.
+GOOD_EARLY_ALL = """\
+     Check Type                      No. of   Met              Violated         Untested
+                                     Checks
+    Hold                           68304     68304 (100%)     0 (0%)           0 (0%)
+    Removal                        43284     43284 (100%)     0 (0%)           0 (0%)
+"""
+
+# The compact census run_signoff_sta.tcl writes: side|check type|reason|count,
+# matching GOOD_ENUM / ENUM_COVERAGE row for row.
+GOOD_CENSUS = """\
+# side|check_type|reason|count
+setup|PulseWidth|No endpoint clock|43
+setup|Recovery|const|10
+setup|Setup|False Path|5
+"""
+
+
 def _mk(tmp, manifest=GOOD_MANIFEST, summary=GOOD_SUMMARY, coverage=GOOD_COVERAGE,
-        hold_summary=GOOD_HOLD_SUMMARY, enum=None):
+        hold_summary=GOOD_HOLD_SUMMARY, enum=None, early_all=GOOD_EARLY_ALL,
+        census=None, enum_hold=None):
     d = tempfile.mkdtemp(dir=tmp)
     if enum is not None:
         with open(os.path.join(d, "analysis_coverage_untested.rpt"), "w") as fh:
             fh.write(enum)
+    if enum_hold is not None:
+        with open(os.path.join(d, "analysis_coverage_untested_hold.rpt"), "w") as fh:
+            fh.write(enum_hold)
+    if early_all is not None:
+        with open(os.path.join(d, "analysis_coverage_early_all.rpt"), "w") as fh:
+            fh.write(early_all)
+    if census is not None:
+        with open(os.path.join(d, "untested_census.txt"), "w") as fh:
+            fh.write(census)
     with open(os.path.join(d, "sta_manifest.txt"), "w") as fh:
         fh.write(manifest)
     if hold_summary is not None:
@@ -826,6 +1097,57 @@ def selftest():
             print(f"BROKEN a run with more views than required FAILS: {r.failures}")
             failed += 1
 
+        # FOURTH POSITIVE CONTROL: the census ALONE (no 25 MB verbose report,
+        # which is what a fixture carries) is acceptable evidence of the
+        # reason set, and a census that agrees with a present verbose report
+        # adds nothing. Both must PASS.
+        for label, kw in (("census alone", dict(coverage=ENUM_COVERAGE, census=GOOD_CENSUS)),
+                          ("census beside the verbose report",
+                           dict(coverage=ENUM_COVERAGE, enum=GOOD_ENUM, census=GOOD_CENSUS))):
+            r = check(_mk(tmp, **kw), dict(DEFAULT_POLICY), Result())
+            if r.ok:
+                print(f"ok    baseline PASSES with the {label}")
+                passed += 1
+            else:
+                print(f"BROKEN {label} FAILS: {r.failures}")
+                failed += 1
+
+        # FIFTH: a budget EXACTLY at the measured count passes (a ratchet
+        # holds at its pin), and so does a count BELOW it (progress).
+        tight = {"untested_budget_by_reason": {"No endpoint clock": 43, "const": 10, "False Path": 5}}
+        pol = dict(DEFAULT_POLICY); pol.update(tight)
+        r = check(_mk(tmp, coverage=ENUM_COVERAGE, enum=GOOD_ENUM), pol, Result())
+        if r.ok:
+            print("ok    baseline PASSES with every class exactly at its ceiling")
+            passed += 1
+        else:
+            print(f"BROKEN a population at its ceiling FAILS: {r.failures}")
+            failed += 1
+
+        # SIXTH: null is deliberately unlimited -- the class is a netlist
+        # property; the census is recorded and the gate stays quiet on it.
+        nul = {"untested_budget_by_reason": {"No endpoint clock": None, "const": None, "False Path": 5}}
+        pol = dict(DEFAULT_POLICY); pol.update(nul)
+        r = check(_mk(tmp, coverage=ENUM_COVERAGE, enum=GOOD_ENUM), pol, Result())
+        if r.ok and any(k.startswith("untested_by_reason_") for k in r.facts):
+            print("ok    a null ceiling is unlimited, and the census is still recorded")
+            passed += 1
+        else:
+            print(f"BROKEN null ceiling: ok={r.ok} failures={r.failures} facts={list(r.facts)[:6]}")
+            failed += 1
+
+        # SEVENTH: a ceiled class listed report-only is visible and non-blocking.
+        ro = {"untested_budget_by_reason": {"No endpoint clock": None, "const": None, "False Path": 0},
+              "untested_budget_report_only": ["False Path"]}
+        pol = dict(DEFAULT_POLICY); pol.update(ro)
+        r = check(_mk(tmp, coverage=ENUM_COVERAGE, enum=GOOD_ENUM), pol, Result())
+        if r.ok and any(c == "UNTESTED_OVER_BUDGET_REPORT" for c, _ in r.warnings):
+            print("ok    a report-only ceiling breach PASSES and is printed as FAIL (report-only)")
+            passed += 1
+        else:
+            print(f"BROKEN report-only: ok={r.ok} failures={r.failures} warnings={r.warnings}")
+            failed += 1
+
         cases = [
             ("missing manifest", dict(manifest=None), "MANIFEST_MISSING"),
             ("empty manifest", dict(manifest="\n\n"), "MANIFEST_EMPTY"),
@@ -892,12 +1214,12 @@ def selftest():
             # that gets muted. What must fail is an untested population nobody
             # has ACCOUNTED FOR.
             ("untested checks present and never enumerated (the real 57,955)",
-             dict(coverage=MEASURED_COVERAGE), "UNTESTED_UNENUMERATED"),
+             dict(coverage=MEASURED_COVERAGE), "UNTESTED_REASONS_MISSING"),
             ("a single check type goes untested, unenumerated",
              dict(coverage=GOOD_COVERAGE.replace(
                  "ClockPeriod                    42        42 (100%)        0 (0%)           0 (0%)",
                  "ClockPeriod                    42        4 (9%)           0 (0%)           38 (90%)")),
-             "UNTESTED_UNENUMERATED"),
+             "UNTESTED_REASONS_MISSING"),
             # A reason string outside the closed set. This is the arm the whole
             # enumeration exists for: an unattributed untested check.
             ("an untested check carries an unrecognised reason",
@@ -942,6 +1264,95 @@ def selftest():
              "HOLD_FEP"),
             ("hold summary absent entirely",
              dict(hold_summary=None), "HOLD_SUMMARY_MISSING"),
+            # EXTRACTION, 2026-09-16. Each of these is a run that would have
+            # looked timed before this date.
+            ("no extraction evidence at all (the scan never ran)",
+             dict(manifest=GOOD_MANIFEST
+                  .replace("extract_engine = Quantus qrc standalone 21.1.1-s329 x3 run(s)\n", "")
+                  .replace("logscan.IMPEXT-3518 = 0\n", "")
+                  .replace("logscan.IMPEXT-5016 = 0\n", "")
+                  .replace("logscan.EXTSNZ-127 = 0\n", "")
+                  .replace("qrc.EXTSNZ-127 = 0\n", "")),
+             "EXTRACTION_UNMEASURED"),
+            ("the scan ran and found no extractor",
+             dict(manifest=GOOD_MANIFEST.replace(
+                 "extract_engine = Quantus qrc standalone 21.1.1-s329 x3 run(s)",
+                 "extract_engine = UNMEASURED")),
+             "EXTRACTION_UNMEASURED"),
+            ("cap-table fallback (IMPEXT-3518)",
+             dict(manifest=GOOD_MANIFEST.replace("logscan.IMPEXT-3518 = 0", "logscan.IMPEXT-3518 = 1")),
+             "EXTRACT_FALLBACK"),
+            ("qrc exited non-zero (IMPEXT-5016)",
+             dict(manifest=GOOD_MANIFEST.replace("logscan.IMPEXT-5016 = 0", "logscan.IMPEXT-5016 = 1")),
+             "EXTRACT_QRC_FAILED"),
+            ("a layer the map does not name (EXTSNZ-127 in the qrc log)",
+             dict(manifest=GOOD_MANIFEST.replace("qrc.EXTSNZ-127 = 0", "qrc.EXTSNZ-127 = 5")),
+             "EXTRACT_LAYER_UNMAPPED"),
+            ("no layer map was in force",
+             dict(manifest=GOOD_MANIFEST.replace(
+                 "extract.layer_map = qrc_layer_map.ccl",
+                 "extract.layer_map = <missing:/nowhere/qrc_layer_map.ccl>")),
+             "LAYER_MAP_MISSING"),
+            ("extraction effort below signoff",
+             dict(manifest=GOOD_MANIFEST.replace("extract_effort_read = signoff",
+                                                 "extract_effort_read = medium")),
+             "EXTRACT_EFFORT"),
+            ("extraction effort unmeasured",
+             dict(manifest=GOOD_MANIFEST.replace("extract_effort_read = signoff",
+                                                 "extract_effort_read = UNMEASURED")),
+             "EXTRACT_EFFORT_UNMEASURED"),
+            # THE CEILINGS. A class over its pin, and a class the table does
+            # not name, each under its own code. Both use the census the
+            # fixtures carry.
+            ("a recognised class has grown past its ceiling",
+             dict(coverage=ENUM_COVERAGE, census=GOOD_CENSUS,
+                  policy={"untested_budget_by_reason": {"No endpoint clock": 42, "const": 10, "False Path": 5}}),
+             "UNTESTED_OVER_BUDGET"),
+            ("the same breach with the report-only list absent blocks",
+             dict(coverage=ENUM_COVERAGE, census=GOOD_CENSUS,
+                  policy={"untested_budget_by_reason": {"No endpoint clock": None, "const": None, "False Path": 0},
+                          "untested_budget_report_only": []}),
+             "UNTESTED_OVER_BUDGET"),
+            ("a policy key that is not a reason this gate recognises",
+             dict(coverage=ENUM_COVERAGE, census=GOOD_CENSUS,
+                  policy={"untested_budget_by_reason": {"No endpoint clock": 43, "const": 10, "False Path": 5, "Nonsense": 1}}),
+             "UNTESTED_POLICY_KEY_UNKNOWN"),
+            ("a class of untested check the policy does not budget",
+             dict(coverage=ENUM_COVERAGE,
+                  census=GOOD_CENSUS.replace("setup|Setup|False Path|5", "setup|Setup|User Disable|5"),
+                  policy={"untested_budget_by_reason": {"No endpoint clock": 43, "const": 10, "False Path": 5}}),
+             "UNTESTED_REASON_UNKNOWN"),
+            ("the census and the verbose report disagree",
+             dict(coverage=ENUM_COVERAGE, enum=GOOD_ENUM,
+                  census=GOOD_CENSUS.replace("setup|Recovery|const|10", "setup|Recovery|const|9\nsetup|Setup|False Path|1")),
+             "UNTESTED_CENSUS_DISAGREES"),
+            ("the census is present but unreadable",
+             dict(coverage=ENUM_COVERAGE, census="side check_type reason count\nnonsense\n"),
+             "UNTESTED_CENSUS_UNPARSED"),
+            # THE EARLY SIDE. A hold budget is declared, so its table is
+            # required, its population must be enumerated, and its ceilings
+            # bind exactly as the late side's do.
+            ("hold-side coverage table missing while a hold budget is declared",
+             dict(early_all=None), "COVERAGE_MISSING"),
+            ("hold-side untested checks present and never enumerated",
+             dict(early_all=GOOD_EARLY_ALL.replace(
+                 "Hold                           68304     68304 (100%)     0 (0%)           0 (0%)",
+                 "Hold                           68304     65927 (96%)      0 (0%)           2377 (3%)")),
+             "UNTESTED_REASONS_MISSING"),
+            ("a census that carries rows for the OTHER side only",
+             dict(coverage=ENUM_COVERAGE, census="hold|Hold|False Path|5\n",
+                  early_all=GOOD_EARLY_ALL.replace(
+                 "Hold                           68304     68304 (100%)     0 (0%)           0 (0%)",
+                 "Hold                           68304     68299 (99%)      0 (0%)           5 (0%)")),
+             "UNTESTED_REASONS_MISSING"),
+            ("a hold-side class over its ceiling",
+             dict(early_all=GOOD_EARLY_ALL.replace(
+                 "Hold                           68304     68304 (100%)     0 (0%)           0 (0%)",
+                 "Hold                           68304     68299 (99%)      0 (0%)           5 (0%)"),
+                  census=GOOD_CENSUS + "hold|Hold|False Path|5\n",
+                  policy={"untested_budget_by_reason": {"No endpoint clock": 43, "const": 10, "False Path": 4},
+                          "untested_budget_report_only": []}),
+             "UNTESTED_OVER_BUDGET"),
         ]
 
         for name, kw, want_code in cases:
@@ -954,6 +1365,7 @@ def selftest():
                     open(os.path.join(d, "timing_summary.rpt"), "w").write(GOOD_SUMMARY)
                 if kw2.get("coverage", GOOD_COVERAGE) is not None:
                     open(os.path.join(d, "analysis_coverage.rpt"), "w").write(GOOD_COVERAGE)
+                open(os.path.join(d, "analysis_coverage_early_all.rpt"), "w").write(GOOD_EARLY_ALL)
             else:
                 d = _mk(tmp, **kw2)
             rr = check(d, pol, Result())
