@@ -695,6 +695,47 @@ DRC_DENSITY_BUDGET ?= 0
 # actually been run rather than to the toolkit's untried one.
 DRC_SCRIPT ?= $(LEGACY_ASIC_DIR)/scripts/calibre/run_drc.sh
 
+# ── FOUNDRY ANTENNA (`make antenna`, toolkit mk/antenna.mk) ─────────────────
+# The same shape as DRC_SCRIPT: the project runner that has actually been run
+# on this design. It is the legacy `make -C ASIC/genus-innovus ant` runner, so
+# the two entry points execute the same deck the same way (wrapper + the
+# project's coverage control, assembled into the rundir as deck.svrf) and the
+# toolkit's census judges the same summary the evidence flow's
+# antenna-foundry-deck gate reads. NOT a second copy of that runner.
+ANTENNA_SCRIPT ?= $(LEGACY_ASIC_DIR)/scripts/calibre/run_ant.sh
+
+# [PDK] The foundry ANTENNA deck, resolved by pdk_paths.sh off the installed
+# tech LEF on the metal LAYER COUNT (../genus-innovus/drc_project.mk says why
+# that differs from DRC). Never spelled here: this repository is public.
+ANTENNA_FOUNDRY_DECK ?= $(PDK_ANT_DECK)
+
+# EMPTY, for the reason DRC_DECK is empty below: run_ant.sh reads ANT_DECK only
+# as an A/B override and otherwise runs its own wrapper beside it. The
+# toolkit's default names a file this project does not have.
+ANTENNA_DECK :=
+
+# The whole deck, or nothing. Measured 2026-09-16 on vt7higheco2-20260914 and
+# its parent vt7high-20260914: the deck executes 721 rulechecks = 714 foundry
+# rulechecks + the 7 ANTCTL.* population controls run_ant.sh appends - the
+# same 714 the rc4 run of 2026-08-29 executed (the "0 on every one of 714
+# rulechecks" line in the rc4 dry-run report is OUR run of this deck, under
+# "Measured elsewhere on these same bytes", not imec's). imec's own antenna
+# archive is a different deck run (204 rulechecks on the 2026-08-10 build,
+# docs/tapeout/48; zero on every submission, docs/tapeout/65) and its count is
+# not comparable to this one. A different count HERE is a deck revision, an
+# unset switch or a partial run; the census's antenna_foundry_rulechecks line
+# is the 714.
+ANTENNA_EXPECT_RULECHECKS ?= 721
+
+# The deck carries a control, so a summary WITHOUT one is a hard failure: an
+# antenna zero with no population beside it is the exact shape of a check
+# that measured nothing (docs/asic/DRC_WAIVER_INVENTORY.md has the history).
+ANTENNA_REQUIRE_CONTROL ?= 1
+
+# Budget. ZERO: the mini@sic manual treats an antenna violation as never
+# acceptable, and the coverage control is excluded from this total by name.
+ANTENNA_BUDGET ?= 0
+
 ## LVS_SCRIPT IS DELIBERATELY NOT SET -- REMOVED 2026-08-21. It used to name
 ## ASIC/lvs-flow/run_lvs.sh, and that made `make lvs` HARD-BROKEN:
 ##
@@ -1297,6 +1338,25 @@ export ROUTE_EXTRACT_EFFORT ?= high
 ## fast-hot av_ml view: two bus-matrix input-stage registers, -0.024), max_tran
 ## 98 -> 99. The residue is the 0.300 ns limit and those two endpoints.
 export ECO_OPT_ARGS ?= -setup -drv -hold
+##
+## THE MARKER-DRIVEN POST-ROUTE PG REPAIR, IN THE FLOW AT LAST. Every stream
+## this design has shipped without it carries VIA3.R.4:M4 = 1: a vendor VIA3
+## cut inside a cache-data macro, armed by our narrow M4 riser below it, and
+## imec does not waive the rule (hooks/post_powerplan.tcl:293-329 says in
+## capitals that the fix is not optional and was not in the flow). The fix is
+## ../genus-innovus/scripts/pg_drc_via3r4_m4_narrow.tcl, marker-driven: its
+## only positional input is the PARENT run's Calibre .drc.results, which the
+## ECO stage now hands it (V3R4_DRC_RESULTS) after route_eco and the re-fill
+## and before the checks. Proven 738 -> 737 on two lineages by hand
+## (eco-20260826-via3r4, rc1eco-20260826); in the stage on vt7high's ECO
+## (vt9a-20260916): Calibre 36 -> 35 non-zero rulechecks, 742 -> 741 results,
+## VIA3.R.4:M4 1 -> 0, no other rulecheck moved. docs/tapeout/73.
+##
+## ECO_MARKER_DRC_RESULTS is deliberately NOT set: the stage defaults it to
+## IN_RUN_TAG's work/drc_run/$(BLOCK).drc.results, i.e. what `make drc` on the
+## parent left, and refuses (HARD) if that file is absent - "no marker" is the
+## control arm, not a pass. Run `make drc` on the route run before `make eco`.
+export ECO_MARKER_REPAIR_TCL ?= $(LEGACY_ASIC_DIR)/scripts/pg_drc_via3r4_m4_narrow.tcl
 
 ## THE TOOLS make eco SHELLS OUT TO. opt_signoff runs Tempus and qrc, and
 ## Innovus resolves neither from its own install: the stage's second real run
@@ -2113,7 +2173,13 @@ export ROUTE_ERROR_ALLOWLIST ?= IMPLF-223 IMPMSMV-3501
 # NOT allowlisted: IMPSP-2021 / IMPSP-9022 - opt_signoff's insertion passes
 # left 17 + 4 cells it could not legalize on vt7higheco-20260914 and returned
 # normally; the stage now counts them (legalize_scan + this census).
-export ECO_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501
+# DMMMC-12: the distributed-timing client's CPU-utilisation monitor ("Cpu
+# utilization for client N ... exceeded the threshold of 150% for longer than
+# 15 minutes"). It is a HOST-LOAD message: the view it names finished
+# successfully in the same log (vt9a-20260916, four concurrent EDA jobs on the
+# box). Tolerated because it says nothing about the design; a view that did
+# not finish still fails the stage through its own timing rows.
+export ECO_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501 DMMMC-12
 
 
 # ── 11. THE COUNTS THIS DIE IS, AND THE RATCHETS THAT HOLD THEM ─────────────
@@ -2122,6 +2188,9 @@ export ECO_ERROR_ALLOWLIST   ?= IMPLF-223 IMPMSMV-3501
 # a power plan's measured geometry. The toolkit defaults every one of these to
 # "do not gate", which is why the numbers below went unchecked for so long.
 #
+# 21 memory macros in the netlist (measured every run since vt1-20260902); the toolkit defaults this gate OFF (-1) and the demonstrator never set it.
+export PLACE_EXPECT_MACROS ?= 21
+
 # ── 11a. THE PAD RING ───────────────────────────────────────────────────────
 #
 # READ THIS BEFORE CHANGING A NUMBER HERE.
