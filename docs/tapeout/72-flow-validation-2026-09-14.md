@@ -227,3 +227,28 @@ utilisation in the 60s or 70s - so hold repair can use cells that do not
 manufacture transition violations. On this die the trade stands as
 measured, and the ECO stage on the `high` route is the best result of the
 day: setup +0.066 / 0, hold 2 endpoints, max_tran 93, placement legal.
+
+## 9. Correction (2026-09-16): rc4 was timed on parasitics
+
+Section 3 and the artifact of 2026-09-14 said signoff STA had never run on
+parasitics. Wrong, and the mistake was reading the wrong run:
+`ASIC/sta/work/rc4probe-untested` in this tree is a wire-free probe made to
+look at the untested-check census; its Tempus log has no extraction at all.
+rc4's real evidence run is in the frozen tree at
+`build/evidence/rc4-20260829/evidence/sta/sta_manifest.txt`: started
+2026-08-29 11:27, `step.extract_parasitics = ok`, coupled, three Quantus
+SPEFs of about 323 MB, setup +0.015 / 0 endpoints and hold +0.003 / 0 on
+every view. A fresh, independent re-extraction on 2026-09-16 reproduced it.
+
+What that changes: rc4 is closed on hold at signoff and today's best ECO
+output is not (−0.021 / 2 endpoints in the fast-hot view). rc4's lineage
+closed hold with 2,245 inserted repeaters, 1,891 of them CKBD0, at an
+Innovus density of about 78 % during the ECO, and met "no legal location"
+once. Our ECO pass ran with the same cell list on a de-filled database and
+met it for 15 nets. The two endpoints are therefore a parity gap the flow
+must close, not a floorplan note, and are added to the closure plan as
+such. The setup comparison stands: both numbers are on parasitics, and
+today's has 51 ps more margin.
+
+Class of error: a verdict read from the wrong stream. The probe directory
+is named for what it is; it should not have been the only thing I opened.
