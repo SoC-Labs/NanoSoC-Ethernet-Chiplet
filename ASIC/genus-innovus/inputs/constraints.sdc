@@ -696,8 +696,13 @@ set _sys_grp [list $EXTCLK QSPI_SCLK QSPI_SCLK_o D2D_TX_CLK_0]
 # remains a deliberate cut of a physically synchronous boundary, backed by RTL
 # synchronisers, NOT a claim of real asynchrony -- exactly the honesty [C2]
 # above asks for. Closing it properly is [C2] option A and is a separate change
-# with a separate risk: ~1,184 exposed endpoints against a design closing setup
-# on 36 ps. Do not fold it in here.
+# with a separate risk. MEASURED 2026-09-16 (Tempus on vt7higheco2, standalone
+# Quantus parasitics, report_analysis_coverage -verbose untested, reason
+# "False Path"): this cut leaves ~5,113 checks untested PER SIDE -- setup
+# 2,119 + recovery 2,994, hold 2,119 + removal 2,994, symmetric as on rc4 --
+# against a design closing setup on 36 ps. The earlier figure quoted here,
+# ~1,184, counted neither the recovery/removal half nor ~935 of the direct
+# half; docs/tapeout/75. Do not fold it in here.
 if {[llength $_rx_grp] != 17 || [llength $_tx_grp] != 1 || [llength $_sys_grp] != 4} {
     error "constraints.sdc: D2D clock groups built wrong -\
            rx [llength $_rx_grp], tx [llength $_tx_grp],\
