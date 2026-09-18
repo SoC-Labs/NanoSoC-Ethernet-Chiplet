@@ -1283,10 +1283,25 @@ static const struct dap_ops hostio4_dap_ops = {
 	.run = hostio4_dp_run,
 };
 
+#ifndef TRANSPORT_DAPDIRECT_SWD
+static const char *const hostio4_transport[] = { "dapdirect_swd", NULL };
+#endif
+
 struct adapter_driver hostio4_adapter_driver = {
 	.name = "hostio4",
+#ifdef TRANSPORT_DAPDIRECT_SWD
+	/* master: a bitmask of transport IDs. TRANSPORT_DAPDIRECT_SWD is a
+	 * #define (BIT(5)) in transport/transport.h, so #ifdef is a valid
+	 * feature test -- the symbol does not exist at all in v0.12.0. */
 	.transport_ids = TRANSPORT_DAPDIRECT_SWD,
 	.transport_preferred_id = TRANSPORT_DAPDIRECT_SWD,
+#else
+	/* v0.12.0: a NULL-terminated string vector instead (interface.h:212),
+	 * modelled on rshim.c:513 at that tag. master REMOVED this member, so
+	 * the two spellings are mutually exclusive and the guard is required --
+	 * one source then builds at both revisions. */
+	.transports = hostio4_transport,
+#endif
 	.commands = hostio4_command_handlers,
 
 	.init = hostio4_init,

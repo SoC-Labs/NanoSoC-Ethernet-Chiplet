@@ -26,11 +26,29 @@ redundant `Ax`.
 | file | what |
 |---|---|
 | `hostio4.c` | the driver, 1300 lines |
-| `hostio4-openocd-v0.12.0.patch` | **use this one.** Back-port to tag `9ea7f3d`, the revision haps-dev runs. Built and proven. |
-| `hostio4-openocd.patch` | the master (`43441cd`) variant. Do NOT apply both. |
+| `hostio4-openocd.patch` | reference registration patch against master (`43441cd`). The bench does NOT use this — see below. |
 | `hostio4-fake.cfg` | OpenOCD config: adapter + a `mem_ap` target |
 | `hostio4-gdb.cfg` | opt-in posture A (`-gdb-port 3333`). Read its header first. |
 | `run_proof_real.sh` | runs the six proofs against the real reference monitor |
+
+## One source, both OpenOCD revisions
+
+`hostio4.c` builds unmodified at **v0.12.0 (`9ea7f3d`)** and at master, guarded by
+`#ifdef TRANSPORT_DAPDIRECT_SWD`. That symbol is a `#define` on master and does not
+exist at 0.12.0, so it is a real feature test; master removed `.transports`, so no
+single spelling works at both and the guard is required rather than stylistic.
+
+There is deliberately no separate back-ported copy. An earlier
+`hostio4-openocd-v0.12.0.patch` has been removed: two whole-driver patches that must
+not both be applied is exactly the sort of thing someone gets wrong at 2am.
+
+**Registration is owned by the build recipe, not by this directory.**
+`/home/dam1n19/SoCLabs/soclabs-openocd` carries
+`patches/0002-register-hostio4-v0.12.0.patch` (configure.ac, `src/jtag/drivers/Makefile.am`,
+`src/jtag/interfaces.c` — at 0.12.0 the adapter externs live in `interfaces.c`, master
+moved them to `interface.h`, so the two are not interchangeable) and symlinks this
+`hostio4.c` in at build time. `make build` there produces one binary carrying both this
+driver and `ahb_qspi`, and its `verify` gate refuses a binary missing either.
 
 ## Reproducing the proofs
 
