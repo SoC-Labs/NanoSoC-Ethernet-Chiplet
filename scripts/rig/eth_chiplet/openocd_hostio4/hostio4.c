@@ -481,7 +481,18 @@ static int hostio4_do_read(uint32_t addr, unsigned int count, uint32_t *out, boo
 		if (rep[i].fault) {
 			*any_fault = true;
 			hostio4_stat_faults++;
-			LOG_DEBUG("hostio4: bus error reading 0x%08" PRIx32, addr + 4 * i);
+			/*
+			 * LOG_ERROR, not LOG_DEBUG: this IS the error, and it is
+			 * the only place the EXACT faulting address is known.
+			 * OpenOCD's own "Failed to read memory at ..." is emitted
+			 * after the queue drains, by which point TAR has already
+			 * auto-incremented, so it names the NEXT word. Someone
+			 * mapping an aperture boundary from that message alone
+			 * walks off by one.
+			 */
+			LOG_ERROR("hostio4: AHB bus error reading 0x%08" PRIx32
+				  " (the monitor flagged '!'); OpenOCD may report "
+				  "the following word instead", addr + 4 * i);
 		}
 	}
 
@@ -524,7 +535,8 @@ static int hostio4_do_write_word(uint32_t addr, uint32_t data, bool *any_fault)
 	if (nrep >= 1 && rep[0].fault) {
 		*any_fault = true;
 		hostio4_stat_faults++;
-		LOG_DEBUG("hostio4: bus error writing 0x%08" PRIx32, addr);
+		LOG_ERROR("hostio4: AHB bus error writing 0x%08" PRIx32
+			  " (the monitor flagged '!')", addr);
 	}
 
 	hostio4_mon_addr = addr + 4;
