@@ -34,7 +34,8 @@
 #   PG_M8S3_EXPECT   {min max} sites.  Default {1 3}.
 #   PG_DRC_VERIFY    1 = re-seek after editing and require zero sites left.
 #                    Default 1.  Costs one more chip-wide pass (~1 min).
-#   PG_DRC_LIB       path to pg_drc_geom_lib.tcl.  Default: alongside this file.
+#   PG_DRC_LIB       path to pg_drc_geom_lib.tcl.  Default: the engine's copy,
+#                    $ASIC_FLOW_DIR/flow/power/.
 #
 # ---------------------------------------------------------------------------
 # BACKWARD COMPATIBILITY -- the 2026-08-24 lineage.  Reported, never assumed.
@@ -72,21 +73,41 @@
 #   ASIC/eth-chiplet/build/ecoseek-20260825/logs/t3.console (13 guard cases,
 #   11 of them in the failing direction, all PASS).
 #
-# THE GEOMETRY LIBRARY MUST TRAVEL WITH THIS FILE.  pg_drc_geom_lib.tcl lives
-# in the same directory and is sourced by path; without it this script refuses
-# to run rather than falling back to anything.
+# THE GEOMETRY LIBRARY IS THE ENGINE'S.  pg_drc_geom_lib.tcl was promoted into
+# the toolkit (flow/power/) on 2026-09-22 and is sourced from there by path;
+# without it this script refuses to run rather than falling back to anything.
 # ===========================================================================
 
-# --- library ---------------------------------------------------------------
-if {![info exists PG_DRC_LIB]} {
-    set PG_DRC_LIB [file join [file dirname [file normalize [info script]]] pg_drc_geom_lib.tcl]
+# --- the engine's libraries -------------------------------------------------
+# PROMOTED 2026-09-22. The geometry primitives (pgg_*), the branch seek that
+# finds a single-cut via in a wide plate's shadow, the added-object bookkeeping
+# and the two prune checks are now ENGINE code in the toolkit's flow/power/,
+# because none of them is about this die. What is left in this file is this
+# die's deck constants, its lineage coordinates, the apply (which edits real
+# geometry) and the driver that decides when to run. See
+# docs/tapeout/78-promoting-the-pg-drc-repair-machinery.md.
+#
+# Resolved from ASIC_FLOW_DIR when the flow set one, else from the toolkit
+# submodule beside this tree, so a hand run on a routed database still works.
+proc _pg_toolkit {rel} {
+    set cands {}
+    if {[info exists ::env(ASIC_FLOW_DIR)] && $::env(ASIC_FLOW_DIR) ne ""} {
+        lappend cands [file join $::env(ASIC_FLOW_DIR) {*}$rel]
+    }
+    lappend cands [file join [file dirname [file dirname [file dirname \
+                       [file normalize [info script]]]]] asic-toolkit {*}$rel]
+    foreach f $cands { if {[file exists $f]} { return $f } }
+    error "pg_drc: engine file [join $rel /] not found (looked in: $cands).\
+           This script is geometry-blind without it and will not guess."
 }
+if {![info exists PG_DRC_LIB]} { set PG_DRC_LIB [_pg_toolkit {flow power pg_drc_geom_lib.tcl}] }
 if {![file exists $PG_DRC_LIB]} {
     error "pg_drc_post_route_edits: geometry library not found at $PG_DRC_LIB.\
-           It lives next to this script in ASIC/genus-innovus/scripts/ and the\
-           two files must travel together. Refusing to run geometry-blind."
+           Refusing to run geometry-blind."
 }
 source $PG_DRC_LIB
+source [_pg_toolkit {flow power pg_drc_branch_seek.tcl}]
+source [_pg_toolkit {flow power pg_drc_delta_gate.tcl}]
 
 # --- knobs -----------------------------------------------------------------
 if {![info exists PG_DRC_DRY_RUN]} { set PG_DRC_DRY_RUN 0 }
@@ -157,137 +178,55 @@ proc _pg_lineage {box lst {tol 0.002}} {
     }
     return "NEW-SITE"
 }
-# Can a site be repaired AT ALL?  _pg_v4r4_apply re-cuts 1 -> 2 cuts INSIDE the
-# existing landing and must not move metal, so a landing shorter than
-# 2*cut + VIA4_S_1 on BOTH axes cannot hold two cuts and this edit can never
-# fix it.  The test lives here, beside the report, rather than only inside the
-# apply, because of what happened on vt1-20260902: EVP_PG_ADD_VIAS=markers grew
-# the single-cut PG VIA4 population from 91 to 100 and three of the new ones
-# fell in the wide-M5 shadow with 0.220, 0.180 and 0.220 um landings.  The range
-# check refused with "set the expectation deliberately" -- and doing that would
-# have moved the failure three lines later into the apply, not removed it.  A
-# guard that misdiagnoses is worse than one that only counts, so it now says
-# which sites are beyond this edit's reach and that widening will not help.
-# THE KEY FORMAT IS A CONTRACT with _pgav_via_key in power_plan.tcl.  If the two
-# ever drift apart the prune silently matches nothing, so the driver refuses
-# when it is asked to prune and the added-set is present but matches none of
-# the located sites -- see PG_V4R4_PRUNE_ADDED below.
-proc _pg_v4_key {v} {
-    regexp {([-+0-9.eE]+)\s+([-+0-9.eE]+)} [get_db $v .point] -> x y
-    return [format "%s@%.4f,%.4f#%s" [get_db $v .net.name] $x $y \
-                   [get_db $v .via_def.cut_layer.name]]
-}
-
-# Every M5 face belonging to a via the add-vias pass created, as {via rect}.
-# Built ONCE: the alternative is a chip-wide walk per unfixable site.
-proc _pg_added_m5_faces {} {
-    set out {}
-    foreach n [get_db nets -if ".is_power || .is_ground"] {
-        foreach v [get_db $n .special_vias] {
-            if {![dict exists $::EVP_PGAV_ADDED [_pg_v4_key $v]]} { continue }
-            if {[get_db $v .via_def.top_layer.name] eq "M5"} {
-                foreach r [pgg_rects [get_db $v .top_rects]] { lappend out [list $v $r] }
-            }
-            if {[get_db $v .via_def.bottom_layer.name] eq "M5"} {
-                foreach r [pgg_rects [get_db $v .bottom_rects]] { lappend out [list $v $r] }
-            }
-        }
-    }
-    return $out
-}
-
-# THE SECOND MECHANISM, and the one that cost vt2-20260908 a run.
+# ===========================================================================
+# WHAT THIS DIE MEASURED, AND WHERE THE CODE THAT ACTS ON IT NOW LIVES
 #
-# add-vias does not only create offending VIAs -- it creates offending
-# NEIGHBOURS. A VIA45 it drops puts an M5 landing pad down; that pad merges
-# into the surrounding M5 and can push a shape over VIA4_R_4_W, arming
-# VIA4.R.4 against a single-cut VIA4 that was already there and already legal.
-# Measured on vt2-20260908: the plate arming site1 was 0.310 x 0.330 um against
-# a 0.300 um arming width -- 10 nm over, and the size and shape of a landing
-# pad. The 24-Aug lineage site's plate, by contrast, is 3.600 x 0.330, a real
-# stripe. The control vt2ctl-20260908, identical in every pinned byte with
-# EVP_PG_ADD_VIAS=off, found 91 candidates and ONE site instead of 100 and
-# four, which is what proved it.
+# The four procs that used to stand here -- the key, the added-face walk, the
+# neighbour attribution, the fit predicate and the two prune invariants -- were
+# promoted into the engine on 2026-09-22 (flow/power/pg_drc_branch_seek.tcl and
+# flow/power/pg_drc_delta_gate.tcl). None of them was about this die. The
+# measurements that PUT them there are, so they stay here:
 #
-# So: given the wide plate that armed a site, return the added via whose M5
-# face IS part of that plate. Centre-inside rather than mere overlap -- the
-# plate is a merged shape and a touching neighbour is not a member of it.
-proc _pg_v4r4_added_neighbour {wide faces} {
-    foreach fr $faces {
-        lassign $fr v r
-        set cx [expr {([lindex $r 0]+[lindex $r 2])/2.0}]
-        set cy [expr {([lindex $r 1]+[lindex $r 3])/2.0}]
-        if {[pgg_pt_in [list $wide] $cx $cy]} { return $v }
-    }
-    return ""
-}
-
-proc _pg_v4r4_fits2 {L C} {
-    global PGD
-    lassign [pgg_nums $L] lx1 ly1 lx2 ly2
-    lassign [pgg_nums $C] cx1 cy1 cx2 cy2
-    set lw [expr {$lx2-$lx1}] ; set lh [expr {$ly2-$ly1}]
-    set cw [expr {$cx2-$cx1}] ; set ch [expr {$cy2-$cy1}]
-    set sp $PGD(VIA4_S_1)
-    return [expr {$lw >= 2*$cw+$sp-0.0005 || $lh >= 2*$ch+$sp-0.0005}]
-}
-
-proc _pg_range_check {what n rng {note ""}} {
-    lassign $rng lo hi
-    if {$n < $lo || $n > $hi} {
-        error "$what: located $n site(s), expected $lo..$hi.\n   \
-               ZERO means either the defect is not present (this database may\
-               already be fixed) or the predicate no longer matches the\
-               geometry -- both are refusals, never a silent pass.\n   \
-               MORE than $hi means the new route has defects this edit was\
-               never measured on. Look at the sites printed above, then set\
-               the expectation deliberately.$note"
-    }
-}
-
-# DERIVED FROM THE RUN'S OWN NUMBERS, NOT A LITERAL. n0 is the pre-prune
-# census (the seek count BEFORE the prune loop deletes anything) and pruned
-# is the count of vias this pass actually deleted -- both already computed by
-# the driver for other reasons, so this costs nothing extra to measure.
+#   vt1-20260902   EVP_PG_ADD_VIAS=markers grew the single-cut PG VIA4
+#                  population from 91 to 100, and three of the new ones fell in
+#                  the wide-M5 shadow with 0.220, 0.180 and 0.220 um landings --
+#                  too short to hold two cuts, so the re-cut below can never fix
+#                  them and the prune is the only remedy. A guard that only
+#                  counted would have sent the reader off to widen a tolerance.
 #
-# THE INVARIANT. Every deletion the prune makes is credited with resolving
-# exactly one site: a self-deletion (case a) removes a hit's own via, and a
-# neighbour-deletion (case b) is only made because it is causally why some
-# OTHER hit's wide plate exists (see _pg_v4r4_added_neighbour) -- delete it
-# and that hit stops qualifying. So a prune that is doing what it believes it
-# is doing can never leave MORE than n0-pruned sites behind. Leaving fewer is
-# fine (a neighbour deletion can resolve more than the one site it was aimed
-# at, if the same plate armed two candidates) -- only MORE is a refusal.
+#   vt2-20260908   THE SECOND MECHANISM, and the one that cost a run. add-vias
+#                  does not only create offending VIAs, it creates offending
+#                  NEIGHBOURS: a VIA45 it drops puts an M5 landing pad down, the
+#                  pad merges into the surrounding M5, and the merged shape goes
+#                  over the arming width -- arming VIA4.R.4 against a single-cut
+#                  VIA4 that was already there and already legal. The plate
+#                  arming site1 was 0.310 x 0.330 um, 10 nm over and the size and
+#                  shape of a landing pad; the 24-Aug lineage site's plate is
+#                  3.600 x 0.330, a real stripe. The control vt2ctl-20260908,
+#                  identical in every pinned byte with EVP_PG_ADD_VIAS=off, found
+#                  91 candidates and ONE site instead of 100 and four. That is
+#                  what proved it, and it is why the engine's
+#                  pg_drc_branch_added_neighbour matches CENTRE-INSIDE rather
+#                  than overlap: the plate is a merged shape and a via that
+#                  merely touches it is not a member of it.
 #
-# WHAT THIS CATCHES THAT PG_V4R4_EXPECT CANNOT. PG_V4R4_EXPECT bounds the
-# ABSOLUTE final count against a human-judged tolerance (see the comment
-# above where the hook sets it), and that tolerance has to stay a literal --
-# derive it from this run's own baseline and, with the prune off, baseline
-# and final are the SAME number by construction, so a baseline-derived
-# ceiling would be unconditionally true and could never fire. This check is
-# orthogonal and does not replace it: it says nothing about how many sites
-# are tolerable, only whether the deletions this pass THINKS it made actually
-# reduced the count by as much as it is claiming. A delete_obj that silently
-# no-ops (wrong object, a stale handle, a future Innovus API change) leaves
-# the via in the database -- the next re-seek finds it again, a second pass
-# may try to delete it again, and the final count can still land inside a
-# perfectly reasonable-looking range. PG_V4R4_EXPECT would not notice; this
-# does.
-proc _pg_v4r4_prune_check {n0 pruned n_final} {
-    set ceil [expr {$n0 - $pruned}]
-    if {$n_final > $ceil} {
-        error "VIA4.R.4:M5 prune: baseline $n0 site(s), $pruned via(s) deleted,\
-               so at most $ceil site(s) should remain -- the post-prune seek\
-               still finds $n_final.\n   \
-               This means at least one deletion this pass believed it made did\
-               not actually remove the via (delete_obj no-op, wrong object, or\
-               the same via re-counted after failing to disappear) -- look at\
-               the PRUNE lines above for a via that appears in more than one\
-               pass. This is not the same failure as PG_V4R4_EXPECT and\
-               widening that will not help: the deletions themselves are the\
-               problem, not the tolerance."
-    }
-}
+# THE KEY FORMAT IS NO LONGER A CONTRACT BETWEEN TWO FILES. It used to be: this
+# file and power_plan.tcl each had their own proc for keying a via, with a
+# comment in both saying the formats had to agree and a guard for when they did
+# not. Both now call the engine's pgdg_via_key. The guard below stays, because
+# an added-set recorded against a DIFFERENT database still matches nothing -- but
+# it can no longer be tripped by the two halves disagreeing, because there is
+# one half.
+#
+# WHAT PG_V4R4_EXPECT CANNOT CATCH, and why the engine's pg_drc_prune_check
+# exists beside it: PG_V4R4_EXPECT bounds the ABSOLUTE final count against a
+# human-judged tolerance, and that tolerance has to stay a literal. A
+# delete_obj that silently no-ops leaves the via in the database, the next
+# re-seek finds it again, and the final count can still land inside a perfectly
+# reasonable-looking range. The derived check -- baseline minus deletions --
+# sees it. The two are orthogonal and neither replaces the other.
+# ===========================================================================
+
 
 # ===========================================================================
 # EDIT 1 -- VIA4.R.4:M5.  A single-cut PG VIA4 standing in the 0.800 um shadow
@@ -329,85 +268,14 @@ proc _pg_v4r4_prune_check {n0 pruned n_final} {
 # "Enclosure >= 0 um" (the body is literally `VIA4 NOT M5`), and the deck has
 # no M5.EN.2 rulecheck at all.
 # ===========================================================================
+# THE DIE'S ARGUMENTS TO THE ENGINE'S BRANCH SEEK, and nothing else: which cut
+# layer, which plate layer above it, the width at which the merged plate arms
+# VIA4.R.4 and how far its shadow reaches. The search itself -- the merge, the
+# branch-touches-plate restriction, the GoodBranch cut count and the rejection
+# census -- is flow/power/pg_drc_branch_seek.tcl and knows none of these.
 proc _pg_v4r4_seek {} {
     global PGD
-    set W $PGD(VIA4_R_4_W) ; set D $PGD(VIA4_R_4_D)
-    set hits {}
-    set nscan 0 ; set nself 0 ; set nnowide 0 ; set nfar 0 ; set nmulti 0
-    set neard 1e9 ; set nearw {}
-    foreach n [get_db nets -if ".is_power || .is_ground"] {
-        foreach v [get_db $n .special_vias] {
-            if {[get_db $v .via_def.cut_layer.name] ne "VIA4"} { continue }
-            set cuts [pgg_rects [get_db $v .cut_rects]]
-            if {[llength $cuts] != 1} { continue }
-            if {[get_db $v .via_def.top_layer.name] ne "M5"} { continue }
-            set faces [pgg_rects [get_db $v .top_rects]]
-            if {[llength $faces] != 1} { continue }
-            incr nscan
-            set C [lindex $cuts 0] ; set L [lindex $faces 0]
-            lassign $L lx1 ly1 lx2 ly2
-            set m [expr {$D+$W+0.05}]
-            set box [list [expr {$lx1-$m}] [expr {$ly1-$m}] [expr {$lx2+$m}] [expr {$ly2+$m}]]
-            set all {}
-            foreach e [pgg_layer_rects $box M5] { lappend all [lindex $e 3] }
-            if {![llength $all]} { set all [list $L] }
-            # THE BRANCH MUST TOUCH THE PLATE.  Branch1HasVia is
-            #     (Branch1 INTERACT M5Wide_0.7_VIA4) INTERACT VIA4
-            # and INTERACT is polygon touching, so the non-wide M5 carrying the
-            # cut has to be CONNECTED to the wide plate.  Without this the seek
-            # fires on any single-cut via that merely has wide M5 within 0.8 um
-            # of it -- measured 2026-08-25 on db_orig: 31 hits chip-wide against
-            # Calibre's 1.  Restricting the width test to the cut's OWN merged
-            # M5 shape is what makes the predicate agree with the deck.
-            set m5 [pgg_conn_of $all $L]
-            set wr [pgg_wide_regions $m5 $W]
-            set cx [expr {([lindex $C 0]+[lindex $C 2])/2.0}]
-            set cy [expr {([lindex $C 1]+[lindex $C 3])/2.0}]
-            # a cut INSIDE the wide plate is not on a branch at all
-            if {[pgg_pt_in $wr $cx $cy]} { incr nself ; continue }
-            if {![llength $wr]} { incr nnowide ; continue }
-            set best 1e9 ; set bestr {}
-            foreach r $wr {
-                set g [pgg_gap $C $r]
-                if {$g < $best} { set best $g ; set bestr $r }
-            }
-            if {$best > $D} {
-                incr nfar
-                if {$best < $neard} { set neard $best ; set nearw [list $C $bestr] }
-                continue
-            }
-            # GoodBranch: count the VIA4 cuts that share this branch
-            set nb 0
-            foreach o [get_obj_in_area -areas [list $box] -layers {VIA4} \
-                         -obj_type {special_via via}] {
-                foreach cr [pgg_rects [get_db $o .cut_rects]] {
-                    set qx [expr {([lindex $cr 0]+[lindex $cr 2])/2.0}]
-                    set qy [expr {([lindex $cr 1]+[lindex $cr 3])/2.0}]
-                    if {[pgg_pt_in $wr $qx $qy]} { continue }
-                    if {![pgg_pt_in $m5 $qx $qy]} { continue }
-                    if {[pgg_gap $cr $bestr] > $D} { continue }
-                    incr nb
-                }
-            }
-            if {$nb > 1} { incr nmulti ; continue }
-            lappend hits [list $v $L $C $bestr $best $nb]
-        }
-    }
-    _pg_say "VIA4.R.4:M5 seek -- $nscan single-cut PG VIA4 examined; rejected\
-             $nself on-plate, $nnowide no wide M5 in reach, $nfar wide M5 beyond\
-             $D um, $nmulti branch already multi-cut"
-    if {$neard < 1e8} {
-        _pg_say [format "  closest REJECTED candidate: cut %s, connected wide M5\
-                 %s at %.3f um (limit %s) -- how much margin the predicate has" \
-                 [_pg_f4 [lindex $nearw 0]] [_pg_f4 [lindex $nearw 1]] $neard $D]
-    }
-    return [lsort -command _pg_v4_order $hits]
-}
-proc _pg_v4_order {a b} {
-    lassign [lindex $a 2] ax ay ; lassign [lindex $b 2] bx by
-    if {$ax < $bx} { return -1 } ; if {$ax > $bx} { return 1 }
-    if {$ay < $by} { return -1 } ; if {$ay > $by} { return 1 }
-    return 0
+    return [pg_drc_branch_seek VIA4 M5 $PGD(VIA4_R_4_W) $PGD(VIA4_R_4_D)]
 }
 
 proc _pg_v4r4_apply {hit tag} {
@@ -846,7 +714,7 @@ if {$PG_DRC_V4R4} {
     set _v4 [_pg_v4r4_seek]
     # THE PRE-PRUNE CENSUS. Captured before the prune loop can touch anything,
     # so it is the baseline half of "baseline + prune deletions" -- see
-    # _pg_v4r4_prune_check below, which is the check that actually uses it.
+    # pg_drc_prune_check below, which is the check that actually uses it.
     set _v4_n0 [llength $_v4]
 
     # --- PRUNE ---------------------------------------------------------------
@@ -879,7 +747,7 @@ if {$PG_DRC_V4R4} {
                    (EVP_PG_ADD_VIAS=off -- then turn this off too) or the two\
                    scripts have drifted. Refusing to prune blind."
         }
-        set _faces [_pg_added_m5_faces]
+        set _faces [pg_drc_branch_added_faces $::EVP_PGAV_ADDED M5]
         # SAMPLED BEFORE ANY DELETION, and that is the whole point. The drift
         # guard below asks "did the recorded keys match anything at all?", and
         # a successful prune DELETES the very vias that answer it -- so testing
@@ -892,12 +760,12 @@ if {$PG_DRC_V4R4} {
             set _del {} ; set _seen {}
             foreach h $_v4 {
                 lassign $h v L C wide dist nb
-                if {[_pg_v4r4_fits2 $L $C]} { continue }
+                if {[pg_drc_branch_fits2 $L $C $PGD(VIA4_S_1)]} { continue }
                 set _why "" ; set _victim ""
-                if {[dict exists $::EVP_PGAV_ADDED [_pg_v4_key $v]]} {
+                if {[dict exists $::EVP_PGAV_ADDED [pgdg_via_key $v]]} {
                     set _victim $v ; set _why "the pass created this via"
                 } else {
-                    set _victim [_pg_v4r4_added_neighbour $wide $_faces]
+                    set _victim [pg_drc_branch_added_neighbour $wide $_faces]
                     if {$_victim ne ""} {
                         set _why "the pass created the M5 plate that arms the rule"
                     }
@@ -917,19 +785,19 @@ if {$PG_DRC_V4R4} {
                 incr _pruned
             }
             # The geometry moved. Do not reason about the new state -- measure it.
-            set _faces [_pg_added_m5_faces]
+            set _faces [pg_drc_branch_added_faces $::EVP_PGAV_ADDED M5]
             set _v4 [_pg_v4r4_seek]
             _pg_say "VIA4.R.4 PRUNE pass$_pass: [llength $_del] via(s) deleted;\
                      re-seek finds [llength $_v4] site(s)"
         }
     }
-    _pg_v4r4_prune_check $_v4_n0 $_pruned [llength $_v4]
+    pg_drc_prune_check $_v4_n0 $_pruned [llength $_v4]
 
     set _n 0 ; set _unfix 0
     foreach h $_v4 {
         incr _n
         lassign $h v L C wide dist nb
-        set _fit [_pg_v4r4_fits2 $L $C]
+        set _fit [pg_drc_branch_fits2 $L $C $PGD(VIA4_S_1)]
         if {!$_fit} { incr _unfix }
         _pg_say [format "  VIA4.R.4:M5 site%d  cut %s  landing %s  net %-6s  master %-16s\
                          nearest wide M5 %s at %.3f um   %s   %s" \
@@ -944,8 +812,11 @@ if {$PG_DRC_V4R4} {
         && [dict size $::EVP_PGAV_ADDED] && [info exists _faces0] && !$_faces0} {
         error "VIA4.R.4 prune: [dict size $::EVP_PGAV_ADDED] via(s) were recorded\
                as added, and NOT ONE of them was found in the database by key.\
-               _pg_v4_key here and _pgav_via_key in power_plan.tcl have drifted\
-               apart, so this prune measured nothing. Refusing."
+               Both sides now key a via with the engine's pgdg_via_key, so the\
+               two formats CANNOT have drifted -- which leaves a stale set: the\
+               keys were recorded against a different database, or those vias\
+               are already gone. Either way this prune measured nothing.\
+               Refusing."
     }
     set _note ""
     if {$_unfix} {
@@ -958,7 +829,7 @@ if {$PG_DRC_V4R4} {
            is the usual author: it adds vias wherever a marker asks and does\
            not know this rule."
     }
-    _pg_range_check "VIA4.R.4:M5" [llength $_v4] $PG_V4R4_EXPECT $_note
+    pg_drc_seek_range_check "VIA4.R.4:M5" [llength $_v4] $PG_V4R4_EXPECT $_note
     # AN UNFIXABLE SITE IS FATAL WHATEVER THE COUNT SAYS. vt2-20260908 pruned
     # its way down to 2 sites, passed a {0 2} range check, and then died inside
     # _pg_v4r4_apply on a landing-geometry message that read like a tool problem
@@ -999,7 +870,7 @@ if {$PG_DRC_M8S3} {
             [expr {$owide ? "(ALSO WIDE)" : ""}] [_pg_f4 [pgg_bbox $wrect]] \
             [_pg_lineage $band $PG_LINEAGE_M8S3]]
     }
-    _pg_range_check "M8.S.3" [llength $_m8] $PG_M8S3_EXPECT
+    pg_drc_seek_range_check "M8.S.3" [llength $_m8] $PG_M8S3_EXPECT
     if {$PG_DRC_DRY_RUN} {
         _pg_say "M8.S.3 DRY RUN -- [llength $_m8] site(s) located, nothing changed"
     } else {

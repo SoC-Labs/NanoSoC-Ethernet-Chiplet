@@ -221,7 +221,8 @@
 #                     array.  NOT VIA3_S_1.  Default 0.130.
 #   V3R4_EXPECT       {min max} marker sites.        Default {1 2}.
 #   V3R4_EXPECT_VIAS  {min max} vias per site.       Default {1 4}.
-#   PG_DRC_LIB        path to pg_drc_geom_lib.tcl.  Default: alongside this file.
+#   PG_DRC_LIB        path to pg_drc_geom_lib.tcl.  Default: the engine's copy,
+#                     $ASIC_FLOW_DIR/flow/power/.
 #
 # ---------------------------------------------------------------------------
 # PROVED 2026-08-25, on a COPY of build/pinfix-20260824/db_orig
@@ -244,13 +245,27 @@
 # Nothing downstream reads these names -- write_stream renumbers generated
 # vias -- but the log lines differ.
 #
-# THE GEOMETRY LIBRARY MUST TRAVEL WITH THIS FILE.  pg_drc_geom_lib.tcl lives
-# in the same directory and is sourced by path; without it this script refuses
-# to run rather than falling back to anything.
+# THE GEOMETRY LIBRARY IS THE ENGINE'S.  pg_drc_geom_lib.tcl was promoted into
+# the toolkit (flow/power/) on 2026-09-22 and is sourced from there by path;
+# without it this script refuses to run rather than falling back to anything.
 # ===========================================================================
 
+# THE GEOMETRY LIBRARY IS ENGINE CODE NOW (promoted 2026-09-22): it carried no
+# coordinate and no design name, so it lives in the toolkit at
+# flow/power/pg_drc_geom_lib.tcl and every consumer sources that one copy.
+# Resolved from ASIC_FLOW_DIR when the flow set one, else from the toolkit
+# submodule beside this tree, so a hand run on a routed database still works.
 if {![info exists PG_DRC_LIB]} {
-    set PG_DRC_LIB [file join [file dirname [file normalize [info script]]] pg_drc_geom_lib.tcl]
+    set _pgl_c {}
+    if {[info exists ::env(ASIC_FLOW_DIR)] && $::env(ASIC_FLOW_DIR) ne ""} {
+        lappend _pgl_c [file join $::env(ASIC_FLOW_DIR) flow power pg_drc_geom_lib.tcl]
+    }
+    lappend _pgl_c [file join [file dirname [file dirname [file dirname \
+                        [file normalize [info script]]]]] \
+                        asic-toolkit flow power pg_drc_geom_lib.tcl]
+    set PG_DRC_LIB [lindex $_pgl_c 0]
+    foreach _pgl_f $_pgl_c { if {[file exists $_pgl_f]} { set PG_DRC_LIB $_pgl_f ; break } }
+    unset -nocomplain _pgl_c _pgl_f
 }
 if {![file exists $PG_DRC_LIB]} {
     error "pg_drc_via3r4_m4_narrow: geometry library not found at $PG_DRC_LIB.\

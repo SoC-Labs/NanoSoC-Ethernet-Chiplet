@@ -36,7 +36,7 @@ array set ::V {
 }
 set ::LIVE {vA vN vB vC vD}
 set ::DELETED {}
-# MUTATION HOOK for _pg_v4r4_prune_check. Empty in every normal scenario --
+# MUTATION HOOK for pg_drc_prune_check. Empty in every normal scenario --
 # delete_obj behaves for real. Listing an id here makes delete_obj record the
 # call (so _pruned still increments, exactly as it would against a real
 # Innovus API that returned success) WITHOUT actually removing the object,
@@ -79,7 +79,7 @@ proc _pg_lineage {C lst} {
     foreach L $lst { if {$L eq $C} { return "MATCHES-LINEAGE" } }
     return "NEW-SITE"
 }
-proc _pg_range_check {what n rng {note ""}} {
+proc pg_drc_seek_range_check {what n rng {note ""}} {
     lassign $rng lo hi
     if {$n < $lo || $n > $hi} { error "RANGE: $what located $n, expected $lo..$hi$note" }
 }
@@ -130,20 +130,20 @@ foreach r [list \
  [scenario "prune armed, power_plan published nothing -> refuse"            {vA vN vB vC vD} none 1 0 "does not exist"] \
  [scenario "key drift: added-set non-empty, matches no via -> refuse"       {vA vN vB vC vD} {NOPE@0.0000,0.0000#VIA4 1} 1 0 "drifted"] \
  [scenario "added via exists but is NOT in the arming plate -> no neighbour"  {vA vN vE vD} {VDD@400.0000,900.0000#VIA5 1} 1 0 "cannot be repaired"] \
- [scenario "delete_obj silently no-ops on vB -> prune-check catches it"     {vA vN vB vC vD} $AN  1 4 "did not actually remove the via" {vB}] \
+ [scenario "delete_obj silently no-ops on vB -> prune-check catches it"     {vA vN vB vC vD} $AN  1 4 "did not actually remove the object" {vB}] \
 ] { if {$r} { incr pass } else { incr fail } }
 
 # THE POINT OF THE SCENARIO ABOVE. Its final count (2: vB survives the no-op,
 # vD is the untouched lineage site) sits INSIDE the default PG_V4R4_EXPECT
 # {0 2} -- so the range check this project already had would have shipped it
 # silently. Prove that with the fixture's own (simplified but faithful)
-# _pg_range_check, not just assert it in a comment.
+# pg_drc_seek_range_check, not just assert it in a comment.
 puts "  --- proof that PG_V4R4_EXPECT {0 2} alone would NOT have caught the mutation above"
-if {[catch { _pg_range_check "VIA4.R.4:M5" 2 {0 2} } _rc_e]} {
-    puts "  BAD: _pg_range_check(final=2, {0 2}) unexpectedly errored: $_rc_e" ; incr fail
+if {[catch { pg_drc_seek_range_check "VIA4.R.4:M5" 2 {0 2} } _rc_e]} {
+    puts "  BAD: pg_drc_seek_range_check(final=2, {0 2}) unexpectedly errored: $_rc_e" ; incr fail
 } else {
-    puts "  ok: _pg_range_check(final=2, {0 2}) does not error -- PG_V4R4_EXPECT is\
-blind here; _pg_v4r4_prune_check (baseline+deletions, derived) is what catches it"
+    puts "  ok: pg_drc_seek_range_check(final=2, {0 2}) does not error -- PG_V4R4_EXPECT is\
+blind here; pg_drc_prune_check (baseline+deletions, derived) is what catches it"
     incr pass
 }
 
@@ -156,7 +156,7 @@ foreach c [list \
     [list "every site resolved"                 4 4 0 0] \
 ] {
     lassign $c tag n0 pruned nfinal want_err
-    set got_err [expr {[catch { _pg_v4r4_prune_check $n0 $pruned $nfinal }] ? 1 : 0}]
+    set got_err [expr {[catch { pg_drc_prune_check $n0 $pruned $nfinal }] ? 1 : 0}]
     set ok [expr {$got_err == $want_err}]
     puts [format "  %-58s n0=%d pruned=%d final=%d err=%d/%d %s" \
         $tag $n0 $pruned $nfinal $got_err $want_err [expr {$ok?"ok":"BAD"}]]
@@ -171,7 +171,7 @@ foreach c [list [list vA-0.220x0.190 [_f vA 7] [_f vA 8] 0] \
                 [list at-0.295 {0 0 0.220 0.295} {0.060 0.098 0.160 0.198} 0] \
                 [list at-0.300 {0 0 0.220 0.300} {0.060 0.098 0.160 0.198} 1]] {
     lassign $c tag L C want
-    set got [_pg_v4r4_fits2 $L $C]
+    set got [pg_drc_branch_fits2 $L $C $PGD(VIA4_S_1)]
     if {$got == $want} { incr pass } else { incr fail }
     puts [format "  %-58s fits2=%d/%d %s" $tag $got $want [expr {$got==$want?"ok":"BAD"}]]
 }

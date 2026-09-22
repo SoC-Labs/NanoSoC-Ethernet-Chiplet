@@ -113,13 +113,28 @@
 #                          if REPORT_DIR is set, else refuses.
 #   PG_V3R4_MERGED_CELLS   the merged-GDS macro cell names.  Default is this
 #                          die's gds_merge_list top cells.
-#   PG_DRC_LIB             path to pg_drc_geom_lib.tcl.  Default: alongside.
+#   PG_DRC_LIB             path to pg_drc_geom_lib.tcl.  Default: the engine's
+#                          copy, $ASIC_FLOW_DIR/flow/power/.
 #
 # NOTHING HERE EDITS, STREAMS OR write_db's.
 # ===========================================================================
 
+# THE GEOMETRY LIBRARY IS ENGINE CODE NOW (promoted 2026-09-22): it carried no
+# coordinate and no design name, so it lives in the toolkit at
+# flow/power/pg_drc_geom_lib.tcl and every consumer sources that one copy.
+# Resolved from ASIC_FLOW_DIR when the flow set one, else from the toolkit
+# submodule beside this tree, so a hand run on a routed database still works.
 if {![info exists PG_DRC_LIB]} {
-    set PG_DRC_LIB [file join [file dirname [file normalize [info script]]] pg_drc_geom_lib.tcl]
+    set _pgl_c {}
+    if {[info exists ::env(ASIC_FLOW_DIR)] && $::env(ASIC_FLOW_DIR) ne ""} {
+        lappend _pgl_c [file join $::env(ASIC_FLOW_DIR) flow power pg_drc_geom_lib.tcl]
+    }
+    lappend _pgl_c [file join [file dirname [file dirname [file dirname \
+                        [file normalize [info script]]]]] \
+                        asic-toolkit flow power pg_drc_geom_lib.tcl]
+    set PG_DRC_LIB [lindex $_pgl_c 0]
+    foreach _pgl_f $_pgl_c { if {[file exists $_pgl_f]} { set PG_DRC_LIB $_pgl_f ; break } }
+    unset -nocomplain _pgl_c _pgl_f
 }
 if {![file exists $PG_DRC_LIB]} {
     error "pg_drc_v3r4_census: geometry library not found at $PG_DRC_LIB.\

@@ -141,19 +141,19 @@ set pass 0 ; set fail 0
 proc ok  {m} { incr ::pass ; puts "  PASS  $m" }
 proc bad {m {why ""}} { incr ::fail ; puts "  FAIL  $m" ; if {$why ne ""} { puts "        $why" } }
 proc check {cond m {why ""}} { if {$cond} { ok $m } else { bad $m $why } }
-proc keys_of {f} { return [lsort [dict keys [_pgav_drc_read $f]]] }
+proc keys_of {f} { return [lsort [dict keys [pgdg_drc_read $f]]] }
 proc rec_key {t o lay bb} { return [join [list $t $o $lay $bb] |] }
 proc reset_world {{added {vP vP5 vQ vH1 vH2 vE}}} {
     set ::LIVE $::ALL ; set ::DELETED {} ; set ::BREAK_DELETE {} ; set ::CHECKS 0
     set ::EVP_PGAV_ADDED [dict create]
-    foreach id $added { dict set ::EVP_PGAV_ADDED [_pgav_via_key $id] 1 }
+    foreach id $added { dict set ::EVP_PGAV_ADDED [pgdg_via_key $id] 1 }
 }
 proc run_gate {before after out rounds reach maxdel} {
     # the gate re-writes its AFTER file, so hand it a scratch copy
     set tmp [file join [file dirname $out] after_work.rep]
     file copy -force $after $tmp
     set err "" ; set res {}
-    if {[catch { set res [_pgav_drc_gate $before $tmp $out $rounds $reach $maxdel] } e]} { set err $e }
+    if {[catch { set res [pg_drc_delta_gate $before $tmp $out $::EVP_PGAV_ADDED $rounds $reach $maxdel "the PG add-vias pass"] } e]} { set err $e }
     return [list $res $err $tmp]
 }
 
@@ -184,13 +184,13 @@ check [expr {[keys_of $WORK/model_all_live.rep] eq $k6}] \
       "model [keys_of $WORK/model_all_live.rep]\n        capture $k6"
 
 puts "  --- the delta"
-check [expr {[_pgav_drc_new [_pgav_drc_read $BEFORE] [_pgav_drc_read $AFTER3]] eq {}}] \
+check [expr {[pgdg_drc_new [pgdg_drc_read $BEFORE] [pgdg_drc_read $AFTER3]] eq {}}] \
       "control (pass OFF): vt2ctl AFTER minus BEFORE is EMPTY"
-set new6 [_pgav_drc_new [_pgav_drc_read $BEFORE] [_pgav_drc_read $AFTER6]]
+set new6 [pgdg_drc_new [pgdg_drc_read $BEFORE] [pgdg_drc_read $AFTER6]]
 check [expr {[lsort $new6] eq [lsort $THREE]}] \
       "vt3pg (pass ON): AFTER minus BEFORE names EXACTLY the three -- MINCUT VDD M5 (1024.540,254.640), MINCUT VSS M4 (877.220,254.150), MINHOLE VDD M5 (553.605,425.975)" \
       "got: $new6"
-check [expr {[llength [_pgav_drc_new [_pgav_drc_read $AFTER6] [_pgav_drc_read $BEFORE]]] == 17}] \
+check [expr {[llength [pgdg_drc_new [pgdg_drc_read $AFTER6] [pgdg_drc_read $BEFORE]]] == 17}] \
       "one-directional: the 17 records BEFORE has and AFTER lacks are repairs, not findings"
 
 puts "  --- the gate on the model (real procs, stubbed tool)"
@@ -214,12 +214,12 @@ check [expr {$err eq "" && $res eq {0 0 {}} && $::DELETED eq {} && $::CHECKS == 
 
 puts "  --- MUTATION 1: the delta guard off -- the gate would pass all 6"
 reset_world
-rename _pgav_drc_new _pgav_drc_new_real
-proc _pgav_drc_new {b a} { return {} }
+rename pgdg_drc_new pgdg_drc_new_real
+proc pgdg_drc_new {b a} { return {} }
 lassign [run_gate $BEFORE $AFTER6 $WORK/gate_mut1.rep 12 0.100 20] res err tmp
 check [expr {$err eq "" && [lindex $res 0] == 0 && $::DELETED eq {}}] \
       "guard mutated off: vt3pg's 6-record report PASSES with 0 new and nothing deleted -- so the delta IS the gate" "res=$res err=$err"
-rename _pgav_drc_new {} ; rename _pgav_drc_new_real _pgav_drc_new
+rename pgdg_drc_new {} ; rename pgdg_drc_new_real pgdg_drc_new
 reset_world
 lassign [run_gate $BEFORE $AFTER6 $WORK/gate_restored.rep 12 0.100 20] res err tmp
 check [expr {$err eq "" && [lindex $res 0] == 3}] "guard restored: names 3 again"
@@ -238,24 +238,24 @@ check [expr {[string match "*verdict                  FAIL*" [read [open $WORK/g
 puts "  --- refusals"
 reset_world {vP vP5 vH1 vH2 vE}
 lassign [run_gate $BEFORE $AFTER6 $WORK/gate_notours.rep 12 0.100 20] res err tmp
-check [expr {[string match "*no via the pass added lies within*" $err] && [string match "*877.220*" $err]}] \
+check [expr {[string match "*no via the PG add-vias pass added lies within*" $err] && [string match "*877.220*" $err]}] \
       "VSS site with only a NOT-OURS via in reach: refused, naming (877.220,254.150)" "err=[string range $err 0 120]"
 check [expr {[lsearch -exact $::DELETED vN0] < 0}] "...and the bystander vN0 was not touched"
 reset_world
 lassign [run_gate $BEFORE $AFTER6 $WORK/gate_maxdel.rep 12 0.100 2] res err tmp
-check [string match "*over EVP_PG_ADD_VIAS_GATE_MAX_DEL (2)*" $err] "deletion cap: 3 needed, cap 2 -> refused" "err=[string range $err 0 100]"
+check [string match "*over PG_DRC_GATE_MAX_DEL (2)*" $err] "deletion cap: 3 needed, cap 2 -> refused" "err=[string range $err 0 100]"
 set fh [open $WORK/unattested.rep w] ; puts $fh "###\n#  Command: check_drc\n###\n" ; close $fh
-check [expr {[catch {_pgav_drc_read $WORK/unattested.rep} e] && [string match "*unattested*" $e]}] \
+check [expr {[catch {pgdg_drc_read $WORK/unattested.rep} e] && [string match "*unattested*" $e]}] \
       "header only, no trailer, no sentinel: unattested -> error" "$e"
 set fh [open $WORK/short.rep w]
 puts $fh "MINCUT: ( Minimum Cut ) Special Wire of Net VDD  ( M5 )\nBounds : ( 1.000, 1.000 ) ( 1.100, 1.100 )\n\n  Total Violations : 2 Viols."
 close $fh
-check [expr {[catch {_pgav_drc_read $WORK/short.rep} e] && [string match "*cannot fully read*" $e]}] \
+check [expr {[catch {pgdg_drc_read $WORK/short.rep} e] && [string match "*cannot fully read*" $e]}] \
       "trailer 2, records 1: cannot fully read -> error" "$e"
-check [expr {[catch {_pgav_drc_read $WORK/absent.rep} e] && [string match "*cannot read*" $e]}] \
+check [expr {[catch {pgdg_drc_read $WORK/absent.rep} e] && [string match "*cannot read*" $e]}] \
       "missing file -> error, never an empty set"
 set fh [open $WORK/clean.rep w] ; puts $fh "###\n#  Command: check_drc\n###\n\nNo DRC violations were found\n" ; close $fh
-check [expr {[dict size [_pgav_drc_read $WORK/clean.rep]] == 0}] "Innovus's clean sentence, no records: parses as the empty set"
+check [expr {[dict size [pgdg_drc_read $WORK/clean.rep]] == 0}] "Innovus's clean sentence, no records: parses as the empty set"
 
 puts ""
 puts [expr {$fail ? "FAIL: $fail of [expr {$pass+$fail}] check(s) wrong" \

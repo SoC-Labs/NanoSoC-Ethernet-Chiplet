@@ -1393,52 +1393,21 @@ proc _pgav_areas {pgvf connf grow maxspan} {
     return $out
 }
 
-## _pgav_via_key / _pgav_via_keys were defined inside the branch below until
-## 2026-09-16; they are top-level now so the gate's prove script can lift
-## them verbatim, exactly as prove_v4r4_prune.sh lifts the edit script's.
-# WHICH VIA4 EXIST BEFORE THIS PASS.  Recorded so that the VIA4.R.4 prune in
-# pg_drc_post_route_edits.tcl can tell a via THIS pass created from one that
-# was always there.  The distinction is not pedantry: deleting a via we just
-# added restores the grid to a state that already worked, while deleting a
-# pre-existing one is an unmeasured change to a grid that routed.  Only the
-# first is safe to do automatically, so only the first is offered.
-#
-# WHY THIS EXISTS AT ALL.  vt1-20260902: this pass took the missing-via
-# markers from 382 to 28 by adding 1,401 vias, and three of them were
-# single-cut VIA4 on narrow branches inside the 0.800 um shadow of a wide M5
-# plate -- VIA4.R.4 violations with landings of 0.220, 0.180 and 0.220 um.
-# The post-route re-cut cannot repair those: it re-cuts 1 -> 2 INSIDE the
-# existing landing and two cuts need 0.300 um.  So the pass has to clean up
-# after itself, and to do that it has to know what it did.
-#
-# THE KEY FORMAT IS A CONTRACT with _pg_v4_key in pg_drc_post_route_edits.tcl.
-# Both sides format the via's own insertion point to 4 dp and prefix the net,
-# and the prune refuses to run if the two disagree (see PG_V4R4_PRUNE_ADDED).
-# THE CUT LAYER IS PART OF THE KEY. A stacked via column puts VIA4 and VIA5
-# at the same net and the same insertion point, so net@x,y alone is
-# ambiguous and would let a VIA5 answer for a VIA4.
-proc _pgav_via_key {v} {
-    regexp {([-+0-9.eE]+)\s+([-+0-9.eE]+)} [get_db $v .point] -> x y
-    return [format "%s@%.4f,%.4f#%s" [get_db $v .net.name] $x $y \
-                   [get_db $v .via_def.cut_layer.name]]
-}
-# EVERY special via, not only VIA4. The VIA4.R.4 prune needs both halves of
-# the defect: the offending via itself (a VIA4), AND the via whose M5 face
-# made a neighbouring plate WIDE enough to arm the rule against a via that
-# was already there and already legal. That second one is usually a VIA5.
-proc _pgav_via_keys {} {
-    set d [dict create]
-    foreach _n [get_db nets -if ".is_power || .is_ground"] {
-        foreach v [get_db $_n .special_vias] { dict set d [_pgav_via_key $v] 1 }
-    }
-    return $d
-}
-
 ## ---------------------------------------------------------------------------
-## THE DELTA GATE  (added 2026-09-16) -- THIS PASS MAY NOT LEAVE A DRC
-## VIOLATION BEHIND.
+## THE DELTA GATE  (added 2026-09-16; PROMOTED TO THE TOOLKIT 2026-09-22)
 ##
-## WHAT IT CATCHES. vt3pg-20260909 (pass on) and vt2ctl-20260908 (pass off,
+## THE MACHINERY IS NO LONGER HERE. The parser, the set difference, the
+## candidate ranking, the one-object-per-site repair, the round cap and every
+## refusal live in the engine, at
+##     $ASIC_FLOW_DIR/flow/power/pg_drc_delta_gate.tcl
+## because not one line of it is about this die: it snapshots check_drc before
+## an operation, requires AFTER minus BEFORE to be empty afterwards, repairs
+## what the operation created by deleting what the operation added, and refuses
+## what survives. What stays in this file is WHICH operation is watched, WHERE
+## the artefacts go, and the measurement below - which is this die's, not the
+## engine's.
+##
+## WHAT IT CAUGHT HERE. vt3pg-20260909 (pass on) and vt2ctl-20260908 (pass off,
 ## every other pinned byte identical) end the power plan with 6 and 3
 ## check_drc violations. The 3 they share are vendor MINCUT markers on an
 ## ethmac rf_01k pin, present in rc4's lineage too. The 3 only the pass-on run
@@ -1454,244 +1423,43 @@ proc _pgav_via_keys {} {
 ## (vt3pg log), the hook's VIA4.R.4 seek searches only the M5 arm, and there
 ## is no MINHOLE seek at all.
 ##
-## THE CONTRACT, which is deliberately not another seek: check_drc is taken
-## BEFORE update_power_vias (pg_addvias_drc_before.rep) and again after every
-## PG repair that follows it has had its turn (the post_powerplan hook, which
-## writes pg_post_drc_edits.rep). The set difference AFTER minus BEFORE must
-## be EMPTY. Each surviving new violation is repaired by deleting the nearest
-## via THIS PASS ADDED at its site -- which restores the grid rc4 routed with
-## at that point and nothing more -- and check_drc is re-run. A new violation
-## with no added via in reach, or one that survives the repair rounds, aborts
-## the stage with its type, net, layer and coordinates. Never advisory: the
-## alternative is a stream Calibre rejects, ten hours later.
-##
 ## WHY THE GATE RUNS IN THE HOOK AND NOT HERE. The AFTER measurement has to
 ## come after the fix_via pass, the residue cleanup and the hook's VIA4.R.4
 ## prune, all of which legitimately repair some of what this pass creates
 ## (fix_via alone takes 136 -> 16 on vt3pg). Gating here would delete ~100
 ## vias fix_via was about to make legal. So this file takes the BEFORE
 ## snapshot and publishes its path (::EVP_PGAV_DRC_BEFORE_FILE), and
-## hooks/post_powerplan.tcl runs _pgav_drc_gate on the hook's own check_drc
-## artefact once nothing else is going to touch the grid.
+## hooks/post_powerplan.tcl calls pg_drc_delta_gate on the hook's own
+## check_drc artefact once nothing else is going to touch the grid.
 ##
-## WHAT A "NEW" VIOLATION IS. A check_drc record keyed by its type, the
-## object it names, its layer and its bounds, verbatim from the report -- the
-## same fields Calibre's result lands on. In BEFORE and AFTER: pre-existing.
-## Only in BEFORE: repaired. Only in AFTER: this pass's, and the gate owns it.
-##
-## REFUSALS. A BEFORE report that cannot be read or attested (no trailer and
-## no `No DRC violations were found` sentence) stops the pass before it runs:
-## a repair whose starting point is unknown cannot know what it added. An
-## AFTER report in that state stops the stage. A missing report is never an
-## empty one. More deletions than EVP_PG_ADD_VIAS_GATE_MAX_DEL (20) is a step
-## change in what the pass produces and stops the stage for a human.
+## THE ADDED SET is recorded here too (::EVP_PGAV_ADDED, via
+## pg_drc_gate_via_keys / pg_drc_gate_added) because only this file knows when
+## the operation ran. It is the gate's delete-list AND the VIA4.R.4 prune's, and
+## since both now key a via with the SAME engine proc (pgdg_via_key) the two
+## cannot drift apart the way two hand-kept copies of the key format could.
 ##
 ## PROVEN outside Innovus by eth-chiplet/hooks/tests/prove_addvias_drc_gate.sh:
 ## the real vt2ctl/vt3pg report bytes name exactly the three; a control (pass
 ## off) names nothing; with the delta guard mutated off the gate passes all 6;
 ## a delete_obj that silently no-ops is caught by the re-check.
 ## ---------------------------------------------------------------------------
-
-## A check_drc report as a dict: key -> {type object layer x1 y1 x2 y2}, the
-## key being those seven fields joined by `|`. ERRORS, never returns a
-## partial set, when the file is unreadable, when it carries neither a `Total
-## Violations` trailer nor Innovus's clean-design sentence, or when the
-## records it read do not add up to the trailer.
-proc _pgav_drc_read {f} {
-    if {![file readable $f]} {
-        error "PG add-vias gate: cannot read check_drc report $f -- a report\
-               that is not there is not a clean one"
-    }
-    set d [dict create] ; set n -1 ; set clean 0 ; set hdr {} ; set nrec 0
-    set fh [open $f r]
-    while {[gets $fh l] >= 0} {
-        if {[regexp {Total Violations\s*:\s*([0-9]+)} $l -> v]} { set n $v ; continue }
-        if {[regexp {^\s*No DRC violations were found\.?\s*$} $l]} { incr clean ; continue }
-        if {[regexp {^([A-Za-z_]+):\s*\(.*?\)\s*(.*?)\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*$} \
-                    $l -> t o lay]} {
-            set hdr [list $t $o $lay] ; continue
-        }
-        if {[regexp {^Bounds\s*:\s*\(\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*\)\s*\(\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*\)} \
-                    $l -> a b c e]} {
-            if {![llength $hdr]} { continue }
-            incr nrec
-            dict set d [join [list {*}$hdr "$a $b $c $e"] |] [list {*}$hdr $a $b $c $e]
-            set hdr {}
-        }
-    }
-    close $fh
-    if {$n < 0} {
-        if {$clean == 1 && $nrec == 0} { return $d }
-        error "PG add-vias gate: $f has no `Total Violations` trailer and no `No\
-               DRC violations were found` sentence -- an unattested report is\
-               not a clean one"
-    }
-    if {$nrec != $n} {
-        error "PG add-vias gate: $f declares $n violation(s) but this parser read\
-               $nrec record(s) -- refusing to gate on a report it cannot fully read"
-    }
-    return $d
+if {[info exists ::env(ASIC_FLOW_DIR)] && $::env(ASIC_FLOW_DIR) ne ""} {
+    set _pgav_gate_tcl [file join $::env(ASIC_FLOW_DIR) flow power pg_drc_delta_gate.tcl]
+} else {
+    # A hand run with no flow environment: the toolkit submodule beside this tree.
+    set _pgav_gate_tcl [file join [file dirname [file dirname [file dirname \
+                            [file normalize [info script]]]]] \
+                            asic-toolkit flow power pg_drc_delta_gate.tcl]
 }
-## The keys in AFTER that BEFORE does not have, sorted. One-directional on
-## purpose: what BEFORE had and AFTER lacks was repaired, and is not a finding.
-proc _pgav_drc_new {before after} {
-    set out {}
-    foreach k [lsort [dict keys $after]] {
-        if {![dict exists $before $k]} { lappend out $k }
-    }
-    return $out
+if {![file exists $_pgav_gate_tcl]} {
+    error "power_plan: the PG DRC delta gate is not at $_pgav_gate_tcl. It is\
+           engine code (flow/power/pg_drc_delta_gate.tcl) and this pass may not\
+           edit the grid without it: an add-vias pass with no gate is how three\
+           Calibre rulechecks reached the stream on vt3pg-20260909."
 }
-proc _pgav_drc_fmt {rec} {
-    lassign $rec t o lay a b c e
-    return [format "%s %s (%s) at (%s,%s)-(%s,%s)" $t $o $lay $a $b $c $e]
-}
-## The net a record names, or "" for a pin / cell / blockage record.
-proc _pgav_rec_net {rec} {
-    if {[regexp {Net (\S+)} [lindex $rec 1] -> n]} { return $n }
-    return ""
-}
-## Innovus rect lists come back as {{x1 y1 x2 y2} ...}; split into 4-tuples.
-proc _pgav_rects {s} {
-    set v [regexp -all -inline {[-+0-9.eE]+} $s] ; set out {}
-    for {set i 0} {$i+3 < [llength $v]} {incr i 4} { lappend out [lrange $v $i [expr {$i+3}]] }
-    return $out
-}
-## Chebyshev gap between two rects: 0 when they touch or overlap.
-proc _pgav_gap {r s} {
-    lassign $r ax1 ay1 ax2 ay2 ; lassign $s bx1 by1 bx2 by2
-    set dx [expr {max($bx1-$ax2, $ax1-$bx2, 0.0)}]
-    set dy [expr {max($by1-$ay2, $ay1-$by2, 0.0)}]
-    return [expr {max($dx, $dy)}]
-}
-## The vias THIS PASS ADDED that touch a violation, best first. Only vias
-## with geometry on the violation's own layer count, only same-net ones when
-## the record names a net, and a via whose CUT sits inside the marker (a
-## MINCUT is drawn on the cut) outranks a stacked neighbour that merely
-## shares the metal face. Each entry is {via key gap cut_is_marker}.
-proc _pgav_gate_candidates {rec reach} {
-    lassign $rec t o lay a b c e
-    set bb  [list $a $b $c $e]
-    set box [list [expr {$a-$reach}] [expr {$b-$reach}] [expr {$c+$reach}] [expr {$e+$reach}]]
-    set net [_pgav_rec_net $rec]
-    set out {}
-    foreach v [get_obj_in_area -areas [list $box] -obj_type special_via] {
-        set key [_pgav_via_key $v]
-        if {![dict exists $::EVP_PGAV_ADDED $key]} { continue }
-        if {$net ne "" && [get_db $v .net.name] ne $net} { continue }
-        if {$lay eq [get_db $v .via_def.cut_layer.name]} {
-            set rl [get_db $v .cut_rects]
-        } elseif {$lay eq [get_db $v .via_def.top_layer.name]} {
-            set rl [get_db $v .top_rects]
-        } elseif {$lay eq [get_db $v .via_def.bottom_layer.name]} {
-            set rl [get_db $v .bottom_rects]
-        } else { continue }
-        set g 1e9
-        foreach r [_pgav_rects $rl] { set g [expr {min($g, [_pgav_gap $r $bb])}] }
-        if {$g > $reach} { continue }
-        set cutm 0
-        foreach r [_pgav_rects [get_db $v .cut_rects]] {
-            set cx [expr {([lindex $r 0]+[lindex $r 2])/2.0}]
-            set cy [expr {([lindex $r 1]+[lindex $r 3])/2.0}]
-            if {$cx >= $a-0.0005 && $cx <= $c+0.0005 && $cy >= $b-0.0005 && $cy <= $e+0.0005} {
-                set cutm 1
-            }
-        }
-        lappend out [list $v $key $g $cutm]
-    }
-    return [lsort -command _pgav_cand_order $out]
-}
-proc _pgav_cand_order {p q} {
-    if {[lindex $p 3] != [lindex $q 3]} { return [expr {[lindex $q 3] - [lindex $p 3]}] }
-    if {[lindex $p 2] != [lindex $q 2]} { return [expr {[lindex $p 2] < [lindex $q 2] ? -1 : 1}] }
-    return [string compare [lindex $p 1] [lindex $q 1]]
-}
-## One repair round: delete the best added via at every new violation. A
-## violation that lies within reach of a via deleted earlier in the same
-## round is left for the re-check to settle rather than charged a second
-## via. Returns the deletions as strings for the artefact; ERRORS when a
-## violation has no added via in reach -- that one is not this pass's.
-proc _pgav_gate_repair {newkeys after reach} {
-    set done {} ; set gone {}
-    foreach k $newkeys {
-        set rec [dict get $after $k]
-        set bb  [lrange $rec 3 6]
-        set near 0
-        foreach r $gone { if {[_pgav_gap $r $bb] <= $reach} { set near 1 } }
-        if {$near} { continue }
-        set c [_pgav_gate_candidates $rec $reach]
-        if {![llength $c]} {
-            error "PG add-vias gate: [_pgav_drc_fmt $rec] is NEW since the\
-                   add-vias pass ran and no via the pass added lies within\
-                   $reach um of it on that layer and net. It is not this pass's\
-                   to delete, and nothing else in the flow repaired it.\
-                   Stopping the stage rather than streaming it."
-        }
-        lassign [lindex $c 0] v key g cutm
-        set vd [get_db $v .via_def.name]
-        set pt [string trim [get_db $v .point]]
-        foreach r [_pgav_rects [concat [get_db $v .cut_rects] [get_db $v .top_rects] \
-                                       [get_db $v .bottom_rects]]] { lappend gone $r }
-        # The key STAYS in ::EVP_PGAV_ADDED on purpose. If delete_obj silently
-        # no-ops the via is still there and still ours; the next round charges
-        # it again, and the round cap turns that into a refusal that names the
-        # site -- instead of the blame sliding to a stacked neighbour.
-        delete_obj $v
-        lappend done [format "%s %s at (%s) for %s" $key $vd $pt [_pgav_drc_fmt $rec]]
-        puts "POWERPLAN: PG add-vias gate -- deleted $key ($vd) for [_pgav_drc_fmt $rec]"
-    }
-    return $done
-}
-## THE GATE. before_f / after_f are check_drc reports; after_f is re-written
-## by the re-checks so the file on disk is always the final state. out_f is
-## the artefact. Returns {new_before_repair new_after_repair deletions};
-## ERRORS when anything new survives.
-proc _pgav_drc_gate {before_f after_f out_f rounds reach maxdel} {
-    set before [_pgav_drc_read $before_f]
-    set after  [_pgav_drc_read $after_f]
-    set after0 $after
-    set new0   [_pgav_drc_new $before $after]
-    set n0     [llength $new0]
-    puts "POWERPLAN: PG add-vias gate -- check_drc before the pass [dict size $before]\
-          record(s), after every repair [dict size $after]; $n0 NEW"
-    set repaired {} ; set new $new0 ; set r 0
-    while {[llength $new] && $r < $rounds} {
-        incr r
-        set done [_pgav_gate_repair $new $after $reach]
-        foreach dd $done { lappend repaired $dd }
-        if {[llength $repaired] > $maxdel} {
-            error "PG add-vias gate: [llength $repaired] via(s) deleted so far,\
-                   over EVP_PG_ADD_VIAS_GATE_MAX_DEL ($maxdel). vt3pg-20260909\
-                   needed 3; this is a step change in what the pass produces.\
-                   Look before deleting more of it."
-        }
-        check_drc -limit 200000 -out_file $after_f
-        set after [_pgav_drc_read $after_f]
-        set new   [_pgav_drc_new $before $after]
-        puts "POWERPLAN: PG add-vias gate -- round $r: [llength $done] via(s) deleted,\
-              [llength $new] new violation(s) remain"
-    }
-    set fh [open $out_f w]
-    puts $fh "# PG add-vias delta gate -- check_drc AFTER minus BEFORE must be empty"
-    puts $fh "before_report            $before_f ([dict size $before] record(s))"
-    puts $fh "after_report             $after_f ([dict size $after] record(s), final)"
-    puts $fh "new_before_repair        $n0"
-    foreach k $new0 { puts $fh "  NEW       [_pgav_drc_fmt [dict get $after0 $k]]" }
-    puts $fh "repaired                 [llength $repaired]"
-    foreach dd $repaired { puts $fh "  DELETED   $dd" }
-    puts $fh "new_after_repair         [llength $new]"
-    foreach k $new { puts $fh "  SURVIVES  [_pgav_drc_fmt [dict get $after $k]]" }
-    puts $fh "rounds                   $r of $rounds"
-    puts $fh "verdict                  [expr {[llength $new] ? "FAIL" : "PASS"}]"
-    close $fh
-    if {[llength $new]} {
-        set l {}
-        foreach k $new { lappend l [_pgav_drc_fmt [dict get $after $k]] }
-        error "PG add-vias gate: [llength $new] violation(s) the add-vias pass\
-               created survive $r repair round(s):\n    [join $l "\n    "]\n  \
-               The stream would carry each as a Calibre result. See $out_f."
-    }
-    return [list $n0 0 $repaired]
-}
+source $_pgav_gate_tcl
+lassign [pg_drc_gate_knobs] _pgav_g_rounds _pgav_g_reach _pgav_g_maxdel _pgav_g_limit
+unset _pgav_gate_tcl
 
 if {$_pgav_mode eq "off"} {
     puts "POWERPLAN: EVP_PG_ADD_VIAS=off -- skipping the unfilled-PG-via pass.\
@@ -1714,16 +1482,15 @@ if {$_pgav_mode eq "off"} {
     }
     puts "POWERPLAN: PG add-vias -- mode $_pgav_mode; before: $_pgav_p0 missing-via\
           marker(s), $_pgav_c0 connectivity marker(s), $_pgav_v0 PG via(s)"
-    set _pgav_v4_before [_pgav_via_keys]
+    set _pgav_v4_before [pg_drc_gate_via_keys]
 
-    # THE DELTA GATE'S BEFORE SNAPSHOT -- see the header above _pgav_drc_read.
-    # Parsed here as well as published, so an unreadable or unattested report
-    # stops the pass BEFORE it edits the grid: a repair that does not know
-    # its starting point cannot say what it added. No catch on the check --
-    # a check_drc that cannot run is the same refusal.
+    # THE DELTA GATE'S BEFORE SNAPSHOT. pg_drc_gate_snapshot runs check_drc and
+    # PARSES it, so an unreadable or unattested report stops the pass BEFORE it
+    # edits the grid: a repair that does not know its starting point cannot say
+    # what it added. No catch -- a check_drc that cannot run is the same
+    # refusal. The path is published for the hook, which takes the AFTER.
     set ::EVP_PGAV_DRC_BEFORE_FILE $REPORT_DIR/pg_addvias_drc_before.rep
-    check_drc -limit 200000 -out_file $::EVP_PGAV_DRC_BEFORE_FILE
-    set _pgav_d0 [_pgav_drc_read $::EVP_PGAV_DRC_BEFORE_FILE]
+    set _pgav_d0 [pg_drc_gate_snapshot $::EVP_PGAV_DRC_BEFORE_FILE $_pgav_g_limit]
     puts "POWERPLAN: PG add-vias -- check_drc BEFORE the pass: [dict size $_pgav_d0]\
           record(s) in $::EVP_PGAV_DRC_BEFORE_FILE (the delta gate's baseline)"
     unset _pgav_d0
@@ -1742,15 +1509,14 @@ if {$_pgav_mode eq "off"} {
         }
         unset -nocomplain _pgav_ar
     }
-    # The VIA4 THIS pass created. Published as a global because the consumer is
-    # a different script, sourced later by the post_powerplan hook.
-    set ::EVP_PGAV_ADDED [dict create]
+    # WHAT THIS PASS CREATED. Published as a global because the consumers are
+    # other scripts: the delta gate in the post_powerplan hook (this is its
+    # delete-list) and the VIA4.R.4 prune in pg_drc_post_route_edits.tcl. Both
+    # key a via with the engine's pgdg_via_key, so the two cannot drift.
+    set ::EVP_PGAV_ADDED [pg_drc_gate_added $_pgav_v4_before]
     set _pgav_n_v4 0
-    foreach _k [dict keys [_pgav_via_keys]] {
-        if {![dict exists $_pgav_v4_before $_k]} {
-            dict set ::EVP_PGAV_ADDED $_k 1
-            if {[string match "*#VIA4" $_k]} { incr _pgav_n_v4 }
-        }
+    foreach _k [dict keys $::EVP_PGAV_ADDED] {
+        if {[string match "*#VIA4" $_k]} { incr _pgav_n_v4 }
     }
     set ::EVP_PGAV_RAN 1
     puts "POWERPLAN: PG add-vias -- [dict size $::EVP_PGAV_ADDED] new via(s)\
@@ -1783,7 +1549,8 @@ if {$_pgav_mode eq "off"} {
     }
     unset -nocomplain _pgav_v0 _pgav_v1 _pgav_p0 _pgav_p1 _pgav_c0
 }
-unset -nocomplain _pgav_mode _pgav_cap _pgav_span _pgav_grow
+unset -nocomplain _pgav_mode _pgav_cap _pgav_span _pgav_grow \
+                  _pgav_g_rounds _pgav_g_reach _pgav_g_maxdel _pgav_g_limit
 
 
 ## ---------------------------------------------------------------------------

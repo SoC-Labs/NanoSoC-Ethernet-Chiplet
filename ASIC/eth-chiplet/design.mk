@@ -1136,6 +1136,26 @@ export ROUTE_OPT_DRV ?= 0
 # (+91,560 vias, ~34k on VIA12/23/34 at 85.7% utilisation).
 export EVP_PG_ADD_VIAS ?= markers
 
+# THE DELTA GATE THAT WATCHES THAT PASS. The machinery is the engine's
+# (flow/power/pg_drc_delta_gate.tcl, promoted 2026-09-22); these four lines are
+# all this die contributes, and each is a measurement, not a preference:
+#   ROUNDS   12  repair rounds. vt3pg-20260909 needed ONE; the headroom is for
+#                a site whose repair exposes the next one under it.
+#   REACH  0.100  um. How far from a marker an added via may sit and still be
+#                the one charged for it. A marker is drawn ON the offending
+#                geometry, so the via's face touches it: generous for touching,
+#                far too small to reach a bystander. NOT a foundry rule.
+#   MAX_DEL  20  deletions before the stage stops for a human. vt3pg needed 3;
+#                an order of magnitude more is a step change in what the
+#                add-vias pass produces, not a cleanup.
+#   LIMIT 200000 check_drc -limit. The same number every other PG check in this
+#                flow uses, so the reports are comparable.
+# The EVP_PG_ADD_VIAS_GATE_* spellings still work and print a deprecation line.
+export PG_DRC_GATE_ROUNDS  ?= 12
+export PG_DRC_GATE_REACH   ?= 0.100
+export PG_DRC_GATE_MAX_DEL ?= 20
+export PG_DRC_GATE_LIMIT   ?= 200000
+
 # Route-gate budgets. Each is a reason, not a round number.
 #   opens 24    = VDDIO pad count + VSSIO pad count; the marker counts PIECES,
 #                 not breaks (12 VDDIO pads -> 12 markers where breaks give 11).
