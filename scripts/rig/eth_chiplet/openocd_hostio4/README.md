@@ -25,9 +25,10 @@ redundant `Ax`.
 
 | file | what |
 |---|---|
-| `hostio4.c` | the driver, 1300 lines |
-| `hostio4-openocd.patch` | reference registration patch against master (`43441cd`). The bench does NOT use this — see below. |
+| `hostio4.c` | the driver, 1327 lines — **the only copy**, see below |
+| `hostio4-openocd.patch` | registration hunks ONLY, against master (`43441cd`): `configure.ac`, `openocd.texi`, `Makefile.am`, `interface.h`, `interfaces.c`. Does **not** carry the driver. The bench does not use this — the recipe owns 0.12.0 registration. |
 | `hostio4-fake.cfg` | OpenOCD config: adapter + a `mem_ap` target |
+| `hostio4-bench.cfg` | OpenOCD config for the real bench path (via `adp-bridge`, no `--raw`) |
 | `hostio4-gdb.cfg` | opt-in posture A (`-gdb-port 3333`). Read its header first. |
 | `run_proof_real.sh` | runs the six proofs against the real reference monitor |
 
@@ -41,6 +42,13 @@ single spelling works at both and the guard is required rather than stylistic.
 There is deliberately no separate back-ported copy. An earlier
 `hostio4-openocd-v0.12.0.patch` has been removed: two whole-driver patches that must
 not both be applied is exactly the sort of thing someone gets wrong at 2am.
+
+**`hostio4-openocd.patch` used to embed a whole copy of the driver too**, and it had
+gone 28 lines stale — it still carried the `LOG_DEBUG` bus-error message that
+`c136d77` replaced, so applying it would have reintroduced the off-by-one faulting
+address that commit exists to prevent. The embedded copy has been stripped; the patch
+is now registration-only, and `git apply --check -R` against a patched pristine
+`43441cd` confirms the five remaining hunks are exact. **There is one `hostio4.c`.**
 
 **Registration is owned by the build recipe, not by this directory.**
 `/home/dam1n19/SoCLabs/soclabs-openocd` carries
