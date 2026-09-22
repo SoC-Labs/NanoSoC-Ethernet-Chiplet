@@ -268,3 +268,14 @@ ASIC/genus-innovus/*-run/
 # and a file-level negation does re-include.
 !/ci/fixtures/**/results.xml
 !/ci/fixtures/**/results_*.xml
+
+# Chip figures: the RENDERED PNGs only, 44 MB across 27 files. The rest of
+# ASIC/figures/<run>/ is worth tracking and is deliberately NOT matched here --
+# the pipeline (scripts/, jobs/), the Innovus placement dump the figures rebuild
+# from (data/place_*.txt.gz) and the provenance README come to 3.25 MB between
+# them. Nine figures rebuild byte-for-byte from that dump alone, with no licence
+# and no GDS; the rest are ~2 min of headless KLayout. Decision of 2026-09-16 is
+# to promote the machinery into ASIC/asic-toolkit/, so the images do not need a
+# permanent home in this repo's history. Same reasoning as the padring fixtures
+# above.
+/ASIC/figures/**/*.png
