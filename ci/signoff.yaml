@@ -4475,6 +4475,16 @@ stages:
   # and each must-fail is verified to carry exactly its own code -- see
   # ci/fixtures/sta-signoff/PROVENANCE.md.
   #
+  # PROMOTED TO THE TOOLKIT 2026-09-22. The runner, the Tempus session, the MMMC
+  # derivation, the log scan and both graders are now
+  # ASIC/asic-toolkit/flow/verify/sta/, reached by `make sta` from the engine.
+  # What is still THIS DIE'S is data: ASIC/sta/sta_policy.json (clock count,
+  # required views, per-reason untested ceilings, derates), ASIC/sta/site.env
+  # (gitignored tool paths) and these fixtures. sta_gate.py now REFUSES to run
+  # without --policy and fails POLICY_INCOMPLETE on a policy missing any of the
+  # five per-die keys, so a second die cannot inherit this one's numbers by
+  # accident. docs/tapeout/79-promoting-signoff-sta-to-the-toolkit.md.
+  #
   # SOUND ONLY WHERE THE PINNED DATABASE DEFINES ALL THREE HOLD VIEWS. The
   # policy requires default_analysis_view_hold, av_ml_libset_hold and
   # av_ltfix_libset_hold; a tree whose graded build was routed under a one-hold-
@@ -4488,7 +4498,7 @@ stages:
     phase: physical
     gate: block
     label: soclabs-sta
-    description: "Signoff STA in Tempus on the routed (or ECO) database with standalone Quantus parasitics: OCV, CPPR both, re-issued derate, extraction proven from the logs, untested checks budgeted per reason, graded by ASIC/sta/sta_gate.py against a committed policy"
+    description: "Signoff STA in Tempus on the routed (or ECO) database with standalone Quantus parasitics: OCV, CPPR both, re-issued derate, extraction proven from the logs, untested checks budgeted per reason, graded by the toolkit's flow/verify/sta/sta_gate.py against this die's committed policy"
     # The tag @GRADED_BUILD@ takes when `prove` runs this stage's
     # fixtures. See the `vars:` block at the head of this file.
     proof_vars: {GRADED_BUILD: vt7higheco2-20260914}
@@ -4523,16 +4533,25 @@ stages:
     run: |
       set -u
       TAG=@GRADED_BUILD@
-      # The ECO database when the run has one, else the routed one -- the
-      # same choice ASIC/sta.mk and ASIC/eco.mk make. Never a placed one.
+      STA="$PWD/ASIC/asic-toolkit/flow/verify/sta"
+      # The ECO database when the run has one, else the routed one -- the same
+      # choice mk/sta.mk's IN_DB and ASIC/eco.mk make. Never a placed one.
       DB="$PWD/ASIC/eth-chiplet/build/$TAG/work/nanosoc_eth_chiplet_pads_eco"
       [ -d "$DB" ] || DB="$PWD/ASIC/eth-chiplet/build/$TAG/work/nanosoc_eth_chiplet_pads_routed"
       W="$PWD/ASIC/sta/work/$TAG"
       mkdir -p "$W/reports" "$W/outputs"
-      python3 ASIC/sta/make_sta_mmmc.py --db "$DB" --out "$W/mmmc_sta.tcl" < /dev/null
-      STA_TAG="$TAG" STA_OUT="$W/outputs" STA_REP="$W/reports" STA_WORK="$W" \
-        STA_MMMC="$W/mmmc_sta.tcl" \
-        ASIC/sta/run_sta.sh "$DB" < /dev/null
+      python3 "$STA/make_sta_mmmc.py" --db "$DB" --out "$W/mmmc_sta.tcl" < /dev/null
+      # Every design fact is passed in; the engine carries none. STA_TECH_DIR
+      # and ASIC_FLOW_DIR are how the session reaches the tech pack's
+      # qrc_layer_map -- the SAME map the route and ECO stages extract with,
+      # rather than the project copy this stage used to keep beside itself.
+      STA_TAG="$TAG" STA_BLOCK=nanosoc_eth_chiplet_pads \
+        STA_WORK="$W" STA_OUT="$W/outputs" STA_REP="$W/reports" \
+        STA_MMMC="$W/mmmc_sta.tcl" STA_REPO="$PWD" \
+        STA_SITE_ENV="$PWD/ASIC/sta/site.env" \
+        ASIC_FLOW_DIR="$PWD/ASIC/asic-toolkit" \
+        STA_TECH_DIR="$PWD/ASIC/asic-toolkit/tech/tsmc65" \
+        "$STA/run_sta.sh" "$DB" < /dev/null
     # TWO GRADERS, AND THE ORDER IS THE POINT. sta_binding.py first: which build
     # is this, and did the run finish. It exits non-zero before sta_gate.py is
     # reached, so a number from the wrong die is never printed, let alone quoted.
@@ -4550,7 +4569,7 @@ stages:
       python3 scripts/ci/sta_binding.py \
           --reports "$REP" --build-tag "$TAG" \
           --build-root ASIC/eth-chiplet/build || exit 1
-      python3 ASIC/sta/sta_gate.py \
+      python3 ASIC/asic-toolkit/flow/verify/sta/sta_gate.py \
           --reports "$REP" --policy ASIC/sta/sta_policy.json
     # Both directions. Every must_fail is a shape this project has already been
     # misled by: wrong-build is the 17-18 August runs verbatim, violating is a

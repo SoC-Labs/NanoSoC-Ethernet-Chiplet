@@ -55,14 +55,15 @@ include $(ASIC_DIR)/../evidence.mk
 #     make eco-emit-vars RUN_TAG=<tag> what it would do, without doing it
 include $(ASIC_DIR)/../eco.mk
 
-# Signoff STA on a build of this flow: Tempus on the routed (or ECO) database
-# with standalone Quantus parasitics, graded by scripts/ci/sta_binding.py and
-# ASIC/sta/sta_gate.py. LAST, for the reason the three includes above are: an
-# include cannot see a target collision, and its three names were checked
-# against mk/*.mk, design.mk, common.mk, floorplan-hazards.mk, evidence.mk,
-# eco.mk and the root Makefile before being written.
+# Signoff STA. THE STAGE IS THE TOOLKIT'S since 2026-09-22 (mk/sta.mk, included
+# by mk/flow.mk above); this file now carries one line, STA_DIR, naming where
+# this die keeps its policy, its site.env and its runs. LAST, for the reason the
+# three includes above are: an include cannot see a target collision, and here
+# it is also load-bearing in the other direction -- the toolkit's STA_DIR is a
+# `?=`, so the override has to come after it.
 #
 #     make sta RUN_TAG=<tag> [IN_DB=<db>]   run and grade
 #     make sta-gate RUN_TAG=<tag>           grade an existing run, no licence
 #     make sta-vars RUN_TAG=<tag>           what it would do, without doing it
+#     make sta-selftest                     the graders' own mutation batteries
 include $(ASIC_DIR)/../sta.mk

@@ -54,6 +54,11 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 SYNTH_ROOT = "/builds/nanosoc-ethernet-chiplet"
+# The timing gate moved into the toolkit on 2026-09-22 (docs/tapeout/79-...);
+# what stays here is the policy it grades against and these fixtures. Named
+# once, because it is both the thing `verify` runs and one of the anchors that
+# proves ROOT resolves to this repository.
+STA_GATE = "ASIC/asic-toolkit/flow/verify/sta/sta_gate.py"
 BLOCK = "nanosoc_eth_chiplet_pads"
 REPORT_FILES = ("timing_summary.rpt", "timing_summary_hold.rpt",
                 "analysis_coverage.rpt", "analysis_coverage_early_all.rpt",
@@ -359,7 +364,7 @@ def verify(dest_root, expectations):
                                 "--build-root", os.path.join(sand, "ASIC/eth-chiplet/build")],
                                capture_output=True, text=True, stdin=subprocess.DEVNULL)
             got_b = _codes_binding(b.stdout + b.stderr)
-            g = subprocess.run([sys.executable, os.path.join(ROOT, "ASIC/sta/sta_gate.py"),
+            g = subprocess.run([sys.executable, os.path.join(ROOT, STA_GATE),
                                 "--reports", rep, "--policy", os.path.join(ROOT, "ASIC/sta/sta_policy.json"),
                                 "--format", "json"],
                                capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -460,7 +465,8 @@ def selftest():
     # a mutant copied to /tmp to test the guard above failed exactly this way
     # and was briefly read as the guard being broken. Assert the anchor here,
     # so a relocated copy says what is actually wrong.
-    anchors = ["ci/fixtures/sta-signoff/regen.py", "ASIC/sta/sta_gate.py", "ci/signoff.yaml"]
+    anchors = ["ci/fixtures/sta-signoff/regen.py", STA_GATE, "ci/signoff.yaml",
+               "ASIC/sta/sta_policy.json"]
     missing = [a for a in anchors if not os.path.exists(os.path.join(ROOT, a))]
     if not missing:
         print("  ok    ROOT resolves to the repository (this file is where it thinks it is)")

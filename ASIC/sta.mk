@@ -1,86 +1,29 @@
 #-----------------------------------------------------------------------------
-# sta.mk -- signoff STA (Tempus + standalone Quantus) on a build of this flow.
+# ASIC/sta.mk -- where THIS die keeps its signoff-STA data.
 #
-# WHY THIS FRAGMENT EXISTS. ASIC/sta/ has carried a mutation-proven signoff STA
-# harness since August and, until 2026-09-16, no make target called it: every
-# run was a hand-typed shell line, which is how six runs in August timed a
-# stale build without anyone noticing. This target names the build, writes
-# everything under ASIC/sta/work/<tag>/, and then GRADES the run -- binding
-# first (which build is this, did it finish), timing second -- and refuses to
-# report success unless both graders' verdict files say so.
+# THE STAGE ITSELF IS THE TOOLKIT'S. `sta`, `sta-gate`, `sta-vars` and
+# `sta-selftest` come from ASIC/asic-toolkit/mk/sta.mk, which mk/flow.mk
+# includes; the runner, the Tempus session, the MMMC derivation, the log scan
+# and the two graders are ASIC/asic-toolkit/flow/verify/sta/. Promoted
+# 2026-09-22 -- see docs/tapeout/79-promoting-signoff-sta-to-the-toolkit.md.
 #
-# ARTEFACT, NOT EXIT STATUS. Tempus exits 0 after errors; run_sta.sh does not
-# trust its exit code and neither does this. The graders write their verdicts
-# to files and the recipe asserts on the files.
+# WHAT IS LEFT HERE IS ONE LINE OF DATA. The toolkit defaults STA_DIR to
+# $(ASIC_DIR)/sta, i.e. ASIC/eth-chiplet/sta. This project keeps its STA
+# directory a level up, beside the flows rather than inside one, because an STA
+# run is evidence ABOUT a build and outlives any single P&R tree.
 #
-# TARGET NAMES were checked against mk/*.mk, design.mk, common.mk,
-# floorplan-hazards.mk, evidence.mk, eco.mk and the root Makefile before being
-# written: sta, sta-gate and sta-vars were all free. An include guard cannot
-# see a target collision, which is why this note is here and not assumed.
+# WHY A PLAIN `:=` AND NOT `?=`. This file is included AFTER mk/flow.mk (see
+# ASIC/eth-chiplet/Makefile and the note there about target collisions), so the
+# toolkit's `STA_DIR ?=` has already bound. A plain assignment overrides it, and
+# everything the toolkit derives from STA_DIR -- STA_POLICY, STA_SITE_ENV,
+# STA_WORK_ROOT -- is recursively expanded, so all three follow.
 #
-#     make sta       RUN_TAG=<tag> [IN_DB=<db>]   run Tempus on the build, then grade
+#     make sta       RUN_TAG=<tag> [IN_DB=<db>]   run Tempus, then grade
 #     make sta-gate  RUN_TAG=<tag>                grade an existing run, no licence
 #     make sta-vars  RUN_TAG=<tag>                what it would do, without doing it
+#     make sta-selftest                           the graders' own batteries
 #
-# IN_DB defaults to the ECO database when the run has one, else the routed
-# one: an ECO run's signoff database is <block>_eco (eco.mk makes the same
-# choice for LVS). scripts/ci/sta_binding.py accepts the ECO database only
-# through the run's eco_manifest.txt and its recorded, finished parent route.
+# Copyright (C) 2026, SoC Labs (www.soclabs.org)
 #-----------------------------------------------------------------------------
 
-STA_ROOT        ?= $(ASIC_DIR)/../sta
-STA_TAG         ?= $(RUN_TAG)
-IN_DB           ?= $(if $(wildcard $(WORK_DIR)/$(BLOCK)_eco),$(WORK_DIR)/$(BLOCK)_eco,$(WORK_DIR)/$(BLOCK)_routed)
-STA_RUN_DIR      = $(STA_ROOT)/work/$(STA_TAG)
-STA_REPORTS      = $(STA_RUN_DIR)/reports
-STA_MANIFEST     = $(STA_REPORTS)/sta_manifest.txt
-STA_GATE_OUT     = $(STA_REPORTS)/sta_gate.txt
-STA_BINDING_OUT  = $(STA_REPORTS)/sta_binding.txt
-STA_POLICY      ?= $(STA_ROOT)/sta_policy.json
-STA_CPUS        ?= 8
-STA_CI_DIR      ?= $(ASIC_DIR)/../../scripts/ci
-
-.PHONY: sta sta-gate sta-vars
-
-sta-vars:
-	@echo "tag      : $(STA_TAG)"
-	@echo "db       : $(IN_DB)"
-	@test -d "$(IN_DB)" && echo "db       : PRESENT" || echo "db       : MISSING"
-	@echo "run dir  : $(STA_RUN_DIR)"
-	@echo "policy   : $(STA_POLICY)"
-	@echo "cpus     : $(STA_CPUS)"
-	@echo "graders  : $(STA_CI_DIR)/sta_binding.py, $(STA_ROOT)/sta_gate.py"
-	@test -r "$(STA_ROOT)/site.env" && echo "site.env : present" || \
-	    echo "site.env : MISSING -- cp $(STA_ROOT)/site.env.example $(STA_ROOT)/site.env and edit"
-
-sta:
-	@test -d "$(IN_DB)" || { \
-	    echo "FAIL: no database at $(IN_DB)"; \
-	    echo "      Set IN_DB, or route/ECO the build first (make route RUN_TAG=$(RUN_TAG))"; exit 1; }
-	@mkdir -p $(STA_RUN_DIR)/reports $(STA_RUN_DIR)/outputs
-	python3 $(STA_ROOT)/make_sta_mmmc.py --db $(IN_DB) --out $(STA_RUN_DIR)/mmmc_sta.tcl < /dev/null
-	cd $(STA_RUN_DIR) && STA_TAG=$(STA_TAG) STA_CPUS=$(STA_CPUS) \
-	    $(STA_ROOT)/run_sta.sh $(IN_DB) < /dev/null
-	$(MAKE) --no-print-directory sta-gate STA_TAG=$(STA_TAG)
-
-# The verdicts. Both graders print their verdict line last; both files are
-# kept beside the reports they judge. `| tee` would hide the exit status and
-# the exit status is not what is asserted anyway -- the verdict line is.
-sta-gate:
-	@test -s "$(STA_MANIFEST)" || { \
-	    echo "FAIL: no manifest at $(STA_MANIFEST) -- the run never started, or STA_TAG is wrong"; exit 1; }
-	@grep -q '^sta_finished = ' "$(STA_MANIFEST)" || { \
-	    echo "FAIL: $(STA_MANIFEST) has no sta_finished row -- the run did not reach its last line"; exit 1; }
-	-python3 $(STA_CI_DIR)/sta_binding.py --reports $(STA_REPORTS) \
-	    --build-tag $(STA_TAG) --build-root $(BUILD_DIR) < /dev/null > $(STA_BINDING_OUT) 2>&1
-	-python3 $(STA_ROOT)/sta_gate.py --reports $(STA_REPORTS) \
-	    --policy $(STA_POLICY) < /dev/null > $(STA_GATE_OUT) 2>&1
-	@cat $(STA_BINDING_OUT)
-	@cat $(STA_GATE_OUT)
-	@test -s "$(STA_GATE_OUT)" && test -s "$(STA_BINDING_OUT)" || { \
-	    echo "FAIL: a grader wrote nothing -- see $(STA_GATE_OUT) and $(STA_BINDING_OUT)"; exit 1; }
-	@grep -q '^BINDING: PASS' "$(STA_BINDING_OUT)" || { \
-	    echo "FAIL: the run is not bound to build $(STA_TAG) -- $(STA_BINDING_OUT)"; exit 1; }
-	@grep -q '^GATE: PASS' "$(STA_GATE_OUT)" || { \
-	    echo "FAIL: signoff STA gate -- $(STA_GATE_OUT)"; exit 1; }
-	@echo "OK: signoff STA $(STA_TAG) passes binding and gate ($(STA_GATE_OUT))"
+STA_DIR := $(abspath $(ASIC_DIR)/../sta)
