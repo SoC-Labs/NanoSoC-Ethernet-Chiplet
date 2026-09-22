@@ -346,6 +346,31 @@ POWER_INTENT ?= $(LEGACY_ASIC_DIR)/inputs/$(BLOCK).upf
 # ordering collision this creates and how it is resolved.
 BONDPADS_TCL ?= $(LEGACY_ASIC_DIR)/scripts/place_bondpads.tcl
 
+# --- HOW THIS DESIGN NAMES ITS PADS -----------------------------------------
+#
+# DECLARED HERE BECAUSE THE ENGINE NO LONGER GUESSES, and until 2026-09-22 it
+# did. Both of these were toolkit defaults spelling THIS design's conventions -
+# PLACE_PAD_PATTERN in four separate copies inside the stage scripts, and
+# `BuPAD_` inside the TSMC 65 tech pack, where it was a fact about one
+# floorplan masquerading as a fact about a process node. Any second die on the
+# same node inherited them, matched nothing, and got a clean report from a
+# census that had counted no pads. The values are unchanged; only the place
+# they are written has moved, from the engine to the project that owns them.
+#
+# PLACE_PAD_PATTERN: the supply-pad instance glob, %RAIL% substituted with each
+# PG net name in turn. Our ring generator emits uPAD_<rail>_<edge>_<n>. MIND
+# THE SEPARATOR - the trailing `_` is what stops the VDD pattern also claiming
+# every VDDIO pad, which would make the census double-count while still
+# agreeing with the expected total.
+export PLACE_PAD_PATTERN ?= uPAD_%RAIL%_*
+
+# ROUTE_BONDPAD_PREFIX: the BOND-pad instance prefix, which is a different
+# family from the IO pads above - place_bondpads.tcl creates BuPAD_* over the
+# uPAD_* driver ring. It is joined with the tech pack's bondpad_cell_prefix
+# (PAD70) by flow_bondpad_globs, because a DRC record names the instance on one
+# side of a violation and the base cell on the other.
+export ROUTE_BONDPAD_PREFIX ?= BuPAD_
+
 HOOKS_DIR     ?= $(ETH_CHIPLET_ASIC_DIR)/hooks
 OVERRIDES_DIR ?= $(ETH_CHIPLET_ASIC_DIR)/overrides
 
