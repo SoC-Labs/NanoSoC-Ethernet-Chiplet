@@ -112,6 +112,72 @@ both `set remote p-packet off` and `set remote P-packet off`.
   (`hostio4_block_write on`) for that reason.
 - The address pointer auto-increments even on an errored transfer.
 
+## What the bench transport does to these bytes
+
+Every proof in this directory ran `adp-bridge --raw`, which turns the
+console-bridge translation **off**. **The bench path cannot pass `--raw`** — the
+dongle runs a console bridge in front of the monitor. So the hardware path
+crosses a layer no proof has exercised, and `to_board()`
+(`HAPS-work fpga/haps-sx/hostio/adp-bridge:178-190`) is a **flat, stateless,
+per-byte loop**: it has no notion of protocol state and cannot tell a command
+from `U` payload.
+
+    0x03  ->  dropped, counted     deletion:     byte count CHANGES
+    0x1b  ->  replaced by ']'      substitution: byte count PRESERVED
+
+**This driver never emits a bare `0x03`.** Every command is ASCII — `Ax%08X\r`,
+`R\r`, `R%08X\r`, `Wx%08X\r`, `Ux%08X\r`, `X\r` — and the lowest byte any of
+them produces is CR `0x0d`. The only raw-binary path is the payload loop in
+`hostio4_do_block_write`.
+
+**It does emit exactly one bare `ESC`, and it is load-bearing.**
+`hostio4_enter_adp_mode` writes a single `0x1b` (`ADP_ESC`, `hostio4.c:69`) via
+`hostio4_write_all(&esc, 1)` at `:1030`, bypassing `hostio4_exchange`. That is
+the mode-entry byte, first on the wire before any command, and the bridge
+rewrites it to `]` in flight. The translation belongs in the bridge and this
+driver should stay ignorant of it — but note that **the one byte everything
+else depends on has never crossed the layer that rewrites it.** If it fails,
+`:1042` reports *"no prompt from the ADP monitor -- is the far end up and in
+command mode?"*, which reads as a dead board. Treat "did ADP mode entry
+succeed" as a discriminator **separate** from "is the board alive".
+
+### `0x03` in a firmware image is a block-write problem, not a `load_image` problem
+
+`hostio4_block_write` is off by default (`hostio4.c:77`, gated at `:626`). With
+it off, `load_image` sends every word as `Wx%08X\r` — **ASCII hex** — so an
+image made entirely of `0x03` crosses intact. Scanning an image for `0x03`
+unconditionally rejects firmware that loads fine in the default configuration.
+**Condition the check on the flag, not on the image.**
+
+With block write **on**, on the bench path, both hazards are live and the worse
+one is not corruption:
+
+| payload byte | bridge does | monitor sees | result |
+|---|---|---|---|
+| `0x03` | deletes it | **short `U` payload** | monitor **parks forever**, reset the only way back |
+| `0x1b` | substitutes `]` | full byte count | **silent corruption**, upload reports success |
+
+**The driver's own defence does not cover either.** "The payload is built in
+full before a single byte is sent, and if the stream write cannot complete the
+link is declared dead" protects against a *local* write failure. The driver does
+send all N bytes; the bridge removes one in transit. A guarantee made at one end
+of a transport is not a guarantee about the transport.
+
+So block write off is a **standing constraint on the bench path**, not
+first-contact caution. Enabling it later needs a bridge that is protocol-aware
+during `U` payload; neither a pre-scan nor `--stats` closes it — `translated_esc`
+is already non-zero from the legitimate mode-entry `ESC`, so a second one does
+not stand out.
+
+> **Correction owed to `HAPS-work docs/bench/HOSTIO4_OPENOCD_FIRST_CONTACT.md:41-42`**,
+> which reads *"A firmware image containing a `0x03` byte cannot be sent over the
+> console-bridge transport. `0x00`, `0x04` and `0x1B` are safe."* Both halves are
+> wrong on the bench path. The `0x03` claim holds only with block write on, and
+> **`0x1B` is not safe** — the bridge substitutes it. That line states the
+> *monitor's* payload rules (`hostio4.c:549`) as though they were the *bridge's*;
+> they are different layers with different behaviour, and the monitor never sees
+> a `0x1b` to apply its rule to.
+
 ## Where this is going
 
 One shared OpenOCD build on haps-dev at `/opt/soclabs-openocd/`, carrying this
