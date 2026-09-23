@@ -62,7 +62,8 @@ PDK_DIR="${PDK_DIR:-/tsmc65pdk/65}"
 PDK_GROUP="${PDK_GROUP:-tsmc65pdkgrp}"
 
 # Signoff STA tool locations. ONE SOURCE OF TRUTH, and it is not this file:
-# ASIC/sta/run_sta.sh reads ASIC/sta/site.env, so this probe reads the same
+# the toolkit's flow/verify/sta/run_sta.sh sources whatever STA_SITE_ENV names,
+# and ci/signoff.yaml names ASIC/sta/site.env, so this probe reads the same
 # file rather than carrying a second copy of the answer. A probe that resolves
 # a tool differently from the script that will run it can certify a host the
 # run then fails on -- which is a worse outcome than no probe, because the
@@ -191,7 +192,7 @@ done
 # spelled `command -v tempus` returned "absent" on a host where the tool was
 # installed, executable and had already produced six result sets. So this block
 # asks for a DECLARATION -- TEMPUS_BIN and QUANTUS_HOME, from the environment or
-# from ASIC/sta/site.env, exactly as ASIC/sta/run_sta.sh asks for them -- and
+# from ASIC/sta/site.env, exactly as the toolkit's run_sta.sh asks for them -- and
 # treats a bare PATH hit as a weaker, reportable second best rather than as the
 # answer.
 #
@@ -278,10 +279,20 @@ fi
 # The grader and the build-binding check are plain python and hold no licence,
 # but a host that cannot run them cannot produce an STA verdict either, and
 # discovering that after a twelve-minute Tempus run is the wrong order.
-for s in ASIC/sta/sta_gate.py scripts/ci/sta_binding.py; do
-    if [ -r "$(dirname "$0")/../../$s" ]; then ok "$(basename "$s")" "present"
-    else bad "$(basename "$s")" "absent — STA would run with nothing to grade it"
-         gap_sta+=("$(basename "$s")"); fi
+#
+# BOTH NOW LIVE IN THE TOOLKIT (d019f06 moved the STA stage there). This list
+# still named ASIC/sta/sta_gate.py after that file was deleted, so every host
+# reported it MISSING and none could earn soclabs-sta. scripts/ci/sta_binding.py
+# is this die's two-line wrapper around the toolkit's copy, so all three are
+# probed: the wrapper is useless without the file it forwards to.
+for s in ASIC/asic-toolkit/flow/verify/sta/sta_gate.py \
+         ASIC/asic-toolkit/flow/verify/sta/sta_binding.py \
+         scripts/ci/sta_binding.py; do
+    # Named by PATH: two of the three share a basename, and a MISSING line that
+    # does not say which one is missing sends the reader to the wrong file.
+    if [ -r "$(dirname "$0")/../../$s" ]; then ok "$s" "present"
+    else bad "$s" "absent — STA would run with nothing to grade it"
+         gap_sta+=("$s"); fi
 done
 
 # --- read-only lab collateral ----------------------------------------------
