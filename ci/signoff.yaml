@@ -528,8 +528,9 @@ stages:
   # gdsrun-20260824-valid4 — a LIVE run, mid-flight — or gdsrun-20260824-valid7,
   # which died at placement. Both have work/ databases and neither finished. A
   # half-written database read by Calibre or Voltus produces a corrupt-DB report
-  # that reads like a design defect; ASIC/sta/run_sta.sh:6-9 already refuses
-  # fp1505 by name for exactly this, and this stage generalises that refusal.
+  # that reads like a design defect; the pre-promotion ASIC/sta/run_sta.sh:6-9
+  # steered away from fp1505 by name for exactly this (retired in d019f06, when
+  # the design-agnostic toolkit copy replaced it), and this stage generalises it.
   # Same doctrine as ir-drop's census selection: NAMED, NEVER RANKED — and where
   # this one must rank, it refuses a tie rather than breaking it.
   #
@@ -826,8 +827,8 @@ stages:
   # 2026-08-24 the two newest directories were gdsrun-20260824-valid4 (live,
   # mid-flight) and -valid7 (died at placement), and neither has a route
   # manifest. A directory is a candidate when its route FINISHED, not when it
-  # was last touched. Same guard ASIC/sta/run_sta.sh:6-9 applies to fp1505 by
-  # name; build-freshness generalises it.
+  # was last touched. Same guard the pre-promotion ASIC/sta/run_sta.sh:6-9
+  # applied to fp1505 by name (retired in d019f06); build-freshness generalises it.
   #
   # THE 2026-08-18 SPLIT IS GONE, AND SO IS ITS REASON. That edit put rom-gds,
   # drc and lec-pnr's REVISED side on fp1505 while `lec` and lec-pnr's GOLDEN
@@ -1165,8 +1166,9 @@ stages:
     # invocation form the rom-selftest stage above already uses, and
     # romlibs-verify-gds has been committed in ASIC/rom_gate.mk throughout.
     #
-    # THE RUN TAG IS PINNED, deliberately, the way ASIC/sta/run_sta.sh:53 pins
-    # it and for the same reason: a glob over build/*/ grades whichever run
+    # THE RUN TAG IS PINNED, deliberately, the way the sta stage pins TAG to one
+    # named build (as the pre-promotion ASIC/sta/run_sta.sh:53 did) and for the
+    # same reason: a glob over build/*/ grades whichever run
     # sorts first, which at any moment may be a half-written live one. When a
     # run supersedes the pinned one, change it HERE AND IN needs_implementation
     # above -- they are the same string on purpose, so this stage cannot
@@ -2863,8 +2865,9 @@ stages:
     #     its presence is the proof the route FINISHED. A half-written database
     #     from a live or killed run has the first and not the second, and
     #     Voltus opening one produces a corrupt-DB report that reads like a
-    #     design defect. That is the same guard ASIC/sta/run_sta.sh:6-9 applies
-    #     by name, generalised: measured 2026-08-24, gdsrun-20260824-valid4
+    #     design defect. That is the same guard the pre-promotion
+    #     ASIC/sta/run_sta.sh:6-9 applied by name (retired in d019f06),
+    #     generalised: measured 2026-08-24, gdsrun-20260824-valid4
     #     (mid-flight) and -valid7 (died at placement) both have work/ and
     #     neither has a route_manifest.txt.
     # Same string as run:, check: and artifacts: below, on purpose.

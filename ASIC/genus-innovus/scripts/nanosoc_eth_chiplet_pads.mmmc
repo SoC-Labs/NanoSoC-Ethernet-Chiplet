@@ -494,7 +494,8 @@ create_analysis_view -name default_analysis_view_hold -constraint_mode default_c
 #    view is FOR is bounding on-chip variation - and this flow already models
 #    that twice, with `timing_analysis_type ocv` plus CPPR plus the
 #    0.95/1.05/0.97/1.03 derate that scripts/route_setup.tcl and
-#    ASIC/sta/run_signoff_sta.tcl both re-issue. Activating it would have
+#    the toolkit's flow/verify/sta/run_signoff_sta.tcl both re-issue.
+#    Activating it would have
 #    replaced a 3% clock-variation model with a 150% one and sent
 #    opt_design -post_route after 980 endpoints of it, at 85.7% utilisation
 #    against a ~92.2% density wall. This design has done that once before: the
@@ -510,7 +511,8 @@ create_analysis_view -name default_analysis_view_hold -constraint_mode default_c
 #
 # IF YOU WANT THE NUMBER BACK, it is a scratchpad away and needs nothing from
 # this file: generate a Tempus MMMC from a routed database with
-# ASIC/sta/make_sta_mmmc.py, append the two create_analysis_view lines to the
+# ASIC/asic-toolkit/flow/verify/sta/make_sta_mmmc.py, append the two
+# create_analysis_view lines to the
 # COPY, and activate them read-only. That is how the 2026-09-01 measurement was
 # made. Recipe and results: docs/tapeout/66-rc5-flow-findings.md, F30.
 #
@@ -566,7 +568,8 @@ create_analysis_view -name typical_analysis_view -constraint_mode default_constr
 # .cdb. These two do not, which matches the generated MMMCs that produced the
 # -0.078 and -0.159 numbers. tcbn65lplt.cdb and tcbn65lpml.cdb both exist and
 # could be added, but noise models are not what a fast-corner hold check turns
-# on, and Tempus strips every -si section anyway (see ASIC/sta/make_sta_mmmc.py
+# on, and Tempus strips every -si section anyway (see the toolkit's
+# flow/verify/sta/make_sta_mmmc.py
 # -- Celtic .cdb is rejected under concurrent MMMC, IMPESI-3490). Add them only
 # with a run that shows they change a number.
 
@@ -624,7 +627,8 @@ create_analysis_view -name av_ml_libset_hold    -constraint_mode default_constra
 # changing it. It governs place and CTS. flow/innovus/4_route.tcl:1564,1618
 # RE-ISSUES set_analysis_view from $ROUTE_VIEWS_SETUP / $ROUTE_VIEWS_HOLD
 # immediately before write_db, so the view set the routed database is SAVED
-# with -- and therefore the set ASIC/sta/make_sta_mmmc.py derives the Tempus
+# with -- and therefore the set the toolkit's flow/verify/sta/make_sta_mmmc.py
+# derives the Tempus
 # MMMC from, and therefore the set sta_policy.json checks -- is whatever
 # design.mk sets those two knobs to. The toolkit defaults them to ONE hold view
 # (4_route.tcl:153), and ASIC/eth-chiplet/design.mk deliberately sets nothing.

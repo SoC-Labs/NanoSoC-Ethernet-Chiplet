@@ -108,7 +108,8 @@ say "filler cells declared to the ECO engine"
 # vt6opt-20260911/qrc_3672222_20260911_10:24:48.log -- and exited non-zero on
 #   ERROR (EXTSNZ-127): The layer name "AP" ... cannot be found in the tech file
 # IMPEXT-5016 is Innovus's OUTER report of that non-zero exit and carries none of
-# the reason. ASIC/sta/run_sta.sh already carries this correction, dated
+# the reason. The toolkit's flow/verify/sta/run_sta.sh already carries this
+# correction, dated
 # 2026-08-18, with "Chasing the install cost hours" written next to it.
 #
 # The map is the one the signoff STA flow already proved: the qrcTechFile is a

@@ -198,7 +198,8 @@
 #   was actually optimised at. That is the point of using `opt` rather than
 #   reading ::env directly.
 #
-#   TO SWEEP THE SIGNOFF SIDE IN STEP, ASIC/sta/run_signoff_sta.tcl takes
+#   TO SWEEP THE SIGNOFF SIDE IN STEP, the toolkit's
+#   flow/verify/sta/run_signoff_sta.tcl takes
 #   STA_DERATE_DATA_E / _DATA_L / _CLK_E / _CLK_L with the same four defaults.
 #   Set both halves to the same point, or the comparison comes out of a route
 #   run at one derate judged by a signoff at another - which is the confusion

@@ -2164,7 +2164,8 @@ export ROUTE_DERATE ?= 1
 #   ROUTE_DERATE_DATA_E=0.92 ROUTE_DERATE_DATA_L=1.08 \
 #   ROUTE_DERATE_CLK_E=0.95  ROUTE_DERATE_CLK_L=1.05  \
 #       make route RUN_TAG=ocv_108 IN_RUN_TAG=main
-# and set the matching STA_DERATE_* for ASIC/sta/run_signoff_sta.tcl, or the
+# and set the matching STA_DERATE_* for the toolkit's
+# flow/verify/sta/run_signoff_sta.tcl, or the
 # route run and the signoff that judges it sit at different derate points.
 
 # ── Diagnosed message IDs ───────────────────────────────────────────────────
@@ -2668,7 +2669,8 @@ ROUTE_POST_TARGETS = evidence run-report-auto
 # exists, and 12 minutes on a 4-hour route is 5%. Every route would then be
 # timed automatically, which is the whole point.
 #
-# It cannot go here as the harness stands. ASIC/sta/run_sta.sh:83-87 refuses a
+# It cannot go here as the harness stands. The toolkit's
+# flow/verify/sta/run_sta.sh:131-135 refuses a
 # database whose files changed in the last 20 minutes -- a guard that exists
 # because reading a half-written route produces a corrupt-DB report that reads
 # like a design defect. This hook fires SECONDS after the route wrote that

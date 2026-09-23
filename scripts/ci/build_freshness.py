@@ -27,8 +27,9 @@
 # still attached) and gdsrun-20260824-valid7 (died at placement). Both had a
 # work/ database; neither had a route manifest. Handing a half-written database
 # to Calibre or Voltus produces a corrupt-DB report that reads like a design
-# defect — ASIC/sta/run_sta.sh:6-9 already refuses one build by name for exactly
-# this reason, and this script generalises that refusal.
+# defect — the pre-promotion ASIC/sta/run_sta.sh:6-9 steered away from one build
+# by name for exactly this reason (retired in d019f06), and this script
+# generalises that refusal.
 #
 # HOW PINS ARE FOUND
 # ------------------

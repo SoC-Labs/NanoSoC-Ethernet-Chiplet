@@ -15,7 +15,8 @@
 # QUANTUS IS PINNED ON PURPOSE. 21.11 matches this Tempus and the Innovus that
 # wrote the database. Older EXT_15/17/18 installs also ship a `qrc` and a stale
 # PATH will find one; a mismatched extractor against a 21.11 database is a
-# silent-wrong-answer risk, not a crash. Same warning as ASIC/sta/run_sta.sh.
+# silent-wrong-answer risk, not a crash. Same warning as the toolkit's
+# flow/verify/sta/run_sta.sh.
 #
 # MEASURED, vt4drv-20260910 -> vt6opt-20260911, 16-core host under load ~10:
 #   read_db + libraries ~4 min, opt_signoff ~31-45 min real (it iterates),
@@ -26,8 +27,9 @@ set -u
 # TOOL LOCATIONS COME FROM site.env OR THE ENVIRONMENT, NEVER FROM A PATH
 # HARDCODED HERE. This repository is public and an absolute site path is
 # vendor-identifying -- the guard blocks the commit, correctly, and the answer
-# is to redact it rather than to bypass. Same file and same contract as
-# ASIC/sta/run_sta.sh, which already defines TEMPUS_BIN and QUANTUS_HOME.
+# is to redact it rather than to bypass. Same file (ASIC/sta/site.env) and same
+# contract as the toolkit's flow/verify/sta/run_sta.sh, which reads TEMPUS_BIN
+# and QUANTUS_HOME from it through STA_SITE_ENV.
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STA_ROOT=${STA_ROOT:-$(cd "$HERE/../../../sta" 2>/dev/null && pwd)}
 if [ -n "${STA_ROOT:-}" ] && [ -f "$STA_ROOT/site.env" ]; then
