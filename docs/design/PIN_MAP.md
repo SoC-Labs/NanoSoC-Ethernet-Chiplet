@@ -185,7 +185,7 @@ proposals to ratify, not UPF facts):
 |---|---|---|---|---|---|
 | `role_strap_i` | In | 1 | strap | **TIED `1'b0` — not a pad** | link role select. Was marked "MUST differ per die"; it *cannot* differ, both dies read 0. See §6b. |
 | `mask_hs_bypass_i` | In | 1 | strap | **TIED `1'b0` — not a pad** | opens the SW role-lock path. Tied 0 = normal. Bench-strap landmine below is therefore **not reachable by a pad** on this tapeout. |
-| `apb_debug_unlock_i` | In | 1 | strap | **TIED `1'b0` — not a pad** | debug strap; tied 0 = debug locked. |
+| `apb_debug_unlock_i` | In | 1 | strap | **TIED `1'b0` — not a pad** | debug strap. **The tie is dead on this die** (corrected 2026-09-23; this cell used to read "tied 0 = debug locked"). `tidelink_top`'s `DEBUG_UNLOCK_DEFAULT = 1'b1` replaces the pin with a constant 1, so APB debug is permanently unlocked whatever the tie. See [TAPEOUT_LIMITATION_DFT_WRAPPER_BYPASS](../TAPEOUT_LIMITATION_DFT_WRAPPER_BYPASS.md). |
 
 ### 4c. Link status / observability — 0 pads (was 4; unbonded 2026-07-16)
 

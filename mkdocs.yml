@@ -160,6 +160,10 @@ nav:
       - "HW validation plan: TL-042 v2": bringup/HW_VALIDATION_PLAN_TL042_V2.md
       - Chiplet host tooling plan: bringup/CHIPLET_HOST_TOOLING_PLAN.md
 
+  - Silicon errata (taped-out die):
+      - "D2D peer-aperture posted writes": TAPEOUT_LIMITATION_D2D_PEER_WRITE.md
+      - "TideLink DFT wrapper bypassed: APB debug unlocked": TAPEOUT_LIMITATION_DFT_WRAPPER_BYPASS.md
+
   - Debug — the D2D wedge:
       - Overview and supersession chain: debug/index.md
       - "Handback: hreadyout frozen at 0": debug/DIAGNOSE_AHB_SUB_HREADYOUT_FROZEN0_tidelink_die_a_u_xhb_sub.md
