@@ -210,8 +210,14 @@ module nanosoc_eth_chiplet #(
     //
     //   nego_priority_i     auto-negotiation priority, normally from OTP or a die
     //                       UID. Two dies both presenting 0 have no tiebreak.
-    //   mask_hs_bypass_i    together open the software-driven role-lock path used
-    //   apb_debug_unlock_i  during bring-up; both low keeps that path shut.
+    //   mask_hs_bypass_i    forces the peer-mask handshake gate open. Moot on this
+    //                       chip: SELF_ARM_TRAIN_EN=1 latches role_lock on the
+    //                       ROLE_CFG[1] write without that gate.
+    //   apb_debug_unlock_i  IGNORED on this chip. DEBUG_UNLOCK_DEFAULT=1'b1 at the
+    //                       u_tidelink instance replaces it with a constant 1, so a
+    //                       SLAVE-role die's local APB can always write the Wlink
+    //                       bank. It never touched role-lock. See
+    //                       docs/TAPEOUT_LIMITATION_DFT_WRAPPER_BYPASS.md.
     //   puf_seed/puf_ready  from TideChart's PUF sampler, when enabled.
     // =========================================================================
     input  wire [15:0] nego_priority_i,
@@ -922,7 +928,47 @@ module nanosoc_eth_chiplet #(
     // (~1,771 cells, ~2,981 um2) is synthesised into silicon. The ASIC DFT wrapper
     // that would otherwise clear it (tidelink/src/rtl/asic/tidelink_dft_wrapper.sv)
     // is in no flist — the chip instantiates tidelink_top directly.
-    tidelink_top #(.NUM_PHY_LANES(NUM_PHY_LANES), .SELF_ARM_TRAIN_EN(1'b1), .AUTO_ANCHOR_EN(1'b1), .TXGEN_PRESENT(1'b0)) u_tidelink (
+    //
+    // THE SAME IS TRUE OF EVERY OTHER PARAMETER THAT WRAPPER SETS. The first
+    // taped-out die took tidelink_top's DEFAULT for each one without anyone
+    // deciding it. Each ASIC-relevant parameter is now decided here, explicitly,
+    // at the value that die shipped (docs/TAPEOUT_LIMITATION_DFT_WRAPPER_BYPASS.md),
+    // so a later change to tidelink_top's defaults cannot change this chip silently.
+    // Genus writes every overridden parameter into the tidelink_top module name, so
+    // each value below can be checked in the netlist with a grep.
+    //
+    // Two of these differ from the wrapper, deliberately:
+    //   DEBUG_UNLOCK_DEFAULT(1'b1) — wrapper 1'b0. The controller ignores
+    //     apb_debug_unlock_i, so a SLAVE-role die's local APB can write the Wlink
+    //     bank (0x2E03_0000-0x2E03_1FFF). The SW bring-up on this chip needs that:
+    //     with autoneg off, the LL bootstrap (0x208) and the FC CRC control are
+    //     software writes, and the hardware handoff sequencer that would make them
+    //     arms only on nego_en. The wrapper's own note (tidelink_dft_wrapper.sv
+    //     :125-128) says to set 1'b1 at the tapeout top in exactly this case.
+    //     Before setting 1'b0, turn
+    //     autonomy on (NEGO_CFG_RESET with nego_en, per-die NEGO_PRIORITY and a peer
+    //     that runs autoneg) or give apb_debug_unlock_i a real source. The g2
+    //     benches drive the pin to 1 and will not notice a locked die.
+    //   NEGO_CFG_RESET(7'h00) — wrapper 7'h61. Autoneg off at POR: the verified
+    //     SELF_ARM posture (sys_desc/chip_boundary/nanosoc_eth_chiplet.yaml:213-233).
+    //     7'h61 would arm I2C autoneg between two dies tied to the same priority
+    //     (Bug N7). Firmware can still write NEGO_CFG at 0x2E03_2090.
+    // The rest equal the wrapper's values.
+    tidelink_top #(
+        .NUM_PHY_LANES        (NUM_PHY_LANES),
+        .SELF_ARM_TRAIN_EN    (1'b1),
+        .AUTO_ANCHOR_EN       (1'b1),
+        .TXGEN_PRESENT        (1'b0),
+        .DEBUG_UNLOCK_DEFAULT (1'b1),   // APB debug unlocked; see above
+        .NEGO_CFG_RESET       (7'h00),  // autoneg off at POR; see above
+        .HONEST_MASK_HS       (1'b1),   // mask_hs_bypass_i follows its pin (tied 0)
+        .ROLE_FROM_STRAP      (1'b1),   // inert while nego_en=0
+        .TRAIN_ENTRY_FALLBACK (1'b0),
+        .RETIRE_EN            (1'b1),   // inert while nego_en=0
+        .ENABLE_AHB_WRITE     (1'b1),
+        .HARDEN_SWI_ENABLE    (1'b1),
+        .EPOCH_ANCHOR_EN      (1'b0)
+    ) u_tidelink (
         // Clocks / resets — all from the SoC clock/reset controller output.
         .hclk       (sys_hclk),
         .hresetn    (sys_hresetn),

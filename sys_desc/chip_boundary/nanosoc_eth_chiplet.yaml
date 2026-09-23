@@ -230,7 +230,11 @@ chip_boundary:
     # =================================================================
     - { soc_port: role_strap_i,       const: "1'b0" }   # both dies master until SW role-locks
     - { soc_port: mask_hs_bypass_i,   const: "1'b0" }   # 0 = normal; no SW role-lock bypass
-    - { soc_port: apb_debug_unlock_i, const: "1'b0" }   # 0 = debug locked
+    # apb_debug_unlock_i: this tie has NO EFFECT. nanosoc_eth_chiplet.sv sets
+    # tidelink_top DEBUG_UNLOCK_DEFAULT=1'b1, which replaces the pin with a
+    # constant 1, so APB debug is unlocked whatever this says. The first die
+    # shipped that way by default; see docs/TAPEOUT_LIMITATION_DFT_WRAPPER_BYPASS.md.
+    - { soc_port: apb_debug_unlock_i, const: "1'b0" }   # IGNORED: DEBUG_UNLOCK_DEFAULT=1
 
     # --- auto-negotiation priority ---
     # Inert in this build, and left tied for that reason. nego_pri_sel
