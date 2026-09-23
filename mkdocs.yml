@@ -151,6 +151,7 @@ nav:
       - Tapeout fold plan: asic/TAPEOUT_FOLD_PLAN_2026-08-09.md
 
   - Bring-up:
+      - "D2D pairing record (which die is which)": bringup/D2D_PAIRING_DECISION.md
       - KR260 bench runbook: bringup/KR260_BENCH_RUNBOOK.md
       - KR260 board wiring: bringup/KR260_BOARD_WIRING.md
       - KR260 LAN8720 fpgahub plan: bringup/KR260_LAN8720_FPGAHUB_PLAN.md

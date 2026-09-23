@@ -12,6 +12,13 @@ which the pair bring-up docs don't yet cover.
 > (G1–G17, per-gap owner + size). Read that first. This doc records the
 > reconciliation, the deltas since it was written, and adds the interrupt/debug
 > layer (G18/G19 below). Do not duplicate G1–G17 here — defer to it.
+>
+> **SUPERSEDED ON THE ROLE QUESTION (2026-09-23).** §5 item 5 below says "pin
+> die_a grandmaster" and §3 item 3 says compute's J21 ball map should "match eth
+> die_b". The compute die has since committed, in its own tree, to being **die_a /
+> master**. Do not take the role assignment from this file. The record is
+> **`../bringup/D2D_PAIRING_DECISION.md`**, which states the contradiction
+> explicitly (§5 there) and carries the decision field.
 
 ---
 
@@ -142,14 +149,16 @@ crosses the flaky AXI FC nodes, so a dependable session needs **G12** (the FCSM 
    TideLink to the V2 line → **G4** rebase/parameterise the D2D window + fix the
    `chiplet_d2d_decode` mis-decode → **G1** build `kr260-compute-chiplet{,-flip}` (specify
    the J21 ball map to **match eth die_b now**, before the XDC is written — free today,
-   expensive later).
+   expensive later). **This is a WIRING claim, not a role assignment; it predates
+   compute's die_a decision — reconcile via `../bringup/D2D_PAIRING_DECISION.md` §5.**
 4. **Address-map conventions once (G4/G5/G7):** window base, TideLink APB base, and
    **per-direction CAM mailbox rules** (`0x2A`/`0x23`) — write them into the het repo's
    target registry (`host/hetsoc/targets.py`), not hard-coded scripts.
 5. **DEVICE_CLASS / root election (G11):** give compute a distinct class (its
    `TC_DEVICE_CLASS` is RW — can be set at runtime, or add the eth-style build strap), and
    **pin die_a grandmaster via `ROLE_CFG` master-lock** as belt-and-braces (the link does
-   not depend on TideChart).
+   not depend on TideChart). **Which die is `die_a` is NOT settled here — see
+   `../bringup/D2D_PAIRING_DECISION.md`.**
 6. **Interrupts:** mailbox doorbell near-term (needs G7's `0x2A` rule); **G18** IRQC
    medium-term, sequenced after G11/G12 and the two branches.
 7. **Debug:** **G19** mirror `0b`/`0c` on compute after G2/G4.

@@ -12,6 +12,10 @@ and hang the PS bus (JTAG-POR only).
 **the mailbox is the untested second one.** The CAM replaces one address byte, so
 retargeting inbound `0x2D`→`0x23` is a one-value change to the proven flow.
 
+**`die_a`/`die_b` below are the two KR260 BOARDS of the eth↔eth bench, not the
+eth↔compute ASIC pair.** For which ASIC die holds which role, and the
+`die_a`→master / `die_b`→slave mapping, see `D2D_PAIRING_DECISION.md`.
+
 ## Backlog (highest value + lowest effort first)
 
 | # | Test | Proves | PS-side today? | Method | Prereq | Success |

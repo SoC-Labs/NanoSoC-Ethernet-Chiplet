@@ -182,6 +182,12 @@ recipe proven in `verif/g2_soc_pair/test_g2_soc_pair.py`, addressed through the
 die_b=slave); each die's `cal_done` only asserts once the peer is also up over
 the ribbon, so the two independent runs self-synchronise:
 
+> **`die_a`/`die_b` here label the TWO KR260 BOARDS of the homogeneous
+> eth↔eth control pair — they are NOT the eth↔compute ASIC pairing.** For
+> which ASIC die holds which role, and the `die_a`→master / `die_b`→slave
+> mapping with its RTL evidence, see **`D2D_PAIRING_DECISION.md`**. Setting a
+> role here without reading it is how the pair ends up with two masters.
+
 ```bash
 # from the dev host, run on BOTH boards at the same time (own terminal each):
 KR260_HOST=ubuntu@10.22.24.159 KR260_ETH_ROLE=die_a \
@@ -201,6 +207,8 @@ KR260_HOST=ubuntu@10.22.24.153 KR260_ETH_ROLE=die_b \
 `calibration_done = 1`. Judge link health by FCSM, *not* lane-lock (lane-lock
 reads 0x00 after training — expected). die_a is pinned grandmaster by
 `--role die_a` (ROLE_CFG master-lock); do not rely on auto-election (G1).
+For the eth↔compute pair the role is not free to choose — see
+`D2D_PAIRING_DECISION.md`.
 
 > The on-chip-firmware path (an M0 app loaded over SWD that runs the same
 > recipe) is the autonomous alternative, but is **not needed** for the bench
