@@ -3,8 +3,12 @@
 Lets OpenOCD talk to the nanoSoC eth chiplet over the 7-pin HOSTIO4 link, with
 no CPU involved and no SWD probe.
 
-**NOTHING HERE HAS EVER TOUCHED HARDWARE.** Every proof below ran against a
-software monitor over TCP loopback. First contact with a board is still to come.
+**Hardware status, 2026-09-23.** Five things are proven on silicon through the
+real bench transport: word read, word write, block read, fault reporting and the
+D2D refusal (`PROOF-HARDWARE-2026-09-22.md`). `load_image` has one 16-byte
+silicon run, which is too small to prove it; the real proof is pending (see
+"`load_image`: what it was proven against"). Everything else here ran against a
+software monitor over TCP loopback.
 
 ## What it is
 
@@ -89,8 +93,8 @@ ran OpenOCD and read the log line `gdb port disabled`.)
 
 | | |
 |---|---|
-| memory read / write | **real** |
-| `load_image` over telnet/tcl | **real** — proven end to end, 8224 bytes, cross-checked on the wire |
+| memory read / write | **real for whole words**, on silicon. A byte or halfword **write** is wrong: see "Whole words only" below |
+| `load_image` over telnet/tcl | **proven on loopback only; silicon pending**: see below |
 | `verify_image` | **unavailable** — `checksum_memory` unimplemented for `mem_ap`; read back with `mdw` |
 | registers | **fiction** — `mem_ap_reg_get/set` return OK and touch nothing |
 | halt / reset / resume / step | **lies** — they flip a state flag; the wire counters are identical before and after |
@@ -106,6 +110,46 @@ when the RTL lands.
 Forcing the gdb port on with `hostio4-gdb.cfg` does not give a usable session:
 stock `arm-none-eabi-gdb` **crashes** on register 25, and is reachable only with
 both `set remote p-packet off` and `set remote P-packet off`.
+
+### `load_image`: what it was proven against
+
+This row used to read "proven end to end, 8224 bytes, cross-checked on the wire".
+That line arrived in the driver's first commit, `8035fe1`, before any hardware run.
+It was proven against a software monitor over TCP loopback. No transcript or script
+of that run survives, and `run_proof_real.sh`'s six proofs do not include
+`load_image`. Every loopback proof here used `adp-bridge --raw`, which switches off
+the byte translation the bench cannot avoid (see "What the bench transport does").
+
+On silicon there is exactly one load: 16 bytes at `0x10007000` on 2026-09-22
+(HAPS-work `docs/bench/PLAN_END_OF_DAY_2026-09-22.md:199-213`). None of its bytes is
+`0x03`, `0x1b` or `0x5d`, so it crossed the layer that rewrites those bytes without
+testing it.
+
+**Silicon proof is pending:** HAPS-work `docs/bench/tools/prove-load-image.sh`
+(branch `tool/prove-load-image`). It loads 4 KB into `0x10007000`, with every byte
+value and the three hazard bytes in every byte lane. It then reads the region back
+byte for byte, checks the wire form against the driver's counters, restores the
+region and verifies the restore. Its `--selftest` shows, offline, that it passes on
+a faithful monitor and fails when one byte is corrupted or the restore does not
+take. It has not yet been run at the bench.
+
+### Whole words only
+
+The driver forces the emulated CSW to 32-bit (`hostio4.c:755`) and advances TAR by 4
+per DRW whatever size OpenOCD asked for (`:643-648`). So a byte or halfword write is
+sent as a whole word with the other byte lanes zeroed. Inside a multi-access
+sequence it also lands in the wrong word. Measured offline against `adpmon.py` on
+2026-09-23:
+
+| write | word before | word after |
+|---|---|---|
+| `mwb 0x10007101 0xAA` | `4d006c40` | `0000aa00` |
+| `mwh 0x10007202 0xBEEF` | `db62d880` | `beef0000` |
+| `load_image` of 3 bytes `aa bb cc` at `0x10007200` | `db62d880 792a5231` | `0000bbaa 00cc0000` |
+
+The last row destroys two words, one of them outside the image. Byte and halfword
+**reads** are correct. So for `load_image`: pad the image to a multiple of 4 and
+load it at a word-aligned address.
 
 ## Traps the driver handles, and you must too if you write another client
 
