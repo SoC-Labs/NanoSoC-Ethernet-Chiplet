@@ -45,10 +45,47 @@
 # check passes on exactly the input it was written to catch. What separates the
 # two states is the supply nets, i.e. the three statements cpf-patch inserts.
 # Same predicate as the Makefile's cpf-patch target, so the two cannot disagree.
-set cpf_file $OUT_DIR/${block_name}_gate1.cpf
-if {![file exists $cpf_file] || [file size $cpf_file] == 0} {
-    error "power_plan: no CPF at $cpf_file - run 'make syn', which also patches it."
+# WHERE THE CPF IS, AND THE SYMLINK THAT HID THE ANSWER FOR WEEKS.
+#
+# This read USED to be `$OUT_DIR/${block_name}_gate1.cpf` -- this RUN's output
+# directory. Synthesis writes the file into the SYNTHESIS run's outputs, and
+# cpf-patch (design.mk) patches it THERE. Nothing in the flow ever copied it
+# into a place run's directory. Every place run that has ever worked in this
+# tree did so because somebody had hand-made a symlink:
+#
+#   build/vt9b-20260916/outputs/..._gate1.cpf -> ../../vt1-20260902/outputs/...
+#
+# vt3pg and vt7high carry the same hand-made link. A FRESH run tag has none, so
+# place died at the power plan with "no CPF" while the engine had already found
+# and validated the very same file one directory over -- MEASURED 2026-09-23 on
+# vt10acc-20260922, the first place run in this tree to start from a directory
+# nobody had prepared by hand. The comment that used to sit here said the
+# Makefile and this script "cannot disagree" because they share a predicate.
+# They shared the predicate and differed on the PATH, which is the disagreement
+# that mattered.
+#
+# The engine resolves and asserts this file at flow/innovus/2_place.tcl (PNR_CPF
+# = the synthesis run's copy) before this script is sourced, so take its answer
+# rather than deriving a second one. The OUT_DIR spelling is still honoured when
+# a run really does carry its own copy, so no existing run changes behaviour.
+set cpf_file ""
+foreach _cpf_cand [list \
+        [expr {[info exists ::PNR_CPF] ? $::PNR_CPF : ""}] \
+        $OUT_DIR/${block_name}_gate1.cpf \
+        [expr {[info exists ::env(SYN_OUT_DIR)] ? "$::env(SYN_OUT_DIR)/${block_name}_gate1.cpf" : ""}]] {
+    if {$_cpf_cand ne "" && [file exists $_cpf_cand] && [file size $_cpf_cand] > 0} {
+        set cpf_file $_cpf_cand ; break
+    }
 }
+unset -nocomplain _cpf_cand
+if {$cpf_file eq ""} {
+    error "power_plan: no CPF. Looked at the engine's PNR_CPF, this run's\
+           $OUT_DIR/${block_name}_gate1.cpf and the synthesis run's copy.\
+           'make syn' writes it and cpf-patch patches it; if synthesis ran under\
+           another tag, pass SYN_RUN_TAG."
+}
+say "power_plan: CPF $cpf_file"
+
 set fh [open $cpf_file r] ; set cpf_text [read $fh] ; close $fh
 foreach stmt {create_power_nets create_ground_nets update_power_domain} {
     if {![string match "*$stmt*" $cpf_text]} {
