@@ -14,11 +14,14 @@ which the pair bring-up docs don't yet cover.
 > layer (G18/G19 below). Do not duplicate G1–G17 here — defer to it.
 >
 > **SUPERSEDED ON THE ROLE QUESTION (2026-09-23).** §5 item 5 below says "pin
-> die_a grandmaster" and §3 item 3 says compute's J21 ball map should "match eth
+> die_a grandmaster" and §5 item 3 says compute's J21 ball map should "match eth
 > die_b". The compute die has since committed, in its own tree, to being **die_a /
 > master**. Do not take the role assignment from this file. The record is
 > **`../bringup/D2D_PAIRING_DECISION.md`**, which states the contradiction
 > explicitly (§5 there) and carries the decision field.
+>
+> **The J21 half is resolved (2026-09-23)** and does not conflict with compute as
+> `die_a`: "die_b" there names a ball map, not a role. See §5 item 3 below.
 
 ---
 
@@ -149,8 +152,21 @@ crosses the flaky AXI FC nodes, so a dependable session needs **G12** (the FCSM 
    TideLink to the V2 line → **G4** rebase/parameterise the D2D window + fix the
    `chiplet_d2d_decode` mis-decode → **G1** build `kr260-compute-chiplet{,-flip}` (specify
    the J21 ball map to **match eth die_b now**, before the XDC is written — free today,
-   expensive later). **This is a WIRING claim, not a role assignment; it predates
-   compute's die_a decision — reconcile via `../bringup/D2D_PAIRING_DECISION.md` §5.**
+   expensive later).
+   **RESOLVED 2026-09-23: this was done, and it holds with compute as `die_a`.**
+   Compute's non-flip pin XDC is ball for ball the eth `-flip` map: `pad_clk_tx` on
+   AC14, `pad_clk_rx` on AD15. Compare
+   `tidelink/fpga/targets/kr260-eth-chiplet-flip/kr260_eth_chiplet_tidelink.xdc:20-39`
+   with compute's `tidelink/fpga/targets/kr260-compute-chiplet/kr260_compute_chiplet_tidelink.xdc:58-78`.
+   "die_b" here names a **ball map**, not a role. The J21 map is fixed per *image*:
+   each chiplet has a straight image and a flip image, the TX↔RX crossover is in the
+   flip XDC, and the ribbon is straight. The role is `ROLE_CFG`. Once locked it
+   overrides the strap (`axi_chiplet_controller.sv:676-678`), and it never changes
+   which ball a pad drives. So compute non-flip pairs with eth **non-flip**
+   (`kr260-eth-chiplet`) on all 18 conductors, whichever die is master. **Choose the
+   eth image from compute's image, never from the role name.** Eth `-flip` with
+   compute non-flip puts both forwarded clocks on AC14. The per-lane trace is in
+   `../bringup/D2D_PAIRING_DECISION.md` §5a.
 4. **Address-map conventions once (G4/G5/G7):** window base, TideLink APB base, and
    **per-direction CAM mailbox rules** (`0x2A`/`0x23`) — write them into the het repo's
    target registry (`host/hetsoc/targets.py`), not hard-coded scripts.
