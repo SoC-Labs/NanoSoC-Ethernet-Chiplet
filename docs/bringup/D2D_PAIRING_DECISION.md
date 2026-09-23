@@ -99,13 +99,13 @@ Two committed statements, one in each repo, cannot both be true:
 | where | what it says | dated |
 |---|---|---|
 | compute `.../firmware/Makefile:61` | "**ROLE: this die is MASTER (die_a).**" | 2026-09-22 (`541ace0`, `b2c1af0`) |
-| eth `docs/design/CHIPLET_ALIGNMENT.md:151` | "**pin die_a grandmaster via `ROLE_CFG` master-lock**" — in context, this die | 2026-08-19 (`ab929f2`) |
-| eth `docs/design/CHIPLET_ALIGNMENT.md:144` | compute's J21 ball map should "**match eth die_b now**" — puts compute in the `die_b` position | 2026-08-19 (`ab929f2`) |
+| eth `docs/design/CHIPLET_ALIGNMENT.md:159` | "**pin die_a grandmaster via `ROLE_CFG` master-lock**" — in context, this die | 2026-08-19 (`ab929f2`) |
+| eth `docs/design/CHIPLET_ALIGNMENT.md:151` | compute's J21 ball map should "**match eth die_b now**" — puts compute in the `die_b` position | 2026-08-19 (`ab929f2`) |
 
 `CHIPLET_ALIGNMENT.md` is a month older and predates the compute side's decision;
 it is also stale in detail (it cites `nanosoc_eth_chiplet.sv:47` for `DEVICE_CLASS`,
 which is now `:81`). It should not be treated as the authority. But note that its
-line 144 is a **wiring** claim, not a role claim — if compute's J21 ball map was in
+line 151 is a **wiring** claim, not a role claim — if compute's J21 ball map was in
 fact built to the eth `die_b` position, whoever fills §2 needs to confirm that the
 physical orientation still works with compute as `die_a`. Those are separable
 questions and only one of them is settled.
