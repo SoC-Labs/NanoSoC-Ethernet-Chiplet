@@ -18,7 +18,7 @@ which cites this repo back. Neither file is complete without the other.
 |---|---|---|
 | Repo | `~/SoCLabs/nanosoc-ethernet-chiplet` (this one) | `~/SoCLabs/NanoSoC-Compute-Chiplet` |
 | IDCODE part number | `0x0001` | `0x0002` (reserved) — `docs/bscan/IDCODE_DECISION.md` |
-| Role is set by | a host, at runtime — **settable** | a baked ROM image — **fixed at tapeout** |
+| Role is set by | a host, at runtime — **settable** (mask-fixed only if the parked resident writer lands, §3) | the manager stage-1 image, **loaded from QSPI flash — reflashable, even on silicon** |
 | Where | `tidelink/pynq_host/scripts/kr260_eth_bringup.py:271` (`--role`, no default) | `.../compute-subsystem/firmware/Makefile:80` (`COMPUTE_D2D_ROLE_MASTER ?= 1`) |
 
 These are the only two dice in the pair. There is no third.
@@ -59,6 +59,17 @@ writes `ROLE_CFG[1]`; the only writer is the external KR260 PS host above
 die's RX link clock *is* this die's forwarded `pad_clk_tx`, **neither die trains**.
 Verified 2026-09-22. A host is therefore mandatory for eth-side bring-up, not a
 convenience.
+
+**A resident writer exists, and is PARKED, not landed** (2026-09-23): the
+`nanosoc-multicore-system` branch `park/resident-role-writer-2026-09-23`, commit
+`7f17cbc`. It writes `ROLE_CFG` at `0x2E032080` as the sixth instruction of CPU1
+stage-0 `main()`. **In sim it trains the pair with no host**: shipping V2 PHY,
+calibrator sim bypass off, one ROM image per die. Both dice reach `FCSM==4` with
+`cal_done=1` at 9,496 µs, and the negative control stays dead for 60 ms. That is a
+functional result, not a margin one: ideal pads, one seed. Landing it is a full
+RTL→GDS re-run, because the ROM is mask-programmed and rebuilt inside every run
+(`ASIC/rom_build.mk:20-24`). It would make this die's role **permanent**.
+`ETH_D2D_ROLE` has no default, and building it unset is a compile error.
 
 ---
 
@@ -110,14 +121,30 @@ fact built to the eth `die_b` position, whoever fills §2 needs to confirm that 
 physical orientation still works with compute as `die_a`. Those are separable
 questions and only one of them is settled.
 
-**The argument for compute holding the fixed role** (compute's, and it is sound):
-compute's role is baked into a ROM and frozen at tapeout; this die's is a
-command-line argument changeable at any time. The side that *cannot* change should
-hold the role; the side that can, adapts. That argues this die is **`die_b` /
-slave** — but that is the reasoning, not the decision. §2 is the decision.
+**CORRECTED 2026-09-23 — the premise this section originally argued from is
+false.** It said compute's role is baked into a ROM and frozen at tapeout, so compute
+should hold the fixed role and this die should adapt. **Compute's role is not in mask
+ROM.** It is in the M0+ manager *stage-1* image (`manager_stage1/main.c:171`), which
+compute's immutable stage-0 ROM loads from QSPI flash into IMEM
+(`compute-subsystem/firmware/bootrom/main.c:5-8`). Baking it into ROM instead is
+"Option Z" (`firmware/Makefile:183-195`, `COMPUTE_D2D_BOOTROM`), which is opt-in: no
+Makefile sets it, and `gen_compute_soc.sh:105` states the ROM is byte-identical to
+the default when it is unset. So:
 
-**Cost of changing it later:** compute side, one line and a rebuild today; expensive
-after a tapeout run; impossible once silicon exists.
+- **As shipped, both sides are changeable** — compute by reflash, this die by `--role`.
+- **If the parked resident writer lands** (§3), **this die becomes the mask-fixed
+  side** and compute the adaptable one. The original argument inverts.
+- **Both role orders train.** In sim on the shipping V2 PHY with the calibrator's
+  sim bypass off, eth `die_b` + compute `die_a` and the reverse both reach
+  `FCSM==4` (LINK_IDLE) at 10,452 µs.
+
+What remains is a genuine choice, not a forced one: **`die_b`** is the zero-change
+option (compute already defaults to `die_a`); **`die_a`** makes this die the
+master/grandmaster, and compute reflashes its default.
+
+**Cost of changing it later:** compute side, a reflash — possible on silicon. This
+side, free while it stays a host argument; **permanent** the moment the resident
+writer lands in mask ROM.
 
 ---
 
@@ -131,7 +158,7 @@ after a tapeout run; impossible once silicon exists.
 - `tidelink/pynq_host/scripts/kr260_eth_run.sh:32`, `:68–73` — `KR260_ETH_ROLE`, no default, refuses without
 - `tidelink/src/rtl/local_overrides/axi_chiplet_controller.sv:637`, `:676–681` — the register and the role mux
 
-**Compute die — fixed at tapeout:**
+**Compute die — reflashable (manager stage-1, loaded from QSPI flash):**
 - repo `~/SoCLabs/NanoSoC-Compute-Chiplet`, submodule `nanosoc-compute-system`, branch `feat/m4-external-dap-bench`
 - `compute-subsystem/firmware/Makefile:80` — `COMPUTE_D2D_ROLE_MASTER ?= 1` (**1 = die_a = master**)
 - `compute-subsystem/firmware/Makefile:61–79` — the decision, its evidence, and the citation back to this repo
