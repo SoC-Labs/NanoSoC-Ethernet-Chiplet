@@ -25,9 +25,10 @@ definitions plus the macro LEF SIZE records. It runs in well under a second, it
 takes NO EDA licence and it needs no database - so it can be run by whoever is
 editing the coordinate, before any tool starts.
 
-It is NOT a substitute for the in-session confirmation. `checks/check_fp_pg.tcl`
-runs against the real post-power-plan database at the `post_powerplan` hook and
-measures the same three things off the actual geometry. Use this one to decide a
+It is NOT a substitute for the in-session confirmation. The toolkit's
+`flow/verify/check_fp_pg.tcl` runs inside the place stage, right after the power
+plan and the post_powerplan hook (PLACE_FP_PG_CHECK), and measures the same three
+things off the actual geometry. Use this one to decide a
 coordinate; use that one to gate the run.
 
 HOW FAR THE ARITHMETIC WAS PROVED

@@ -384,9 +384,10 @@ split_row -selected
 #   * one absolute M5 ladder (EVP_M5_ABS_START below, doc 36 s7): THREE TIMES
 #     WORSE -- 330 -> 990 stranded, 55 -> 305 functional, plus a new M1 short.
 #
-# GATE. hooks/post_powerplan.tcl -> checks/check_fp_pg.tcl measures FP-ISLAND on
-# the real geometry seconds after this runs. Run the stage with
-# FP_PG_ISLAND_MAX=0 and a floorplan this cannot feed aborts in minutes instead
+# GATE. The place stage's check_fp_pg (asic-toolkit flow/verify/check_fp_pg.tcl,
+# PLACE_FP_PG_CHECK) measures FP-ISLAND on the real geometry seconds after this
+# and the post_powerplan hook run. Any unfed island fails the stage by default
+# (FP_PG_ISLAND_MAX=0), so a floorplan this cannot feed aborts in minutes instead
 # of after a five-hour route. The licence-free pre-flight that predicts the same
 # islands and the same feed x's from the floorplan TEXT, with no database and no
 # tool, is checks/fp_guard.py.
@@ -411,8 +412,9 @@ proc pg_feed_rows {} {
 
 proc pg_feed_vstripes {die nets} {
     ## Vertical supply stripes already in the database, on every routing layer.
-    ## "Vertical" is taller-than-wide AND over 50um long, which is what
-    ## checks/check_fp_pg.tcl uses, so the two agree by construction.
+    ## "Vertical" is taller-than-wide AND over 50um long, which is what the
+    ## toolkit's flow/verify/check_fp_pg.tcl uses, so the two agree by
+    ## construction.
     set out [dict create]
     foreach n $nets { dict set out $n {} }
     foreach l [get_db layers -if {.type == routing}] {
@@ -481,8 +483,12 @@ if {!$PG_ISLAND_FEED} {
     set _pif_w    3.6
     set _pif_s    1.2
     set _pif_span [expr {2*$_pif_w + $_pif_s}]
-    ## Widest row segment treated as an island. Same default as
-    ## FP_PG_ISLAND_MAX_W in checks/check_fp_pg.tcl, deliberately.
+    ## Widest row segment this plan FEEDS. It used to match the check's
+    ## FP_PG_ISLAND_MAX_W default of 60; since asic-toolkit 1796724 the stage's
+    ## check examines EVERY span and fails on any unfed one, so an island wider
+    ## than this is no longer unseen - it stops the stage. Measured on
+    ## vt10acc-20260922: 0 unfed of 48 spans. Widening the feed changes PG
+    ## geometry and needs an A/B, so the value is unchanged.
     set _pif_maxw 60.0
     ## Overlap wanted between the stripe and the island on EACH net. Capped per
     ## island: an island of width w can hold at most (w - S)/2 on each side, so
@@ -544,7 +550,7 @@ if {!$PG_ISLAND_FEED} {
         lassign $_pif_i _pif_a _pif_b
         puts stderr [format "WARNING: power_plan: island \[%.3f,%.3f\] is %.2fum wide -- narrower than one\
                      VDD+VSS set (%.2fum of stripe plus %.2fum gap), so no single set can feed it.\
-                     It stays at risk and check_fp_pg.tcl will report it." \
+                     It stays unfed and the stage's check_fp_pg will fail on it." \
                      $_pif_a $_pif_b [expr {$_pif_b - $_pif_a}] [expr {2*$_pif_w}] $_pif_s]
     }
 
