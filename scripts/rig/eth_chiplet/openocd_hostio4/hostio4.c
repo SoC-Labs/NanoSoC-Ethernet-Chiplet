@@ -202,15 +202,32 @@ static int hostio4_write_all(const void *buf, size_t len)
 	return ERROR_OK;
 }
 
-/* swallow whatever the far end still owes us, until it goes quiet */
+/*
+ * Swallow whatever the far end still owes us, until it goes quiet -- but never
+ * for longer than HOSTIO4_DRAIN_MAX_MS in total. The quiet window is re-armed
+ * on every byte, so a far end that never pauses for @quiet_ms (a program
+ * printf()ing on the shared console) would otherwise keep OpenOCD here for
+ * ever, deaf to SIGTERM (its handler only sets a flag this loop never reads).
+ */
+#define HOSTIO4_DRAIN_MAX_MS		2000
+
 static void hostio4_drain(unsigned int quiet_ms)
 {
+	int64_t hard = timeval_ms() + HOSTIO4_DRAIN_MAX_MS;
 	int64_t deadline = timeval_ms() + quiet_ms;
 	uint8_t c;
 
 	hostio4_rx_reset();
-	while (hostio4_getc(&c, deadline) == 1)
+	while (hostio4_getc(&c, deadline) == 1) {
+		if (timeval_ms() >= hard) {
+			LOG_WARNING("hostio4: the far end never went quiet for %u ms in %d ms "
+				    "(something is printing on the console?); continuing",
+				    quiet_ms, HOSTIO4_DRAIN_MAX_MS);
+			hostio4_rx_reset();
+			return;
+		}
 		deadline = timeval_ms() + quiet_ms;
+	}
 }
 
 /* ------------------------------------------------------------------ */
@@ -246,12 +263,19 @@ enum hostio4_parse_state {
  * Replies are appended to @replies (at most @max_replies of them; the OLDEST
  * are dropped on overflow, because for a pipelined "Ax...;R<n>" the ones that
  * matter are the last n).
+ *
+ * @want_letter, when non-zero, is the only reply letter that is stored or
+ * COUNTED. Without it the "A 0x<addr>" reply to a pipelined "Ax" counts as a
+ * data word: a block read that loses one "R" line in transit then still
+ * reports @count replies, and the caller hands back the ADDRESS as word 0 and
+ * every other word shifted by one -- with no error.
  */
 static int hostio4_exchange(const char *out, size_t out_len,
 			    unsigned int want_prompts,
 			    struct hostio4_reply *replies,
 			    unsigned int max_replies,
-			    unsigned int *n_replies)
+			    unsigned int *n_replies,
+			    char want_letter)
 {
 	if (hostio4_link_dead)
 		return ERROR_FAIL;
@@ -277,7 +301,9 @@ static int hostio4_exchange(const char *out, size_t out_len,
 
 	while (got_prompts < want_prompts) {
 		uint8_t c;
-		int rc = hostio4_getc(&c, deadline);
+		/* the deadline is absolute: bytes that keep arriving without a
+		 * prompt must not extend it */
+		int rc = timeval_ms() > deadline ? 0 : hostio4_getc(&c, deadline);
 
 		if (rc < 0) {
 			hostio4_link_dead = true;
@@ -353,7 +379,9 @@ reparse:
 				break;
 			}
 			st = PS_IDLE;
-			if (ndigits) {
+			/* 1..8 digits is a 32-bit word; more is a garbled line */
+			if (ndigits && ndigits <= 8 &&
+			    (!want_letter || cur.letter == want_letter)) {
 				if (replies && max_replies) {
 					if (got_replies < max_replies) {
 						replies[got_replies] = cur;
@@ -458,7 +486,7 @@ static int hostio4_do_read(uint32_t addr, unsigned int count, uint32_t *out, boo
 	}
 	prompts++;
 
-	int retval = hostio4_exchange(cmd, len, prompts, rep, count, &nrep);
+	int retval = hostio4_exchange(cmd, len, prompts, rep, count, &nrep, 'R');
 
 	if (retval != ERROR_OK) {
 		hostio4_mon_addr_valid = false;
@@ -473,8 +501,8 @@ static int hostio4_do_read(uint32_t addr, unsigned int count, uint32_t *out, boo
 	}
 
 	/*
-	 * hostio4_exchange() keeps the LAST @count replies, which is exactly the
-	 * R replies -- any reply the "Ax" produced has already been shifted out.
+	 * hostio4_exchange() counted and kept 'R' replies only, so the "A" reply
+	 * to a pipelined "Ax" can never stand in for a lost data word.
 	 */
 	for (unsigned int i = 0; i < count; i++) {
 		out[i] = rep[i].value;
@@ -526,7 +554,7 @@ static int hostio4_do_write_word(uint32_t addr, uint32_t data, bool *any_fault)
 	prompts++;
 	hostio4_stat_writes++;
 
-	int retval = hostio4_exchange(cmd, len, prompts, rep, 1, &nrep);
+	int retval = hostio4_exchange(cmd, len, prompts, rep, 1, &nrep, 'W');
 
 	if (retval != ERROR_OK) {
 		hostio4_mon_addr_valid = false;
@@ -583,7 +611,7 @@ static int hostio4_do_block_write(uint32_t addr, const uint32_t *data, unsigned 
 
 	hostio4_stat_block_writes++;
 
-	int retval = hostio4_exchange((const char *)buf, len, prompts, NULL, 0, NULL);
+	int retval = hostio4_exchange((const char *)buf, len, prompts, NULL, 0, NULL, 0);
 
 	if (retval != ERROR_OK) {
 		hostio4_mon_addr_valid = false;
@@ -598,6 +626,30 @@ static int hostio4_do_block_write(uint32_t addr, const uint32_t *data, unsigned 
 /* ------------------------------------------------------------------ */
 /* deferred DRW batching                                               */
 /* ------------------------------------------------------------------ */
+
+/*
+ * The bench transport rewrites three byte values, byte by byte, with no notion
+ * of a 'U' payload (HAPS-work fpga/haps-sx/hostio/adp-bridge to_board(), and
+ * haps-hostio's console loop, `if ch == "]": send("\x1b")`):
+ *   0x03  adp-bridge deletes it (Ctrl-C): the payload arrives one byte short
+ *         and the monitor parks for good;
+ *   0x5d  the dongle's console bridge turns ']' into ESC: silent corruption;
+ *   0x1b  adp-bridge turns ESC into ']' (the dongle turns it back): silent
+ *         corruption on any path that lacks the dongle's half.
+ * A block whose payload carries any of them goes as ASCII Wx words instead --
+ * slower, and the only form those bytes survive.
+ */
+static bool hostio4_payload_mangled(const uint32_t *data, unsigned int count)
+{
+	for (unsigned int i = 0; i < count; i++)
+		for (unsigned int b = 0; b < 32; b += 8) {
+			uint8_t v = (uint8_t)(data[i] >> b);
+
+			if (v == 0x03 || v == ADP_ESC || v == ADP_PROMPT)
+				return true;
+		}
+	return false;
+}
 
 static int hostio4_flush_pending(void)
 {
@@ -623,7 +675,8 @@ static int hostio4_flush_pending(void)
 					*hostio4_pend_dest[i] = vals[i];
 		}
 	} else {
-		if (hostio4_block_write && count >= 2) {
+		if (hostio4_block_write && count >= 2 &&
+		    !hostio4_payload_mangled(hostio4_pend_data, count)) {
 			retval = hostio4_do_block_write(addr, hostio4_pend_data, count);
 		} else {
 			for (unsigned int i = 0; i < count && retval == ERROR_OK; i++)
@@ -640,11 +693,70 @@ static int hostio4_flush_pending(void)
 	return retval;
 }
 
+/* bytes per DRW transfer: 1, 2 or 4 (anything wider is treated as 4) */
+static uint32_t hostio4_csw_bytes(uint32_t csw)
+{
+	switch (csw & CSW_SIZE_MASK) {
+	case CSW_8BIT:
+		return 1;
+	case CSW_16BIT:
+		return 2;
+	default:
+		return 4;
+	}
+}
+
 static uint32_t hostio4_tar_inc(uint32_t csw)
 {
 	if ((csw & CSW_ADDRINC_MASK) != 0)
-		return 1 << (csw & CSW_SIZE_MASK);
+		return hostio4_csw_bytes(csw);
 	return 0;
+}
+
+/*
+ * One 8- or 16-bit DRW transfer. The monitor has no sub-word access at any
+ * address above 0xff (its access size is the DIGIT COUNT of "Ax", and the
+ * driver always sends eight), so the containing word is read and, for a
+ * write, merged and written back. A read hands OpenOCD the whole word: per
+ * ADI, a sub-word DRW value carries its bytes in their byte lanes, and
+ * mem_ap_read() extracts the lane itself.
+ *
+ * The RMW is not atomic on the bus. That is the price of not zeroing the
+ * three neighbouring bytes, which is what writing the DRW value as a word did.
+ */
+static int hostio4_subword(enum hostio4_pend_kind kind, unsigned int ap_idx,
+			   uint32_t *dest, uint32_t data)
+{
+	struct hostio4_ap_state *st = &hostio4_ap[ap_idx];
+	uint32_t bytes = hostio4_csw_bytes(st->csw);
+	uint32_t lane = st->tar & 3;
+	uint32_t wire = hostio4_xlat(ap_idx, st->tar) & ~3u;
+	uint32_t word = 0, mask;
+	bool fault = false;
+	int retval = hostio4_flush_pending();
+
+	if (retval != ERROR_OK)
+		return retval;
+	if (lane + bytes > 4) {
+		LOG_ERROR("hostio4: a %u-byte access at 0x%08" PRIx32 " crosses a word",
+			  bytes, st->tar);
+		hostio4_dap_retval = ERROR_TARGET_UNALIGNED_ACCESS;
+		return ERROR_TARGET_UNALIGNED_ACCESS;
+	}
+	retval = hostio4_do_read(wire, 1, &word, &fault);
+	if (retval == ERROR_OK && kind == PEND_READ) {
+		if (dest)
+			*dest = word;
+	} else if (retval == ERROR_OK && !fault) {
+		mask = (bytes == 1 ? 0xffu : 0xffffu) << (8 * lane);
+		retval = hostio4_do_write_word(wire, (word & ~mask) | (data & mask), &fault);
+	}
+	if (retval != ERROR_OK)
+		hostio4_dap_retval = retval;
+	else if (fault)
+		hostio4_dap_retval = ERROR_TARGET_DATA_ABORT;
+	st->tar += hostio4_tar_inc(st->csw);
+	return retval;
 }
 
 static int hostio4_queue_drw(enum hostio4_pend_kind kind, unsigned int ap_idx,
@@ -660,10 +772,14 @@ static int hostio4_queue_drw(enum hostio4_pend_kind kind, unsigned int ap_idx,
 		limit = HOSTIO4_MAX_BLOCK;
 
 	/* refuse before anything is queued, so the error names the real address */
-	if (hostio4_check_span(wire, 1) != ERROR_OK) {
+	if (hostio4_check_span(wire & ~3u, 1) != ERROR_OK) {
 		hostio4_dap_retval = ERROR_FAIL;
 		return ERROR_FAIL;
 	}
+
+	if (hostio4_csw_bytes(st->csw) != 4)
+		return hostio4_subword(kind, ap_idx, dest, data);
+	wire &= ~3u;
 
 	bool contiguous = (hostio4_pend_kind == kind) &&
 			  (hostio4_pend_count > 0) &&
@@ -751,12 +867,21 @@ static int hostio4_emu_ap_q_write(unsigned int ap_idx, unsigned int reg, uint32_
 	switch (reg) {
 	case ADIV5_MEM_AP_REG_CSW:
 		ret = hostio4_flush_pending();
-		/* the monitor is a 32-bit AHB master; force CSW_SIZE to 32-bit */
-		st->csw = (data & ~(uint32_t)CSW_SIZE_MASK) | CSW_32BIT;
+		/*
+		 * Keep the SIZE OpenOCD asked for: forcing it to 32 bits made a
+		 * byte write a word write (three neighbouring bytes zeroed) and
+		 * stepped TAR by 4 while OpenOCD's cache stepped it by 1, so the
+		 * next byte landed in the NEXT word. Packed transfers are not
+		 * emulated: report ADDRINC_SINGLE back, and mem_ap_init() then
+		 * leaves ap->packed_transfers false.
+		 */
+		if ((data & CSW_ADDRINC_MASK) == CSW_ADDRINC_PACKED)
+			data = (data & ~(uint32_t)CSW_ADDRINC_MASK) | CSW_ADDRINC_SINGLE;
+		st->csw = data;
 		break;
 	case ADIV5_MEM_AP_REG_TAR:
 		ret = hostio4_flush_pending();
-		st->tar = data & ~0x3u;
+		st->tar = data;		/* byte-exact; the wire address is masked */
 		break;
 	case ADIV5_MEM_AP_REG_TAR64:
 		if (data) {
@@ -1033,13 +1158,13 @@ static int hostio4_enter_adp(void)
 	len = hostio4_emit_addr(cmd, 0);
 
 	/* throwaway: may be eaten, may come back '?', we do not care */
-	(void)hostio4_exchange(cmd, len, 1, NULL, 0, NULL);
+	(void)hostio4_exchange(cmd, len, 1, NULL, 0, NULL, 0);
 	hostio4_link_dead = false;
 	hostio4_silent_cmds = 0;
 	hostio4_drain(50);
 
 	/* now a command we actually require an answer to */
-	if (hostio4_exchange(cmd, len, 1, NULL, 0, NULL) != ERROR_OK) {
+	if (hostio4_exchange(cmd, len, 1, NULL, 0, NULL, 0) != ERROR_OK) {
 		LOG_ERROR("hostio4: no prompt from the ADP monitor on %s -- "
 			  "is the far end up and in command mode?", hostio4_port);
 		return ERROR_FAIL;
