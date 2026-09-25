@@ -390,7 +390,7 @@ split_row -selected
 # (FP_PG_ISLAND_MAX=0), so a floorplan this cannot feed aborts in minutes instead
 # of after a five-hour route. The licence-free pre-flight that predicts the same
 # islands and the same feed x's from the floorplan TEXT, with no database and no
-# tool, is checks/fp_guard.py.
+# tool, is `make floorplan-hazards` (scripts/ci/check_floorplan_hazards.py).
 #
 #   EVP_NO_PG_ISLAND_FEED=1   omit the feed stripes. The defect comes back; this
 #                             exists so the A/B stays available, not because the

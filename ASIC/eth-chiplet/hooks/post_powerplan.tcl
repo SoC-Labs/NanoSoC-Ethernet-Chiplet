@@ -18,8 +18,10 @@
 # toolkit check against a saved post-power-plan database.
 #
 # The licence-free pre-flight that answers the same question from the floorplan
-# TEXT, before any tool starts, is
-#     ASIC/genus-innovus/scripts/checks/fp_guard.py            (and --selftest)
+# TEXT and the netlist, before any tool starts, is
+#     make -C ASIC/eth-chiplet floorplan-hazards SYN_RUN_TAG=<syn> RUN_TAG=<run>
+# (scripts/ci/check_floorplan_hazards.py, with floorplan-hazards-selftest; the
+# RUN_TAG must have its per-run romlibs, or it stops as NOT MEASURED).
 #
 # HOOK CONTRACT: `flow_hook` sources this with `uplevel 1`, so $REPORT_DIR and
 # the flow's helpers (say/warn/die) are in scope, and an error raised here
