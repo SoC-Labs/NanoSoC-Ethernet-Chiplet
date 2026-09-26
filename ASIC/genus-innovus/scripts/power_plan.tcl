@@ -1355,88 +1355,25 @@ unset _rzko_on
 ## building the grid and hours after it.
 ## ---------------------------------------------------------------------------
 
-set _pgav_mode "markers"
-if {[info exists ::env(EVP_PG_ADD_VIAS)] && $::env(EVP_PG_ADD_VIAS) ne ""} {
-    set _pgav_mode $::env(EVP_PG_ADD_VIAS)
-}
-if {[lsearch -exact {off markers global} $_pgav_mode] < 0} {
-    error "power_plan: EVP_PG_ADD_VIAS='$_pgav_mode' is not one of off|markers|global"
-}
-set _pgav_cap 20000
-if {[info exists ::env(EVP_PG_ADD_VIAS_CAP)] && $::env(EVP_PG_ADD_VIAS_CAP) ne ""} {
-    set _pgav_cap [expr {int($::env(EVP_PG_ADD_VIAS_CAP))}]
-}
-set _pgav_span 50.0
-if {[info exists ::env(EVP_PG_ADD_VIAS_MAX_SPAN)] && $::env(EVP_PG_ADD_VIAS_MAX_SPAN) ne ""} {
-    set _pgav_span [expr {double($::env(EVP_PG_ADD_VIAS_MAX_SPAN))}]
-}
-## The site boxes are grown by this before being handed over, because a marker
-## box is the OVERLAP, and a via needs its enclosure to sit somewhere.
-set _pgav_grow 0.300
-if {[info exists ::env(EVP_PG_ADD_VIAS_GROW)] && $::env(EVP_PG_ADD_VIAS_GROW) ne ""} {
-    set _pgav_grow [expr {double($::env(EVP_PG_ADD_VIAS_GROW))}]
-}
-
-## "N total info(s) created" off a check report, or -1 when the file cannot be
-## read or carries no such line. -1 IS NOT ZERO: zero is the best possible
-## result and an unreadable report must not be able to produce it.
-proc _pgav_total {f} {
-    set n -1
-    if {![file readable $f]} { return $n }
-    set fh [open $f r]
-    while {[gets $fh l] >= 0} {
-        if {[regexp {([0-9]+) total info\(s\) created} $l -> v]} { set n $v }
-    }
-    close $fh
-    return $n
-}
-## Every PG via in the database, counted as OBJECTS from the database, never as
-## calls -- the accounting mistake this file has already made once.
-proc _pgav_vias {} {
-    set n 0
-    foreach _n [get_db pg_nets .name] {
-        set _net [get_db current_design .nets $_n]
-        if {$_net eq ""} { continue }
-        incr n [llength [get_db $_net .special_vias]]
-    }
-    return $n
-}
-## The sites the two checks name, as -area rectangles. Whole-net piece boxes
-## are dropped -- see the header.
-proc _pgav_areas {pgvf connf grow maxspan} {
-    set out {} ; set drop 0
-    if {[file readable $pgvf]} {
-        set fh [open $pgvf r]
-        while {[gets $fh l] >= 0} {
-            if {[regexp {at \(([-0-9.]+), ([-0-9.]+)\) \(([-0-9.]+), ([-0-9.]+)\) between layers} \
-                        $l -> a b c d]} {
-                lappend out [list [expr {$a-$grow}] [expr {$b-$grow}] \
-                                  [expr {$c+$grow}] [expr {$d+$grow}]]
-            }
-        }
-        close $fh
-    }
-    if {[file readable $connf]} {
-        set fh [open $connf r]
-        while {[gets $fh l] >= 0} {
-            if {[regexp {opens at \(([-0-9.]+), ([-0-9.]+)\) \(([-0-9.]+), ([-0-9.]+)\)} \
-                        $l -> a b c d]} {
-                if {($c-$a) > $maxspan || ($d-$b) > $maxspan} { incr drop ; continue }
-                lappend out [list [expr {$a-$grow}] [expr {$b-$grow}] \
-                                  [expr {$c+$grow}] [expr {$d+$grow}]]
-            } elseif {[regexp {dangling Wire at \(([-0-9.]+), ([-0-9.]+)\)} $l -> a b]} {
-                lappend out [list [expr {$a-$grow}] [expr {$b-$grow}] \
-                                  [expr {$a+$grow}] [expr {$b+$grow}]]
-            }
-        }
-        close $fh
-    }
-    puts "POWERPLAN: PG add-vias -- [llength $out] site box(es); $drop whole-net\
-          piece box(es) dropped as wider or taller than ${maxspan} um"
-    return $out
-}
-
 ## ---------------------------------------------------------------------------
+## THE PASS IS THE TOOLKIT'S  (promoted 2026-09-26)
+##
+## The calls the measurements above describe -- check_power_vias and
+## check_connectivity for the sites, the check_drc BEFORE snapshot, the targeted
+## update_power_vias, the added-via set, the AFTER check and the three refusals
+## -- are the engine's flow/power/pg_add_vias.tcl, in the same order, sourced by
+## the place stage before this file. Not one line of them was about this die.
+## What stays here is the measurement, and the knobs design.mk sets:
+##     PG_ADD_VIAS / _CAP / _MAX_SPAN / _GROW   (EVP_PG_ADD_VIAS* still honoured,
+##                                              with a deprecation line)
+## The nets ({VDD VSS}) and the check range ({M1 AP}) are no longer written
+## here: the engine derives them from design_config.tcl's power_nets /
+## ground_nets and the tech pack's pg_via_check_layer_bottom and routing layers.
+##
+## It still publishes ::EVP_PGAV_RAN / ::EVP_PGAV_DRC_BEFORE_FILE /
+## ::EVP_PGAV_ADDED, which the hook's VIA4.R.4 prune and
+## pg_drc_post_route_edits.tcl read, and ::PG_ADD_VIAS_* under the new names.
+##
 ## THE DELTA GATE  (added 2026-09-16; PROMOTED TO THE TOOLKIT 2026-09-22)
 ##
 ## THE MACHINERY IS NO LONGER HERE. The parser, the set difference, the
@@ -1472,11 +1409,12 @@ proc _pgav_areas {pgvf connf grow maxspan} {
 ## (fix_via alone takes 136 -> 16 on vt3pg). Gating here would delete ~100
 ## vias fix_via was about to make legal. So this file takes the BEFORE
 ## snapshot and publishes its path (::EVP_PGAV_DRC_BEFORE_FILE), and
-## hooks/post_powerplan.tcl calls pg_drc_delta_gate on the hook's own
-## check_drc artefact once nothing else is going to touch the grid.
+## hooks/post_powerplan.tcl calls the engine's pg_add_vias_gate on the hook's
+## own check_drc artefact once nothing else is going to touch the grid. (Had
+## the hook not gated, the place stage would have, after the hook.)
 ##
-## THE ADDED SET is recorded here too (::EVP_PGAV_ADDED, via
-## pg_drc_gate_via_keys / pg_drc_gate_added) because only this file knows when
+## THE ADDED SET is recorded by the pass (::EVP_PGAV_ADDED, via
+## pg_drc_gate_via_keys / pg_drc_gate_added) because only the pass knows when
 ## the operation ran. It is the gate's delete-list AND the VIA4.R.4 prune's, and
 ## since both now key a via with the SAME engine proc (pgdg_via_key) the two
 ## cannot drift apart the way two hand-kept copies of the key format could.
@@ -1486,114 +1424,14 @@ proc _pgav_areas {pgvf connf grow maxspan} {
 ## off) names nothing; with the delta guard mutated off the gate passes all 6;
 ## a delete_obj that silently no-ops is caught by the re-check.
 ## ---------------------------------------------------------------------------
-if {[info exists ::env(ASIC_FLOW_DIR)] && $::env(ASIC_FLOW_DIR) ne ""} {
-    set _pgav_gate_tcl [file join $::env(ASIC_FLOW_DIR) flow power pg_drc_delta_gate.tcl]
-} else {
-    # A hand run with no flow environment: the toolkit submodule beside this tree.
-    set _pgav_gate_tcl [file join [file dirname [file dirname [file dirname \
-                            [file normalize [info script]]]]] \
-                            asic-toolkit flow power pg_drc_delta_gate.tcl]
+if {[info commands pg_add_vias_run] eq ""} {
+    error "power_plan: pg_add_vias_run is not defined. The toolkit's place stage\
+           sources flow/power/pg_add_vias.tcl before this file; this project\
+           needs a toolkit that has it. An add-vias pass that runs without its\
+           gate is how three Calibre rulechecks reached the stream on\
+           vt3pg-20260909, so this does not fall back to a local copy."
 }
-if {![file exists $_pgav_gate_tcl]} {
-    error "power_plan: the PG DRC delta gate is not at $_pgav_gate_tcl. It is\
-           engine code (flow/power/pg_drc_delta_gate.tcl) and this pass may not\
-           edit the grid without it: an add-vias pass with no gate is how three\
-           Calibre rulechecks reached the stream on vt3pg-20260909."
-}
-source $_pgav_gate_tcl
-lassign [pg_drc_gate_knobs] _pgav_g_rounds _pgav_g_reach _pgav_g_maxdel _pgav_g_limit
-unset _pgav_gate_tcl
-
-if {$_pgav_mode eq "off"} {
-    puts "POWERPLAN: EVP_PG_ADD_VIAS=off -- skipping the unfilled-PG-via pass.\
-          This run carries the route stage's full missing-via, PG-open and\
-          dangling-wire counts."
-} else {
-    set _pgav_v0 [_pgav_vias]
-    catch { check_power_vias -layer_range {M1 AP} \
-                -report $REPORT_DIR/pg_pre_addvias.rep }
-    catch { check_connectivity -type special -error 200000 -warning 200000 \
-                -out_file $REPORT_DIR/pg_pre_addvias_conn.rep }
-    set _pgav_p0 [_pgav_total $REPORT_DIR/pg_pre_addvias.rep]
-    set _pgav_c0 [_pgav_total $REPORT_DIR/pg_pre_addvias_conn.rep]
-    if {$_pgav_p0 < 0 || $_pgav_c0 < 0} {
-        error "power_plan: PG add-vias: no summary line in\
-               $REPORT_DIR/pg_pre_addvias.rep (got $_pgav_p0) or in\
-               $REPORT_DIR/pg_pre_addvias_conn.rep (got $_pgav_c0). Refusing to\
-               run a repair whose BEFORE state is unknown -- an unparsed report\
-               is not a clean one."
-    }
-    puts "POWERPLAN: PG add-vias -- mode $_pgav_mode; before: $_pgav_p0 missing-via\
-          marker(s), $_pgav_c0 connectivity marker(s), $_pgav_v0 PG via(s)"
-    set _pgav_v4_before [pg_drc_gate_via_keys]
-
-    # THE DELTA GATE'S BEFORE SNAPSHOT. pg_drc_gate_snapshot runs check_drc and
-    # PARSES it, so an unreadable or unattested report stops the pass BEFORE it
-    # edits the grid: a repair that does not know its starting point cannot say
-    # what it added. No catch -- a check_drc that cannot run is the same
-    # refusal. The path is published for the hook, which takes the AFTER.
-    set ::EVP_PGAV_DRC_BEFORE_FILE $REPORT_DIR/pg_addvias_drc_before.rep
-    set _pgav_d0 [pg_drc_gate_snapshot $::EVP_PGAV_DRC_BEFORE_FILE $_pgav_g_limit]
-    puts "POWERPLAN: PG add-vias -- check_drc BEFORE the pass: [dict size $_pgav_d0]\
-          record(s) in $::EVP_PGAV_DRC_BEFORE_FILE (the delta gate's baseline)"
-    unset _pgav_d0
-
-    if {$_pgav_mode eq "global"} {
-        update_power_vias -add_vias 1 -nets {VDD VSS}
-    } else {
-        set _pgav_ar [_pgav_areas $REPORT_DIR/pg_pre_addvias.rep \
-                                  $REPORT_DIR/pg_pre_addvias_conn.rep \
-                                  $_pgav_grow $_pgav_span]
-        if {![llength $_pgav_ar]} {
-            puts "POWERPLAN: PG add-vias -- nothing to do: neither check named a\
-                  site. Not an error; it means the grid is already fully vias'd."
-        } else {
-            update_power_vias -add_vias 1 -nets {VDD VSS} -area $_pgav_ar
-        }
-        unset -nocomplain _pgav_ar
-    }
-    # WHAT THIS PASS CREATED. Published as a global because the consumers are
-    # other scripts: the delta gate in the post_powerplan hook (this is its
-    # delete-list) and the VIA4.R.4 prune in pg_drc_post_route_edits.tcl. Both
-    # key a via with the engine's pgdg_via_key, so the two cannot drift.
-    set ::EVP_PGAV_ADDED [pg_drc_gate_added $_pgav_v4_before]
-    set _pgav_n_v4 0
-    foreach _k [dict keys $::EVP_PGAV_ADDED] {
-        if {[string match "*#VIA4" $_k]} { incr _pgav_n_v4 }
-    }
-    set ::EVP_PGAV_RAN 1
-    puts "POWERPLAN: PG add-vias -- [dict size $::EVP_PGAV_ADDED] new via(s)\
-          recorded for the VIA4.R.4 prune, $_pgav_n_v4 of them VIA4\
-          (of [dict size $_pgav_v4_before] via(s) before)"
-    unset -nocomplain _pgav_v4_before _pgav_n_v4
-
-    set _pgav_v1 [_pgav_vias]
-    catch { check_power_vias -layer_range {M1 AP} \
-                -report $REPORT_DIR/pg_post_addvias.rep }
-    set _pgav_p1 [_pgav_total $REPORT_DIR/pg_post_addvias.rep]
-    puts "POWERPLAN: PG add-vias -- after: $_pgav_p1 missing-via marker(s),\
-          $_pgav_v1 PG via(s), [expr {$_pgav_v1 - $_pgav_v0}] added"
-    if {$_pgav_p1 < 0} {
-        error "power_plan: PG add-vias: $REPORT_DIR/pg_post_addvias.rep has no\
-               summary line, so whether this pass helped or hurt is UNKNOWN. It\
-               has already edited the grid; it may not hand it on unmeasured."
-    }
-    if {$_pgav_p1 > $_pgav_p0} {
-        error "power_plan: PG add-vias: missing power vias went UP, $_pgav_p0 ->\
-               $_pgav_p1. This pass only ADDS vias, so a rise means it created\
-               crossings it did not fill. Refusing to hand that on."
-    }
-    if {$_pgav_mode eq "markers" && ($_pgav_v1 - $_pgav_v0) > $_pgav_cap} {
-        error "power_plan: PG add-vias: markers mode added\
-               [expr {$_pgav_v1 - $_pgav_v0}] vias, over EVP_PG_ADD_VIAS_CAP\
-               ($_pgav_cap). The measured figure for this floorplan is about\
-               1,400; a targeted pass that adds an order of magnitude more is\
-               not targeted any more. Look before the run spends six more hours."
-    }
-    unset -nocomplain _pgav_v0 _pgav_v1 _pgav_p0 _pgav_p1 _pgav_c0
-}
-unset -nocomplain _pgav_mode _pgav_cap _pgav_span _pgav_grow \
-                  _pgav_g_rounds _pgav_g_reach _pgav_g_maxdel _pgav_g_limit
+pg_add_vias_run $REPORT_DIR
 
 
 ## ---------------------------------------------------------------------------
@@ -1641,16 +1479,12 @@ unset -nocomplain _pgav_mode _pgav_cap _pgav_span _pgav_grow \
 ## Gate on: unrouted std-cell power ports (must NOT regress toward 4414),
 ## check_connectivity -type special (337 opens / 1432 dangling baseline),
 ## top-cell M4 shape count (387090 baseline).
-if {![info exists ::env(EVP_NO_G4_FIXVIA)] || $::env(EVP_NO_G4_FIXVIA) ne "1"} {
-    puts "POWERPLAN: G.4 residue -- check_drc then fix_via -min_step/-min_cut"
-    check_drc -limit 200000 -out_file $REPORT_DIR/pg_pre_fixvia.rep
-    fix_via -min_step
-    fix_via -min_cut
-    check_drc -limit 200000 -out_file $REPORT_DIR/pg_post_fixvia.rep
-    puts "POWERPLAN: fix_via done -- compare pg_pre_fixvia.rep vs pg_post_fixvia.rep"
-} else {
-    puts "POWERPLAN: EVP_NO_G4_FIXVIA=1 -- skipping the fix_via min_step/min_cut pass"
-}
+##
+## THE CALLS ARE THE TOOLKIT'S (pg_fix_via_run, flow/power/pg_add_vias.tcl,
+## promoted 2026-09-26): check_drc, fix_via -min_step, fix_via -min_cut,
+## check_drc, into the same pg_pre_fixvia.rep / pg_post_fixvia.rep. PG_FIX_VIA=0
+## skips it; EVP_NO_G4_FIXVIA=1 is the old spelling and still works.
+pg_fix_via_run $REPORT_DIR
 
 ## ---------------------------------------------------------------------------
 ## MARKER-DRIVEN PG RESIDUE CLEANUP  (added 2026-08-23)

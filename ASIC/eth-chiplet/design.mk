@@ -1158,8 +1158,10 @@ export ROUTE_OPT_DRV ?= 0
 # _placed, _cts and _routed across four runs including a full RTL->GDS rebuild.
 # Measured on real bytes: missing vias 367->12, opens 51->26, dangling 727->176,
 # for +0.8% PG vias and +6 check_drc. The `global` arm was measured and REJECTED
-# (+91,560 vias, ~34k on VIA12/23/34 at 85.7% utilisation).
-export EVP_PG_ADD_VIAS ?= markers
+# (+91,560 vias, ~34k on VIA12/23/34 at 85.7% utilisation). The pass is the
+# toolkit's (flow/power/pg_add_vias.tcl) since 2026-09-26; EVP_PG_ADD_VIAS is
+# its old name and would still work, with a deprecation line.
+export PG_ADD_VIAS ?= markers
 
 # THE DELTA GATE THAT WATCHES THAT PASS. The machinery is the engine's
 # (flow/power/pg_drc_delta_gate.tcl, promoted 2026-09-22); these four lines are

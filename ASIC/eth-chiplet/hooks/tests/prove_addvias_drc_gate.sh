@@ -62,10 +62,13 @@
 #                silent no-op the re-check refuses and names the site.
 #   REFUSES      no added via in reach, the deletion cap, an unattested,
 #                truncated or missing report: each an error, never a pass.
-#   JOINED       the hook calls the gate AFTER its check_drc artefact and
-#                BEFORE the PG census; power_plan.tcl takes the BEFORE
-#                snapshot before update_power_vias; the skip branch refuses
-#                to skip the gate once the pass has run.
+#   JOINED       power_plan.tcl calls the engine's pg_add_vias_run and
+#                pg_fix_via_run and keeps no copy of either; the engine's pass
+#                takes the BEFORE snapshot before update_power_vias; the hook
+#                calls the engine's pg_add_vias_gate once, AFTER its check_drc
+#                artefact and BEFORE the PG census; the skip branch refuses to
+#                skip the gate once the pass has run. (Since 2026-09-26; the
+#                pass and the gate glue were this project's until then.)
 #
 # WHAT IS NOT PROVEN HERE. That delete_obj leaves a legal grid, or what a
 # deletion costs in missing-via markers -- only a run can say (the hook's
@@ -110,7 +113,7 @@ echo
 
 # Lift the real procs out of the live script, and assert the joins.
 python3 - "$PP" "$HOOK" "$WORK" "$GATE" <<'PY'
-import sys, re, io
+import sys, re, io, os
 pp, hook, W, gate = sys.argv[1:5]
 src = io.open(pp, encoding="utf-8").read()
 hk  = io.open(hook, encoding="utf-8").read()
@@ -129,52 +132,53 @@ def pos(text, needle, label):
     i = text.find(needle)
     if i < 0: bad.append("%s: %r not found" % (label, needle))
     return i
-# power_plan.tcl SOURCES THE ENGINE'S GATE and defines none of it itself. A
-# second copy of these procs in the project is how the two would drift apart
-# while both looked proven, so the absence is asserted, not assumed.
-mpath = re.search(r'^\s*set (\w+) \[file join .*flow power pg_drc_delta_gate\.tcl\]', src, re.M)
-if not mpath:
-    bad.append("power_plan: never names the engine's flow/power/pg_drc_delta_gate.tcl")
-elif not re.search(r'^\s*source \$%s\s*$' % mpath.group(1), src, re.M):
-    bad.append("power_plan: names the engine's gate file but never SOURCES it -- every proc the hook calls would be undefined at the point it is called")
-dup = re.findall(r'^proc (_pgav_(?:drc_|gate_|cand_|rec_|via_key|rects|gap)\w*) ', src, re.M)
-if dup: bad.append("power_plan: still defines its own copy of %s -- the engine's gate is not the one running" % ", ".join(dup))
-# the BEFORE snapshot is taken, and PARSED, before the pass edits the grid
-a = pos(src, "pg_drc_gate_snapshot $::EVP_PGAV_DRC_BEFORE_FILE", "power_plan")
-# THE CALL, not the paragraph about it. Matched as an indented statement,
-# because `update_power_vias -add_vias 1` also appears in a comment 400 lines
-# above the pass - which made this assertion compare the snapshot against a
-# sentence and report a failure that the harness then dropped on the floor.
-mcall = re.search(r'^[ \t]+update_power_vias -add_vias 1', src, re.M)
+# THE PASS AND ITS GATE ARE ENGINE CODE (flow/power/pg_add_vias.tcl, promoted
+# 2026-09-26). power_plan.tcl CALLS the pass and defines none of it; a second
+# copy in the project is how the two would drift apart while both looked
+# proven, so the absence is asserted, not assumed.
+av = io.open(os.path.join(os.path.dirname(gate), "pg_add_vias.tcl"), encoding="utf-8").read()
+dup = re.findall(r'^proc (_pgav_\w*) ', src, re.M)
+if dup: bad.append("power_plan: still defines its own copy of %s -- the engine's pass is not the one running" % ", ".join(dup))
+if re.search(r'^[ \t]*update_power_vias -add_vias', src, re.M):
+    bad.append("power_plan: still calls update_power_vias itself -- an add-vias pass outside the engine has no gate")
+if re.search(r'^[^#\n]*\bpg_drc_gate_snapshot\b', src, re.M):
+    bad.append("power_plan: still takes its own BEFORE snapshot -- the engine's pass takes it")
+mrun = re.search(r'^pg_add_vias_run \$REPORT_DIR\s*$', src, re.M)
+mfix = re.search(r'^pg_fix_via_run \$REPORT_DIR\s*$', src, re.M)
+if not mrun: bad.append("power_plan: never calls pg_add_vias_run $REPORT_DIR -- there is no pass to gate")
+if not mfix: bad.append("power_plan: never calls pg_fix_via_run $REPORT_DIR -- fix_via no longer repairs the pass's MINSTEP residue")
+if mrun and mfix and not mrun.start() < mfix.start(): bad.append("power_plan: fix_via runs before the pass it repairs")
+if "info commands pg_add_vias_run" not in src: bad.append("power_plan: does not refuse a toolkit without the pass -- the call would die as an unknown command with no reason given")
+# the engine's pass: the BEFORE snapshot, PARSED, before the edit; the added set
+# through the engine's key; both published under the names this project reads
+a = pos(av, "set d0 [pg_drc_gate_snapshot $before_file", "engine pass")
+mcall = re.search(r'^[ \t]+update_power_vias -add_vias 1', av, re.M)
 b = mcall.start() if mcall else -1
-if b < 0: bad.append("power_plan: no update_power_vias call found - there is no pass to gate")
-if a >= 0 and b >= 0 and not a < b: bad.append("power_plan: BEFORE snapshot is not before update_power_vias")
-if src.count("set ::EVP_PGAV_DRC_BEFORE_FILE ") != 1: bad.append("power_plan: BEFORE path published %d times" % src.count("set ::EVP_PGAV_DRC_BEFORE_FILE "))
-if "set _pgav_d0 [pg_drc_gate_snapshot" not in src: bad.append("power_plan: BEFORE report is not parsed before the pass (an unreadable one would not stop it)")
-# the added set is recorded with the ENGINE's key, so the gate's delete-list and
-# the VIA4.R.4 prune's cannot key a via two different ways
-if "pg_drc_gate_added" not in src: bad.append("power_plan: the added-via set is not recorded through the engine (pg_drc_gate_added)")
-# hook: gate after the artefact check_drc, before the census, inside the edits block
+if b < 0: bad.append("engine pass: no update_power_vias call found")
+if a >= 0 and b >= 0 and not a < b: bad.append("engine pass: BEFORE snapshot is not before update_power_vias")
+if "pg_drc_gate_added" not in av: bad.append("engine pass: the added-via set is not recorded through pg_drc_gate_added")
+for g in ("set ::EVP_PGAV_RAN 1", "set ::EVP_PGAV_DRC_BEFORE_FILE ", "set ::EVP_PGAV_ADDED "):
+    if g not in av: bad.append("engine pass: no longer publishes %s -- the VIA4.R.4 prune and the skip-branch refusal read it" % g.split()[1])
+# hook: the engine's gate after the artefact check_drc, before the census, once
 c = pos(hk, "check_drc -limit 200000 -out_file $REPORT_DIR/pg_post_drc_edits.rep", "hook")
-d = pos(hk, "pg_drc_delta_gate $::EVP_PGAV_DRC_BEFORE_FILE", "hook")
+d = pos(hk, "pg_add_vias_gate $REPORT_DIR/pg_post_drc_edits.rep $REPORT_DIR", "hook")
 e = pos(hk, "pg_post_prune_vias.rep", "hook")
 if -1 not in (c, d, e) and not (c < d < e): bad.append("hook: gate is not between the check_drc artefact and the PG census (order %d %d %d)" % (c, d, e))
-ncall = len(re.findall(r'^[ \t]*(?:lassign \[)?pg_drc_delta_gate \$', hk, re.M))
-if ncall != 1: bad.append("hook: pg_drc_delta_gate called %d times" % ncall)
-if "pg_drc_gate_knobs" not in hk: bad.append("hook: the gate's knobs are not read through the engine's registry, so they reach no manifest")
-# hook: the gate's inputs are the artefact file (re-written by re-checks) and the published BEFORE
-g = hk[d:d+400] if d >= 0 else ""
-# the hook hands the gate the added-set. Without it the gate has nothing it is
-# allowed to delete and every new violation becomes an unexplained refusal.
-if "$::EVP_PGAV_ADDED" not in g: bad.append("hook: the gate is not given the added-via set")
-if "$REPORT_DIR/pg_post_drc_edits.rep" not in g: bad.append("hook: the gate's AFTER is not pg_post_drc_edits.rep")
+ncall = len(re.findall(r'^[ \t]*pg_add_vias_gate ', hk, re.M))
+if ncall != 1: bad.append("hook: pg_add_vias_gate called %d times" % ncall)
+if re.search(r'^[ \t]*(?:lassign \[)?pg_drc_delta_gate ', hk, re.M): bad.append("hook: still calls pg_drc_delta_gate itself as well as the engine's gate")
+# the engine's gate: the added set, the knobs through the registry, the rows on both branches
+gg = re.search(r'^proc pg_add_vias_gate \{.*?^\}', av, re.M | re.S)
+gg = gg.group(0) if gg else ""
+if not gg: bad.append("engine: no pg_add_vias_gate")
+if "$::PG_ADD_VIAS_ADDED" not in gg: bad.append("engine gate: not given the added-via set")
+if "pg_drc_gate_knobs" not in gg: bad.append("engine gate: knobs not read through the registry, so they reach no manifest")
+for row in ("pg_addvias_new_viol_before", "pg_addvias_new_viol_after", "pg_addvias_repaired"):
+    if gg.count(row) < 2: bad.append("engine gate: manifest row %s not written on both branches" % row)
 # hook: skipping the edits block refuses once the pass has run
 f = pos(hk, 'EVP_NO_PG_DRC_EDITS) eq "1"} {', "hook")
 h = hk[f:f+900] if f >= 0 else ""
 if "info exists ::EVP_PGAV_RAN" not in h or "error " not in h: bad.append("hook: EVP_NO_PG_DRC_EDITS=1 does not refuse when the pass ran")
-# hook: rows reach the manifest
-for row in ("pg_addvias_new_viol_before", "pg_addvias_new_viol_after", "pg_addvias_repaired"):
-    if hk.count(row) < 2: bad.append("hook: manifest row %s not written on both branches" % row)
 # power_plan: a deleted via keeps its key (a no-op delete is re-charged, not re-attributed)
 rep = grab("pgdg_repair")
 if "dict unset" in rep: bad.append("engine: pgdg_repair forgets a deleted key -- a silent no-op would be blamed on a neighbour")
@@ -189,7 +193,7 @@ PASS=0; FAIL=0
 if [ -s "$WORK/joins.txt" ]; then
     while IFS= read -r l || [ -n "$l" ]; do printf '  FAIL  JOINED: %s\n' "$l"; FAIL=$((FAIL+1)); done < "$WORK/joins.txt"
 else
-    echo "  PASS  JOINED: snapshot before update_power_vias; gate after the check_drc artefact and before the census; skip branch refuses; rows on both branches; deleted keys kept"
+    echo "  PASS  JOINED: power_plan calls the engine pass and fix_via and copies neither; the pass snapshots before update_power_vias; the hook calls the engine gate once, after the check_drc artefact and before the census; skip branch refuses; rows on both branches; deleted keys kept"
     PASS=$((PASS+1))
 fi
 

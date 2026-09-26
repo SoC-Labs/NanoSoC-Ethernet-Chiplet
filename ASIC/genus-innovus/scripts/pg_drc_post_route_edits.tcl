@@ -744,7 +744,7 @@ if {$PG_DRC_V4R4} {
             error "VIA4.R.4 prune: PG_V4R4_PRUNE_ADDED is on but ::EVP_PGAV_ADDED\
                    does not exist. power_plan.tcl publishes it when the add-vias\
                    pass runs, so either that pass was skipped\
-                   (EVP_PG_ADD_VIAS=off -- then turn this off too) or the two\
+                   (PG_ADD_VIAS=off -- then turn this off too) or the two\
                    scripts have drifted. Refusing to prune blind."
         }
         set _faces [pg_drc_branch_added_faces $::EVP_PGAV_ADDED M5]
@@ -825,7 +825,7 @@ if {$PG_DRC_V4R4} {
            $_n site(s) have a landing too small to hold two cuts at all, so\
            _pg_v4r4_apply would refuse them a few lines below this check. The\
            repair has to happen UPSTREAM -- stop whatever created a single-cut\
-           VIA4 on a narrow branch inside the wide-M5 shadow. EVP_PG_ADD_VIAS\
+           VIA4 on a narrow branch inside the wide-M5 shadow. PG_ADD_VIAS\
            is the usual author: it adds vias wherever a marker asks and does\
            not know this rule."
     }
@@ -845,7 +845,7 @@ if {$PG_DRC_V4R4} {
                to the PG add-vias pass, by its own via or by the M5 plate that\
                arms the rule, so what is left was not created by this flow's\
                add-vias. Either find what did create it, or set\
-               EVP_PG_ADD_VIAS=off to establish whether add-vias is involved at\
+               PG_ADD_VIAS=off to establish whether add-vias is involved at\
                all -- that control takes about six minutes to the seek."
     }
     if {$PG_DRC_DRY_RUN} {

@@ -92,9 +92,9 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
     # violations ungated, and look like a run that measured them. Refuse.
     if {[info exists ::EVP_PGAV_RAN]} {
         error "post_powerplan: EVP_NO_PG_DRC_EDITS=1 but the PG add-vias pass\
-               RAN (EVP_PG_ADD_VIAS is not off). Its delta gate runs inside the\
+               RAN (PG_ADD_VIAS is not off). Its delta gate runs inside the\
                PG DRC edits block, so skipping the block leaves the pass's\
-               violations unmeasured. Set EVP_PG_ADD_VIAS=off as well, or drop\
+               violations unmeasured. Set PG_ADD_VIAS=off as well, or drop\
                EVP_NO_PG_DRC_EDITS."
     }
     if {[info commands warn] ne ""} {
@@ -227,65 +227,14 @@ if {[info exists ::env(EVP_NO_PG_DRC_EDITS)] && $::env(EVP_NO_PG_DRC_EDITS) eq "
         # re-opens the marker site the via filled, and check_power_vias /
         # check_connectivity are what measure that cost.
         ########################################################################
-        if {[info exists ::EVP_PGAV_RAN]} {
-            if {![info exists ::EVP_PGAV_DRC_BEFORE_FILE]} {
-                error "post_powerplan: the PG add-vias pass ran but published no\
-                       BEFORE check_drc report (::EVP_PGAV_DRC_BEFORE_FILE).\
-                       power_plan.tcl and this hook have drifted apart; the\
-                       pass's violations are unmeasured. Not proceeding."
-            }
-            if {[info commands pg_drc_delta_gate] eq ""} {
-                error "post_powerplan: the PG add-vias pass ran but\
-                       pg_drc_delta_gate is not defined -- power_plan.tcl did\
-                       not source the engine's flow/power/pg_drc_delta_gate.tcl\
-                       while this hook expects it. Not proceeding unmeasured."
-            }
-            if {![info exists ::EVP_PGAV_ADDED]} {
-                error "post_powerplan: the PG add-vias pass ran but published no\
-                       added-via set (::EVP_PGAV_ADDED). The gate may only delete\
-                       what the pass added; with no such set it would either\
-                       delete nothing or delete somebody else's geometry.\
-                       Not proceeding."
-            }
-            # THE KNOBS ARE THE ENGINE'S: PG_DRC_GATE_ROUNDS / _REACH / _MAX_DEL
-            # / _LIMIT, each registered in the run manifest, each still honouring
-            # its EVP_PG_ADD_VIAS_GATE_* predecessor with a deprecation line.
-            lassign [pg_drc_gate_knobs] _pgg_rounds _pgg_reach _pgg_maxdel _pgg_limit
-            if {[info commands say] ne ""} {
-                say "post_powerplan: PG add-vias delta gate -- AFTER minus BEFORE must be empty"
-            }
-            lassign [pg_drc_delta_gate $::EVP_PGAV_DRC_BEFORE_FILE \
-                                    $REPORT_DIR/pg_post_drc_edits.rep \
-                                    $REPORT_DIR/pg_addvias_gate.rep \
-                                    $::EVP_PGAV_ADDED \
-                                    $_pgg_rounds $_pgg_reach $_pgg_maxdel \
-                                    "the PG add-vias pass" \
-                                    $_pgg_limit] _pgg_n0 _pgg_n1 _pgg_rep
-            set _pgg_keys {}
-            foreach _pgg_d $_pgg_rep { lappend _pgg_keys [lindex $_pgg_d 0] }
-            set _pgg_rows [list \
-                pg_addvias_new_viol_before $_pgg_n0 \
-                pg_addvias_new_viol_after  $_pgg_n1 \
-                pg_addvias_repaired        "[llength $_pgg_rep] [join $_pgg_keys { }]"]
-            unset -nocomplain _pgg_d _pgg_keys
-        } else {
-            set _pgg_rows [list \
-                pg_addvias_new_viol_before "not-run (EVP_PG_ADD_VIAS=off)" \
-                pg_addvias_new_viol_after  "not-run (EVP_PG_ADD_VIAS=off)" \
-                pg_addvias_repaired        "not-run (EVP_PG_ADD_VIAS=off)"]
-        }
-        # Manifest rows. place_audit is the engine's collector (2_place.tcl) and
-        # lands in place_manifest.txt and place_pg_audit.rep; the fallback
-        # appends to the same list it reads.
-        foreach {_pgg_k _pgg_v} $_pgg_rows {
-            if {[info commands place_audit] ne ""} {
-                place_audit $_pgg_k $_pgg_v
-            } else {
-                lappend ::PLACE_AUDIT $_pgg_k $_pgg_v
-            }
-        }
-        unset -nocomplain _pgg_rounds _pgg_reach _pgg_maxdel _pgg_limit \
-                          _pgg_n0 _pgg_n1 _pgg_rep _pgg_rows _pgg_k _pgg_v
+        # THE CALL IS THE ENGINE'S (pg_add_vias_gate, flow/power/pg_add_vias.tcl,
+        # promoted 2026-09-26): the refusals when the pass published no BEFORE
+        # report or no added set, the knobs through pg_drc_gate_knobs, the
+        # pg_drc_delta_gate call on the artefact just written, and the three
+        # pg_addvias_* manifest rows -- "not-run" when the pass was off. It
+        # marks the pass gated, so the place stage does not gate it a second
+        # time after this hook returns.
+        pg_add_vias_gate $REPORT_DIR/pg_post_drc_edits.rep $REPORT_DIR
 
         # THE PRUNE DELETES PG VIAS, AND UNTIL NOW NOTHING LOOKED AT THE GRID IT
         # LEFT. Both check_power_vias calls live inside power_plan.tcl's add-vias
