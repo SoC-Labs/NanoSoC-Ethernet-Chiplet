@@ -4,7 +4,8 @@
 implemented independently. Do not invent, rename, reorder or "improve" any port. If a port
 seems wrong, say so in your report — do not silently change it.
 
-Target: IEEE 1149.1-2001, EXTEST/SAMPLE/PRELOAD/BYPASS/IDCODE/HIGHZ/CLAMP.
+Target: IEEE 1149.1-2001, EXTEST/SAMPLE/PRELOAD/BYPASS/IDCODE/CLAMP. HIGHZ is **not**
+implemented; see the note under the instruction table.
 Technology: TSMC 65LP, `tcbn65lp`. Plain synthesisable SystemVerilog — **no vendor cells,
 no DesignWare instantiation, no `initial` blocks, no `#` delays** in RTL.
 
@@ -102,7 +103,7 @@ Behaviour: shift/capture flop as above but captures `func_in`. The update flop l
 the shift flop on the **falling** edge of `tck` when `update_dr` is high — this is required
 by 1149.1 so the driven value does not glitch mid-shift. `func_out = mode ? update_q : func_in`.
 
-**`mode` must be 0 whenever the TAP is not in EXTEST/CLAMP/HIGHZ**, so normal operation is
+**`mode` must be 0 whenever the TAP is not in EXTEST/CLAMP**, so normal operation is
 bit-for-bit unchanged. Reset (`trst_n` low) must clear the update flop and force `mode`
 transparent at the wrapper level.
 
@@ -159,7 +160,7 @@ module bscan_ir #(
   output wire sel_idcode,
   output wire sel_boundary,  // EXTEST | SAMPLE_PRELOAD. NOT clamp -- see the table.
   output wire mode,          // drive the boundary register onto the pads
-  output wire highz          // tri-state all outputs
+  output wire highz          // tri-state all outputs. Constant 0: HIGHZ is not decoded.
 );
 ```
 
@@ -171,10 +172,16 @@ Instruction encoding (IR_WIDTH = 4):
 | `SAMPLE_PRELOAD` | `4'b0001` | boundary | 0 | 0 |
 | `IDCODE` | `4'b0010` | idcode | 0 | 0 |
 | `CLAMP` | `4'b0011` | bypass | 1 | 0 |
-| `HIGHZ` | `4'b0100` | bypass | 0 | 1 |
 | `BYPASS` | `4'b1111` | bypass | 0 | 0 |
 | *(all others)* | — | bypass | 0 | 0 |
 
+- **`4'b0100` is plain BYPASS, not HIGHZ.** This table listed it as HIGHZ (`highz` = 1)
+  until 2026-09-28. The RTL stopped decoding it in `f76df69` (2026-08-20), in favour of the
+  BSDL, which lists `0100` among the BYPASS codes: `bscan_ir.sv:201-230` has arms for
+  EXTEST, SAMPLE_PRELOAD, IDCODE, CLAMP and BYPASS only, so `0100` takes `default`
+  (`5'b10000`) and `highz` never rises. The `highz` port is kept so the interface is
+  unchanged. Implementing HIGHZ for real needs a control cell on each of the 15 pure-output
+  pads, a BSDL entry and this row, all together (`scripts/gen_bscan.py:115-119`).
 - `capture_ir` must load `IR_WIDTH'b01` into the low two bits (1149.1 mandates `...01`).
 - On `trst_n` low the instruction resets to **IDCODE**.
 - The instruction takes effect on `update_ir`; the shift register is separate from the
