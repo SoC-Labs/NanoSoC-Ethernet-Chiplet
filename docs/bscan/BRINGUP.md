@@ -43,16 +43,25 @@ so with `SE = 0` there is no defined-safe enable value to fall back on.
 **`SWDIO` (TMS) has no such problem** — reset leaves its driver tri-stated
 (`verif/bscan/tb_bscan_gate.sv:195–204`). It is safe to take before `SE`. TDI is not.
 
-### One more: `0100` is not BYPASS on this die
+### One more: `0100` is plain BYPASS; HIGHZ is not implemented
 
 The BSDL declares opcode `0100` as one of the codes that map to BYPASS
-(`sys_desc/bscan/nanosoc_eth_chiplet_pads.bsdl:215`). **The silicon decodes `0100`
-as HIGHZ** (`src/rtl/bscan/bscan_ir.sv:139` `INSN_HIGHZ = 'h4`, and `:206`
-`INSN_HIGHZ : dec = 5'b10001` — BYPASS in the chain, `highz` asserted). The DR is
-BYPASS either way, so shifting behaves as the BSDL says, **but issuing `0100` also
-tri-states the 13 bidirectional and 2 open-drain pads.**
+(`sys_desc/bscan/nanosoc_eth_chiplet_pads.bsdl:215`), and the RTL agrees. The
+decode case in `src/rtl/bscan/bscan_ir.sv:201-230` has arms for EXTEST,
+SAMPLE_PRELOAD, IDCODE, CLAMP and BYPASS only, so `0100` takes `default`
+(`5'b10000`, BYPASS) and `highz` never rises. (`:139` still defines `INSN_HIGHZ`,
+but nothing uses it.)
 
-**Use `1111` for BYPASS. Never `0100`.** See §9 for why the BSDL says what it says.
+**Corrected 2026-09-28.** Until then this section said the silicon decodes `0100` as
+HIGHZ and tri-states the 13 bidir and 2 open-drain pads. That described the RTL
+*before* `f76df69` (2026-08-20), which removed the HIGHZ arm, and this page was
+committed in that same commit without being updated. `f76df69` predates the
+2026-08-21 resynthesis that rc4 descends from. The rc4 netlist does not keep the
+decode's signal names, so gate-level confirmation is inferred from the source, not
+traced.
+
+**Use `1111` for BYPASS.** It is the canonical all-ones code and correct under
+either reading. See §9 for why the BSDL does not offer HIGHZ.
 
 ---
 
@@ -244,7 +253,7 @@ From `verif/bscan/tb_bscan_gate.sv:604–613`:
 
 ### B1. BYPASS: prove the DR is exactly one stage
 
-1. Load IR = **`1111`** (BYPASS). *(Not `0100` — see the warning at the top.)*
+1. Load IR = **`1111`** (BYPASS). *(`0100` also decodes to BYPASS — see the note at the top — but `1111` is the canonical code.)*
 2. Shift 32 bits through the DR.
 3. Capture-DR must load **0**, so the first bit out is `0`.
 4. Every subsequent bit must reappear **delayed by exactly one TCK**.
@@ -555,11 +564,13 @@ All of these are declared in the BSDL rather than discovered on a tester
    *"declaring HIGHZ while 15 system outputs keep driving is a conformance claim the
    silicon does not honour, and a tester would trust it."*
 
-   **But the silicon still decodes `0100` as HIGHZ** (`src/rtl/bscan/bscan_ir.sv:139`,
-   `:206`) and the wrapper still drives every control cell from it
-   (`src/rtl/bscan/nanosoc_eth_chiplet_bscan.sv:434`, `bsr_highz`). Issuing `0100`
-   therefore tri-states the 13 bidir and 2 open-drain pads while the BSDL says you
-   asked for BYPASS. **Use `1111`.**
+   **The RTL agrees, since `f76df69` (2026-08-20).** `src/rtl/bscan/bscan_ir.sv` no
+   longer decodes `0100`, so it takes the BYPASS `default`, and `ir_highz` / `bsr_highz`
+   (`src/rtl/bscan/nanosoc_eth_chiplet_bscan.sv:434`) are constant 0. Before that
+   commit the RTL decoded `0100` as HIGHZ: it tri-stated the 13 bidir and 2 open-drain
+   pads under a scan path that looked exactly like BYPASS. That is the disagreement
+   `f76df69` fixed, and until 2026-09-28 this item still described the old RTL.
+   **Use `1111`** as the canonical BYPASS code.
 
    *(To make HIGHZ real: give the 15 pure-output pads a control cell each — chain
    76 → 91 — and route their `OEN` from the register. `scripts/gen_bscan.py:115–119`
@@ -589,7 +600,7 @@ LSB-first, which is what every JTAG tool does for you — give your tool the hex
 | `IDCODE` | `0010` | `0x2` | ID register (32) | functional |
 | `CLAMP` | `0011` | `0x3` | BYPASS (1) | **driven from the update flops** (§9.6) |
 | `BYPASS` | `1111` | `0xF` | BYPASS (1) | functional |
-| *(HIGHZ — do not use)* | `0100` | `0x4` | BYPASS (1) | **bidir + open-drain tri-stated** (§9.5) |
+| *(not HIGHZ — plain BYPASS since `f76df69`)* | `0100` | `0x4` | BYPASS (1) | functional (§9.5) |
 | all other codes | — | — | BYPASS (1) | functional |
 
 `INSTRUCTION_CAPTURE` = `0001`. On Test-Logic-Reset the instruction resets to
