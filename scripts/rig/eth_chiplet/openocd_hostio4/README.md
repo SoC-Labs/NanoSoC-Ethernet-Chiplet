@@ -44,6 +44,9 @@ redundant `Ax`.
 | `test_driver_fixes.sh` | the repeatable tests: one leg per 2026-09-24 fix, the six hardware-proof steps, and an 8224-byte `load_image`. Exit status = failed legs |
 | `fake_mon.py` | a **deliberately misbehaving** monitor for fault injection (console chatter, a flood, a garbled reply line). Not a reference: use `adpmon.py` for that |
 | `h4check.py` | reads a far end's `--trace` as evidence: the commands it received, the bytes inside `U` payloads, and a replay of `adpmon.py`'s memory |
+| `dma250_quiesce.tcl` | pauses the DMA-250 (`NSEC_CTRL.ALLCHPAUSE`) around debug accesses to CPU-local memory, for the rc4 HSEL erratum. Works over SWD or hostio4. See the section below |
+| `dma_mon.py` | `adpmon.py` plus a model of the DMA-250 pause registers and an erratum oracle (a CPU-local access made while an unpaused cross-port copy runs is dropped and counted) |
+| `test_dma250_quiesce.sh` | the quiesce tests against `dma_mon.py`, with a control leg and a mutant leg. Exit status = failed legs |
 
 ## One source, both OpenOCD revisions
 
@@ -70,6 +73,29 @@ is now registration-only, and `git apply --check -R` against a patched pristine
 moved them to `interface.h`, so the two are not interchangeable) and symlinks this
 `hostio4.c` in at build time. `make build` there produces one binary carrying both this
 driver and `ahb_qspi`, and its `verify` gate refuses a binary missing either.
+
+## DMA-250 quiesce (rc4 HSEL erratum)
+
+On the rc4 die, an SWD or HOSTIO4 access to the network core's memory (0x0-0x1FFF_FFFF,
+and 0x5xxx_xxxx from SWD) or to CPU1's (0x8-0x9FFF_FFFF) can be **dropped** while the
+DMA-250 runs a copy that crosses bus-matrix ports: answered OKAY on the network core,
+ERROR on CPU1. The debug masters cannot cause it; they are victims only. Firmware built
+with the DMA-250 guard (nanosoc-multicore-system `firmware/include/dma250_hsel_guard.h`)
+never runs such a copy, but an older image or a hand-poked DMA can.
+
+    source dma250_quiesce.tcl
+    dma250_quiesced { load_image app.bin 0x90000000 bin }   ;# pause, run, release
+    dma250_hold_for_gdb chip.ahb                            ;# paused while gdb is attached
+    dma250_release force                                    ;# recover a pause left set
+
+`ALLCHPAUSE` stops every channel at a beat boundary and holds any command enabled
+afterwards off the bus until it is released (proven on the rc4 DMA-250 RTL, block bench).
+Two register traps: `ALLCHPAUSE` is write-1-set (writing 0 does nothing; release is a
+W1C of `NSEC_STATUS.STAT_ALLCHPAUSED`), and `STAT_ALLCHIDLE` is sticky (never poll it
+for "paused"). Cost: firmware DMA does not progress while paused.
+
+Tests: `./test_dma250_quiesce.sh <openocd-with-hostio4>`; the Python twin for host
+scripts is `../dma250_quiesce.py` (`python3 ../test_dma250_quiesce.py`).
 
 ## Reproducing the proofs
 
