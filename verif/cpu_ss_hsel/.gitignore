@@ -1,0 +1,6 @@
+build/
+dma_issue/build/
+results_*.xml
+*.log
+ucli.key
+__pycache__/
