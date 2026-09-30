@@ -121,19 +121,22 @@ measured. Treat it as affected.
 6. **If a DMA copy touched CPU1's window anyway, check CPU1's image CRC before releasing
    CPU1.**
 
-**Known affected software, fix on a branch (not yet merged).** The eth_netapp GDB stub copied CPU1 memory with
-the DMA-250 between CPU1's admin alias and a bounce buffer at `0x1000_F000`. Every `m`, and
-the read half of every `M` and `Z0`, is the E1 shape: CPU1 decodes `0x1000_F0xx` as IMEM
-offset `0x30xx` (16 KB IMEM), so it is expected to zero CPU1 IMEM `0x3000–0x30FF`. Not
-observed on silicon; the same shape is proven in the full-SoC simulation (§6). The fix
-has CPU1 copy its own memory with its own loads and stores and return the bytes over the
-IPC ring: `nanosoc-multicore-system` branch `fix/gdb-stub-cpu-copy` (`b472440`, not yet
-pushed or merged, and not in this repository's submodule pin). There is no bus-only fix:
-CPU0 has no route to CPU1's window, and every CPU0 RAM address the DMA-250 reaches is also
-CPU1 memory. **Until that fix is in, do not use the GDB stub's memory commands (`m`, `M`,
-`Z0`) on CPU1.** Once it is in, those commands need CPU1 running one of the paired programs
-(`chip_core_demo_worker`, `telnet_worker`). After CPU1 faults (for example, at a
-breakpoint) they return `E01`, so use SWD to inspect CPU1 memory. A first audit of the other DMA-250 uses in
+**Known affected software, fixed from the current submodule pin.** The eth_netapp GDB stub
+copied CPU1 memory with the DMA-250 between CPU1's admin alias and a bounce buffer at
+`0x1000_F000`. Every `m`, and the read half of every `M` and `Z0`, is the E1 shape: CPU1
+decodes `0x1000_F0xx` as IMEM offset `0x30xx` (16 KB IMEM), so it is expected to zero CPU1
+IMEM `0x3000–0x30FF`. Not observed on silicon; the same shape is proven in the full-SoC
+simulation (§6). There is no bus-only fix: CPU0 has no route to CPU1's window, and every
+CPU0 RAM address the DMA-250 reaches is also CPU1 memory. The fix has CPU1 copy its own
+memory with its own loads and stores and return the bytes over IPC ring socket 3
+(`nanosoc-multicore-system` `f25a3e2`, merged as `9507a93`, which this repository pins).
+The `eth_netapp_gdb*` and `eth_netapp_demo*` images built from that pin link no DMA-250
+copy code. **An image built from an earlier pin still has the bug: do not use its memory
+commands (`m`, `M`, `Z0`) on CPU1.** The fixed commands need CPU1 running
+`chip_core_demo_worker` or `telnet_worker` built from the same pin; both now serve socket 3.
+After CPU1 faults (for example, at a breakpoint) they return `E01`, so use SWD to inspect
+CPU1 memory. The fix is proven by host tests and a firmware build, not yet on silicon.
+A first audit of the other DMA-250 uses in
 `nanosoc-multicore-system/firmware/` and this repository's `scripts/` found only same-port
 copies, register reads, and one unimplemented skeleton (the PL022 SPI DMA mode); a full
 inventory of DMA-250 users and host debug paths is being completed.
