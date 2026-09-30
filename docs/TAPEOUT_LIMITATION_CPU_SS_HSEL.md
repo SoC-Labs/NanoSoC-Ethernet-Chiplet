@@ -141,6 +141,29 @@ A first audit of the other DMA-250 uses in
 copies, register reads, and one unimplemented skeleton (the PL022 SPI DMA mode); a full
 inventory of DMA-250 users and host debug paths is being completed.
 
+**Enforcement in firmware (rules 1, 2 and 4).** Since this repository pinned
+`nanosoc-multicore-system` `f474197`, every firmware target there that links the DMA-250
+driver also links a guard (`firmware/include/dma250_hsel_guard.h`,
+`firmware/lib/dma250_hsel_guard/`). The driver's `dma250_mem2mem_1d()` is wrapped at link
+time (`-Wl,--wrap`), so every copy through the driver is checked first. The guard refuses a
+copy, and returns an error instead of starting it, when:
+- its source and destination sit behind different ports and one of them is affected;
+- either range spans two windows or falls outside the DMA's decode;
+- any channel is already running, or the channel is not allowed (only CH0 by default);
+- the command is linked or auto-restarting.
+
+CPU1 builds refuse every DMA-250 command. `dma250_hsel_copy_sync()` retries a refused copy
+with the CPU when this CPU can reach both ends. `firmware/tests/check_dma250_guard.py`
+finds code that starts the DMA without the driver, or calls the driver past the guard; it
+is run by hand, not by the build. The guard does not cover images built from an earlier
+pin, a DMA started by a debugger, or rules 3, 5 and 6.
+
+**Host tools (rule 5).** `scripts/rig/eth_chiplet/dma250_quiesce.py` and
+`openocd_hostio4/dma250_quiesce.tcl` pause every DMA-250 channel (`NSEC_CTRL.ALLCHPAUSE`,
+`0x2000_020C` bit 9) around an SWD or HOSTIO4 access to an affected window, and release it
+by clearing `STAT_ALLCHPAUSED` (`0x2000_0208` bit 19). They are opt-in: no host tool calls
+them by default, so wrap the access yourself (see `openocd_hostio4/README.md`).
+
 ---
 
 ## 5. Not affected
