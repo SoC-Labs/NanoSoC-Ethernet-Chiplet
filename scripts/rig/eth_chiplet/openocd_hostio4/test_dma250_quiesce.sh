@@ -20,6 +20,20 @@
 #       from the sticky STAT_ALLCHIDLE bit. The oracle must catch it (the body
 #       runs unpaused and a violation is recorded), or the harness cannot tell
 #       a correct quiesce from a wrong one.
+#   A1  AUTO MODE: dma250_auto_on, then plain mww + mdw to network-core IMEM with
+#       the DMA running: lands, 0 violations, one pause/release per access.
+#   A2  AUTO MODE leaves unaffected addresses alone: mww 0x2A00_0000 issues no pause.
+#   A3  AUTO MODE: plain load_image into CPU1 IMEM 0x9000_0000: lands, 0 violations,
+#       exactly one pause.
+#   A4  CONTROL for A1: auto on then off, mww is dropped again (the wrap is what
+#       protected it, and off really restores the raw command).
+#   A5  MUTANT: the window check answers "not affected" for everything; the
+#       oracle must catch the unpaused access.
+#   A6  AUTO MODE + the DMA never acknowledges: the mww is refused, IMEM unchanged.
+#   A7  dma250_auto_on BEFORE init (no memory commands yet) errors instead of
+#       printing "ON" and wrapping nothing.
+#   B1  the shipped hostio4-bench.cfg turns AUTO MODE on: plain mww lands, 0 violations.
+#   B2  CONTROL for B1: the same cfg with DMA250_AUTO 0 drops the mww.
 #   G1  dma250_hold_for_gdb: arm-none-eabi-gdb attaches to the mem_ap target and
 #       detaches: exactly one pause at attach and one release at detach. (Memory
 #       access through gdb on mem_ap is not tested: stock arm-none-eabi-gdb 10.3
@@ -43,8 +57,10 @@ leg() {
       > "$OUT/$name.mon" 2>&1 &
   local MP=$!
   for i in $(seq 1 60); do grep -q "^127" "$OUT/$name.mon" 2>/dev/null && break; sleep 0.1; done
-  sed "s|@PORT@|127.0.0.1:$P|" "$HERE/hostio4-fake.cfg" > "$OUT/$name.cfg"
-  timeout -k 5 60 "$OOCD" -s "$(dirname "$OOCD")/../share/openocd/scripts" -f "$OUT/$name.cfg" \
+  sed -e "s|@PORT@|127.0.0.1:$P|" -e "s|127.0.0.1:24900|127.0.0.1:$P|" \
+      "${LEG_CFG:-$HERE/hostio4-fake.cfg}" > "$OUT/$name.cfg"
+  timeout -k 5 60 "$OOCD" -s "$(dirname "$OOCD")/../share/openocd/scripts" \
+      ${LEG_PRE:+-c "$LEG_PRE"} -f "$OUT/$name.cfg" \
       -c "telnet_port disabled" -c "tcl_port disabled" \
       -c "init" -c "$script" -c "shutdown" > "$OUT/$name.log" 2>&1
   echo "openocd rc=$?" >> "$OUT/$name.log"
@@ -92,6 +108,52 @@ sed -e 's@dma250q_wr $ctrl_a \[expr {$ctrl | $ALLCHPAUSE}\]@# MUTANT: request re
 leg Q5 "--dma-running" \
   "source $OUT/mutant.tcl; dma250_quiesced { mww 0x10000000 0x44444444 }" \
   'rep Q5 "violations [1-9]"' 'rep Q5 "mem 0x10000000 0x00000000"'
+
+AUTO="$TCL; dma250_auto_on"
+leg A1 "--dma-running" \
+  "$AUTO; mww 0x10000000 0x55555555; echo \"RD [mdw 0x10000000]\"" \
+  'rep A1 "violations 0"' 'rep A1 "mem 0x10000000 0x55555555"' 'cnt A1 "pause-req" 2' 'cnt A1 "release" 2' \
+  'rep A1 "final ALLCHPAUSE 0"' 'grep -q "^RD .*55555555" "$OUT/A1.log"'
+
+leg A2 "--dma-running" \
+  "$AUTO; mww 0x2A000000 0x00000001" \
+  'nrep A2 "pause-req"' 'grep -q "openocd rc=0" "$OUT/A2.log"'
+
+leg A3 "--dma-running" \
+  "$AUTO; load_image $OUT/img8.bin 0x90000000 bin" \
+  'rep A3 "violations 0"' 'rep A3 "mem 0x9000001c 0x0a0b0c08"' 'cnt A3 "pause-req" 1' 'cnt A3 "release" 1'
+
+leg A4 "--dma-running" \
+  "$AUTO; dma250_auto_off; mww 0x10000000 0x77777777" \
+  'rep A4 "violations [1-9]"' 'rep A4 "mem 0x10000000 0x00000000"'
+
+sed 's@^proc dma250q_affected {addr nbytes} {@&\n    return 0 ;# MUTANT: nothing is affected@' \
+    "$HERE/dma250_quiesce.tcl" > "$OUT/mutant_auto.tcl"
+[ "$(grep -c 'MUTANT: nothing' "$OUT/mutant_auto.tcl")" = 1 ] || { echo "FAIL A5 (mutant not applied)"; FAILS=$((FAILS+1)); }
+leg A5 "--dma-running" \
+  "source $OUT/mutant_auto.tcl; dma250_auto_on; mww 0x10000000 0x99999999" \
+  'rep A5 "violations [1-9]"' 'rep A5 "mem 0x10000000 0x00000000"'
+
+leg A6 "--dma-running --dma-no-ack" \
+  "$AUTO; if {[catch {mww 0x10000000 0x22222222} msg]} { echo \"REFUSED: \$msg\" }" \
+  'rep A6 "violations 0"' 'rep A6 "mem 0x10000000 0x00000000"' 'grep -q "REFUSED: dma250_pause" "$OUT/A6.log"'
+
+# A7 runs dma250_auto_on before init (LEG_PRE comes before -f and the cfg's init)
+LEG_PRE="source $HERE/dma250_quiesce.tcl; if {[catch dma250_auto_on msg]} { echo \"EARLY-REFUSED: \$msg\" }" \
+leg A7 "" \
+  "echo \"AUTO=\$::dma250q_auto\"" \
+  'grep -q "EARLY-REFUSED: dma250_auto_on: no memory commands" "$OUT/A7.log"' 'grep -q "^AUTO=0" "$OUT/A7.log"' \
+  '! grep -q "auto mode ON" "$OUT/A7.log"'
+
+LEG_CFG=$HERE/hostio4-bench.cfg LEG_PRE="set DMA250_QUIESCE_TCL $HERE/dma250_quiesce.tcl" \
+leg B1 "--dma-running" \
+  "mww 0x10000000 0x88888888" \
+  'rep B1 "violations 0"' 'rep B1 "mem 0x10000000 0x88888888"' 'grep -q "auto mode ON" "$OUT/B1.log"'
+
+LEG_CFG=$HERE/hostio4-bench.cfg LEG_PRE="set DMA250_AUTO 0" \
+leg B2 "--dma-running" \
+  "mww 0x10000000 0x88888888" \
+  'rep B2 "violations [1-9]"' 'rep B2 "mem 0x10000000 0x00000000"' '! grep -q "auto mode ON" "$OUT/B2.log"'
 
 # G1: gdb attach/detach hold (needs arm-none-eabi-gdb on PATH; skipped if absent)
 if command -v arm-none-eabi-gdb >/dev/null 2>&1; then

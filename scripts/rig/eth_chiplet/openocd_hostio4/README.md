@@ -83,9 +83,27 @@ ERROR on CPU1. The debug masters cannot cause it; they are victims only. Firmwar
 with the DMA-250 guard (nanosoc-multicore-system `firmware/include/dma250_hsel_guard.h`)
 never runs such a copy, but an older image or a hand-poked DMA can.
 
+**On by default in `hostio4-bench.cfg` and `hostio4-gdb.cfg`.** Both source
+`dma250_quiesce.tcl` and turn on its AUTO MODE at the target's `examine-end`:
+- `mdw/mdh/mdb/mdd` and `mww/mwh/mwb/mwd` pause the DMA-250 only when they touch a
+  CPU-local window;
+- `load_image`, `dump_image` and `verify_image` always pause;
+- the DMA stays paused for as long as gdb is attached.
+
+If the DMA does not acknowledge the pause, the access is **refused**, not made
+unprotected. To opt out, pass `-c "set DMA250_AUTO 0"` before `-f`; inside a session,
+`dma250_auto_off` restores the raw commands.
+
+Not covered:
+- target-scoped forms (`chip.ahb mdw ...`);
+- `read_memory`/`write_memory`.
+
+By hand, with any other config:
+
     source dma250_quiesce.tcl
     dma250_quiesced { load_image app.bin 0x90000000 bin }   ;# pause, run, release
     dma250_hold_for_gdb chip.ahb                            ;# paused while gdb is attached
+    dma250_auto_on                                          ;# after init only: errors if run earlier
     dma250_release force                                    ;# recover a pause left set
 
 `ALLCHPAUSE` stops every channel at a beat boundary and holds any command enabled
