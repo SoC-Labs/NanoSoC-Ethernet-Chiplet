@@ -154,9 +154,12 @@ copy, and returns an error instead of starting it, when:
 
 CPU1 builds refuse every DMA-250 command. `dma250_hsel_copy_sync()` retries a refused copy
 with the CPU when this CPU can reach both ends. `firmware/tests/check_dma250_guard.py`
-finds code that starts the DMA without the driver, or calls the driver past the guard; it
-is run by hand, not by the build. The guard does not cover images built from an earlier
-pin, a DMA started by a debugger, or rules 3, 5 and 6.
+finds code that starts the DMA without the driver, or calls the driver past the guard.
+Since `nanosoc-multicore-system` `9dcb73a`, the firmware build runs it on every guarded
+image as part of that image's link: an image that bypasses the guard fails to build and is
+deleted. The source scan and the checker's own selftest run on every build too. The guard
+does not cover images built from an earlier pin, a DMA started by a debugger, or rules 3,
+5 and 6.
 
 **Host tools (rule 5).** `scripts/rig/eth_chiplet/dma250_quiesce.py` and
 `openocd_hostio4/dma250_quiesce.tcl` pause every DMA-250 channel (`NSEC_CTRL.ALLCHPAUSE`,
