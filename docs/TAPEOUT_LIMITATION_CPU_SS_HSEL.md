@@ -164,8 +164,18 @@ does not cover images built from an earlier pin, a DMA started by a debugger, or
 **Host tools (rule 5).** `scripts/rig/eth_chiplet/dma250_quiesce.py` and
 `openocd_hostio4/dma250_quiesce.tcl` pause every DMA-250 channel (`NSEC_CTRL.ALLCHPAUSE`,
 `0x2000_020C` bit 9) around an SWD or HOSTIO4 access to an affected window, and release it
-by clearing `STAT_ALLCHPAUSED` (`0x2000_0208` bit 19). They are opt-in: no host tool calls
-them by default, so wrap the access yourself (see `openocd_hostio4/README.md`).
+by clearing `STAT_ALLCHPAUSED` (`0x2000_0208` bit 19). The OpenOCD bench and gdb configs
+(`openocd_hostio4/hostio4-bench.cfg`, `hostio4-gdb.cfg`) turn this on by default:
+- every `md*`/`mw*` that touches an affected window is paused;
+- every `load_image`, `dump_image` and `verify_image` is paused;
+- the DMA stays paused for as long as gdb is attached.
+
+An access whose pause is not acknowledged is refused. Not covered:
+- the target-scoped forms (`chip.ahb mdw`);
+- `read_memory`/`write_memory`;
+- Python host scripts. Wrap those in `dma250_quiesce.py` yourself.
+
+See `openocd_hostio4/README.md`.
 
 ---
 

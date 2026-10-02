@@ -35,6 +35,7 @@
 #   dma250_hold_for_gdb chip.ahb                            ;# paused while gdb is attached
 #   dma250_status                                           ;# registers, for a human
 #   dma250_release force                                    ;# recover a pause left set
+#   dma250_auto_on / dma250_auto_off                        ;# see AUTO MODE below
 #
 # COST. While paused, firmware's DMA commands do not progress; a firmware poll
 # with a short bound can time out. Hold the pause only around debug accesses.
@@ -136,3 +137,84 @@ proc dma250_status {} {
         echo [format "%-11s 0x%08x = 0x%08x" $name [dma250q_a $off] [dma250q_rd [dma250q_a $off]]]
     }
 }
+
+# ---------------------------------------------------------------------------
+# AUTO MODE. dma250_auto_on wraps OpenOCD's own memory commands so nobody has
+# to remember the pause: an access that touches a CPU-local window runs with
+# the DMA-250 paused, anything else goes straight through. hostio4-bench.cfg
+# and hostio4-gdb.cfg turn it on (set DMA250_AUTO 0 before -f to opt out).
+#   md[wbhd] / mw[wbhd] [phys] ADDR ...   paused only if [ADDR, ADDR+len) is affected
+#   load_image, dump_image, verify_image  always paused (the range is in a file)
+# OpenOCD registers its memory commands during `init`, so dma250_auto_on must
+# run after it: the cfgs call it from the target's examine-end event. Called
+# earlier it finds nothing to wrap and ERRORS rather than claiming to be on.
+# If the pause cannot be confirmed the access is REFUSED, as with dma250_pause;
+# dma250_auto_off restores the raw commands. NOT covered: target-scoped forms
+# (chip.ahb mdw ...), read_memory/write_memory (this file's own register path),
+# and gdb packets -- dma250_hold_for_gdb covers gdb by pausing for the whole
+# attach. Windows as in dma250_quiesce.py: 0x0-0x1FFF_FFFF and
+# 0x5000_0000-0x5FFF_FFFF (network core), 0x8000_0000-0x9FFF_FFFF (CPU1).
+# ---------------------------------------------------------------------------
+if {![info exists ::dma250q_auto]} { set ::dma250q_auto 0 }
+
+proc dma250q_affected {addr nbytes} {
+    set last [expr {$addr + ($nbytes > 0 ? $nbytes : 1) - 1}]
+    foreach {lo hi} {0x00000000 0x1FFFFFFF 0x50000000 0x5FFFFFFF 0x80000000 0x9FFFFFFF} {
+        if {$addr <= $hi && $last >= $lo} { return 1 }
+    }
+    return 0
+}
+
+# md*/mw*: work out [addr, addr+len) from the arguments, pause if it is affected.
+proc dma250q_mem_cmd {cmd args} {
+    set raw dma250q_raw_$cmd
+    set width [dict get {b 1 h 2 w 4 d 8} [string index $cmd end]]
+    set a $args
+    if {[lindex $a 0] eq "phys"} { set a [lrange $a 1 end] }
+    if {[llength $a] < 1 || [catch {expr {[lindex $a 0] + 0}} addr]} {
+        return [uplevel 1 [list $raw {*}$args]]   ;# let the command report its own usage error
+    }
+    if {[string index $cmd 1] eq "d"} {
+        set count [expr {[llength $a] > 1 ? [lindex $a 1] : 1}]
+    } else {
+        set count [expr {[llength $a] > 2 ? [lindex $a 2] : 1}]
+    }
+    if {[dma250q_affected $addr [expr {$width * $count}]]} {
+        return [dma250_quiesced [list $raw {*}$args]]
+    }
+    return [uplevel 1 [list $raw {*}$args]]
+}
+
+proc dma250_auto_on {} {
+    if {$::dma250q_auto} { return }
+    set wrapped {}
+    foreach cmd {mdw mdh mdb mdd mww mwh mwb mwd} {
+        if {[llength [info commands $cmd]] == 0} { continue }
+        rename $cmd dma250q_raw_$cmd
+        proc $cmd {args} "dma250q_mem_cmd $cmd {*}\$args"
+        lappend wrapped $cmd
+    }
+    foreach cmd {load_image dump_image verify_image} {
+        if {[llength [info commands $cmd]] == 0} { continue }
+        rename $cmd dma250q_raw_$cmd
+        proc $cmd {args} "dma250_quiesced \[list dma250q_raw_$cmd {*}\$args\]"
+        lappend wrapped $cmd
+    }
+    if {[llength $wrapped] == 0} {
+        error "dma250_auto_on: no memory commands exist yet, so nothing was wrapped and AUTO MODE is OFF. Call it after init (e.g. \$target configure -event examine-end { dma250_auto_on })."
+    }
+    set ::dma250q_auto 1
+    dma250q_say "auto mode ON: [join $wrapped {, }] pause the DMA-250 around CPU-local accesses"
+}
+
+proc dma250_auto_off {} {
+    if {!$::dma250q_auto} { return }
+    foreach cmd {mdw mdh mdb mdd mww mwh mwb mwd load_image dump_image verify_image} {
+        if {[llength [info commands dma250q_raw_$cmd]] == 0} { continue }
+        rename $cmd {}
+        rename dma250q_raw_$cmd $cmd
+    }
+    set ::dma250q_auto 0
+    dma250q_say "auto mode OFF: raw memory commands restored"
+}
+
