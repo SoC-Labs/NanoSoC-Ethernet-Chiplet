@@ -125,8 +125,8 @@ measured. Treat it as affected.
 copied CPU1 memory with the DMA-250 between CPU1's admin alias and a bounce buffer at
 `0x1000_F000`. Every `m`, and the read half of every `M` and `Z0`, is the E1 shape: CPU1
 decodes `0x1000_F0xx` as IMEM offset `0x30xx` (16 KB IMEM), so it is expected to zero CPU1
-IMEM `0x3000–0x30FF`. Not observed on silicon; the same shape is proven in the full-SoC
-simulation (§6). There is no bus-only fix: CPU0 has no route to CPU1's window, and every
+IMEM `0x3000–0x30FF`. Reproduced on an FPGA built from the rc4 RTL: 64 of 64 words
+zeroed, DMA DONE, destination correct (§6). Not yet observed on silicon. There is no bus-only fix: CPU0 has no route to CPU1's window, and every
 CPU0 RAM address the DMA-250 reaches is also CPU1 memory. The fix has CPU1 copy its own
 memory with its own loads and stores and return the bytes over IPC ring socket 3
 (`nanosoc-multicore-system` `f25a3e2`, merged as `9507a93`, which this repository pins).
@@ -201,6 +201,7 @@ them by default, so wrap the access yourself (see `openocd_hostio4/README.md`).
 | **Interconnect simulation 2** (independent: the unmodified `multicore_interconnect.sv`, `ethernet_ss_ahb_rmii.sv`, `nanosoc_ss_cpu_plus.sv`, Arm AhbLitePC on every port, scoreboarded memories) | phantom at 0–1 IDLE 12/12, at ≥2 IDLE 0. E2 12/12. 24 of 48 debug writes to network-core IMEM lost, answered OKAY. E3: 4 of 8 writes lost. Repeated write carries debug data in 45 of 75. CPU-only: 0 phantoms in 176. Both gates: clean on 3 seeds |
 | **DMA-250 block level** (the 60 rendered rc4 DMA-250 files plus rc4's wrappers, driven by the firmware's `dma250_mem2mem_1d` sequence; 1–64 beats, 0–3 wait states either side) | 0 IDLE cycles at 736 of 736 source/destination switches; 24/24 copies correct. Control: 2 inserted IDLE cycles measured as 2 |
 | **Full SoC** (`nanosoc_multicore_soc` from the rc4 `build_soc`, the real DMA-250 as the only master, CPUs held idle) | see below |
+| **FPGA, rc4 RTL** (PYNQ-Z2 `pynq_z2_03`, 2026-10-02; the SoC only, no TideLink, 25 MHz; built from a byte-identical copy of rc4's `build_soc`, 332 files) | see below |
 
 Full-SoC results (8-word copies, one channel; `orig` = rc4 as shipped, `ctrl` = the two
 one-line gates of §7):
@@ -212,10 +213,24 @@ one-line gates of §7):
 | network-core DMEM → shared SRAM `0x2D00_0400` | DMA ERROR, **SRAM word zeroed** | DMA ERROR, SRAM intact |
 | network-core DMEM → peer aperture `0x2F00_0400` (OKAY responder) | DONE, **16 writes for 8, all 8 end 0** | DONE, 8 writes, correct |
 
+FPGA results (one DMA-250 channel, CPU1 halted; CPU1 memory seeded and read back over SWD
+through its admin alias, so the check never relies on the DMA's own view):
+
+| Copy | Result |
+|---|---|
+| network-core DMEM → network-core DMEM, through the §4 guard | DONE, correct |
+| CPU1 IMEM `0x9000_1000` → `0x1000_F000` (the old GDB stub), through the guard | refused (`-11`), channel never enabled, CPU1 IMEM intact |
+| the same copy without the guard | DONE, destination correct, **CPU1 IMEM `0x3000–0x30FF` zeroed 64/64** |
+| CPU1 DMEM `0x9800_0100` → network-core DMEM `0x1800_0600` (the full-SoC case above), no guard | DONE, destination correct, **CPU1 DMEM `0x600–0x61F` zeroed 8/8** |
+
+In both unguarded copies the memory on each side of the damaged range (256 bytes for
+IMEM, 32 for DMEM) and the source were unchanged. The bench is the `hsel_proof` app and `hsel_proof_run.tcl` in session
+scratch space, not in this repository (bitstream md5 `d6af6a90…`).
+
 The simulation benches live in session scratch space, not in this repository:
 `overnight/sim/` (simulation 1), `wave16/ethss/` in the nanoSoC-M0-QuickStart-SoC session
 (simulation 2), `hsel6/dma_issue/` and `hsel6/soc/` (DMA-250 and full SoC). Each has a
-README with the method. The defect has not been reproduced on silicon.
+README with the method. The defect has not yet been reproduced on silicon.
 
 **FPGA benches.** Every KR260 and HAPS-SX build of this chip reads the same generated RTL
 and carries both ports ungated. Use them as the silicon mirror for this erratum; a bitstream
