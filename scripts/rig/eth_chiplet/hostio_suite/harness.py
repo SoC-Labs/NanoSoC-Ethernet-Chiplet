@@ -661,6 +661,38 @@ def board_source(pump_ms=PUMP_MS, stuck_ms=STUCK_MS, rx_cap=RX_CAP):
     return _BOARD % {"cap": int(rx_cap), "pump": int(pump_ms), "stuck": int(stuck_ms)}
 
 
+def _target_body(target, test_id, default_fn, rec=None):
+    """The body to run for `test_id` on `target`: its own, or the vehicle's.
+
+    A vehicle-port profile may give a test a BODY written for its own memory
+    map (Target.test_bodies, 'module:function'). The test keeps its id, its
+    control role and its gating, so THE RULE still holds: whatever it gates is
+    VOID unless the vehicle's body PASSES. The record says which body ran.
+    """
+    spec = (target.test_bodies or {}).get(test_id) if target is not None else None
+    if not spec:
+        return default_fn
+    mod_name, _, fn_name = spec.partition(":")
+    mod = importlib.import_module(mod_name)
+    fn = getattr(mod, fn_name)
+    if rec is not None:
+        rec.record("target_body", "%s (target %s)" % (spec, target.name))
+    return fn
+
+
+def _write_forbidden(addr):
+    """(lo, hi, why) of the active target's write_forbid band holding addr, or None."""
+    t = active_target()
+    for lo, hi, why in (getattr(t, "write_forbid", None) or ()):
+        if lo <= (addr & 0xFFFFFFFF) <= hi:
+            return lo, hi, why
+    return None
+
+
+class TargetWriteRefused(RuntimeError):
+    """A write the active target's write_forbid table refuses (reports ERROR)."""
+
+
 # ---------------------------------------------------------------------------
 # Adp -- CONTRACT.md section "Adp"
 # ---------------------------------------------------------------------------
@@ -970,6 +1002,12 @@ class Adp(object):
 
     def write(self, addr, val, timeout_ms=CMD_TIMEOUT_MS):
         """A x<addr> ; W x<val>."""
+        fb = _write_forbidden(addr)
+        if fb is not None:
+            raise TargetWriteRefused(
+                "refusing W x%08X to 0x%08X on target %s: 0x%08X-0x%08X %s"
+                % (val & 0xFFFFFFFF, addr & 0xFFFFFFFF, active_target().name,
+                   fb[0], fb[1], fb[2]))
         self.open()
         cs = "%s ; %s" % (ADDR_CMD % (addr & 0xFFFFFFFF),
                           WRITE_CMD % (val & 0xFFFFFFFF))
@@ -1551,6 +1589,9 @@ class Runner(object):
         VOID beats needs because THE RULE beats everything except 'it never ran
         at all by operator choice'.
         """
+        ts = (self.target.test_skips or {}) if self.target is not None else {}
+        if meta.id in ts:
+            return SKIP, ("not applicable on target %s: %s" % (self.target.name, ts[meta.id]))
         h = self._hazard_block(meta)
         if h:
             return SKIP, h
@@ -1613,7 +1654,7 @@ class Runner(object):
         try:
             if self.opts.preamble and meta.preamble:
                 self._preamble()
-            meta.fn(self.adp, rec)
+            _target_body(self.target, meta.id, meta.fn, rec)(self.adp, rec)
         except SkipTest as exc:
             return self._blank(meta, SKIP, "rec.skip: %s" % exc, rec,
                                time.monotonic() - t0)
@@ -2505,6 +2546,10 @@ def _selftest(out=sys.stdout):
     out.write("\n[6] HIO-307's coarse rate band -- sized against its window\n")
     _selftest_coarse_band(ck, out)
 
+    out.write("\n[7] Vehicle port (haps_sx_compute) -- skips, bodies, overrides, "
+              "write guard\n")
+    _selftest_vehicle_port(ck, out)
+
     # section [4] counts itself separately so the ORIGINAL core total stays
     # countable; everything else, this section included, is core.
     core = n[0] - n_target[0]
@@ -3076,6 +3121,103 @@ def _selftest_coarse_band(ck, out):
                     "perf_snap_delta_window_s") if "hclk" in k], [])
 
 
+def _selftest_vehicle_port(ck, out):
+    """[7] The vehicle-port mechanisms, each shown working AND inert.
+
+    A target skip must SKIP on the porting target and do nothing on eth; a body
+    replacement must keep THE RULE (its gated test is VOID when the replacement
+    fails); a module override must change the constant and record what it
+    replaced; the write guard must refuse on compute and pass on eth.
+    """
+    from io import StringIO
+    import types
+    comp = targets.resolve("haps_sx_compute")
+    eth = targets.resolve("fpga_kr260")
+    ck("alias compute -> haps_sx_compute", targets.resolve("compute").name,
+       "haps_sx_compute")
+    ck("eth profiles carry NO port tables",
+       (eth.test_skips, eth.test_bodies, eth.module_overrides, eth.write_forbid),
+       ({}, {}, (), ()))
+
+    # -- target skip ---------------------------------------------------------
+    reg = Registry("vp-skip")
+
+    @test("HIO-101", tier=1, registry=reg, purpose="eth-only")
+    def _e(adp, rec):
+        rec.check("ran", True)
+
+    for t, want in ((comp, SKIP), (eth, PASS)):
+        r = Runner(reg, Opts(preamble=False, target=t), adp=_FakeAdp(), out=StringIO())
+        r.run()
+        ck("target skip: HIO-101 on %s" % t.name, r.results["HIO-101"]["outcome"], want)
+    r = Runner(reg, Opts(preamble=False, target=comp), adp=_FakeAdp(), out=StringIO())
+    r.run()
+    ck("target skip reason names the target",
+       "haps_sx_compute" in (r.results["HIO-101"]["reason"] or ""), True)
+
+    # -- body replacement keeps THE RULE --------------------------------------
+    mod = types.ModuleType("_vp_bodies")
+    mod.good = lambda adp, rec: rec.check("compute body ran", True)
+    mod.bad = lambda adp, rec: rec.check("compute body fails", False)
+    sys.modules["_vp_bodies"] = mod
+
+    def build():
+        rg = Registry("vp-body")
+
+        @test("HIO-106", tier=1, control=True, gates=["HIO-120"], registry=rg,
+              purpose="control")
+        def _c(adp, rec):
+            rec.check("eth body", True)
+
+        @test("HIO-120", tier=1, registry=rg, purpose="gated")
+        def _g(adp, rec):
+            rec.check("ran", True)
+        return rg
+
+    for spec, want_c, want_g in (("_vp_bodies:good", PASS, PASS),
+                                 ("_vp_bodies:bad", FAIL, VOID)):
+        t = targets.resolve("haps_sx_compute")
+        t.test_bodies = {"HIO-106": spec}
+        t.test_skips = {}
+        rg = build()
+        r = Runner(rg, Opts(preamble=False, target=t), adp=_FakeAdp(), out=StringIO())
+        r.run()
+        ck("body %s: the control's outcome" % spec, r.results["HIO-106"]["outcome"], want_c)
+        ck("body %s: the gated test's outcome (THE RULE)" % spec,
+           r.results["HIO-120"]["outcome"], want_g)
+    del sys.modules["_vp_bodies"]
+
+    # -- module overrides are applied and recorded ---------------------------
+    m = types.ModuleType("tier0")
+    m.BOOTROM_ADDR = 0x08000000
+    t = targets.resolve("haps_sx_compute")
+    got = targets.apply_module_overrides({"tier0": m}, t)
+    ck("override changes the module constant", m.BOOTROM_ADDR, 0x80000000)
+    rec0 = [g for g in got if g["attr"] == "BOOTROM_ADDR"][0]
+    ck("override records the value it replaced", rec0["replaced"], "0x08000000")
+    m2 = types.ModuleType("tier0")
+    m2.BOOTROM_ADDR = 0x08000000
+    targets.apply_module_overrides({"tier0": m2}, eth)
+    ck("an eth profile overrides nothing", m2.BOOTROM_ADDR, 0x08000000)
+
+    # -- write guard ---------------------------------------------------------
+    prev = active_target()
+    try:
+        set_active_target(comp)
+        a = Adp("/dev/null-never-opened")
+        ck("compute refuses a write to core_remap 0x29000000",
+           _raises(a.write, 0x29000000, 0), "TargetWriteRefused")
+        ck("compute refuses a write into the QSPI XiP aperture (HZ-6)",
+           _raises(a.write, 0x24000000, 0), "TargetWriteRefused")
+        ck("compute does NOT refuse IMEM (tier 2's batteries reach open())",
+           _raises(a.write, 0x90002000, 0) != "TargetWriteRefused", True)
+        set_active_target(eth)
+        ck("eth profile does not refuse 0x29000000 at the harness layer",
+           _raises(a.write, 0x29000000, 0) != "TargetWriteRefused", True)
+    finally:
+        set_active_target(prev)
+
+
 def _raises(fn, *a, **kw):
     """Return the exception type name, or 'no exception'. Used by the selftest."""
     try:
@@ -3297,6 +3439,10 @@ def main(argv=None):
     bindings = []
     if not args.no_target_bindings:
         bindings = targets.apply_module_bindings(LOADED_MODULES, target)
+    # A vehicle-port profile (e.g. haps_sx_compute) re-points tier-module
+    # constants at its own memory map. Empty on every eth profile. Recorded in
+    # the same list, so the run record and --dry-run show each one.
+    bindings = list(bindings) + targets.apply_module_overrides(LOADED_MODULES, target)
 
     gb = compute_gating(reg)
     ids, unmatched = _select(reg, args.tier, args.test)
@@ -3492,10 +3638,16 @@ def _do_dry_run(reg, gb, ids, opts, args):
         m = reg.get(tid)
         note = ""
         hz = runner._hazard_block(m)
-        if hz:
+        tsk = (runner.target.test_skips or {}).get(tid)
+        if tsk:
+            note = "  -> SKIP (target): %s" % tsk[:70]
+        elif hz:
             note = "  -> SKIP: %s" % hz
         elif gb.get(tid):
             note = "  (gated by %s)" % ",".join(gb[tid])
+        body = (runner.target.test_bodies or {}).get(tid)
+        if body:
+            note += "  [body: %s]" % body
         print("  %d  %-9s %-52s%s" % (m.tier, m.id, (m.purpose or "")[:52], note))
     print("")
     print("controls: %s" % (", ".join(m.id for m in reg.controls()) or "(none)"))
