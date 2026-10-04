@@ -66,6 +66,7 @@ was downloaded 1 Sep and never analysed until this audit.
 | N3-N7 | Single RC corner, FF-only hold, 20 % checks untested, no CDC on shipped RTL, no LEC of rc4 | MARGIN / PAPER GAP | no | ~95 MHz on slow parts; VDD ≤ 1.2 V |
 | V1 | Shipped link configuration has never carried traffic on any platform | VERIFICATION GAP | no | V2 ASIC-flist traffic regression |
 | X1 | rc4 cannot be rebuilt or diffed | PROVENANCE | no | archive `db_rc4` + ECO scripts now |
+| M1 | Two SRAM macros ship with EMA = 000 (minimum read margin): TideLink FIFO rf_16k and MAC BD RAM rf_01k | MARGIN / YIELD (unquantified) | yes, to change | run at VDD ≥ 1.2 V; end-to-end data checks; BD RAM march test |
 
 The full entry for each follows. Minor functional limitations are in §4.
 
@@ -333,6 +334,27 @@ off-board.
   TDI before SE is high fights a 16 mA pad driver.
 
 ---
+
+### 3.2 Memories
+
+### M1 — Two SRAM macros ship with EMA = 000 (minimum read margin)
+
+- **In silicon: CONFIRMED** (rc4 netlist `nanosoc_eth_chiplet_pads_rc4_pnr.v`; every EMA pin traced to its tie cell):
+  - `u_tidelink_fifo_u_fifo_mem_u_sram_u_rf` (rf_16k, TideLink packet FIFO): EMA[2:0] = `FE_OFN101_…LTIELO` ×3 ← `CKBD1` ← `TIEL` = **000**.
+  - `u_ethmac_0_u_inner_u_eth_top_wishbone_bd_ram_u_sram_u_rf` (rf_01k, MAC buffer descriptors): EMA[2:0] = `FE_OFN79_…LTIELO` ×3 ← `CKBD4` ← `TIEL` = **000**.
+  - Control: the other 7 macros (imem/dmem, scratch rx/tx, shared, rf_32k) read **010**; their bit 1 traces `BUFFD8` ← `TIEH`.
+  - RTL sources: tidelink `5e8bdb5a` `src/rtl/fifo/asic/tidelink_sram.sv:56` (`.EMA(3'b000)  // Default extra margin`); nanosoc-multicore-system `ethernet-mac-ahb/src/rtl/asic/ethmac_sram.v:59` (`.EMA(3'b000)`). Both comments say "default", but the compiler default is **2** (`rf_16k.v`/`rf_01k.v` print "Set Value for EMA doesn't match Default value 2"). `sl_sram.v:40` uses `TIE_EMA = 3'b010`, which is why the other 7 are correct.
+- **What EMA does:** EMA delays the sense-amp enable to give the bitline more time to develop. The rf_16k Liberty has a separate CLK→Q arc for each setting. At min slew/load: ss 1.08 V 125 °C, 2.28 ns at 000 vs 2.72 ns at 010; tt 1.20 V 25 °C, 1.35 ns vs 1.60 ns. STA times whichever arc applies, so **timing is not the issue**. The issue is the read margin the 0.4 ns buys against weak bitcells, which STA does not model. Whether 000 is yield-safe at ss / 1.08 V / hot is **unquantified**: there is no Monte Carlo or margin data for it in the kit.
+- **On silicon:** the failure mode is a wrong bit read back, random and data-dependent, worst at low VDD, slow corner and high or low temperature extremes. There is no parity or ECC on either memory.
+  - **TideLink FIFO:** the link CRC covers the wire, not the SRAM. A misread payload word is delivered to the AHB reader with no flag. A misread length/header word misframes the packet (clamped length), shifts later reads, and may set the sticky UNDERRUN/OVERRUN bits. The symptom looks like a link problem but isn't one: CRC/ECC counters stay at 0.
+  - **MAC BD RAM:** a misread descriptor means a wrong buffer pointer, length or status. Effects are DMA to the wrong address, dropped or truncated frames, or a hung ring.
+- **How bring-up can see it** (T1: there is no MBIST):
+  - BD RAM: the CPU can read and write the descriptor area through the MAC registers (OpenCores ethmac maps BDs at offset 0x400–0x7FF; confirm on the eth address map). Run a march test (0/1/checkerboard/address-in-data) from firmware with the MAC idle. This is a direct test of the macro.
+  - TideLink FIFO: no direct port. Test it end to end: a peer-write soak with unique per-word tags and a checksum, swept across VDD (1.08 → 1.32 V) and temperature. A TideLink FIFO fault shows up as a data mismatch with **zero** link CRC/ECC counts and no FCSM change. That distinguishes it from a wire fault, which raises CRC counts or causes a replay.
+  - Run both at the lowest VDD the board allows first. A clean result at 1.08 V hot is the evidence that 000 is acceptable on the part.
+- **Mitigation:** operate at nominal 1.2 V or above for read margin. N3 caps VDD at 1.2 V for hold, so the window is "1.2 V, not lower". Use end-to-end checksums on TideLink payloads in firmware. Re-initialise the MAC on a BD-ring hang.
+- **Fix for a re-spin:** tidelink `328214b` (branch `eth/ema-default`, parent `785daee`; md5 `e7b55710…`) sets 3'b010, verified against the rf_16k model and in 4 gate targets. The pin stays at the rc4 lineage; take this commit only before a re-synthesis. `ethmac_sram.v` needs the same one-line change in nanosoc-multicore-system; it has **not** been made.
+- **Same defect on compute:** compute had the identical TideLink tie (2 FIFO macros) and fixed it by physical ECO on its RC (LEC golden tidelink `837c747`).
 
 ## 4. Minor functional limitations (firmware fixes them)
 
