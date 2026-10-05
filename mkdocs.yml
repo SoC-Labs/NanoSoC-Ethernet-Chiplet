@@ -164,6 +164,7 @@ nav:
       - "D2D peer-aperture posted writes": TAPEOUT_LIMITATION_D2D_PEER_WRITE.md
       - "TideLink DFT wrapper bypassed: APB debug unlocked": TAPEOUT_LIMITATION_DFT_WRAPPER_BYPASS.md
       - "DMA-250 copies corrupt local memory (ungated HTRANS)": TAPEOUT_LIMITATION_CPU_SS_HSEL.md
+      - "Discovery tables report wrong memory sizes": TAPEOUT_LIMITATION_DISCOVERY_SIZES.md
 
   - Debug — the D2D wedge:
       - Overview and supersession chain: debug/index.md
