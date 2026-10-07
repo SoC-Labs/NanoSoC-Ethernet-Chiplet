@@ -67,6 +67,7 @@ was downloaded 1 Sep and never analysed until this audit.
 | V1 | Shipped link configuration has never carried traffic on any platform | VERIFICATION GAP | no | V2 ASIC-flist traffic regression |
 | X1 | rc4 cannot be rebuilt or diffed | PROVENANCE | no | archive `db_rc4` + ECO scripts now |
 | M1 | Two SRAM macros ship with EMA = 000 (minimum read margin): TideLink FIFO rf_16k and MAC BD RAM rf_01k | MARGIN / YIELD (unquantified) | yes, to change | run at VDD ≥ 1.2 V; end-to-end data checks; BD RAM march test |
+| D2D-DMA | DMA-250 copies to or from the D2D window 0x2E–0x2F corrupt data silently and report DONE (added 2026-10-05) | FUNCTIONAL (silent corruption) | yes, to fix | **never point the DMA-250 at `0x2E00_0000–0x2FFF_FFFF`**; M0+ LDR/STR for peer data |
 
 The full entry for each follows. Minor functional limitations are in §4.
 
@@ -163,6 +164,29 @@ The full entry for each follows. Minor functional limitations are in §4.
 - **TideChart can elect two roots** (FPGA 08-08, cause open, UNVERIFIED on rc4).
   Pin roles via `ROLE_CFG` and the PTP grandmaster by register.
 - **T6 endurance wedge at beat 1024** (FPGA, n=2, UNVERIFIED). May be R2.
+
+### D2D-DMA — The DMA-250 must never target the D2D window (added 2026-10-05)
+
+- **In silicon: CONFIRMED on the shipped RTL in simulation** (pre-silicon closure item 11 follow-up,
+  `docs/chip-reference-manual/review/closure/item11-tl053.md` §"Follow-up 2026-10-04"). Bench: g2 pair,
+  generated ASIC `tidelink_asic.flist` at `785daee` (= rc4 `5e8bdb5a` in src/deps/flists), calibrator bypass
+  off; die A's DMA-250 channel 0 programmed over eth_ss_0 with the `dma250_driver.c` layout (1D, 32-bit,
+  16 words). The DMA master decode reaches `0x2E–0x2F` (`multicore_matrix_decode_DMAC_0_M.v`).
+  - **Peer→peer** (`0x2F001100 → 0x2F001200`): DONE, err = 0, but all 16 destination words read back 0x0
+    and **every destination word was written twice** at die B; the d2d monitor saw a write NONSEQ during a
+    stalled peer read on 7,866 cycles. This is TL-053 on every beat. Deterministic; independent of order.
+  - **Local→peer** (source DMEM `0x1800_0400`): 32 peer write address phases for 16 words; each word written
+    **2 or 3 times** at die B; destination ≠ source. The duplicated-write class (M4DUP), fixed by tidelink
+    `b08145a`, which the eth pin lacks.
+  - **Peer→local**: 31 peer read address phases for 16 words; destination ≠ source.
+  - All three report DONE with err = 0: **silent corruption**.
+- **Why DSB does not help:** the hazard is inside the DMA's own pipelined AHB stream; only a DMA-side rule
+  works. The eth Cortex-M0+ does **not** trigger TL-053 (4 LDR→STR shapes clean, same item), so DSB before a
+  peer store stays advisory for M0+ code.
+- **Rule (firmware):** **never point the DMA-250 at `0x2E00_0000–0x2FFF_FFFF`, as source or destination.**
+  Move peer data with M0+ LDR/STR. `dma250_mem2mem_1d()` should refuse D2D-window addresses on the eth die.
+  Shared SRAM `0x2D…` is outside the DMA's decode (STAT_ERR), so local buffers must be in DMEM/IMEM.
+- **Fix for a re-spin:** take tidelink `b08145a` (TL-053/M4DUP), then re-run `item07/g2/test_tl053_dma.py`.
 
 ---
 
