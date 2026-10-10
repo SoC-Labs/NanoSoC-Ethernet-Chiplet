@@ -67,6 +67,10 @@ was downloaded 1 Sep and never analysed until this audit.
 | V1 | Shipped link configuration has never carried traffic on any platform | VERIFICATION GAP | no | V2 ASIC-flist traffic regression |
 | X1 | rc4 cannot be rebuilt or diffed | PROVENANCE | no | archive `db_rc4` + ECO scripts now |
 | M1 | Two SRAM macros ship with EMA = 000 (minimum read margin): TideLink FIFO rf_16k and MAC BD RAM rf_01k | MARGIN / YIELD (unquantified) | yes, to change | run at VDD ≥ 1.2 V; end-to-end data checks; BD RAM march test |
+| D2D-DMA | DMA-250 copies to or from the D2D window 0x2E–0x2F corrupt data silently and report DONE (added 2026-10-05) | FUNCTIONAL (silent corruption) | yes, to fix | **never point the DMA-250 at `0x2E00_0000–0x2FFF_FFFF`**; M0+ LDR/STR for peer data |
+| B2-CLK | QSPI boot read fails above ≈66 MHz CLK at CLK_DIV = 1: fails at 100 and 90.9 MHz on every corner (added 2026-10-09) | BRING-UP RULE (measured by STA) | no | **boot at CLK = 50 MHz**; raise CLK only after firmware sets `CLK_DIV` ≥ 2 |
+| RX-POL | TideLink RX polarity `out_prepend_swi_polarity` must stay at its reset value 1; rising-edge capture fails hold (added 2026-10-09) | FIRMWARE RULE | no | **never clear it** |
+| FLASH-LAYOUT | XiP/overlay apps linked cold code at flash `0x20000`, CPU1's boot-counter sector — firmware defect, not silicon (added 2026-10-09) | SOFTWARE (latent corruption) | no | cold segment at `0x80000` (`nanosoc_xip_layout.ld`); nothing in `0x00000–0x5FFFF` but tables, counter and CPU1 slots; `check_flash.py --elf` |
 
 The full entry for each follows. Minor functional limitations are in §4.
 
@@ -164,6 +168,53 @@ The full entry for each follows. Minor functional limitations are in §4.
   Pin roles via `ROLE_CFG` and the PTP grandmaster by register.
 - **T6 endurance wedge at beat 1024** (FPGA, n=2, UNVERIFIED). May be R2.
 
+### D2D-DMA — The DMA-250 must never target the D2D window (added 2026-10-05)
+
+- **In silicon: CONFIRMED on the shipped RTL in simulation** (pre-silicon closure item 11 follow-up,
+  `docs/chip-reference-manual/review/closure/item11-tl053.md` §"Follow-up 2026-10-04"). Bench: g2 pair,
+  generated ASIC `tidelink_asic.flist` at `785daee` (= rc4 `5e8bdb5a` in src/deps/flists), calibrator bypass
+  off; die A's DMA-250 channel 0 programmed over eth_ss_0 with the `dma250_driver.c` layout (1D, 32-bit,
+  16 words). The DMA master decode reaches `0x2E–0x2F` (`multicore_matrix_decode_DMAC_0_M.v`).
+  - **Peer→peer** (`0x2F001100 → 0x2F001200`): DONE, err = 0, but all 16 destination words read back 0x0
+    and **every destination word was written twice** at die B; the d2d monitor saw a write NONSEQ during a
+    stalled peer read on 7,866 cycles. This is TL-053 on every beat. Deterministic; independent of order.
+  - **Local→peer** (source DMEM `0x1800_0400`): 32 peer write address phases for 16 words; each word written
+    **2 or 3 times** at die B; destination ≠ source. The duplicated-write class (M4DUP), fixed by tidelink
+    `b08145a`, which the eth pin lacks.
+  - **Peer→local**: 31 peer read address phases for 16 words; destination ≠ source.
+  - All three report DONE with err = 0: **silent corruption**.
+- **Why DSB does not help:** the hazard is inside the DMA's own pipelined AHB stream; only a DMA-side rule
+  works. The eth Cortex-M0+ does **not** trigger TL-053 (4 LDR→STR shapes clean, same item), so DSB before a
+  peer store stays advisory for M0+ code.
+- **Rule (firmware):** **never point the DMA-250 at `0x2E00_0000–0x2FFF_FFFF`, as source or destination.**
+  Move peer data with M0+ LDR/STR. `dma250_mem2mem_1d()` should refuse D2D-window addresses on the eth die.
+  Shared SRAM `0x2D…` is outside the DMA's decode (STAT_ERR), so local buffers must be in DMEM/IMEM.
+- **Fix for a re-spin:** take tidelink `b08145a` (TL-053/M4DUP), then re-run `item07/g2/test_tl053_dma.py`.
+
+---
+
+### RX-POL — TideLink RX polarity must stay at its reset value (added 2026-10-09)
+
+- **In silicon: by STA on rc4** (pre-silicon closure item 6g, `docs/chip-reference-manual/review/closure/item06g-d2d-rx-window.md`; Tempus on a
+  read-only shadow of `db_rc4`, recovered SDC — see B2-CLK for the SDC basis — 4 corners, OCV + CPPR).
+- **Mechanism:** the RX capture flops `phy_gpio/gpiorx_<n>/link_data_pad_clk_reg[15:0]` are clocked through the
+  `WavClockMux` polarity mux, selected by `io_pol` = `out_prepend_swi_polarity`
+  (`tidelink@785daee src/rtl/local_overrides/WavD2DGpioRx_v2.v:556-566`). In the rc4 netlist that register is a
+  set flop (`DFSNQD1`, `rc4_pnr.v:806645`) and **resets to 1**: capture on the **falling** edge of `TL_CLK_RX`,
+  half a period after the edge-aligned launch. The RTL comment at `WavD2DGpioRx_v2.v:155` ("reset 0") is wrong for
+  this build. The register is APB-writable (write-data bit 16).
+- **Window, reset polarity:** accepted D = t(`TL_RX[n]`) − t(`TL_CLK_RX` rising), all corners:
+  **[−3.80, +4.73] ns** at the SDC's 10 ns; ≈[−8.8, +9.7] ns at compute's real 50 MHz (inferred). Compute link 0's
+  TX envelope [0.271, 2.028] passes with **≥ 2.70 ns** margin (≥ 7.7 ns at 50 MHz).
+- **Rising-edge capture** (`io_pol` = 0): [1.119, 9.925] ns; **fails hold by up to 0.85 ns** against compute's
+  earliest lanes, at any clock rate. The calibrator cannot compensate: on the ASIC it only picks the bit slot and
+  bit slip (whole-UI alignment), not the sampling point inside a UI.
+- **Rule (firmware):** **never write 0 to `out_prepend_swi_polarity`.**
+- **TX side for completeness** (item 6b, `docs/chip-reference-manual/review/closure/item06b-d2d-tx-skew.md`): eth → compute D on the rising-edge
+  reference is −0.002…+1.665 ns on every lane and corner, inside compute's [−0.15, 2.81] with ≥ 0.148 ns margin.
+  The often-quoted lane-3 −0.355 ns is measured from `TL_CLK_TX`'s falling edge: ≈0.32 ns of duty-cycle
+  distortion, not skew. This closes the TX half of N2.
+
 ---
 
 ## 3. SoC, boot, debug, DFT
@@ -196,6 +247,39 @@ The full entry for each follows. Minor functional limitations are in §4.
   (`SYS_HCLK` = CLK pad).
 - **Decision owed:** the bring-up board oscillator frequency.
 
+### B2-CLK — Measured: the QSPI boot read fails above ≈66 MHz CLK (added 2026-10-09)
+
+- **In silicon: by STA on rc4** (pre-silicon closure item 6c, `docs/chip-reference-manual/review/closure/item06-sta.md` §6c). Tempus 21.11 on a
+  read-only shadow of `db_rc4`, fresh Quantus SPEFs, signoff OCV/CPPR, corrected QSPI constraint on top of the rc4
+  SDC: flash data launched by the **falling** edge of the SCLK pad clock, input delay max 9.0 ns (SST26VF064B
+  TV 8 ns at 30 pF + 1 ns board), min 0.
+- **Correction to B2 above:** the data is **captured on the RISING edge** of internal `QSPI_SCLK`
+  (Tempus path report: launch `(F) QSPI_SCLK_o`, capture `(R) QSPI_SCLK`; RTL `qspi_controller.sv:559` posedge block
+  holds `:624-627`). The budget is half an SCLK period = **one CLK period** at CLK_DIV = 1, not the 20 ns of the hand
+  budget, minus the SCLK pad-out latency (7.10 ns at SS) plus capture insertion (2.43 ns).
+- **Read setup slack, worst of QSPI_IO[3:0], CLK_DIV = 1 (ns):**
+
+  | corner | CLK 100 MHz | CLK 90.9 MHz | CLK 50 MHz | zero-slack CLK |
+  |---|---:|---:|---:|---:|
+  | SS 1.08 V 125 °C | **−5.00** | −4.00 | **+4.98** | 66.7 MHz |
+  | SS 1.08 V −40 °C | −3.65 | −2.65 | +6.34 | 73.3 MHz |
+  | TT 1.20 V 25 °C | −3.08 | −2.08 | +6.91 | 76.5 MHz |
+  | FF 1.32 V −40 °C | −2.30 | −1.30 | +7.70 | 81.3 MHz |
+
+  Slack moves 1:1 with the period. Read hold +0.140 ns. A 5 ns-TV flash adds 3.0 ns (SS 100 MHz still −2.0).
+  Item 10's SS-SDF GLS booted from flash at 50 MHz with zero violations.
+- **Rule (board + firmware):** **boot at CLK = 50 MHz** (+5.0 ns at SS). Raise CLK only after firmware has set
+  `CLK_DIV` ≥ 2 (100 MHz with CLK_DIV = 2: +5.0 ns at SS). Safe boot limit ≈66 MHz at SS, ≈76 MHz typical.
+- **SDC basis (read before quoting):** the shipped rc4 SDC was deleted with `holdeco-20260827` about 2026-10-07
+  (also `coldcorner-20260827` and `gdsrun-20260826-rc1`). The numbers use the **recovered SDC**
+  `build/presilicon-closure/item06/sdc/rc4_recovered.sdc` (392 lines, md5 `2c5ace10e7932cdbab1841a17453fbf4`), an
+  Innovus 21.11 write of the same constraint mode on 26 Aug. It matches every recorded fact of the shipped file and
+  reproduces signoff setup and the 57,955 untested checks exactly, but it **cannot be proven byte-identical**.
+  `db_rc4`, outputs, the signoff STA and the recovered SDC are archived in Artifactory under
+  `asic-record/ethchip/nanosoc_eth_chiplet_pads/rc4-20260829/`.
+- **Write side:** data setup +3.68 ns (SS, 100 MHz). A −3.08 ns hold on `qspi_qio_mode_latched_reg` → `QSPI_IO[1]`
+  is a quasi-static mode bit (missing exception), not a data-hold failure.
+
 ### B3 — The HOSTIO/ADP monitor can hang the die
 
 - **In silicon: CONFIRMED.** The ADP FSM has no HREADY timeout; `ADP_UPLOAD_TIMEOUT`
@@ -216,6 +300,29 @@ The full entry for each follows. Minor functional limitations are in §4.
   (`f60449b:sys_desc/nanosoc_multicore_soc.yaml:2347`). SWD has never returned a
   DPIDR on any board. The path flash → firmware → MAC has never run on any vehicle.
 - See §3.1 for what can and cannot be done with no flash.
+
+### FLASH-LAYOUT — XiP/overlay cold code linked into the boot-counter sector (firmware, not silicon; added 2026-10-09)
+
+- **Not a silicon defect.** The silicon flash map (`nanosoc_multicore_addrmap.h:376-381`, non-`NETAPP_SIM`) is
+  TABLE0 `0x00000`, TABLE1 `0x10000`, BOOT_COUNTER `0x20000`, SLOT_A `0x30000`, SLOT_B `0x40000`, GOLDEN `0x50000`,
+  CPU0 app `0x60000`.
+- **Defect:** `firmware/scripts/sections_xip.ld:51` (and `sections_xip_netapp.ld`, `sections_overlay.ld`) placed the
+  cold `.xip`/`.overlay` segment at `ORIGIN(FLASH_XIP) + 0x20000`, a default left from the old layout. **17 of 18**
+  XiP/overlay apps linked cold code at flash `0x20000` (`0x24020000`); only `eth_netapp_tftp_swd` used `0x80000`.
+- **Effect on silicon:** on every boot the CPU1 stage-0 ROM programs a `0x00` over the first `0xFF` in that
+  sector's first 16 bytes, and demotes TABLE0 when it counts two leading `0x00`. A build whose first 16 bytes hold
+  a `0xFF` gets one code byte zeroed per boot; one that starts `00 00` loses TABLE0 on every boot. Today's builds
+  survive by the luck of their bytes (latent). The old `check_flash.py` called such images BOOTABLE.
+- **Fix (2026-10-07, `docs/chip-reference-manual/review/closure/item17-silicon-rom-envs.md` §"Layout fix"):** new `firmware/scripts/nanosoc_xip_layout.ld`
+  sets `NANOSOC_XIP_COLD_OFFSET` = `0x80000` with `ASSERT(≥ 0x70000)`; the three scripts include it; 14 cocotb tests
+  and 5 PYNQ HW scripts follow. Proven in a scratch worktree: all 18 apps at `0x24080000`, netapp ARP/ICMP/UDP passes
+  on the silicon-ROM route, 5 envs pass. **The patch `build/presilicon-closure/item17/layout_fix_nms.patch` is not
+  yet applied to the main NMS tree** (owner action); the PYNQ scripts have not run on a board.
+  `ASIC/gls-netlist/flash/check_flash.py` (superproject working tree) now derives the reserved sectors from the
+  address map and rejects overlaps and foreign data (old `0x20000` image → NOT BOOTABLE).
+- **Rule:** no image may use flash `0x00000–0x5FFFF` except TABLE0/TABLE1, the erased counter and CPU1 images in
+  slot A/B or golden at their address-map offsets. Run `check_flash.py --elf <app>.elf` on every image.
+  `flash_pack.py` still cannot place XiP segments (no `--segment`); the blob is overlaid by hand.
 
 ### 3.1 Booting without flash, and workarounds for B2
 
