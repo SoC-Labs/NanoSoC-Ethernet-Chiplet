@@ -1,18 +1,29 @@
 /*-----------------------------------------------------------------------------
  * hostio_fw -- CPU1 parking loop.
  *
- * WHAT IT IS.  A valid ARMv6-M vector table and two instructions.  CPU1 sits
- * in them forever, fetching from its own local IMEM and doing nothing else.
+ * WHAT IT IS.  A valid ARMv6-M vector table, ONE store, and a two-instruction
+ * loop.  On reset CPU1 writes the park signature once, then sits in the loop
+ * forever, fetching from its own local IMEM and doing nothing else.
+ *
+ * THE ONE STORE (requirement P3, ASIC_FIRST_SILICON_HOSTIO_PROCEDURE.md 5.3
+ * step 6; COB plan P10.2).  FW_IMAGE_ID_ADDR (0x2D000008) <- FW_IMAGE_ID_MAGIC
+ * | FW_IMAGE_ID_PARK = 0x48465701, written exactly once from the reset vector,
+ * before the loop.  It is the positive control for the parking step: a parked
+ * CPU1 and a HardFaulted CPU1 are both quiet, and only this word tells them
+ * apart.  NMI/HardFault vector straight to the loop, NOT through the store, so
+ * a fault after reset can never re-assert the signature.  Without this store
+ * the image ran but 5.3 step 6 could never pass (measured on the rc4 RTL,
+ * pre-silicon closure item 8, 2026-10).
  *
  * WHAT IT DELIBERATELY DOES NOT DO.
  *   * No DMEM access.  No .data, no .bss, no stack use at all -- the initial
  *     SP is a valid value the core loads at reset and never a target of any
  *     push, because nothing here pushes.
- *   * No peripheral access of any kind.  Not the mailbox, not the remap
- *     register, not the MAC, not shared SRAM.  A parked CPU1 that still
- *     announced itself in shared SRAM would be contending for the very bus
- *     the memory tests are trying to measure, which is the whole reason for
- *     parking it.
+ *   * No peripheral access after the one signature store.  Not the mailbox,
+ *     not the remap register, not the MAC, and no further shared-SRAM
+ *     traffic.  A parked CPU1 that kept announcing itself in shared SRAM
+ *     would be contending for the very bus the memory tests are trying to
+ *     measure, which is the whole reason for parking it.
  *   * NO WFI.  CPU1's PRMU sources the fabric's HCLK and HRESETn and nothing
  *     in this tree establishes what CPU1's SLEEPING output does to it.  A
  *     parking loop that gated the fabric clock would take the debug port down
@@ -28,11 +39,15 @@
  * which is correct whether or not CPU1's REMAP bit is set -- the 0x00000000
  * aperture is CPU1's boot ROM until REMAP says otherwise.
  *
- * READ README.md BEFORE TRYING TO INSTALL THIS.  There is no route from the
- * ADP debug port into CPU1 IMEM today, by design and in code.
+ * INSTALL ROUTE: the ADP debug port DOES reach CPU1 IMEM at 0x90000000 on the
+ * rc4 RTL (procedure 6.3.1 four-command test, and an upload + REMAP bit 0 +
+ * CPU1_SWRST run of this image, both proven in the rc4 chip-level sim,
+ * pre-silicon closure item 8).  Confirm with 6.3.1 on the die first.
  *
  * Copyright 2026, SoC Labs (www.soclabs.org)
  *---------------------------------------------------------------------------*/
+#include "fw_abi.h"
+
     .syntax unified
     .cpu    cortex-m0
     .thumb
@@ -43,7 +58,7 @@
     .global fw_park_vectors
 fw_park_vectors:
     .word   __StackTop          /*  0  initial SP (never used: nothing pushes) */
-    .word   fw_park             /*  1  Reset                                   */
+    .word   fw_park_reset       /*  1  Reset: sign once, then park             */
     .word   fw_park             /*  2  NMI                                     */
     .word   fw_park             /*  3  HardFault                               */
     .word   0                   /*  4  reserved                                */
@@ -58,6 +73,21 @@ fw_park_vectors:
     .word   0                   /* 13  reserved                                */
     .word   fw_park             /* 14  PendSV                                  */
     .word   fw_park             /* 15  SysTick                                 */
+
+/* -- reset: the P3 signature, written once -------------------------------- */
+    .section .text.fw_park_reset, "ax", %progbits
+    .align  2
+    .thumb_func
+    .global fw_park_reset
+    .type   fw_park_reset, %function
+fw_park_reset:
+    ldr     r0, =FW_IMAGE_ID_ADDR
+    ldr     r1, =(FW_IMAGE_ID_MAGIC | FW_IMAGE_ID_PARK)
+    str     r1, [r0]
+    dsb
+    b       fw_park
+    .ltorg
+    .size   fw_park_reset, . - fw_park_reset
 
 /* -- the parking loop ----------------------------------------------------- */
 /* .thumb_func is what puts the Thumb bit into every `.word fw_park` above.

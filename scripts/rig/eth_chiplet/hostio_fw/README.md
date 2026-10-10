@@ -39,8 +39,9 @@ the boot ROM otherwise, so nothing here is linked there.
 
 ### Toolchain
 
-`arm-none-eabi-gcc (GNU Arm Embedded Toolchain 10.3-2021.10) 10.3.1`, already
-on `PATH` from `/home/dam1n19/runthrough_itb/gcc-arm-none-eabi-10.3-2021.10/bin`.
+`arm-none-eabi-gcc (GNU Arm Embedded Toolchain 10.3-2021.10) 10.3.1`, put on
+`PATH` by `module load arm-gnu-toolchain`. Load it: the site profile otherwise
+leaves a 2016 GCC 5.4 `arm-none-eabi` on `PATH` instead.
 It has the `thumb/v6-m/nofp` multilib, which is what `-mcpu=cortex-m0` needs.
 Built freestanding: `-nostdlib -nostartfiles`, no CMSIS, no libc, no libgcc —
 `arm-none-eabi-nm -u` reports **zero undefined symbols** in all three ELFs, so

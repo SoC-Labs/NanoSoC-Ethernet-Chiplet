@@ -39,12 +39,19 @@
 #     all offsets, sizes, magic, the role->index map, and the PINNED
 #     table_crc coverage [0x14 .. 0x20 + ne*0x20)
 #
-# Usage:  check_flash.py <flash.bin> [--verbose]
+# Usage:  check_flash.py <flash.bin> [--verbose] [--addrmap H]
+#                        [--segment OFF:FILE ...] [--elf APP.elf ...]
+#   --segment / --elf declare EXTRA flash payloads the boot tables do not
+#   describe (the cold .xip / .overlay segment of a two-segment app). Each must
+#   lie outside every reserved sector and every table payload, and the image
+#   must hold its exact bytes. --elf reads .xip/.overlay LMA + bytes itself.
 # Exit:   0 = both ROMs boot, 1 = at least one would not.
 # -----------------------------------------------------------------------------
 
 import argparse
 import binascii
+import os
+import re
 import struct
 import sys
 
@@ -74,6 +81,85 @@ ROLE_SECONDARY_IDX = 0                 # addrmap.h:336  eth/CPU0
 ROLE_MASTER_IDX = 1                    # addrmap.h:335  CPU1
 
 APP_SIZE_CAP = 0x01000000              # both ROMs: "cap 16 MB"
+
+# ---- RESERVED SECTORS: derived from addrmap.h, never hard-coded -------------
+# The literals above document the rc4 values; load_addrmap() re-reads them from
+# the header (the non-NETAPP_SIM #else branch, which is what the ROMs were
+# compiled with) and the run uses the header's values. A header that no longer
+# parses is an error (exit 2), not a silent fallback to the literals.
+DEFAULT_ADDRMAP = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+    "nanosoc-multicore-system", "firmware", "include",
+    "nanosoc_multicore_addrmap.h"))
+FLASH_SECTOR = 0x10000
+CPU1_SLOT_SIZE = 0x10000
+COUNTER_SCAN_MAX = 256
+XIP_BASE = 0x24000000
+
+
+def load_addrmap(path):
+    """Set the layout globals from nanosoc_multicore_addrmap.h (HW branch)."""
+    global BOOT_TABLE0_OFFSET, BOOT_TABLE1_OFFSET, BOOT_COUNTER_OFFSET
+    global CPU1_SLOT_A_OFFSET, CPU1_SLOT_B_OFFSET, CPU1_GOLDEN_OFFSET
+    global FLASH_SECTOR, CPU1_SLOT_SIZE, COUNTER_SCAN_MAX
+    txt = open(path).read()
+    m = re.search(r"#ifdef\s+NETAPP_SIM\b(.*?)#else\b(.*?)#endif", txt, re.S)
+    if not m or "NANOSOC_BOOT_TABLE0_OFFSET" not in m.group(2):
+        raise ValueError("no '#ifdef NETAPP_SIM ... #else <HW layout> #endif' block")
+    hw = dict((k, int(v, 16)) for k, v in re.findall(
+        r"#define\s+NANOSOC_(\w+)\s+(0x[0-9A-Fa-f]+)u?", m.group(2)))
+    glob_ = dict((k, int(v, 0)) for k, v in re.findall(
+        r"#define\s+NANOSOC_(\w+)\s+(0x[0-9A-Fa-f]+|\d+)u?\b", txt))
+    BOOT_TABLE0_OFFSET = hw["BOOT_TABLE0_OFFSET"]
+    BOOT_TABLE1_OFFSET = hw["BOOT_TABLE1_OFFSET"]
+    BOOT_COUNTER_OFFSET = hw["BOOT_COUNTER_OFFSET"]
+    CPU1_SLOT_A_OFFSET = hw["CPU1_SLOT_A_OFFSET"]
+    CPU1_SLOT_B_OFFSET = hw["CPU1_SLOT_B_OFFSET"]
+    CPU1_GOLDEN_OFFSET = hw["CPU1_GOLDEN_OFFSET"]
+    CPU1_SLOT_SIZE = hw.get("CPU1_SLOT_SIZE", CPU1_SLOT_SIZE)
+    FLASH_SECTOR = glob_.get("FLASH_SECTOR", FLASH_SECTOR)
+    COUNTER_SCAN_MAX = glob_.get("BOOT_COUNTER_SCAN_MAX", COUNTER_SCAN_MAX)
+
+
+def reserved_sectors():
+    """(name, lo, hi) for every flash region the boot ROMs own."""
+    return [("TABLE0", BOOT_TABLE0_OFFSET, BOOT_TABLE0_OFFSET + FLASH_SECTOR),
+            ("TABLE1", BOOT_TABLE1_OFFSET, BOOT_TABLE1_OFFSET + FLASH_SECTOR),
+            ("BOOT_COUNTER", BOOT_COUNTER_OFFSET, BOOT_COUNTER_OFFSET + FLASH_SECTOR),
+            ("CPU1_SLOT_A", CPU1_SLOT_A_OFFSET, CPU1_SLOT_A_OFFSET + CPU1_SLOT_SIZE),
+            ("CPU1_SLOT_B", CPU1_SLOT_B_OFFSET, CPU1_SLOT_B_OFFSET + CPU1_SLOT_SIZE),
+            ("CPU1_GOLDEN", CPU1_GOLDEN_OFFSET, CPU1_GOLDEN_OFFSET + FLASH_SECTOR)]
+
+
+def elf_flash_segments(path):
+    """[(name, flash_off, bytes)] for the .xip / .overlay sections of an ELF32-LE,
+    at their LOAD address (LMA, from the program header that carries them)."""
+    b = open(path, "rb").read()
+    if b[:4] != b"\x7fELF" or b[4] != 1 or b[5] != 1:
+        raise ValueError("%s: not an ELF32 little-endian file" % path)
+    e_phoff, e_shoff = struct.unpack_from("<II", b, 0x1C)
+    e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHHHH", b, 0x2A)
+    phs = [struct.unpack_from("<IIIIIIII", b, e_phoff + i * e_phentsize) for i in range(e_phnum)]
+    shs = [struct.unpack_from("<IIIIIIIIII", b, e_shoff + i * e_shentsize) for i in range(e_shnum)]
+    stro = shs[e_shstrndx][4]
+    out = []
+    for sh in shs:
+        nm = b[stro + sh[0]:b.index(b"\0", stro + sh[0])].decode()
+        if nm not in (".xip", ".overlay") or sh[5] == 0:
+            continue
+        off, size = sh[4], sh[5]
+        lma = None
+        for ph in phs:   # p_type, p_offset, p_vaddr, p_paddr, p_filesz, ...
+            if ph[0] == 1 and ph[1] <= off < ph[1] + ph[4]:
+                lma = ph[3] + (off - ph[1])
+        if lma is None or not (XIP_BASE <= lma < XIP_BASE + 0x04000000):
+            raise ValueError("%s: %s LMA %s is not in the XiP aperture" % (path, nm, lma))
+        out.append(("%s:%s" % (os.path.basename(path), nm), lma - XIP_BASE, b[off:off + size]))
+    return out
+
+
+def ranges_overlap(a_lo, a_hi, b_lo, b_hi):
+    return a_lo < b_hi and b_lo < a_hi
 
 # The ROM copies the table with copy_image(..., 32u) - 32 words = 128 bytes -
 # into g_tbl, then parses out of that buffer. An entry that lies beyond 128 B
@@ -215,7 +301,19 @@ def main():
         description="Would the silicon stage-0 ROMs accept this flash image?")
     ap.add_argument("image")
     ap.add_argument("--verbose", "-v", action="store_true")
+    ap.add_argument("--addrmap", default=DEFAULT_ADDRMAP,
+                    help="nanosoc_multicore_addrmap.h the reserved sectors are read from")
+    ap.add_argument("--segment", action="append", default=[], metavar="OFF:FILE",
+                    help="extra flash payload (e.g. a cold .xip blob) at flash offset OFF")
+    ap.add_argument("--elf", action="append", default=[], metavar="APP.elf",
+                    help="take the .xip/.overlay segment(s) of this ELF as extra payloads")
     args = ap.parse_args()
+    try:
+        load_addrmap(args.addrmap)
+    except (OSError, ValueError, KeyError) as exc:
+        print("check_flash: cannot derive the reserved sectors from %s: %s"
+              % (args.addrmap, exc))
+        return 2
 
     img = open(args.image, "rb").read()
     rep = Report()
@@ -366,6 +464,18 @@ def main():
                          "app's LINKER_PROFILE is cc_stage1_imem "
                          "(firmware_apps.py:63-69) - the address alone does "
                          "not establish it.")
+        elif who == "CPU0" and region == 0x10000000:
+            # The CPU0 ROM does not care which alias the image links at:
+            # stage0_bootrom/main.c:246 sets VTOR = NANOSOC_IMEM_BASE and
+            # remap_and_jump() (main.c:167-181) loads SP/PC from the IMEM
+            # aperture at 0x10000000 and `bx`es to the ABSOLUTE PC. After
+            # REMAP=1, 0x0 and 0x10000000 both alias eth IMEM, so a
+            # 0x10000000-linked image (hostio_fw, IMG-1) runs. Proven in rc4
+            # gate-level sim 2026-10-04 (closure item 10).
+            rep.good("%s image: MSP=0x%08X reset PC=0x%08X -> links at the "
+                     "remap-independent IMEM alias 0x10000000; the ROM "
+                     "branches to the absolute PC, so this runs"
+                     % (who, msp, pc))
         elif who == "CPU1" and region == 0x00000000:
             rep.note("%s image reset PC=0x%08X links at 0x0, not 0x10000000. "
                      "It still runs, because CPU1 sets its own REMAP (bit0) "
@@ -376,6 +486,98 @@ def main():
         else:
             rep.bad("%s image: reset PC=0x%08X is in %s, expected %s-linked "
                     "code" % (who, pc, tag, "0x%08X" % want))
+
+    # ---- flash layout: nothing may sit in a reserved sector uninvited ------
+    # The ROMs READ the tables/slots/golden and PROGRAM the counter sector on
+    # every boot (stage0_bootrom_chip_core/main.c boot_counter_increment). Any
+    # other payload that lands in those sectors is either corrupted by the ROM
+    # or silently clobbers what the ROM needs. Pre-silicon closure item 17:
+    # every XiP app linked its cold segment at 0x20000 = BOOT_COUNTER.
+    print("\n-- flash layout (reserved sectors from %s) --" % os.path.basename(args.addrmap))
+    lay_ok = True
+    resv = reserved_sectors()
+    claimed = []                       # (lo, hi) bytes the ROM layout owns
+    payloads = []                      # (who, lo, hi) table-described images
+    for name, toff in (("TABLE0", BOOT_TABLE0_OFFSET), ("TABLE1", BOOT_TABLE1_OFFSET),
+                       ("GOLDEN", CPU1_GOLDEN_OFFSET)):
+        hdr, _ = parse_header(img, toff)
+        if hdr is None:
+            continue
+        claimed.append((toff, toff + hdr['hdr_bytes'] + hdr['ne'] * ENTRY_BYTES))
+        for idx in range(hdr['ne']):
+            e = entry(img, toff, hdr, idx)
+            if not (e['flags'] & BOOT_ENTRY_FLAG_VALID):
+                continue
+            for kind in ('app', 'stage1'):
+                o, n = e[kind + '_offset'], e[kind + '_size']
+                if n:
+                    payloads.append(("%s entry %d %s" % (name, idx, kind), o, o + n, idx, name))
+    nz = len(img[BOOT_COUNTER_OFFSET:BOOT_COUNTER_OFFSET + COUNTER_SCAN_MAX]) - \
+        len(img[BOOT_COUNTER_OFFSET:BOOT_COUNTER_OFFSET + COUNTER_SCAN_MAX].lstrip(b"\x00"))
+    claimed.append((BOOT_COUNTER_OFFSET, BOOT_COUNTER_OFFSET + nz))
+    for who, lo, hi, idx, name in payloads:
+        for rn, rlo, rhi in resv:
+            if not ranges_overlap(lo, hi, rlo, rhi):
+                continue
+            legit = (idx == ROLE_MASTER_IDX and rn in ("CPU1_SLOT_A", "CPU1_SLOT_B", "CPU1_GOLDEN")
+                     and rlo <= lo and hi <= rhi) or \
+                    (name == "GOLDEN" and rn == "CPU1_GOLDEN" and rlo <= lo and hi <= rhi)
+            if legit:
+                claimed.append((lo, hi))
+            else:
+                lay_ok = False
+                rep.bad("%s [0x%06X..0x%06X) overlaps reserved sector %s [0x%06X..0x%06X)"
+                        % (who, lo, hi, rn, rlo, rhi))
+    segs = []
+    for spec in args.segment:
+        o, f = spec.split(":", 1)
+        segs.append((os.path.basename(f), int(o, 0), open(f, "rb").read()))
+    for f in args.elf:
+        segs.extend(elf_flash_segments(f))
+    for nm, o, data in segs:
+        lo, hi = o, o + len(data)
+        bad = False
+        for rn, rlo, rhi in resv:
+            if ranges_overlap(lo, hi, rlo, rhi):
+                bad = True
+                rep.bad("segment %s [0x%06X..0x%06X) overlaps reserved sector %s [0x%06X..0x%06X)"
+                        % (nm, lo, hi, rn, rlo, rhi))
+        for who, plo, phi, _, _ in payloads:
+            if ranges_overlap(lo, hi, plo, phi):
+                bad = True
+                rep.bad("segment %s [0x%06X..0x%06X) overlaps %s [0x%06X..0x%06X)"
+                        % (nm, lo, hi, who, plo, phi))
+        if img[lo:hi] != data:
+            bad = True
+            diff = next(i for i in range(len(data)) if lo + i >= len(img) or img[lo + i] != data[i])
+            rep.bad("segment %s: image bytes differ from the segment at flash 0x%06X "
+                    "(clobbered or not programmed)" % (nm, lo + diff))
+        if bad:
+            lay_ok = False
+        else:
+            rep.good("segment %s [0x%06X..0x%06X): clear of the boot layout, bytes match"
+                     % (nm, lo, hi))
+    # foreign bytes: anything non-0xFF in a reserved sector that the layout
+    # does not account for (catches a segment nobody declared)
+    for rn, rlo, rhi in resv:
+        a = rlo
+        while a < min(rhi, len(img)):
+            cl = [c for c in claimed if c[0] <= a < c[1]]
+            if cl:
+                a = max(c[1] for c in cl)
+                continue
+            if img[a] != 0xFF:
+                lay_ok = False
+                rep.bad("foreign data in reserved sector %s at 0x%06X (0x%02X): not a "
+                        "table, counter or slot payload - the ROM will read or "
+                        "program over it" % (rn, a, img[a]))
+                break
+            a += 1
+    if lay_ok:
+        rep.good("layout: no payload or segment overlaps %s"
+                 % ", ".join(r[0] for r in resv))
+    else:
+        rep.ok = False
 
     print("")
     for ln in rep.lines:
