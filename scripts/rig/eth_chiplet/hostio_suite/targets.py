@@ -462,6 +462,26 @@ class Target(object):
                                             "25.010 MHz -- an unnamed clock-rate "
                                             "assumption. Multiply by fabric_hz."),
 
+        # SUITE PORTING to a vehicle that is not the eth chiplet at all (the
+        # NanoSoC compute chiplet on HAPS-SX). Empty on every eth profile, so
+        # they change nothing there. Every one of them is RECORDED in the run
+        # record (target.module_overrides_applied, and SKIP reasons per test).
+        "test_skips":                ({}, "{test id: reason} -- tests that do not "
+                                          "apply to this vehicle. They report SKIP "
+                                          "with the reason; never PASS"),
+        "test_bodies":               ({}, "{test id: 'module:function'} -- a "
+                                          "vehicle-specific BODY for a test whose "
+                                          "role (control, gating) carries over but "
+                                          "whose addresses do not. Same id, same "
+                                          "gates; the record names the body run"),
+        "module_overrides":          ((), "((module, attr, value, why), ...) -- "
+                                          "tier-module constants re-pointed at this "
+                                          "vehicle's map. Applied unconditionally "
+                                          "and recorded, unlike MODULE_BINDINGS"),
+        "write_forbid":              ((), "((lo, hi, why), ...) -- address ranges "
+                                          "Adp.write() refuses on this vehicle, "
+                                          "whatever a tier module's own guard says"),
+
         # provenance
         "settled_absent":            (None, "{prop: why} for properties whose None "
                                             "is an ESTABLISHED FINDING, not a gap. "
@@ -1116,10 +1136,242 @@ def _unknown():
     return t
 
 
+def _haps_sx_compute():
+    """The NanoSoC COMPUTE chiplet on HAPS-SX (single Cortex-M4, rsyn9 RTL).
+
+    NOT an eth vehicle. It shares the HOSTIO4 wrapper, the socdebug ADP monitor
+    and several APB blocks with eth (QSPI regs, DMA-250, the cc_periph
+    timer/uart2/watchdog slots, IPC mailbox regs, hw_spinlock), but its memory
+    map is different: no reset_ctrl, no TideChart/TideLink/perf/BFM/ETC on
+    debug_m's reach, IPC at 0x2A, PHC at 0x2B (a different register model),
+    spinlock at 0x2C000000, and its RAMs are reached through the compute_admin
+    alias (ROM 0x80000000, IMEM 0x90000000, DMEM 0x98000000).
+
+    STATE THIS PROFILE ASSUMES (operator's duty to establish before a run):
+    the M4 runs hostio_test from flash and is PARKED ON WFI after the host sent
+    STOP (shared SRAM 0x2D000400 = 0x48540004). That is what makes the bus
+    quiescent and ROM/IMEM reads safe: ADP has no bus timeout, and an M4
+    spinning in ROM/IMEM can starve the admin port (procedure section 3.3).
+    """
+    # PHYSICAL SIZES, from the RTL the bitstream was built from -- NOT from
+    # compute_mem.h's "IMEM 32K, DMEM 32K" comment or the memory map's 128 MB
+    # windows: nanosoc_compute_soc.sv:29-30 sets COMPUTE_IMEM_RAM_ADDR_W = 14
+    # (16 KB, rf_16k) and COMPUTE_DMEM_RAM_ADDR_W = 13 (8 KB, rf_08k). MEASURED
+    # 2026-10-03: a first run of this profile assumed 32 KB and its IMEM/DMEM
+    # "upper halves" aliased onto the parked M4's code and stack (HIO-205
+    # caught the DMEM alias: 0x98006000 landed on 0x98004000).
+    IMEM_BASE, IMEM_SIZE = 0x90000000, 16 * 1024
+    DMEM_BASE, DMEM_SIZE = 0x98000000, 8 * 1024
+    # Above hostio_test (999 bytes at 0x90001000) and below the 16 KB top: the
+    # window tier4_5's F/U and DMA tests may write without touching live code.
+    IMEM_SCRATCH, IMEM_SCRATCH_SIZE = 0x90002000, 0x2000
+    skips = {
+        # tier 0
+        "HIO-001": "power-on banner needs an operator power cycle; on compute "
+                   "the banner ' 0x50c1ab04' was captured when the console was "
+                   "first drained (T8 log), and no reset is taken in this run",
+        # tier 1 -- eth identity that does not exist on the compute map
+        "HIO-101": "eth boot ROM vector table at 0x08000000: compute has no eth "
+                   "ROM (0x08000000 answers R!); the compute ROM is checked by "
+                   "HIO-106's compute body and HIO-007",
+        "HIO-102": "CPU1-vs-CPU0 ROM discrimination: compute has ONE ROM (M4)",
+        "HIO-104": "reset_ctrl PIDs at 0x2A000FC0: compute has no reset_ctrl "
+                   "(0x2A is the IPC mailbox)",
+        "HIO-105": "reset_ctrl reset values at 0x2A000000: no reset_ctrl on compute",
+        "HIO-107": "eth CPU0-ran witness / boot-gate ladder: eth-only boot flow",
+        "HIO-108": "bus_fault_monitor 0x2C300010: not in the compute map",
+        "HIO-109": "event-timestamp-capture 0x2C000000: not in the compute map "
+                   "(0x2C is hw_spinlock, and its page 0 read ACQUIRES a lock)",
+        "HIO-110": "perf-probe 0x2C200000: not in the compute map",
+        "HIO-111": "IPC PERIPH_ID hard-coded at eth's 0x23000034; compute's IPC is "
+                   "at 0x2A000000 and is exercised by HIO-305 (ported)",
+        "HIO-112": "eth-only weak identity probe",
+        "HIO-116": "eth REMAP signature at 0x00000000: compute's 0x0 is not on "
+                   "debug_m, and the REMAP register is compute core_remap",
+        "HIO-117": "aliasing fingerprint needs reset_ctrl at 0x2A (absent on compute)",
+        "HIO-118": "alias-wrap size probe is calibrated on the two eth ROMs and eth "
+                   "windows; not ported",
+        "HIO-119": "permanently not applicable (eth's own verdict)",
+        "HIO-121": "TideLink registers are NOT reachable from compute's debug_m",
+        "HIO-122": "TideLink registers are NOT reachable from compute's debug_m",
+        "HIO-123": "TideChart is NOT reachable from compute's debug_m",
+        "HIO-125": "eth event router: not in the compute map (0x2B is the PHC)",
+        "HIO-127": "eth non-zero counter reset values (perf/BFM/TideLink): absent",
+        # tier 2
+        "HIO-206": "CPU1 IMEM battery: compute has no CPU1. Its single M4 IMEM "
+                   "(16 KB) is covered by HIO-201..204",
+        "HIO-207": "CPU1 DMEM battery: compute has no CPU1. Its single M4 DMEM "
+                   "(8 KB) is covered by HIO-205",
+        # tier 3
+        "HIO-301": "reset_ctrl SYS_CTRL: no reset_ctrl on compute",
+        "HIO-302": "reset_ctrl RESET_INFO W1C: no reset_ctrl on compute",
+        "HIO-303": "TideChart TC_ERROR: not reachable from compute's debug_m",
+        "HIO-306": "etc_capture: not in the compute map",
+        "HIO-307": "perf probe: not in the compute map",
+        "HIO-308": "bus_fault_monitor: not in the compute map",
+        "HIO-309": "PHC: compute's PHC (0x2B000000, compute phc_apb_regs.sv) is a "
+                   "different register model from eth's phc_regs.rdl; not ported",
+        "HIO-310": "TideLink census: not reachable from compute's debug_m",
+        "HIO-313": "boot-gate WRITE path: compute's 0x29000000 is core_remap, and "
+                   "this bench forbids any write to it (REMAP is POR-only clear)",
+        "HIO-314": "RO sweep writes 0xFFFFFFFF to five eth-only addresses "
+                   "(0x2A000FF0 is compute's IPC window); not ported",
+        # tier 4
+        "HIO-402": "fabric clock via the eth perf probe: not in the compute map",
+        "HIO-403": "PHC protocol is eth phc_regs.rdl; compute's PHC differs",
+        "HIO-404": "PHC rate: needs HIO-403 and a declared fabric clock",
+        "HIO-407": "TideLink lane state: not reachable from compute's debug_m",
+        "HIO-408": "TideLink link-up wait: not reachable from compute's debug_m",
+        "HIO-409": "XHB bridge witness: eth TideLink registers, not reachable",
+        "HIO-410": "TideChart election: not reachable from compute's debug_m",
+        "HIO-413": "cross-die peer read: single-die bench (decided 2026-09-30)",
+        "HIO-414": "eth firmware boot-confirm token 0x2D001FF0: compute firmware "
+                   "does not write it",
+        "HIO-415": "MDIO / Ethernet MAC: compute has no Ethernet MAC",
+        # tier 5
+        "HIO-502": "release CPU0 = a write to 0x29000000: forbidden on this bench, "
+                   "and compute has no CPU0",
+        "HIO-503": "needs HIO-502 (eth CPU0 relaunch)",
+        "HIO-504": "needs HIO-502 (eth CPU0 firmware liveness)",
+        "HIO-506": "Ethernet MAC/MDIO via CPU0 firmware: no MAC on compute",
+        "HIO-507": "live bus-fault monitor: not in the compute map",
+        "HIO-509": "whole-SoC reset via eth reset_ctrl SW_RESET: no reset_ctrl on "
+                   "compute, and a reset would undo the WFI park this run needs",
+    }
+    overrides = (
+        # tier0: the mapped/unmapped control pair and the ROM word
+        ("tier0", "BOOTROM_ADDR", 0x80000000,
+         "compute boot ROM through the compute_admin alias (bootrom_0)"),
+        ("tier0", "BOOTROM_WORD", 0x18002000,
+         "bootrom.bin (md5 44bbdfcc) word 0, MEASURED over ADP 2026-10-03"),
+        ("tier0", "UNMAPPED_ADDR", 0x30000000,
+         "in no compute decode range; MEASURED R! 2026-10-03"),
+        # tier2_3: the RAM batteries re-pointed at FREE compute RAM
+        ("tier2_3", "ETH_ROM_BASE", 0x80000000, "compute boot ROM (admin alias)"),
+        ("tier2_3", "CPU1_ROM_BASE", 0x80000000,
+         "compute has ONE ROM; HIO-209 checks it under both names"),
+        ("tier2_3", "ETH_IMEM_BASE", IMEM_BASE,
+         "the M4's WHOLE IMEM via the admin alias. DESTROYS the parked M4's "
+         "code: reset the M4 after tier 2 (it reloads from flash)"),
+        ("tier2_3", "ETH_IMEM_SIZE", IMEM_SIZE,
+         "16 KB physical (COMPUTE_IMEM_RAM_ADDR_W = 14, rf_16k)"),
+        ("tier2_3", "ETH_DMEM_BASE", DMEM_BASE,
+         "the M4's WHOLE DMEM via the admin alias. DESTROYS its stack/.data"),
+        ("tier2_3", "ETH_DMEM_SIZE", DMEM_SIZE,
+         "8 KB physical (COMPUTE_DMEM_RAM_ADDR_W = 13, rf_08k)"),
+        # tier2_3: spinlock and IPC at their compute bases (same register files:
+        # hw_spinlock.v differs from eth only in a function's `automatic`;
+        # ipc_mailbox_apb_regs.sv is md5-identical, 641e7105)
+        ("tier2_3", "SPINLOCK_OWNER", 0x2C000300, "compute hw_spinlock base 0x2C000000"),
+        ("tier2_3", "SPINLOCK_FORCE_RELEASE", 0x2C000304, "compute hw_spinlock"),
+        ("tier2_3", "SPINLOCK_DBG_PAGE", 0x2C000200, "compute hw_spinlock"),
+        ("tier2_3", "_SPINLOCK_ACQUIRE_PAGES",
+         ((0x2C000000, 0x2C0000FF), (0x2C000100, 0x2C0001FF), (0x2C000200, 0x2C0002FF)),
+         "the HZ-7 acquire-page guard follows the block to its compute base"),
+        ("tier2_3", "IPC_SLOT0_W0", 0x2A000000, "compute ipc_mailbox_0 base 0x2A000000"),
+        ("tier2_3", "IPC_IRQ_STATUS", 0x2A000028, "compute ipc_mailbox_0"),
+        ("tier2_3", "IPC_LOCK", 0x2A000030, "compute ipc_mailbox_0"),
+        ("tier2_3", "IPC_PERIPH_ID", 0x2A000034, "compute ipc_mailbox_0"),
+        ("tier2_3", "IPC_OUT_OF_RANGE", 0x2A000038, "compute ipc_mailbox_0"),
+        # tier4_5
+        ("tier4_5", "BOOTROM_ETH", 0x80000000,
+         "HIO-401's always-OKAY poll target: the compute boot ROM (admin alias)"),
+        ("tier4_5", "PHC_CAP_NS", 0x2B000028,
+         "HIO-405's recorded-only stale-latch demo: compute PHC cap_nanoseconds "
+         "(region 1, word 2 of phc_apb_regs.sv)"),
+        ("tier4_5", "ETH_IMEM", IMEM_SCRATCH, "compute IMEM above hostio_test"),
+        ("tier4_5", "UPLOAD_BASE", IMEM_SCRATCH,
+         "HIO-501's F/U target: compute IMEM 0x90002000 (above hostio_test)"),
+        ("tier4_5", "_BULK_WRITE_REGIONS",
+         ((IMEM_SCRATCH, IMEM_SCRATCH_SIZE,
+           "compute IMEM 0x90002000-0x90003FFF (admin alias), above the parked "
+           "M4's code and below the 16 KB top"),),
+         "the only region tier4_5 may carpet-write on compute"),
+        ("tier4_5", "DMA_TEST_SRC", 0x90003000, "compute IMEM scratch window"),
+        ("tier4_5", "DMA_TEST_DST", 0x90003800, "compute IMEM scratch window"),
+        ("tier4_5", "DMA_REACHABLE_SAFE", (IMEM_SCRATCH, IMEM_SCRATCH + IMEM_SCRATCH_SIZE - 1),
+         "compute DMA-250 data master reaches compute_admin (memory map Initiator "
+         "Connectivity); 0x90002000-0x90003FFF is above the live code"),
+        ("tier4_5", "DMA_NAMED_REFUSALS",
+         ((0x24000000, 0x27FFFFFF, "QSPI XiP aperture (HZ-6)"),
+          (0x40000000, 0x6FFFFFFF, "compute D2D windows d2d0/d2d1"),
+          (0x80000000, 0x90001FFF, "compute ROM and the PARKED M4's IMEM code"),
+          (0x90004000, 0x97FFFFFF, "above the 16 KB IMEM: ALIASES back onto live code"),
+          (0x98000000, 0x9FFFFFFF, "compute DMEM (8 KB, aliased across the window): "
+                                   "the M4's stack/.data")),
+         "compute's hazard windows for a DMA descriptor"),
+    )
+    forbid = (
+        (0x29000000, 0x29FFFFFF, "compute core_remap: REMAP is cleared only by "
+                                 "POR -- no writes on this bench"),
+        (0x24000000, 0x27FFFFFF, "QSPI XiP aperture (HZ-6)"),
+        (0x28008000, 0x28008FFF, "watchdog: arming it starts a reset countdown"),
+    )
+    t = Target(
+        "haps_sx_compute",
+        kind="fpga",
+        label="NanoSoC compute chiplet on HAPS-SX (rsyn9, single M4, M4 parked on WFI)",
+        description=(
+            "The compute chiplet's HOSTIO4/ADP port on the HAPS-SX VU19P "
+            "(bitstream be8093f7, rsyn9 launch RTL), with hostio_test parked on "
+            "WFI after STOP. Eth-only tests SKIP with a per-test reason; tests on "
+            "blocks the two dies share run unchanged or re-pointed at the "
+            "compute map (module_overrides); the three tier-1 controls run a "
+            "compute body (test_bodies)."),
+        fabric_hz=None,
+        eth_rom_image=None,
+        bus_quiescent=True,
+        bus_parkable=True,
+        cpu1_free_running=False,
+        census_value_class_asserted=False,
+        rom_distinct_offsets={"eth_rom": 0x004, "cpu1_rom": 0x004},
+        subword_rmw_supported=None,
+        eth_imem_live_code=False,
+        timer0_owned_by_firmware=False,
+        dma_powered=True,
+        soak_seconds=30,
+        test_skips=skips,
+        test_bodies={
+            "HIO-103": "compute_bodies:hio_103_compute",
+            "HIO-106": "compute_bodies:hio_106_compute",
+            "HIO-114": "compute_bodies:hio_114_compute",
+        },
+        module_overrides=overrides,
+        write_forbid=forbid,
+        sources={
+            "bus_quiescent": "hostio_test parked on WFI after STOP: HT_STATUS "
+                             "0x48540004 and HT_ITER stable over 1.5 s (T8 log, "
+                             "2026-10-03); no other master is programmed",
+            "rom_distinct_offsets": "bootrom.bin (44bbdfcc): word 0 0x18002000, "
+                                    "word 1 0x00000085 (reset vector), measured "
+                                    "over ADP",
+            "eth_imem_live_code": "re-pointed at the M4's IMEM: the M4 is ASLEEP "
+                                  "on WFI (DHCSR 0x00050001, S_SLEEP, read over SWD "
+                                  "2026-10-03), so no core is fetching from it",
+            "write_forbid": "no ROM band: compute_ss_bootrom.sv is a pure "
+                            "case-statement ROM with no write port, so HIO-209's "
+                            "write cannot land",
+            "dma_powered": "hostio_test ran 8527 DMA-250 copies on this image "
+                           "(HT_DMA_ERR 0)",
+            "timer0_owned_by_firmware": "hostio_test and the SPL use no timer",
+        },
+        notes=[
+            "Run ONLY with the M4 parked on WFI (0x2D000400 == 0x48540004). "
+            "Tier 2 overwrites the M4's WHOLE IMEM and DMEM (HIO-201..205) and "
+            "shared SRAM (HIO-208, the breadcrumbs and the HT block): the M4 "
+            "sleeps through it, but its image is gone. Afterwards RESET THE M4 "
+            "(SWD 'reset run'): the boot ROM reloads SPL + hostio_test from "
+            "flash, and the console/GO/STOP protocol parks it again.",
+        ],
+    )
+    return t
+
+
 _BUILDERS = {
     "fpga_kr260": _fpga_kr260,
     "asic_tsmc65": _asic_tsmc65,
     "unknown": _unknown,
+    "haps_sx_compute": _haps_sx_compute,
 }
 
 # Short aliases the operator will actually type at 2 a.m.
@@ -1130,6 +1382,7 @@ ALIASES = {
     "tsmc65": "asic_tsmc65",
     "silicon": "asic_tsmc65",
     "none": "unknown",
+    "compute": "haps_sx_compute",
     "": "unknown",
 }
 
@@ -1351,6 +1604,42 @@ def apply_module_bindings(modules, target):
         applied.append({"module": mod_name, "attr": attr, "property": prop,
                         "applied": True, "why": "bound from target %s" % target.name,
                         "value": fmt_prop(prop, value)})
+    return applied
+
+
+def _hexrepr(v):
+    """Addresses read as addresses in the record: ints as 0x%08X, recursively."""
+    if isinstance(v, bool):
+        return repr(v)
+    if isinstance(v, int):
+        return "0x%08X" % v if v >= 0x10000 else str(v)
+    if isinstance(v, (tuple, list)):
+        return "(" + ", ".join(_hexrepr(x) for x in v) + ")"
+    return repr(v)
+
+
+def apply_module_overrides(modules, target):
+    """Re-point tier-module constants at this vehicle's map.  Returns records.
+
+    Unlike apply_module_bindings this fires whatever the module's value is:
+    a module constant on an eth vehicle IS the eth value, so there is no
+    "undeclared" sentinel to wait for. That is exactly why every override is
+    recorded with the value it replaced, and why the profile lists them.
+    """
+    applied = []
+    for mod_name, attr, value, why in (target.module_overrides or ()):
+        mod = modules.get(mod_name)
+        if mod is None or not hasattr(mod, attr):
+            applied.append({"module": mod_name, "attr": attr, "property":
+                            "module_overrides", "applied": False,
+                            "why": "module or attribute not loaded", "value": None})
+            continue
+        old = getattr(mod, attr)
+        setattr(mod, attr, value)
+        applied.append({"module": mod_name, "attr": attr,
+                        "property": "module_overrides", "applied": True,
+                        "why": "override from target %s: %s" % (target.name, why),
+                        "value": _hexrepr(value), "replaced": _hexrepr(old)})
     return applied
 
 
