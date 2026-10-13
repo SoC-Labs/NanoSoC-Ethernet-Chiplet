@@ -694,6 +694,86 @@ class TargetWriteRefused(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
+# The REMAP guard -- rc4 eth_ss REMAP-during-held-transfer erratum
+# ---------------------------------------------------------------------------
+# A host (ADP) or DMA transfer to the eth_ss 0x0 alias that is held in the
+# matrix while CPU0's stage0 writes REMAP is re-decoded: taken twice, or
+# answered by the old target. The rule (targets.Target.remap_guard): no access
+# to [lo, hi] until CPU0 has handed over. There is no direct handover signal
+# -- REMAP is not host-readable -- so the guard reads the target's marker word,
+# the first thing a CPU0 image writes after REMAP, and refuses until it reads
+# back. An operator who has waited the handover out on an image that writes no
+# marker (the stock flash image) declares it with --assume-handed-over; the
+# declaration is recorded, never inferred.
+_REMAP_STATE = {"handed_over": False, "how": None}
+
+
+class RemapGuardRefused(SkipTest):
+    """An access the REMAP guard refuses. A SkipTest: the test reports SKIP
+    with the erratum as the reason, never FAIL and never a silent PASS."""
+
+
+def remap_guard_reset(assume_handed_over=False, how=None):
+    """Start a run: forget any handover seen, or take the operator's word."""
+    _REMAP_STATE["handed_over"] = bool(assume_handed_over)
+    _REMAP_STATE["how"] = how if assume_handed_over else None
+    return dict(_REMAP_STATE)
+
+
+def remap_guard_state():
+    return dict(_REMAP_STATE)
+
+
+def remap_guard_check(adp, addr, what):
+    """Refuse `what` at `addr` if it falls in the active target's REMAP-guarded
+    range and the CPU0 handover has not been proven. Returns None when allowed.
+
+    The marker probe goes through adp.read(); it cannot recurse, because the
+    probe's own address is exempt (a marker inside [lo, hi] is chosen to sit in
+    the decode-INSENSITIVE part, outside window S)."""
+    g = getattr(active_target(), "remap_guard", None)
+    if not g:
+        return None
+    a = addr & 0xFFFFFFFF
+    if not (g["lo"] <= a <= g["hi"]):
+        return None
+    if _REMAP_STATE["handed_over"]:
+        return None
+    maddr, mval = g["marker"]
+    if a == maddr:
+        return None
+    r = adp.read(maddr)
+    v = getattr(r, "value", None)
+    if getattr(r, "ok", False) and not getattr(r, "error", False) and v == mval:
+        _REMAP_STATE["handed_over"] = True
+        _REMAP_STATE["how"] = "marker 0x%08X == 0x%08X" % (maddr, mval)
+        return None
+    raise RemapGuardRefused(
+        "REMAP guard: refusing %s at 0x%08X on target %s -- CPU0 stage0 handover "
+        "not proven (marker 0x%08X reads %s, want 0x%08X). %s. Window S "
+        "0x%08X-0x%08X is decode-sensitive; the rule covers 0x%08X-0x%08X. If the "
+        "image writes no marker and the handover has been waited out, re-run with "
+        "--assume-handed-over."
+        % (what, a, active_target().name, maddr,
+           "0x%08X" % v if isinstance(v, int) else "nothing", mval, g["why"],
+           g["lo"], g["s_hi"], g["lo"], g["hi"]))
+
+
+def _addr_of_cmd(c):
+    """The address an ADP 'A' command sets, or None. Accepts 'Ax..', 'A x..'."""
+    t = str(c).strip()
+    if not t or t[0] not in "Aa":
+        return None
+    t = t[1:].strip()
+    if t[:1] in ("x", "X"):
+        t = t[1:]
+    try:
+        return int(t, 16)
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Adp -- CONTRACT.md section "Adp"
 # ---------------------------------------------------------------------------
 class Adp(object):
@@ -979,12 +1059,16 @@ class Adp(object):
 
     def cmd(self, c, timeout_ms=CMD_TIMEOUT_MS):
         """Send one ADP command line and return its Reply."""
+        a = _addr_of_cmd(c)
+        if a is not None:
+            remap_guard_check(self, a, "ADP address command %r" % str(c))
         self.open()
         return self._cmd_call("cmd(%r,%d)" % (str(c), timeout_ms),
                               timeout_ms, cmdstr=str(c))
 
     def read(self, addr, timeout_ms=CMD_TIMEOUT_MS):
         """A x<addr> ; R.  NOTE: R auto-increments, so re-issue A between reads."""
+        remap_guard_check(self, addr, "ADP read")
         self.open()
         cs = "%s ; R" % (ADDR_CMD % (addr & 0xFFFFFFFF))
         t0 = time.monotonic()
@@ -1008,6 +1092,7 @@ class Adp(object):
                 "refusing W x%08X to 0x%08X on target %s: 0x%08X-0x%08X %s"
                 % (val & 0xFFFFFFFF, addr & 0xFFFFFFFF, active_target().name,
                    fb[0], fb[1], fb[2]))
+        remap_guard_check(self, addr, "ADP write")
         self.open()
         cs = "%s ; %s" % (ADDR_CMD % (addr & 0xFFFFFFFF),
                           WRITE_CMD % (val & 0xFFFFFFFF))
@@ -1524,6 +1609,7 @@ class Opts(object):
         self.target = None            # a targets.Target; None -> `unknown`
         self.target_source = "default"   # 'cli' | 'env:NAME' | 'default'
         self.target_bindings = []     # what apply_module_bindings() did
+        self.assume_handed_over = None   # operator's REASON, or None (REMAP guard)
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -1702,6 +1788,9 @@ class Runner(object):
         ids = list(ids) if ids is not None else self.reg.ids()
         self.order = order_tests(self.reg, ids, self.gb)
         self.started_monotonic = time.monotonic()
+        aho = getattr(self.opts, "assume_handed_over", None)
+        remap_guard_reset(bool(aho), ("operator --assume-handed-over: %s" % aho)
+                          if aho else None)
         for tid in self.order:
             meta = self.reg.get(tid)
             if self.opts.max_seconds:
@@ -2028,6 +2117,9 @@ def build_record(runner, die_id, timestamp, argv=None, adp=None, selection=None)
         "target": dict(runner.target.to_dict(),
                        source=runner.opts.target_source,
                        bindings_applied=list(runner.opts.target_bindings or [])),
+        # How the REMAP guard was satisfied, if it was: the marker, the
+        # operator's stated reason, or not at all (guarded accesses SKIPPED).
+        "remap_guard": remap_guard_state(),
         "gating_rule": compute_gating.__doc__.strip().splitlines()[0],
         "controls_carried_from": runner.opts.carried_from,
         "aborted": runner.aborted,
@@ -2133,9 +2225,11 @@ def discover(reg=None, pattern="tier*.py", modules=None, verbose=False):
 class _FakeAdp(object):
     """A board that never existed.  Used only by --selftest."""
 
-    def __init__(self, table=None):
+    def __init__(self, table=None, guard=False):
         self.table = table or {}
         self.reads = 0
+        self.guard = guard          # model Adp's REMAP guard (selftest [8] only)
+        self.addressed = []         # every address that reached the "board"
 
     def enter(self, timeout_ms=None):
         return Reply("\nC 0x00000000\n]")
@@ -2147,15 +2241,26 @@ class _FakeAdp(object):
         return Reply("\n]")
 
     def cmd(self, c, timeout_ms=CMD_TIMEOUT_MS):
+        a = _addr_of_cmd(c)
+        if a is not None:
+            if self.guard:
+                remap_guard_check(self, a, "ADP address command %r" % str(c))
+            self.addressed.append(a)
         return Reply("\n%s 0x00000000\n]" % (c[:1].upper() or "C"), cmd=c)
 
     def read(self, addr, timeout_ms=CMD_TIMEOUT_MS):
+        if self.guard:
+            remap_guard_check(self, addr, "ADP read")
+        self.addressed.append(addr)
         self.reads += 1
         r = Reply(self.table.get(addr, "\nR!0x00000000\n]"), cmd="rd 0x%08X" % addr)
         r.addr_ok = True
         return r
 
     def write(self, addr, val, timeout_ms=CMD_TIMEOUT_MS):
+        if self.guard:
+            remap_guard_check(self, addr, "ADP write")
+        self.addressed.append(addr)
         return Reply("\nW 0x%08x\n]" % val)
 
     def raw_rx(self, ms, flush=True):
@@ -2549,6 +2654,10 @@ def _selftest(out=sys.stdout):
     out.write("\n[7] Vehicle port (haps_sx_compute) -- skips, bodies, overrides, "
               "write guard\n")
     _selftest_vehicle_port(ck, out)
+
+    out.write("\n[8] REMAP guard (rc4 REMAP-during-held-transfer erratum) -- each "
+              "access path refused before handover, admitted after\n")
+    _selftest_remap_guard(ck, out)
 
     # section [4] counts itself separately so the ORIGINAL core total stays
     # countable; everything else, this section included, is core.
@@ -3121,6 +3230,120 @@ def _selftest_coarse_band(ck, out):
                     "perf_snap_delta_window_s") if "hclk" in k], [])
 
 
+def _selftest_remap_guard(ck, out):
+    """[8] The REMAP guard, on every path a host or DMA access can take.
+
+    Each check fails if the guard it attacks is removed:
+      Adp.read / Adp.write / Adp.cmd('A x..')  -> 'REACHED' instead of refused;
+      tier1 HIO-114 per-row catch              -> the census raises instead of
+                                                  completing with GUARDED rows;
+      tier4_5 HIO-412 explicit DMA check       -> the refusal names the seeding
+                                                  write, not the DMA endpoint.
+    """
+    import tier1
+    import tier4_5
+
+    class Reached(Exception):
+        pass
+
+    def reached(*_a, **_k):
+        raise Reached("the access reached the board")
+
+    def probe_reads(value):
+        # The guard's marker probe calls adp.read(); answer it without a board.
+        def rd(addr, timeout_ms=CMD_TIMEOUT_MS):
+            r = Reply("\nR 0x%08x\n]" % value, cmd="rd 0x%08X" % addr)
+            r.addr_ok = True
+            return r
+        return rd
+
+    def adp_with_marker(value):
+        a = Adp("/dev/null-never-opened")
+        a.open = reached                 # anything past the guard "reaches the board"
+        a.read = probe_reads(value)      # the marker probe only
+        return a
+
+    def outcome(fn, *args):
+        try:
+            fn(*args)
+        except RemapGuardRefused:
+            return "refused"
+        except Reached:
+            return "reached"
+        except Exception as exc:         # pragma: no cover - a defect in the guard
+            return "error: %s" % type(exc).__name__
+        return "no exception"
+
+    prev = active_target()
+    asic = targets.resolve("asic_tsmc65")
+    marker_addr, marker_val = asic.remap_guard["marker"]
+    try:
+        set_active_target(asic)
+        # -- the three Adp paths, before handover ------------------------------
+        for name, fn, args in (("Adp.read 0x00000000", Adp.read, (0x00000000,)),
+                               ("Adp.write 0x10000000", Adp.write, (0x10000000, 0)),
+                               ("Adp.cmd 'A x18000000'", Adp.cmd, ("A x18000000",)),
+                               ("Adp.cmd 'Ax1FFFFFFF' (range top)", Adp.cmd,
+                                ("Ax1FFFFFFF",))):
+            remap_guard_reset()
+            a = adp_with_marker(0)
+            ck("before handover: %s is refused" % name, outcome(fn, a, *args), "refused")
+        # -- outside the range, never refused -----------------------------------
+        remap_guard_reset()
+        ck("0x20000000 (just above the range) is not guarded",
+           outcome(Adp.read, adp_with_marker(0), 0x20000000), "reached")
+        # -- the marker admits, and is remembered -------------------------------
+        remap_guard_reset()
+        ck("marker 0x%08X == 0x%08X admits the access" % (marker_addr, marker_val),
+           outcome(Adp.read, adp_with_marker(marker_val), 0x00000000), "reached")
+        ck("...and the run record says how", remap_guard_state()["how"],
+           "marker 0x%08X == 0x%08X" % (marker_addr, marker_val))
+        # -- the operator's declaration admits, and is recorded -----------------
+        remap_guard_reset(True, "operator --assume-handed-over: selftest")
+        ck("--assume-handed-over admits the access",
+           outcome(Adp.write, adp_with_marker(0), 0x00000000, 0), "reached")
+        # -- the compute vehicle has no eth_ss alias: no guard -------------------
+        set_active_target(targets.resolve("haps_sx_compute"))
+        remap_guard_reset()
+        ck("haps_sx_compute carries no REMAP guard",
+           outcome(Adp.read, adp_with_marker(0), 0x00000000), "reached")
+
+        # -- the tier tests themselves, against a fake board --------------------
+        set_active_target(asic)
+        in_range = lambda xs: sorted({x for x in xs if 0 <= x <= 0x1FFFFFFF
+                                      and x != marker_addr})
+        remap_guard_reset()
+        fa = _FakeAdp(guard=True)
+        ck("HIO-116 (the REMAP probe) is refused before handover",
+           outcome(tier1.hio_116, fa, Rec("HIO-116")), "refused")
+        ck("...and none of its window reads reached the board", in_range(fa.addressed), [])
+
+        remap_guard_reset()
+        fa = _FakeAdp(guard=True)
+        rec = Rec("HIO-114")
+        ck("HIO-114 census completes before handover (guarded rows skipped, "
+           "not the whole test)", outcome(tier1.hio_114, fa, rec), "no exception")
+        ck("...it reached no guarded address", in_range(fa.addressed), [])
+        ck("...and records the 5 eth_ss rows as GUARDED",
+           len(rec.values.get("census_guarded_rows", [])), 5)
+
+        remap_guard_reset()
+        fa = _FakeAdp(guard=True)
+        try:
+            tier4_5.hio_412(fa, Rec("HIO-412"))
+            why = "no refusal"
+        except RemapGuardRefused as exc:
+            why = str(exc)
+        except Exception as exc:
+            why = "error: %s" % type(exc).__name__
+        ck("HIO-412 DMA is refused at its DMA endpoint check, before the seeding "
+           "writes", "DMA-250 SRC endpoint" in why, True)
+        ck("...and nothing in the range reached the board", in_range(fa.addressed), [])
+    finally:
+        set_active_target(prev)
+        remap_guard_reset()
+
+
 def _selftest_vehicle_port(ck, out):
     """[7] The vehicle-port mechanisms, each shown working AND inert.
 
@@ -3321,6 +3544,14 @@ def _build_parser():
     p.add_argument("--allow-destructive", action="store_true")
     p.add_argument("--allow-wedge", action="store_true")
     p.add_argument("--allow-reset", action="store_true")
+    p.add_argument("--assume-handed-over", dest="assume_handed_over", default=None,
+                   metavar="REASON",
+                   help="declare that CPU0's stage0 has written REMAP and handed "
+                        "over, so the REMAP guard (rc4 erratum) admits accesses to "
+                        "the eth_ss 0x0 alias. Give the REASON (e.g. 'stock flash, "
+                        "waited 30 s after boot gate bit2'); it is recorded. Without "
+                        "it the guard admits them only once the target's marker "
+                        "word reads back")
     p.add_argument("--unattended", action="store_true",
                    help="declare that nobody is watching; WEDGE_RISK tests then "
                         "refuse even with --allow-wedge")
@@ -3485,6 +3716,7 @@ def main(argv=None):
         target=target,
         target_source=target_source,
         target_bindings=bindings,
+        assume_handed_over=args.assume_handed_over,
     )
 
     if args.list or args.list_json:
