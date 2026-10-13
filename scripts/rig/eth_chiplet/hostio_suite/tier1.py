@@ -741,8 +741,18 @@ def hio_114(adp, rec):
     observed = {}
     seen_data = seen_zero = seen_error = seen_noreply = 0
 
+    guarded = []
     for addr, cls, what in _CENSUS:
-        r = _probe(adp, addr)
+        # rc4 REMAP erratum: before CPU0's stage0 has handed over, the guard
+        # refuses the eth_ss 0x0 alias. Those rows are NOT read and NOT
+        # compared; the rest of the census still runs.
+        try:
+            r = _probe(adp, addr)
+        except harness_module.RemapGuardRefused:
+            guarded.append(_h(addr))
+            observed["%s" % _h(addr)] = {"expect": cls, "actual": "GUARDED",
+                                         "value": None, "raw": None, "what": what}
+            continue
 
         if not r.ok:
             actual = "NO-REPLY"
@@ -791,6 +801,12 @@ def hio_114(adp, rec):
         # ---- D/Z: decode only; value recorded ------------------------------
 
     rec.record("census", observed)
+    rec.record("census_guarded_rows", guarded)
+    if guarded:
+        rec.note("%d census row(s) NOT read: the REMAP guard refused %s because CPU0's "
+                 "stage0 handover was not proven (rc4 REMAP-during-held-transfer "
+                 "erratum). Re-run once the marker reads back, or with "
+                 "--assume-handed-over." % (len(guarded), ", ".join(guarded)))
     rec.record("census_class_counts", {"D": seen_data, "Z": seen_zero,
                                        "E": seen_error, "NO-REPLY": seen_noreply})
 

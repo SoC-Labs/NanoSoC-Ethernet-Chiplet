@@ -71,6 +71,7 @@ was downloaded 1 Sep and never analysed until this audit.
 | B2-CLK | QSPI boot read fails above ≈66 MHz CLK at CLK_DIV = 1: fails at 100 and 90.9 MHz on every corner (added 2026-10-09) | BRING-UP RULE (measured by STA) | no | **boot at CLK = 50 MHz**; raise CLK only after firmware sets `CLK_DIV` ≥ 2 |
 | RX-POL | TideLink RX polarity `out_prepend_swi_polarity` must stay at its reset value 1; rising-edge capture fails hold (added 2026-10-09) | FIRMWARE RULE | no | **never clear it** |
 | FLASH-LAYOUT | XiP/overlay apps linked cold code at flash `0x20000`, CPU1's boot-counter sector — firmware defect, not silicon (added 2026-10-09) | SOFTWARE (latent corruption) | no | cold segment at `0x80000` (`nanosoc_xip_layout.ld`); nothing in `0x00000–0x5FFFF` but tables, counter and CPU1 slots; `check_flash.py --elf` |
+| REMAP-HOLD | A host or DMA transfer to the eth_ss 0x0 alias that is held in the bus matrix while CPU0's stage0 writes REMAP is re-decoded: taken twice, or answered by the old target (added 2026-10-13) | BRING-UP RULE (debug-attached only) | no | **no ADP, SWD or DMA access to `0x0000_0000–0x1FFF_FFFF` until CPU0's stage0 has written REMAP and handed over**; the hostio_suite enforces it |
 
 The full entry for each follows. Minor functional limitations are in §4.
 
@@ -323,6 +324,43 @@ The full entry for each follows. Minor functional limitations are in §4.
 - **Rule:** no image may use flash `0x00000–0x5FFFF` except TABLE0/TABLE1, the erased counter and CPU1 images in
   slot A/B or golden at their address-map offsets. Run `check_flash.py --elf <app>.elf` on every image.
   `flash_pack.py` still cannot place XiP segments (no `--segment`); the blob is overlaid by hand.
+
+### REMAP-HOLD — A transfer held across CPU0's REMAP write is re-decoded (added 2026-10-13)
+
+- **Found by:** formal analysis of the Arm BuildBusMatrix CPU-subsystem matrix, done by the QuickStart
+  project (notice `NOTICE-CHIPLETS-REMAP-held-transfer-2026-10-13.md` in nanoSoC-M0-QuickStart-SoC
+  `docs/evidence/notices/`). Not observed on a die.
+- **Mechanism:** a non-CPU transfer addressed to the eth_ss 0x0 alias that is held in the matrix while
+  REMAP changes is re-decoded against the new map. It can be taken twice, or answered by the target the
+  old map selected.
+- **Who can reach it on rc4:** DMA-250 (`dmac_0`), the ADP debug port (`debug_m`, HOSTIO) and the SoC-400
+  DAP (`dap_ss_0`, SWD) all reach the eth_ss slave range `0x0000_0000–0x1FFF_FFFF` untranslated. CPU0's
+  stage0 writes REMAP in `remap_and_jump()` (stage0_bootrom `main.c:171-178`) while CPU1, a DMA it started,
+  or a host can be active.
+- **Which part of the range is sensitive:** only `0x0000_0000–0x07FF_FFFF` changes decode with REMAP (boot
+  ROM before, IMEM after). The boot ROM alias at `0x0800_0000`, IMEM at `0x1000_0000` and DMEM at
+  `0x1800_0000` decode the same either way. The rule below covers the whole slave range, as the notice
+  states, because it is simpler to apply and costs nothing at bring-up.
+- **Exposure:** low in a normal boot. Possible in debug-attached bring-up, where a host reads or writes
+  that range while CPU0 is still in stage0.
+- **No handover signal:** REMAP is not readable from the host (the eth APB at `0x5000_0000` is not routed
+  from the main bus), and stage0 writes no success breadcrumb. Boot-gate bit 2 and mailbox
+  `0x2300_0010 = 0xD15C0001` mean stage0 has *started*, not finished. The only usable marker is one a
+  CPU0 image writes after REMAP: the HOSTIO firmware's boot token `0x2D00_1FF0 = 0xB007C0FE`. The stock
+  flash image writes none. If stage0 halts (no valid eth image), REMAP is never written and the hazard
+  cannot occur.
+- **Rule (bring-up scripts):** no ADP, SWD or DMA access to `0x0000_0000–0x1FFF_FFFF` until CPU0's stage0
+  has written REMAP and handed over: the marker reads back, or, with an image that writes no marker, the
+  handover has been waited out.
+- **Enforced in:** `scripts/rig/eth_chiplet/hostio_suite`. Every ADP read, write and address command in
+  the range is refused (the test reports SKIP, naming this erratum) until the target's marker reads back
+  or the operator passes `--assume-handed-over REASON`, which is recorded. HIO-114 skips only its five
+  eth_ss census rows; HIO-412 checks its DMA endpoints before any write. Self-test section [8] fails if
+  any of these guards is removed.
+- **Not yet guarded:** the HAPS-work tools (haps-hostio `adp-identity`, the GUI Peek default, both at
+  `0x0800_0000`, which is decode-insensitive) and the OpenOCD smoke procs, which halt CPU0 first. Audit
+  with file:line tables: HAPS session 3006a0bc, 2026-10-13.
+- **Silicon change:** none proposed.
 
 ### 3.1 Booting without flash, and workarounds for B2
 

@@ -94,6 +94,7 @@ import os
 import time
 
 from harness import Adp, Reply, test, Rec, HZ  # noqa: F401  (pinned import, CONTRACT.md)
+from harness import remap_guard_check  # rc4 REMAP erratum: the DMA is invisible to Adp's guard
 
 
 # -----------------------------------------------------------------------------
@@ -305,7 +306,15 @@ DMA_CTRL_1D_WORD = 0x00200202     # TRANSIZE_32 | XTYPE_CONT | DONETYPE_EOC
 # [31:10]) reaches exactly four windows, and three of them are ways to wedge the
 # board THROUGH the DMA, bypassing every guard in this file -- _check_addr only
 # ever sees what ADP writes, never where the DMA subsequently reads or writes.
-#   MI0  0x00000000-0x1FFFFFFF  eth subsystem            <- the only safe one
+#   MI0  0x00000000-0x1FFFFFFF  eth subsystem            <- the only one free of the
+#                                                           hazards below, and STILL
+#                                                           only after CPU0's stage0
+#                                                           has handed over: the rc4
+#                                                           REMAP-during-held-transfer
+#                                                           erratum (67-rc4 register)
+#                                                           forbids DMA here before
+#                                                           that. hio_412 asks the
+#                                                           REMAP guard first.
 #   MI5  0x24000000-0x27FFFFFF  QSPI XiP (HZ-6)          <- 1.3 ms/beat or livelock
 #   MI12 0x2E000000-0x2FFFFFFF  D2D + peer aperture      <- HZ-2 / HZ-3
 #   MI13 0x80000000-0x9FFFFFFF  LIVE CPU1 memory         <- CPU1 sources the SoC clock
@@ -1874,6 +1883,11 @@ def hio_412(adp, rec):
     nbytes = DMA_TEST_BEATS * 4
     _check_dma_endpoint(DMA_TEST_SRC, nbytes, "SRC")
     _check_dma_endpoint(DMA_TEST_DST, nbytes, "DST")
+    # The REMAP guard sees only ADP accesses. The DMA's own addresses travel as
+    # register VALUES, so ask it explicitly, for both endpoints, before the
+    # seeding writes and before any channel register: a refusal SKIPs the test.
+    remap_guard_check(adp, DMA_TEST_SRC, "DMA-250 SRC endpoint")
+    remap_guard_check(adp, DMA_TEST_DST, "DMA-250 DST endpoint")
     rec.record("dma_channels_present", DMA_NUM_CH)
     rec.record("dma_ch0_base", DMA_CH0)
     rec.record("dma_src", DMA_TEST_SRC)

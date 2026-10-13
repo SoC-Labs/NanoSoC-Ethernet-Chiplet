@@ -481,6 +481,14 @@ class Target(object):
         "write_forbid":              ((), "((lo, hi, why), ...) -- address ranges "
                                           "Adp.write() refuses on this vehicle, "
                                           "whatever a tier module's own guard says"),
+        "remap_guard":               (None, "{lo, hi, s_hi, marker, why} -- the rc4 "
+                                            "eth_ss REMAP-during-held-transfer "
+                                            "erratum. Every ADP read, write or "
+                                            "address command in [lo, hi] is REFUSED "
+                                            "(the test reports SKIP) until the "
+                                            "handover marker (addr, value) reads "
+                                            "back, or the operator passes "
+                                            "--assume-handed-over. None = no guard"),
 
         # provenance
         "settled_absent":            (None, "{prop: why} for properties whose None "
@@ -768,6 +776,22 @@ class Target(object):
 # ===========================================================================
 # THE PROFILES
 # ===========================================================================
+# rc4 eth_ss REMAP-during-held-transfer erratum (QuickStart notice
+# NOTICE-CHIPLETS-REMAP-held-transfer-2026-10-13; docs/tapeout/67 REMAP-HOLD). A
+# non-CPU transfer to the eth_ss 0x0 alias that is held in the matrix while
+# CPU0's stage0 writes REMAP is re-decoded: taken twice, or answered by the old
+# target. Only 0x0-0x07FFFFFF (window S) changes decode; the rule covers the
+# whole eth_ss slave range 0x0-0x1FFFFFFF, as the notice states. The marker is
+# the first word a CPU0 image writes AFTER REMAP: hostio_fw's boot token. The
+# stock flash image writes none, so on stock flash the operator must declare
+# the handover (--assume-handed-over) after waiting it out.
+_REMAP_GUARD_HOSTIO_FW = dict(
+    lo=0x00000000, hi=0x1FFFFFFF, s_hi=0x07FFFFFF,
+    marker=(0x2D001FF0, 0xB007C0FE),
+    why="rc4 erratum REMAP-HOLD: no host/DMA access to the eth_ss 0x0 alias until "
+        "CPU0's stage0 has written REMAP and handed over")
+
+
 def _fpga_kr260():
     t = Target(
         "fpga_kr260",
@@ -784,6 +808,10 @@ def _fpga_kr260():
         eth_rom_image="smoke_remap",
         eth_dmem_word0=0x05F5E100,
         cpu0_ran_marker=0x05F5E100,
+        # smoke_remap writes REMAP too; its first post-REMAP witness is the
+        # DMEM word0 anchor, which sits in R-S (decode-insensitive), so the
+        # guard may read it as its probe.
+        remap_guard=dict(_REMAP_GUARD_HOSTIO_FW, marker=(0x18000000, 0x05F5E100)),
         bootgate_values=(0x00000004,),
         # CPU0 IS RELEASED here too -- measured gate 0x00000004 -- so the bus is
         # NOT quiet by default. The difference from the ASIC is that it CAN be
@@ -929,6 +957,7 @@ def _asic_tsmc65():
         # healthy ASIC die when the gate was open, and VACUOUSLY GREEN when it
         # was shut -- the false-red and the false-green in one assertion.
         cpu0_ran_marker=None,
+        remap_guard=dict(_REMAP_GUARD_HOSTIO_FW),
         settled_absent={
             "cpu0_ran_marker":
                 "ESTABLISHED ABSENT, not unmeasured. stage0_bootrom offers no "
@@ -1116,7 +1145,9 @@ def _unknown():
             "target-INDEPENDENT set (see TargetIndependent), which is RTL-grounded "
             "on both vehicles and stays asserted -- relaxing that would be "
             "deleting coverage, not being careful."),
-        # every target-specific property stays None
+        # every target-specific property stays None -- except the REMAP guard:
+        # it is a safety rule for any eth die, not an expectation about one
+        remap_guard=dict(_REMAP_GUARD_HOSTIO_FW),
         census_value_class_asserted=False,
         soak_seconds=60,
         sources={},
