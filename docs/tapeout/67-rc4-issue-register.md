@@ -72,6 +72,7 @@ was downloaded 1 Sep and never analysed until this audit.
 | RX-POL | TideLink RX polarity `out_prepend_swi_polarity` must stay at its reset value 1; rising-edge capture fails hold (added 2026-10-09) | FIRMWARE RULE | no | **never clear it** |
 | FLASH-LAYOUT | XiP/overlay apps linked cold code at flash `0x20000`, CPU1's boot-counter sector — firmware defect, not silicon (added 2026-10-09) | SOFTWARE (latent corruption) | no | cold segment at `0x80000` (`nanosoc_xip_layout.ld`); nothing in `0x00000–0x5FFFF` but tables, counter and CPU1 slots; `check_flash.py --elf` |
 | REMAP-HOLD | A host or DMA transfer to the eth_ss 0x0 alias that is held in the bus matrix while CPU0's stage0 writes REMAP is re-decoded: taken twice, or answered by the old target (added 2026-10-13) | BRING-UP RULE (debug-attached only) | no | **no ADP, SWD or DMA access to `0x0000_0000–0x1FFF_FFFF` until CPU0's stage0 has written REMAP and handed over**; the hostio_suite enforces it |
+| SB-CRC | A CRC error on a multi-word TideLink sideband packet (node 0xA1) is counted but not replayed: the message is lost, or delivered with words zeroed (added 2026-10-14) | FUNCTIONAL (low exposure; affects TideChart enumeration) | yes, to fix | minimise sideband traffic (isolated words reduce but do not remove exposure: a header-packet hit still loses the message); never send sideband bursts or enable the TideLink PTP servo; snapshot the sideband CRC counter `0x2E03_1720` and reload both dies on an increment during enumeration; never set `disable_crc` |
 
 The full entry for each follows. Minor functional limitations are in §4.
 
@@ -193,6 +194,55 @@ The full entry for each follows. Minor functional limitations are in §4.
 - **Fix for a re-spin:** take tidelink `b08145a` (TL-053/M4DUP), then re-run `item07/g2/test_tl053_dma.py`.
 
 ---
+
+### SB-CRC — A sideband CRC error is detected but not replayed (added 2026-10-14)
+
+- **Found by:** the TideLink project (bisect, simulation and KR260 hardware, 2026-10-14). Present in the rc4
+  netlist: `socl_l9b_hold_reg[0..1]` and `socl_l9_first_data_seen_rx_reg` exist in the sideband FC node of
+  `nanosoc_eth_chiplet_pads_rc4_pnr.v` (md5 `1899a304…`, TideLink pin `785daee`). The compute die very likely
+  ships with it too, so both directions of the pair are affected; the eth die's receive side covers
+  compute→eth.
+- **What happens:** a CRC error on the sideband flow-control node (`WlinkGenericFCSM_6`, DataID `0xA1`) is
+  detected (the node's CRC error counter increments) but the packet is not replayed. The July L9b logic
+  (`socl_l9b_reanchor_now`) re-anchors past the dropped word, and L9c then discards the correct replay as a
+  stale echo.
+- **Outcome depends on which Wlink packet of the message is hit.** Every sideband message is a header packet
+  plus its payload packets, so even a single-word message is two packets. Only a CRC hit on the LAST Wlink packet
+  of a message replays correctly. A hit on the header loses even a single-word message (simulation 6/6; a hit
+  on its payload packet replays 6/6). In longer messages a header hit is mostly lost and a middle hit delivers
+  the message with that payload zeroed, silently. HAPS test T17 replayed because its hit landed on the last
+  packet.
+- **Evidence:** KR260 pair, 30 shots each direction on 4-word packets: 60/60 detected, 60/60 lost, link up after
+  every shot. Simulation: 243 runs. With the L9b term forced off in simulation the replay is exact (that is the
+  rev-2 RTL fix, not a register).
+- **Not affected:** the AXI data nodes (peer reads and writes, and the cross-die IPC doorbell) have no L9b/L9c.
+  The link stays up.
+- **No register disables it.** L9b/L9c are Verilog parameters plus fixed logic. `SM_CONTROL[16]`
+  (`disable_crc`, node `+0x1714`) avoids the loss only by accepting every corrupted sideband word silently and
+  blinding the counter, which is worse: never set it.
+- **Who uses the sideband on rc4:** eth firmware does not. It never writes `TC_CTRL[0]/[1]` and has no user of
+  the `NANOSOC_D2D_*` sideband FIFO words (checked in `nanosoc-multicore-system/firmware`, 2026-10-14). The
+  eth die's part of TideChart DISCOVER/ASSIGN is done in TideLink/TideChart hardware. TideChart enumeration is
+  driven by the compute firmware as root, stop-and-wait, one word at a time. The
+  TideLink PTP servo (`SERVO_CFG 0x204C`, six back-to-back words per exchange) is off at reset and no shipping
+  firmware enables it. The bug is therefore NOT dormant: a CRC hit on the header packet of any enumeration
+  message loses it. Exposure is very low (below), and enumeration already reports a timeout or a count mismatch
+  when a message goes missing.
+- **Workaround (rules):**
+  - Minimise sideband traffic. Isolated words reduce the exposure but do not remove it, because a hit on a
+    message's header packet still loses the message. Do not send multi-word sideband messages or bursts, and do
+    not enable the TideLink PTP servo, unless the application adds a sequence number plus ack/retry.
+  - Detection (the main mitigation): the sideband node's CRC error counter is `0x2E03_1720` (TideLink APB
+    `0x2E03_0000` + node `0x1700` + `0x20`, 16-bit). A non-zero value or an increment means a sideband message
+    may have been lost or zeroed. Compute firmware snapshots it around enumeration and requests a reload of both
+    dies on an increment; enumeration is one-shot per reset, so do not retry it.
+  - Eth side (optional): bring-up scripts and any future eth firmware may read `0x2E03_1720` after link-up and
+    log any non-zero value.
+  - Testing: inject at the eth die's Wlink `LINK_ERROR_INJECTION` register `0x2E03_023C` (DataID `0xA1`,
+    payload byte 4 to 11, enable bit 24). Not `0x2E03_003C`: that is an unmapped alias that degrades the link.
+- **Exposure:** very low today. 0 natural CRC errors in about 4.4e8 AXI words on the FPGA links (95% upper bound
+  about 7e-9 per word; same PHY lanes). No silicon bit-error data exists.
+- **Silicon change:** none possible for rc4. The fix (L9b re-anchor term off) is an RTL change, for the next revision.
 
 ### RX-POL — TideLink RX polarity must stay at its reset value (added 2026-10-09)
 
