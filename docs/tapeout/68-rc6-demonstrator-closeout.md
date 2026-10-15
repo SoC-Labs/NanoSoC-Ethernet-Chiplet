@@ -22,7 +22,7 @@ not, and where to restart.
 | Setup at signoff (Tempus, full extraction) | −0.018 ns, 1 endpoint (one PHC counter bit). Passes in-flow at +0.012 | rc6e |
 | DRC | 0 | rc6b, rc6e |
 | LEC, synthesised gates vs routed netlist | **Equivalent, 61,599 / 61,599** in 10 min | rc6b |
-| LEC, RTL vs synthesised gates | 31 of 33 module pairs equivalent; 2 aborted (unproven, not shown wrong) | rc6b |
+| LEC, RTL vs synthesised gates | **33 of 33 module pairs equivalent.** 31 in the bounded hierarchical run; the ETH IMEM wrapper (16,082 points) and `Wlink` (10,263 points, 16/16 sub-pairs) proven in targeted runs that resolved every abort | rc6b, `lec_targeted/` |
 | Route and ECO stage gates | No hard failures after the layer-probe fix | rc6b, rc6e |
 
 ## What it does not prove
@@ -32,9 +32,6 @@ not, and where to restart.
   launching flops'. Hold is clean after CTS (+0.005 ns, 0 endpoints) and breaks at route.
   Route's hold repair reported 216 + 110 nets it could not fix for lack of a legal location;
   the signoff ECO made one change and stopped.
-- **Two RTL→gate LEC modules**: the TideLink D2D link (`Wlink`) and the ETH IMEM wrapper. Each
-  stops at its first abort, so about 14,800 points in each are not compared. `Wlink` has
-  9,845 XOR gates in RTL against 466 XOR + 297 XNOR in gates, a classic abort source.
 
 ## What the run changed in the toolkit
 
@@ -62,8 +59,12 @@ utilisation for this floorplan.
 1. Rerun from rc6b's synthesis with `PLACE_MAX_DENSITY=0.95`, or keep 0.90 and find why CTS
    legalisation fails (the 15 instances are small logic cells near the core).
 2. For a new die, plan utilisation in the 60–70 % range so hold repair has room.
-3. Run the two aborted LEC modules alone at high compare effort, with XOR-tree abort
-   resolution, under a per-module time limit.
+3. LEC is closed (updated 2026-10-15). The two modules the bounded run left aborted were each run
+   alone at high compare effort with XOR-tree abort resolution and analyze-abort: ETH IMEM in
+   about 2 h, `Wlink` (9,845 XOR gates in RTL against 466 XOR + 297 XNOR in gates) in about 5 h.
+   Every abort resolved to equivalent. Recipe: `add_module_attribute <mod> -compare_effort high`,
+   `-cpu_limit`, `set_analyze_option -effort_analyze_abort high -analyze_abort_resolve_xortree`,
+   `run_hier_compare ... -analyze_abort -root_module <mod> <mod>`.
 4. Give the RTL leg its own rule set; removed constant registers and clock-gate latches are
    expected there.
 
