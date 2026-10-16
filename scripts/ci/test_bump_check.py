@@ -237,6 +237,23 @@ class BumpCheck(unittest.TestCase):
         self.assertIn("run-local unit", out)
         self.assertIn("forbidden", out)
 
+    def test_run_local_never_runs_a_regenerating_capability(self):
+        r = self.repo()
+        mark = os.path.join(r.dir, "ran")
+        cap = ("schema: 1\ncomponent: demo\ncapabilities:\n  - id: elab\n    kind: elab\n"
+               "    tier: t2\n    run: touch %s\n    regenerates: true\n    affected_by: [sub]\n" % mark)
+        g = lambda *a: sh(r.dir, "git", "-c", "user.name=t", "-c", "user.email=t@t", *a)
+        with open(os.path.join(r.dir, ".nanosoc", "capabilities.yaml"), "w") as f:
+            f.write(cap)
+        g("add", ".nanosoc/capabilities.yaml")
+        g("commit", "-q", "-m", "regen")
+        r.tip = g("rev-parse", "HEAD")
+        os.environ.pop("NANOSOC_GEN_OK", None)
+        rc, out = r.check("block", run_local=True)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT RUN", out)
+        self.assertFalse(os.path.exists(mark), "a regenerating capability ran")
+
     def test_require_list_counts_matches(self):
         r = self.repo(run_cmd="echo PASS")
         cap = {"id": "x", "run": "echo PASS", "verdict": {"require": [{"pattern": "PASS", "min": 2}]}}

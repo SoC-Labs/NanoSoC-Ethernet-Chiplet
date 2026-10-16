@@ -219,6 +219,7 @@ def check(ranges, mode, run_local=False, max_tier=2, cwd=None, out=sys.stdout):
     say = lambda s="": print(s, file=out)
     unresolved = 0
     seen = set()
+    ran = {}
     for base, tip in ranges:
         moves = changed_gitlinks(base, tip, cwd=root)
         if not moves:
@@ -261,7 +262,18 @@ def check(ranges, mode, run_local=False, max_tier=2, cwd=None, out=sys.stdout):
                 else:
                     bad = 0
                     for c in todo:
-                        ok, d = run_capability(c, root)
+                        if c.get("regenerates") and os.environ.get("NANOSOC_GEN_OK") != "1":
+                            # It writes generated RTL (and today, sources a
+                            # set_env.sh to do it). Not here: a sandbox with
+                            # NANOSOC_GEN_OK=1 only. Not run is not passed.
+                            say("    run-local %-18s NOT RUN  regenerates: true "
+                                "(sandbox with NANOSOC_GEN_OK=1 only)" % c.get("id"))
+                            bad += 1
+                            continue
+                        key = (tip, c.get("id"))
+                        if key not in ran:          # one tree, one run per capability
+                            ran[key] = run_capability(c, root)
+                        ok, d = ran[key]
                         say("    run-local %-18s %s  %s" % (c.get("id"), "PASS" if ok else "FAIL", d))
                         bad += 0 if ok else 1
                     if not bad:
