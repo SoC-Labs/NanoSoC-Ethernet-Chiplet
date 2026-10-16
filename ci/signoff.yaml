@@ -205,7 +205,7 @@ stages:
     # Tee the verdicts: run.sh keeps its per-pass Verilator logs under
     # build/lint/passes/ (it used to mktemp and delete them), but the pass/fail
     # lines that COMPOSE the verdict are only ever on stdout.
-    run: make lint 2>&1 | tee build/lint/lint_verdicts.log; exit ${PIPESTATUS[0]}
+    run: make lint STRICT=1 2>&1 | tee build/lint/lint_verdicts.log; exit ${PIPESTATUS[0]}
     # verif/lint/run.sh now keeps one durable log per pass under
     # build/lint/passes/, so this gate can assert on artefacts instead of on the
     # exit status of a pipeline. That matters here more than almost anywhere: the

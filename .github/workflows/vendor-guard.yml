@@ -70,7 +70,7 @@
 #
 # THE SUBMODULE IS PRIVATE, AND THAT COSTS THIS JOB ITS SECRETLESSNESS.
 # ASIC/asic-toolkit is SoC-Labs/nanoSoC-ASIC-Toolkit, a private repository
-# declared over git@github.com, so the hosted runner needs SUBMODULE_TOKEN and
+# (declared over https://github.com/), so the hosted runner needs SUBMODULE_TOKEN and
 # the same insteadOf rewrite ci-ladder.yml, asic-gds.yml and asic-signoff.yml
 # already use. If that checkout does not happen THE JOB FAILS. It does not fall
 # back to the *.lef-only check, because a gate that quietly degrades to the
@@ -150,8 +150,10 @@ jobs:
 
       # Exactly the mechanism ci-ladder.yml, asic-gds.yml and asic-signoff.yml
       # use, for exactly the same repository: ASIC/asic-toolkit is
-      # SoC-Labs/nanoSoC-ASIC-Toolkit, PRIVATE, and declared over git@github.com
-      # in .gitmodules. Anonymous HTTPS cannot clone it.
+      # SoC-Labs/nanoSoC-ASIC-Toolkit, PRIVATE. .gitmodules declares it over
+      # https://github.com/ (since 2026-10-16; git@github.com: before, and older
+      # pins of nested repos may still say so, hence both rewrites). Anonymous
+      # HTTPS cannot clone it.
       #
       # NO `continue-on-error`, NO `|| true`, and no branch that carries on
       # without the toolkit. See the header: falling back to the *.lef-only

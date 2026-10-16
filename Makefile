@@ -107,7 +107,7 @@ LEGACY_ASIC_DIR := $(CHIPLET_HOME)/ASIC/genus-innovus
 TOOLKIT_DIR  := $(CHIPLET_HOME)/ASIC/asic-toolkit
 
 .PHONY: bootstrap elab chip-boundary chip-wrapper lint check regress cdc elab-strict clean
-.PHONY: vendor-check hooks
+.PHONY: vendor-check hooks lint-control bump-hook bump-check bump-check-selftest
 .PHONY: bscan bscan-table bscan-gen bscan-splice bscan-check bscan-sim
 .PHONY: help asic asic-status asic-syn asic-pnr asic-gds asic-drc asic-padring-gds
 .PHONY: asic-lvs asic-lvs-pre asic-lec-pnr asic-pipeline asic-pipeline-resume
@@ -252,12 +252,55 @@ bootstrap:
 
 ##@2 Fast checks — no EDA licence, runnable in a fresh clone
 
-## lint: Verilator structural lint over the wrapper RTL.
+## lint: Verilator structural lint over the wrapper RTL. STRICT=1 for CI.
 #  Combinational loops, inferred latches, width and undriven-net faults that
 #  `elab` cannot see.
 #  Findings and waivers: docs/verification/LINT_FINDINGS.md.
+#
+#  STRICT=1 is what CI, ci/signoff.yaml and the release manager run
+#  (.nanosoc/capabilities.yaml). It re-reads the run's own output and FAILS on
+#  any "SKIPPED" line, whatever the exit status says. That catches the false
+#  green the evaluation measured on main 8e6d043: `make lint` exited 0 in 1 s
+#  printing `PASS 3 WRAPPER: SKIPPED`, so the integration top -- the one pass a
+#  nanosoc-multicore-system bump changes -- was never linted. run.sh fails a
+#  skip itself today, but LINT_ALLOW_SKIP=1 in a runner's environment, or an
+#  older run.sh on another line, turns that back into rc 0. STRICT=1 does not
+#  depend on either. `make lint-control` proves it still fires.
+STRICT ?= 0
 lint:
-	"$(CHIPLET_HOME)/scripts/lint.sh"
+	@set -uo pipefail
+	if [ "$(STRICT)" != 1 ]; then exec "$(CHIPLET_HOME)/scripts/lint.sh"; fi
+	mkdir -p "$(CHIPLET_HOME)/build/lint"
+	log="$(CHIPLET_HOME)/build/lint/strict.log"
+	"$(CHIPLET_HOME)/scripts/lint.sh" 2>&1 | tee "$$log"
+	rc=$${PIPESTATUS[0]}
+	if grep -aq 'SKIPPED' "$$log"; then
+	    echo "lint STRICT=1: FAIL -- a lint pass reported SKIPPED, so part of the" >&2
+	    echo "  RTL this gate describes was never linted (exit status was $$rc)." >&2
+	    echo "  A pass that did not run is not a pass that was clean." >&2
+	    exit 1
+	fi
+	exit $$rc
+
+## lint-control: negative control for `lint STRICT=1` -- must report a FAIL.
+#  Hides the CMSDK blackbox source so PASS 3 (WRAPPER) is skipped, and sets
+#  LINT_ALLOW_SKIP=1 so run.sh itself would let that through. Passes only when
+#  STRICT=1 still turns the skip into a failure. Overwrites build/lint/.
+lint-control:
+	@set -uo pipefail
+	out="$$(CMSDK_AHB_TO_APB=/nonexistent/cmsdk_ahb_to_apb.v \
+	        ARM_IP_LIBRARY_PATH=/nonexistent LINT_ALLOW_SKIP=1 \
+	        $(MAKE) --no-print-directory -C "$(CHIPLET_HOME)" lint STRICT=1 2>&1)"
+	rc=$$?
+	if [ "$$rc" -ne 0 ] && grep -q 'WRAPPER: SKIPPED' <<<"$$out" \
+	   && grep -q 'lint STRICT=1: FAIL' <<<"$$out"; then
+	    echo "lint-control OK: STRICT=1 failed the run whose WRAPPER pass was skipped"
+	    exit 0
+	fi
+	echo "$$out" | tail -20 >&2
+	echo "lint-control FAIL: expected a STRICT=1 failure on a skipped WRAPPER pass" >&2
+	echo "  (rc=$$rc). STRICT=1 no longer catches a skipped pass." >&2
+	exit 1
 
 ## vendor-check: prove no TSMC foundry collateral is tracked in this PUBLIC repo.
 #  The PDK licence does not permit reproducing vendor files.
@@ -380,10 +423,46 @@ hooks:
 	    exit 1
 	fi
 
+## bump-hook: install the WARN-only submodule-bump pre-push hook in this clone.
+#  scripts/hooks/pre-push warns when a push moves a gitlink that has no passing
+#  bump check; it never blocks (CI's bump-check job and the release manager
+#  do). If a pre-push hook is already installed (e.g. by `make hooks`), this
+#  installs nothing and prints the line to chain it from that hook.
+bump-hook:
+	@set -uo pipefail
+	cd "$(CHIPLET_HOME)"
+	dst="$$(git rev-parse --git-path hooks)/pre-push"
+	if [ -e "$$dst" ]; then
+	    echo "make bump-hook: $$dst already exists; not replacing it." >&2
+	    echo "  Chain the bump warning from it: pass the same stdin to" >&2
+	    echo '      "$$(git rev-parse --show-toplevel)/scripts/hooks/pre-push" "$$1"' >&2
+	    exit 0
+	fi
+	mkdir -p "$$(dirname "$$dst")"
+	ln -s "$(CHIPLET_HOME)/scripts/hooks/pre-push" "$$dst"
+	echo "installed $$dst -> scripts/hooks/pre-push (warn-only)"
+
+## bump-check: the CI bump gate, locally: BASE=<ref> (default origin/main).
+#  Blocks (exit 1) when a gitlink moved in BASE..HEAD has no PASS from the
+#  release manager. RUN_LOCAL=1 runs the affected t1/t2 capabilities here.
+BASE ?= origin/main
+RUN_LOCAL ?= 0
+bump-check:
+	python3 "$(CHIPLET_HOME)/scripts/ci/bump_check.py" --mode block \
+	    --range "$$(git merge-base $(BASE) HEAD)..HEAD" \
+	    $(if $(filter 1,$(RUN_LOCAL)),--run-local)
+
+## bump-check-selftest: unit tests for scripts/ci/bump_check.py and the hook.
+bump-check-selftest:
+	python3 "$(CHIPLET_HOME)/scripts/ci/test_bump_check.py"
+
 ##@2 Fast checks — no EDA licence, runnable in a fresh clone
 
 ## check: the licence-free gate set - vendor-check + chip-boundary + lint.
 #  `elab` and the verif/ environments need a tool licence on top.
+# `check` always lints STRICT=1: a target-specific variable reaches the `lint`
+# prerequisite, so a skipped pass cannot make `check OK` print.
+check: STRICT := 1
 check: vendor-check chip-boundary lint
 	@echo "== check OK: vendor-check + chip-boundary + lint clean =="
 
