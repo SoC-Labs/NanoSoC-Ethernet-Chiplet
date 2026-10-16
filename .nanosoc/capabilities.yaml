@@ -1,0 +1,227 @@
+# -----------------------------------------------------------------------------
+# .nanosoc/capabilities.yaml — what this tree can test, declared by the tree.
+# Copyright 2026, SoC Labs (www.soclabs.org)
+# -----------------------------------------------------------------------------
+# Read by the nanoSoC release manager AT THE COMMIT UNDER TEST (never from a
+# working tree), so a capability moves with the code it tests (decision 2,
+# 2026-10-16). Schema: nanoSoC-Release-Manager schemas/capabilities.schema.json.
+# Per-host facts (tool paths, licence servers, Arm IP roots) are NOT here; they
+# live in the release manager's registry, per host.
+#
+# Every `run` below is an existing target, measured on 2026-10-16 at
+# feat/padring-boundary-scan 597659f on an EDA host in a clean environment
+# (env -i PATH=<python3.8>:/usr/bin:/bin plus the named site variables):
+#   chip-boundary   rc 0, 1 s                      bscan-check   rc 0, <1 s
+#   lint STRICT=1   rc 1, 1 s  (real finding: SYNCASYNCNET sys_hresetn — the
+#                   non-synthesis EWR_TIEDOWN assertion samples sys_hresetn
+#                   synchronously; src/rtl/nanosoc_eth_chiplet.sv:500)
+#   lint-control    rc 0       (STRICT=1 fails a skipped WRAPPER pass)
+#   decode-smoke    rc 0, 5 s, 2 x PASS (VCS T-2022.06-SP2)
+#   soc-completeness rc 1: 19 t2/connection errors in a clean environment
+# Not run here, because their recipes source set_env.sh (never done by an
+# agent or by the release manager's runner): elab, elab-strict, cdc, regress*.
+# They are declared so the runner can refuse them BY NAME (see `notes`) until
+# their recipes take the environment from `env` below.
+#
+# Bump checks: scripts/ci/bump_check.py reads `affected_by` to say which of
+# these a submodule-pointer move re-runs. A gitlink path is the key.
+# -----------------------------------------------------------------------------
+schema: 1
+component: nanosoc-ethernet-chiplet
+
+env:
+  provides:
+    CHIPLET_HOME: "${TREE}"
+    NANOSOC_MULTICORE_HOME: "${TREE}/nanosoc-multicore-system"
+    TIDELINK_HOME: "${TREE}/tidelink"
+    TIDECHART_HOME: "${TREE}/tidechart"
+    TIDELINK_PHY_V2: "1"
+  site:
+    - {name: ARM_IP_LIBRARY_PATH, what: "Arm IP root; lint finds cmsdk_ahb_to_apb.v under it for the WRAPPER blackbox", arm_ip: true}
+    - {name: CMSDK_DIR, what: "Arm CMSDK root (elab, regress)", arm_ip: true}
+    - {name: XHB500_IP_DIR, what: "Arm XHB-500 root (tidelink V2 flist)", arm_ip: true}
+    - {name: VCS_HOME, what: "VCS install root"}
+    - {name: SNPSLMD_LICENSE_FILE, what: "Synopsys licence server"}
+    - {name: CDS_LIC_FILE, what: "Cadence licence server (xrun, genus, innovus)", optional: true}
+    - {name: TSMC_65_HOME, what: "PDK root (physical phase only)", pdk: true, optional: true}
+
+tools:
+  python3:   {probe: "python3 --version", min: "3.7"}
+  verilator: {probe: "verilator --version", min: "4.028"}
+  vcs:       {probe: "vcs -ID", min: "T-2022.06-SP2", licence: synopsys, seat: vcs}
+  xcelium:   {probe: "xrun -version", min: "22.03", licence: cadence, seat: xcelium}
+  genus:     {probe: "genus -version", min: "21.15", licence: cadence, seat: genus}
+  innovus:   {probe: "innovus -version", min: "21.11", licence: cadence, seat: innovus}
+  conformal: {probe: "lec -version", min: "22.10", licence: cadence, seat: conformal}
+
+capabilities:
+  - id: chip-boundary
+    kind: static
+    tier: t1
+    run: make chip-boundary
+    tools: [python3]
+    budget_s: 120
+    runtime: S
+    affected_by: [nanosoc-multicore-system]
+    verdict: {exit: 0, require: [{pattern: "every port accounted for exactly once"}]}
+    gate: block
+
+  - id: bscan-check
+    kind: static
+    tier: t1
+    run: make bscan-check
+    tools: [python3]
+    budget_s: 120
+    runtime: S
+    affected_by: [nanosoc-multicore-system]
+    gate: block
+
+  - id: lint
+    kind: lint
+    tier: t1
+    run: make lint STRICT=1
+    tools: [verilator, python3]
+    budget_s: 600
+    runtime: S
+    # PASS 3 (WRAPPER) blackboxes the GENERATED SoC top; it is rendered by
+    # `make -C nanosoc-multicore-system/sys_desc` (ci/signoff.yaml lint pre-step).
+    needs: [regen:build_soc]
+    affected_by: [nanosoc-multicore-system, tidechart, tidelink]
+    outputs: [build/lint/strict.log, build/lint/passes]
+    verdict: {exit: 0, forbid: ["SKIPPED", "LINT FAILED"]}
+    control: make lint-control
+    gate: block
+
+  - id: decode-smoke
+    kind: sim
+    tier: t2
+    run: make -C verif/chiplet_d2d_decode all
+    tools: [vcs]
+    needs: [vcs-seat]
+    budget_s: 900
+    runtime: M
+    affected_by: []
+    verdict: {exit: 0, forbid: ["FAIL"], require: [{pattern: "PASS", min: 2}]}
+    gate: block
+
+  - id: soc-completeness
+    kind: static
+    tier: t1
+    run: make -C nanosoc-multicore-system/sys_desc validate
+    tools: [python3]
+    budget_s: 300
+    runtime: S
+    affected_by: [nanosoc-multicore-system]
+    verdict: {exit: 0, require: [{pattern: "System completeness: [0-9]+/[0-9]+ checks pass"}]}
+    gate: report
+    from: ci/signoff.yaml
+    notes: >-
+      ci/signoff.yaml gates this stage `block`. Declared `report` here because
+      in a clean environment it exits 1 with 19 t2/connection errors (8/11
+      checks): component roots come from nanosoc-multicore-system/set_env.sh,
+      which nothing may source. Promote to block once env.provides covers them.
+
+  - id: elab
+    kind: elab
+    tier: t2
+    run: make elab
+    tools: [vcs, python3]
+    needs: [vcs-seat, regen:build_soc]
+    regenerates: true
+    budget_s: 900
+    runtime: M
+    affected_by: [nanosoc-multicore-system, tidelink, tidechart]
+    outputs: [build/elab/elab.log]
+    verdict: {exit: 0, rows: {format: regex, path: build/elab/elab.log, fail: "^Error-"}}
+    gate: block
+    notes: >-
+      The recipe sources three set_env.sh files (this repo, the SoC, TideLink;
+      Makefile `elab`), and the SoC's regenerates build_soc. A runner that
+      refuses set_env must refuse this until the recipe takes its environment
+      from `env`.
+
+  - id: elab-strict
+    kind: elab
+    tier: t3
+    run: make elab-strict
+    tools: [xcelium]
+    needs: [xcelium-seat]
+    regenerates: true
+    budget_s: 2400
+    runtime: L
+    affected_by: [nanosoc-multicore-system, tidelink, tidechart]
+    gate: block
+    when: [on_bump, release]
+    from: ci/signoff.yaml
+    notes: "verif/elab_strict/run.sh sources set_env.sh (run.sh:51-53); ~25 min."
+
+  - id: cdc
+    kind: cdc
+    tier: t3
+    run: make cdc
+    tools: [xcelium]
+    needs: [xcelium-seat]
+    regenerates: true
+    budget_s: 2400
+    runtime: L
+    affected_by: [nanosoc-multicore-system, tidelink]
+    gate: report
+    from: ci/signoff.yaml
+    notes: "verif/cdc/run.sh sources set_env.sh (run.sh:38-40); signoff.yaml gates cdc `report`."
+
+  - id: regress-quick
+    kind: sim
+    tier: t3
+    run: make regress ARGS=--quick
+    tools: [vcs]
+    needs: [vcs-seat, regen:build_soc]
+    regenerates: true
+    budget_s: 2700
+    runtime: L
+    affected_by: [nanosoc-multicore-system, tidelink]
+    verdict: {exit: 0, rows: {format: regress-table}}
+    gate: block
+    notes: "scripts/regress.sh: decode x2 + g2_peer_aperture; skips g2_soc_pair. Needs set_env (regress.sh:23)."
+
+  - id: regress
+    kind: sim
+    tier: t3
+    run: make regress
+    tools: [vcs]
+    needs: [vcs-seat, regen:build_soc]
+    regenerates: true
+    budget_s: 10800
+    runtime: L
+    affected_by: [nanosoc-multicore-system, tidelink]
+    verdict: {exit: 0, rows: {format: regress-table}}
+    gate: block
+    when: [nightly, release]
+    from: ci/signoff.yaml
+
+  - id: asic-syn
+    kind: synth
+    tier: t6
+    run: make asic-syn
+    tools: [genus]
+    needs: [pdk, genus-seat]
+    budget_s: 14400
+    runtime: XL
+    manual: true
+    gate: report
+    notes: "Genus synthesis through the asic-toolkit flow (ASIC/eth-chiplet). Needs the PDK; a person starts it."
+
+  - id: signoff-physical
+    kind: synth
+    tier: t6
+    run: python3 scripts/ci/signoff.py run physical
+    tools: [genus, innovus, conformal]
+    needs: [pdk]
+    budget_s: 86400
+    runtime: XL
+    manual: true
+    gate: report
+    from: ci/signoff.yaml
+    notes: "The physical phase of ci/signoff.yaml (LEC, LVS, DRC, ERC, IR, STA, GLS). `signoff.py list` names the stages."
+
+compose:
+  - {path: tidelink, run: [lint-fast, synth-lint-selftest], when: on_bump}

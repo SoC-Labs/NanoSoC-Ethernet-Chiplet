@@ -167,10 +167,12 @@ jobs:
       # ever considers a key. (SSH_AUTH_SOCK is unset and the fake home has no
       # .ssh either, but those are secondary — the passwd lookup is the wall.)
       #
-      # The git.soton.ac.uk submodules are HTTPS and clone fine. Only the three
-      # GitHub ones — tidelink and its two PHY deps — are git@github.com, so
-      # rewrite those onto HTTPS with a token. GITHUB_TOKEN covers THIS repo
-      # only, hence a PAT.
+      # Every top-level submodule is HTTPS since 2026-10-16 (the GitHub ones
+      # were git@github.com: before). The private toolkit still needs a token,
+      # so rewrite https://github.com/ (and git@github.com:, for older nested
+      # pins) onto authenticated HTTPS. GITHUB_TOKEN covers THIS repo only,
+      # hence a PAT. Both rewrites use --add: without it the second
+      # `git config` REPLACES the first and the https:// rewrite is lost.
       # [2026-08-13] SUBMODULE_TOKEN IS NOW MANDATORY, and was optional before.
       # There are FOUR GitHub submodules, not three: TideLink-Chiplet-
       # Interconnect-AHB, TideLink-Chiplet-GPIO-PHY and ASIC-Flow are public,
@@ -199,7 +201,7 @@ jobs:
             echo "::error::access to that repository."
             exit 1
           fi
-          git config --global url."${B}".insteadOf "git@github.com:"
+          git config --global --add url."${B}".insteadOf "git@github.com:"
 
       - name: 'rung 2 — bootstrap submodules'
         if: fromJSON(steps.plan.outputs.level) >= 2
