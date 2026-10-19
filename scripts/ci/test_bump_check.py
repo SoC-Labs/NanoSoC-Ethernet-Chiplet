@@ -275,6 +275,19 @@ class BumpCheck(unittest.TestCase):
         rc, out = self.ask(self.repo(), "WARNED")                    # not a prefix match
         self.assertEqual(rc, 1, out)
 
+    def test_rm_other_verdicts_block(self):
+        # Only PASS and WARN land (the release manager's gate.lands); every other verdict blocks.
+        for v in ("INFRA", "WAIVED", "FLAKY", "NOT-RUN"):
+            rc, out = self.ask(self.repo(), v)
+            self.assertEqual(rc, 1, "%s: %s" % (v, out))
+            self.assertIn("bump-check: FAIL", out)
+
+    def test_rm_warn_is_not_a_warning_in_warn_mode(self):
+        rc, out = self.ask(self.repo(), "warn", mode="warn")          # the verdict is read case-blind
+        self.assertEqual(rc, 0, out)
+        self.assertIn("release manager: WARN", out)
+        self.assertNotIn("WARNING", out)
+
     def test_rm_null_verdict_blocks(self):
         rc, out = self.ask(self.repo(), None, note="none finished")
         self.assertEqual(rc, 1, out)
