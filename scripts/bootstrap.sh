@@ -7,7 +7,9 @@
 #-----------------------------------------------------------------------------
 # Why this exists rather than a plain `git submodule update --init --recursive`:
 #
-# This repo's own three submodules are HTTPS. But one submodule *inside TideLink*
+# This repo's own submodules are all HTTPS (the three GitHub ones moved off
+# git@github.com: on 2026-10-16, so an SSH-less host or the release manager's
+# mirror can fetch every pin). But one submodule *inside TideLink*
 # — `deps/tidelink-phy`, at the commit we pin — is still declared over SSH
 # (`git@git.soton.ac.uk:...`). Fixing that means a new TideLink commit, and this
 # repo's TideLink pointer is deliberately frozen. So instead we rewrite the SSH

@@ -117,7 +117,7 @@ jobs:
             echo "::error::repo secret to a PAT with read access to it."
             exit 1
           fi
-          git config --global url."${B}".insteadOf "git@github.com:"
+          git config --global --add url."${B}".insteadOf "git@github.com:"
 
       - name: Bootstrap submodules
         run: |
