@@ -12,9 +12,13 @@
 # feat/padring-boundary-scan 597659f on an EDA host in a clean environment
 # (env -i PATH=<python3.8>:/usr/bin:/bin plus the named site variables):
 #   chip-boundary   rc 0, 1 s                      bscan-check   rc 0, <1 s
-#   lint STRICT=1   rc 1, 1 s  (real finding: SYNCASYNCNET sys_hresetn — the
-#                   non-synthesis EWR_TIEDOWN assertion samples sys_hresetn
-#                   synchronously; src/rtl/nanosoc_eth_chiplet.sv:500)
+#   lint STRICT=1   rc 0, 1 s  (re-measured 2026-10-19 on rm/lint-and-warn,
+#                   Verilator 4.028, same clean environment. It was rc 1 at
+#                   597659f: SYNCASYNCNET sys_hresetn, from the simulation-only
+#                   EWR_TIEDOWN assertion sampling sys_hresetn synchronously.
+#                   D13 (David 2026-10-19) guards that assertion with
+#                   `ifndef VERILATOR; no synthesised logic changed and no
+#                   waiver was added, so lint stays strict everywhere else.)
 #   lint-control    rc 0       (STRICT=1 fails a skipped WRAPPER pass)
 #   decode-smoke    rc 0, 5 s, 2 x PASS (VCS T-2022.06-SP2)
 #   soc-completeness rc 1: 19 t2/connection errors in a clean environment
