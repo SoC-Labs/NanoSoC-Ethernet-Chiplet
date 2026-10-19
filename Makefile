@@ -443,8 +443,10 @@ bump-hook:
 	echo "installed $$dst -> scripts/hooks/pre-push (warn-only)"
 
 ## bump-check: the CI bump gate, locally: BASE=<ref> (default origin/main).
-#  Blocks (exit 1) when a gitlink moved in BASE..HEAD has no PASS from the
-#  release manager. RUN_LOCAL=1 runs the affected t1/t2 capabilities here.
+#  Blocks (exit 1) when a gitlink moved in BASE..HEAD has neither a PASS nor a
+#  WARN ("already red before the bump") from the release manager; FAIL,
+#  UNVERIFIED and no answer block. RUN_LOCAL=1 runs the affected t1/t2
+#  capabilities here.
 BASE ?= origin/main
 RUN_LOCAL ?= 0
 bump-check:
