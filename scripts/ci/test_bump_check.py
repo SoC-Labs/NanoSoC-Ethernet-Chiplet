@@ -291,6 +291,14 @@ class BumpCheck(unittest.TestCase):
         self.assertIn("configuration: eth-chiplet-asic", out)
         self.assertIn("note: new red in eth-chiplet-asic", out)
 
+    def test_rm_fail_is_not_overridden_by_a_passing_local_run(self):
+        # D14: a new red in another configuration holds; a green local run must not land it.
+        rc, out = self.ask(self.repo(run_cmd="echo LINT OK"), "FAIL", run_local=True,
+                           configuration="cfg-b")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("not overridden by a local run", out)
+        self.assertNotIn("run-local lint", out)
+
     def test_rm_fail_still_only_warns_in_warn_mode(self):
         rc, out = self.ask(self.repo(), "FAIL", mode="warn")
         self.assertEqual(rc, 0, out)
